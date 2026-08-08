@@ -1,10 +1,26 @@
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Payment screenshots are written here (never committed; see .gitignore) and
+// served only through an authenticated route -- not from the static root.
+const UPLOAD_DIR = path.join(__dirname, 'uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB decoded
+const IMAGE_EXT = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+};
+const EXT_MIME = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
 
 // --- CONFIG -------------------------------------------------------------
 const COOKIE_NAME = 'nqocn_sid';
@@ -54,6 +70,33 @@ function safeEqual(a, b) {
   const bufB = Buffer.from(String(b), 'utf8');
   if (bufA.length !== bufB.length) return false;
   return crypto.timingSafeEqual(bufA, bufB);
+}
+
+// Decode a `data:image/...;base64,...` URI, validate type and size, and
+// write it to the upload dir. Returns { filename } or { error }.
+async function saveScreenshot(dataUri) {
+  const m = /^data:(image\/(?:png|jpe?g|gif|webp));base64,([A-Za-z0-9+/=]+)$/i.exec(dataUri || '');
+  if (!m) return { error: 'A valid PNG, JPEG, GIF, or WebP image is required.' };
+
+  const ext = IMAGE_EXT[m[1].toLowerCase()] || 'png';
+  const buf = Buffer.from(m[2], 'base64');
+  if (buf.length === 0) return { error: 'The uploaded image is empty.' };
+  if (buf.length > MAX_IMAGE_BYTES) return { error: 'Image exceeds the 5 MB limit.' };
+
+  const filename = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
+  await fs.promises.writeFile(path.join(UPLOAD_DIR, filename), buf);
+  return { filename };
+}
+
+// Best-effort removal of a stored screenshot file (ignores legacy data URIs
+// and already-missing files).
+async function deleteScreenshotFile(value) {
+  if (!value || /^data:/i.test(value)) return;
+  try {
+    await fs.promises.unlink(path.join(UPLOAD_DIR, path.basename(value)));
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.error('Failed to remove old screenshot:', err.message);
+  }
 }
 
 function parseCookies(req) {
@@ -164,6 +207,24 @@ db.serialize(() => {
   });
 });
 
+// One-time migration: move any base64 screenshots still stored in the DB out
+// to files, leaving only the filename behind. Idempotent -- once migrated,
+// the LIKE no longer matches. Runs after table creation via db.serialize.
+db.serialize(() => {
+  db.all("SELECT id, screenshot FROM registrations WHERE screenshot LIKE 'data:image/%'", async (err, rows) => {
+    if (err) return console.error('Screenshot migration check failed:', err.message);
+    for (const row of rows) {
+      const saved = await saveScreenshot(row.screenshot);
+      if (saved.error) {
+        console.error(`Skipping screenshot migration for registration ${row.id}: ${saved.error}`);
+        continue;
+      }
+      db.run('UPDATE registrations SET screenshot = ? WHERE id = ?', [saved.filename, row.id]);
+      console.log(`Migrated screenshot for registration ${row.id} -> ${saved.filename}`);
+    }
+  });
+});
+
 // Periodically purge expired OTPs and sessions. unref() so it never keeps
 // the process (or a test run) alive on its own.
 setInterval(() => {
@@ -259,8 +320,10 @@ function requireRole(...roles) {
 }
 
 // --- MIDDLEWARE ---------------------------------------------------------
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// Body limit sized for a single base64 screenshot (5 MB image + ~33%
+// encoding overhead + form fields), not the old 50 MB.
+app.use(express.json({ limit: '8mb' }));
+app.use(express.urlencoded({ limit: '8mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(loadSession);
 
@@ -420,6 +483,12 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     const expectedAmount = tier[REGISTRATION_PHASE];
     const categoryLabel = tier.label;
 
+    // Persist the screenshot to disk; the DB stores only the filename.
+    const saved = await saveScreenshot(screenshot);
+    if (saved.error) {
+      return res.status(400).json({ success: false, error: saved.error });
+    }
+
     // What the delegate claims to have paid, for the finance audit trail.
     const claimedAmount = Number(amount);
     const amountMismatch = !Number.isFinite(claimedAmount) || Math.round(claimedAmount) !== expectedAmount;
@@ -428,6 +497,9 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     const name = req.session.name;
     const flagged = isFlagged || amountMismatch ? 1 : 0;
     const paidAmount = Number.isFinite(claimedAmount) ? claimedAmount : null;
+
+    // Remember any previous file so it can be removed after a successful update.
+    const prev = await dbGet('SELECT screenshot FROM registrations WHERE phone_number = ?', [phone]);
 
     const result = await dbRun(
       `INSERT INTO registrations
@@ -445,8 +517,13 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
           screenshot = excluded.screenshot,
           is_flagged = excluded.is_flagged,
           bank_status = 'PENDING'`,
-      [phone, name, categoryKey, categoryLabel, workshop, qiExposure, expectedAmount, paidAmount, utr, screenshot, flagged]
+      [phone, name, categoryKey, categoryLabel, workshop, qiExposure, expectedAmount, paidAmount, utr, saved.filename, flagged]
     );
+
+    if (prev && prev.screenshot && prev.screenshot !== saved.filename) {
+      await deleteScreenshotFile(prev.screenshot);
+    }
+
     res.json({ success: true, id: result.lastID, expectedAmount, amountMismatch });
   } catch (err) {
     console.error('Database Insert Error:', err);
@@ -454,12 +531,56 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
   }
 });
 
+// Columns to expose for a registration -- everything except the raw
+// screenshot filename, plus a boolean the client can use to build the link.
+const REGISTRATION_PUBLIC_COLUMNS =
+  `id, phone_number, delegate_name, category_key, category_label, workshop,
+   qi_exposure, expected_amount, paid_amount, utr_number, is_flagged, bank_status,
+   (screenshot IS NOT NULL AND screenshot != '') AS has_screenshot`;
+
 // Fetch the caller's own registration (replaces the old IDOR-prone
 // /api/registrations/user/:phone route).
 app.get('/api/registrations/me', requireAuth, async (req, res, next) => {
   try {
-    const row = await dbGet('SELECT * FROM registrations WHERE phone_number = ?', [req.session.phone]);
+    const row = await dbGet(
+      `SELECT ${REGISTRATION_PUBLIC_COLUMNS} FROM registrations WHERE phone_number = ?`,
+      [req.session.phone]
+    );
     res.json({ registration: row || null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Serve a payment screenshot to the owning delegate or a finance admin.
+app.get('/api/registrations/:id/screenshot', requireAuth, async (req, res, next) => {
+  try {
+    const row = await dbGet('SELECT phone_number, screenshot FROM registrations WHERE id = ?', [req.params.id]);
+    if (!row || !row.screenshot) {
+      return res.status(404).json({ success: false, error: 'Screenshot not found.' });
+    }
+
+    const isFinance = req.session.role === 'SUPER_ADMIN' || req.session.role === 'FINANCE_ADMIN';
+    if (!isFinance && req.session.phone !== row.phone_number) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to view this screenshot.' });
+    }
+
+    res.set('Cache-Control', 'private, no-store');
+
+    // Defensive fallback for any legacy base64 value that escaped migration.
+    if (/^data:image\//i.test(row.screenshot)) {
+      const m = /^data:(image\/[a-z]+);base64,(.*)$/i.exec(row.screenshot);
+      if (!m) return res.status(404).json({ success: false, error: 'Screenshot not found.' });
+      res.type(m[1]);
+      return res.send(Buffer.from(m[2], 'base64'));
+    }
+
+    const safeName = path.basename(row.screenshot); // guard against traversal
+    const ext = path.extname(safeName).slice(1).toLowerCase();
+    if (EXT_MIME[ext]) res.type(EXT_MIME[ext]);
+    res.sendFile(path.join(UPLOAD_DIR, safeName), (err) => {
+      if (err && !res.headersSent) res.status(404).json({ success: false, error: 'Screenshot not found.' });
+    });
   } catch (err) {
     next(err);
   }
@@ -484,7 +605,7 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
 // Finance reconciliation: view all registrations.
 app.get('/api/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
-    const rows = await dbAll('SELECT * FROM registrations ORDER BY id DESC');
+    const rows = await dbAll(`SELECT ${REGISTRATION_PUBLIC_COLUMNS} FROM registrations ORDER BY id DESC`);
     res.json({ registrations: rows || [] });
   } catch (err) {
     next(err);
@@ -577,8 +698,11 @@ app.put('/api/abstracts/:id/status', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEW
 
 // --- ERROR HANDLER ------------------------------------------------------
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
   if (res.headersSent) return next(err);
+  if (err.type === 'entity.too.large' || err.status === 413) {
+    return res.status(413).json({ success: false, error: 'Upload too large. Payment screenshots must be under 5 MB.' });
+  }
+  console.error('Unhandled error:', err);
   res.status(500).json({ success: false, error: 'Internal server error.' });
 });
 

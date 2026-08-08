@@ -76,12 +76,23 @@ cookie is only sent over TLS.
 | `GET  /api/registrations`             | `SUPER_ADMIN`, `FINANCE_ADMIN`  |
 | `PUT  /api/registrations/:id/status`  | `SUPER_ADMIN`, `FINANCE_ADMIN`  |
 | `GET/POST /api/users`, `PUT .../role` | `SUPER_ADMIN`                   |
+| `GET /api/registrations/:id/screenshot` | Owning delegate or finance admin |
+
+## Payment screenshots
+
+Uploaded screenshots are written to `uploads/` (git-ignored) and the database
+stores only the generated filename. They are served exclusively through the
+authenticated `GET /api/registrations/:id/screenshot` route — to the owning
+delegate or a finance admin — never from the static root. Images must be PNG,
+JPEG, GIF, or WebP and under 5 MB. On first start after upgrading, any
+base64 screenshots still in the database are migrated to files automatically.
+
+Back up `uploads/` alongside `conference.db`; it is not tracked in git.
 
 ## Known limitations
 
 Still outstanding (tracked for follow-up work):
 
-- Payment screenshots are stored as base64 inside SQLite.
 - No SMS gateway; OTP delivery is console/echo only (see above).
 - The displayed fee (`calculateFee`) always uses the `early` column; if
   `REGISTRATION_PHASE` is changed, the client display and QR will lag the

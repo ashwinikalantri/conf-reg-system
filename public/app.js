@@ -356,14 +356,6 @@ function esc(v) {
     .replace(/'/g, '&#39;');
 }
 
-// Only allow inline image data URIs as a screenshot link target. Anything
-// else (javascript:, http(s), etc.) is rejected so it cannot run or phone home.
-function safeImageSrc(v) {
-  return typeof v === 'string' && /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(v)
-    ? v
-    : null;
-}
-
 // Inline onclick/onchange can be broken out of by a value containing a quote,
 // so the dynamic controls use data-* attributes plus these delegated
 // listeners, attached once.
@@ -465,7 +457,6 @@ async function renderBackendPayments() {
   setText('badge-pending-payments', pending.length);
 
   tbody.innerHTML = regs.map(p => {
-    const img = safeImageSrc(p.screenshot);
     return `
     <tr class="border-b border-slate-100 ${p.is_flagged ? 'bg-red-50/50' : ''}">
       <td class="p-4 font-bold text-sm">
@@ -483,8 +474,8 @@ async function renderBackendPayments() {
         }
       </td>
       <td class="p-4 text-center">
-        ${img
-          ? `<a href="${esc(img)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-800 font-semibold underline text-xs">View Image</a>`
+        ${p.has_screenshot
+          ? `<a href="/api/registrations/${esc(p.id)}/screenshot" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-800 font-semibold underline text-xs">View Image</a>`
           : `<span class="text-xs text-slate-400">N/A</span>`
         }
       </td>
