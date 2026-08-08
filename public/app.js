@@ -372,7 +372,54 @@ async function restoreSession() {
 }
 
 // --- ADMIN & BACKEND LOGIC ---
+
+// Escape untrusted values before putting them in HTML. Delegate-supplied
+// fields (name, UTR, institution, ...) reach the admin's browser, so every
+// interpolation below must pass through this.
+function esc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Only allow inline image data URIs as a screenshot link target. Anything
+// else (javascript:, http(s), etc.) is rejected so it cannot run or phone home.
+function safeImageSrc(v) {
+  return typeof v === 'string' && /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(v)
+    ? v
+    : null;
+}
+
+// Inline onclick/onchange can be broken out of by a value containing a quote,
+// so the dynamic controls use data-* attributes plus these delegated
+// listeners, attached once.
+let adminDelegationReady = false;
+function setupAdminDelegation() {
+  if (adminDelegationReady) return;
+  adminDelegationReady = true;
+
+  const paymentBody = document.getElementById('payment-table-body');
+  if (paymentBody) {
+    paymentBody.addEventListener('click', (e) => {
+      const btn = e.target.closest('.approve-btn');
+      if (btn) approvePayment(btn.dataset.id);
+    });
+  }
+
+  const userBody = document.getElementById('user-table-body');
+  if (userBody) {
+    userBody.addEventListener('change', (e) => {
+      const sel = e.target.closest('.role-select');
+      if (sel) updateRole(sel.dataset.phone, sel.value);
+    });
+  }
+}
+
 async function initBackendPortal() {
+  setupAdminDelegation();
   const res = await fetch('/api/users');
   if (res.status === 401) {
     alert('Please log in through the delegate portal with an administrator account.');
@@ -391,7 +438,7 @@ async function initBackendPortal() {
 
   const switcher = document.getElementById('admin-user-switcher');
   if (switcher) {
-    switcher.innerHTML = adminUsers.map(u => `<option value="${u.phone_number}">${u.full_name} (${u.role})</option>`).join('');
+    switcher.innerHTML = adminUsers.map(u => `<option value="${esc(u.phone_number)}">${esc(u.full_name)} (${esc(u.role)})</option>`).join('');
     if (!activeAdminUser && adminUsers.length) activeAdminUser = adminUsers[0];
   }
 
@@ -405,13 +452,15 @@ async function renderBackendPayments() {
   const tbody = document.getElementById('payment-table-body');
   if (!tbody) return;
 
-  tbody.innerHTML = (data.registrations || []).map(p => `
+  tbody.innerHTML = (data.registrations || []).map(p => {
+    const img = safeImageSrc(p.screenshot);
+    return `
     <tr class="border-b border-slate-100 ${p.is_flagged ? 'bg-red-50/50' : ''}">
       <td class="p-4 font-bold text-sm">
-        ${p.delegate_name}
+        ${esc(p.delegate_name)}
         ${p.is_flagged ? `<br><span class="inline-block mt-1 text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">⚠️ Flagged</span>` : ''}
       </td>
-      <td class="p-4 font-mono text-xs">${p.utr_number}</td>
+      <td class="p-4 font-mono text-xs">${esc(p.utr_number)}</td>
       <td class="p-4 text-sm">
         <span class="font-semibold text-slate-700">₹${Number(p.paid_amount)}</span>
         ${p.expected_amount == null
@@ -422,31 +471,32 @@ async function renderBackendPayments() {
         }
       </td>
       <td class="p-4 text-center">
-        ${p.screenshot 
-          ? `<a href="${p.screenshot}" target="_blank" class="text-indigo-600 hover:text-indigo-800 font-semibold underline text-xs">View Image</a>` 
+        ${img
+          ? `<a href="${esc(img)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-800 font-semibold underline text-xs">View Image</a>`
           : `<span class="text-xs text-slate-400">N/A</span>`
         }
       </td>
       <td class="p-4">
         <span class="${p.bank_status === 'BANK_VERIFIED' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'} text-xs px-2.5 py-1 rounded-full font-bold">
-          ${p.bank_status}
+          ${esc(p.bank_status)}
         </span>
       </td>
       <td class="p-4 text-right">
-        ${p.bank_status !== 'BANK_VERIFIED' 
-          ? `<button onclick="approvePayment('${p.id}')" class="px-3 py-1.5 ${p.is_flagged ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'} text-white font-semibold rounded-lg text-xs shadow-sm">
+        ${p.bank_status !== 'BANK_VERIFIED'
+          ? `<button class="approve-btn px-3 py-1.5 ${p.is_flagged ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'} text-white font-semibold rounded-lg text-xs shadow-sm" data-id="${esc(p.id)}">
               ${p.is_flagged ? 'Force Verify' : 'Verify Payment'}
              </button>`
           : `<span class="text-xs text-slate-400 font-medium">Verified</span>`
         }
       </td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 }
 
 async function approvePayment(id) {
   if (confirm("Have you cross-checked the payment screenshot and bank record?")) {
-    await fetch(`/api/registrations/${id}/status`, {
+    await fetch(`/api/registrations/${encodeURIComponent(id)}/status`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ bankStatus: 'BANK_VERIFIED' })
@@ -463,11 +513,11 @@ async function renderBackendUsers() {
 
   tbody.innerHTML = (data.users || []).map(u => `
     <tr>
-      <td class="p-4 font-bold">${u.full_name}<br><span class="text-xs text-slate-400">+91 ${u.phone_number}</span></td>
-      <td class="p-4">${u.designation} (${u.institution})</td>
-      <td class="p-4"><span class="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-full">${u.role}</span></td>
+      <td class="p-4 font-bold">${esc(u.full_name)}<br><span class="text-xs text-slate-400">+91 ${esc(u.phone_number)}</span></td>
+      <td class="p-4">${esc(u.designation)} (${esc(u.institution)})</td>
+      <td class="p-4"><span class="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-full">${esc(u.role)}</span></td>
       <td class="p-4 text-right">
-        <select onchange="updateRole('${u.phone_number}', this.value)" class="text-xs p-1 border rounded">
+        <select class="role-select text-xs p-1 border rounded" data-phone="${esc(u.phone_number)}">
           <option value="DELEGATE" ${u.role === 'DELEGATE' ? 'selected' : ''}>Delegate</option>
           <option value="FINANCE_ADMIN" ${u.role === 'FINANCE_ADMIN' ? 'selected' : ''}>Finance Admin</option>
           <option value="ACADEMIC_REVIEWER" ${u.role === 'ACADEMIC_REVIEWER' ? 'selected' : ''}>Academic Reviewer</option>
@@ -479,7 +529,7 @@ async function renderBackendUsers() {
 }
 
 async function updateRole(phone, role) {
-  await fetch(`/api/users/${phone}/role`, {
+  await fetch(`/api/users/${encodeURIComponent(phone)}/role`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ role })

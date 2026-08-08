@@ -81,7 +81,6 @@ cookie is only sent over TLS.
 
 Still outstanding (tracked for follow-up work):
 
-- Admin tables render database values as raw HTML (XSS risk).
 - Payment screenshots are stored as base64 inside SQLite.
 - The abstract review desk in the admin panel is not yet functional, and
   there is no `GET /api/abstracts` endpoint.
