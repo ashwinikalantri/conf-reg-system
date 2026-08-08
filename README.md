@@ -77,6 +77,16 @@ cookie is only sent over TLS.
 | `PUT  /api/registrations/:id/status`  | `SUPER_ADMIN`, `FINANCE_ADMIN`  |
 | `GET/POST /api/users`, `PUT .../role` | `SUPER_ADMIN`                   |
 | `GET /api/registrations/:id/screenshot` | Owning delegate or finance admin |
+| `GET /api/registrations/:id/audit`    | `SUPER_ADMIN`, `FINANCE_ADMIN`  |
+
+## Audit trail
+
+Every administrative status change — payment bank status and abstract review
+status — is appended to an `audit_log` table recording the old and new value,
+the acting admin (phone, name, role), and a timestamp. The admin tables show
+who last changed each record and when; `GET /api/registrations/:id/audit`
+returns a registration's full history. The log is append-only; nothing in the
+app deletes or edits it.
 
 ## Payment screenshots
 

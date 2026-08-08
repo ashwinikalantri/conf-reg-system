@@ -99,6 +99,26 @@ async function deleteScreenshotFile(value) {
   }
 }
 
+// Append an entry to the audit trail, attributed to the acting admin.
+async function recordAudit({ req, entityType, entityId, action, oldValue, newValue }) {
+  await dbRun(
+    `INSERT INTO audit_log
+      (entity_type, entity_id, action, old_value, new_value, actor_phone, actor_name, actor_role, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      entityType,
+      String(entityId),
+      action,
+      oldValue == null ? null : String(oldValue),
+      newValue == null ? null : String(newValue),
+      req.session.phone,
+      req.session.name,
+      req.session.role,
+      Date.now(),
+    ]
+  );
+}
+
 function parseCookies(req) {
   const out = {};
   const header = req.headers.cookie;
@@ -194,6 +214,23 @@ db.serialize(() => {
       role TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL
+    )
+  `);
+
+  // Append-only audit trail of administrative state changes (who did what,
+  // to which record, and when).
+  db.run(`
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      old_value TEXT,
+      new_value TEXT,
+      actor_phone TEXT NOT NULL,
+      actor_name TEXT,
+      actor_role TEXT,
+      created_at INTEGER NOT NULL
     )
   `);
 
@@ -602,17 +639,26 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
 
 // --- ADMIN ENDPOINTS ----------------------------------------------------
 
-// Finance reconciliation: view all registrations.
+// Finance reconciliation: view all registrations, each annotated with the
+// most recent audit entry (who last changed its status, and when).
 app.get('/api/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
-    const rows = await dbAll(`SELECT ${REGISTRATION_PUBLIC_COLUMNS} FROM registrations ORDER BY id DESC`);
+    const rows = await dbAll(`
+      SELECT ${REGISTRATION_PUBLIC_COLUMNS},
+        (SELECT actor_name FROM audit_log a
+           WHERE a.entity_type = 'registration' AND a.entity_id = CAST(registrations.id AS TEXT)
+           ORDER BY a.id DESC LIMIT 1) AS last_action_by,
+        (SELECT created_at FROM audit_log a
+           WHERE a.entity_type = 'registration' AND a.entity_id = CAST(registrations.id AS TEXT)
+           ORDER BY a.id DESC LIMIT 1) AS last_action_at
+      FROM registrations ORDER BY id DESC`);
     res.json({ registrations: rows || [] });
   } catch (err) {
     next(err);
   }
 });
 
-// Finance reconciliation: update bank verification status.
+// Finance reconciliation: update bank verification status (audited).
 app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
     const { bankStatus } = req.body;
@@ -620,8 +666,38 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
     if (!allowed.includes(bankStatus)) {
       return res.status(400).json({ success: false, error: 'Invalid bank status.' });
     }
+
+    const existing = await dbGet('SELECT bank_status FROM registrations WHERE id = ?', [req.params.id]);
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'Registration not found.' });
+    }
+
     await dbRun('UPDATE registrations SET bank_status = ? WHERE id = ?', [bankStatus, req.params.id]);
+    await recordAudit({
+      req,
+      entityType: 'registration',
+      entityId: req.params.id,
+      action: 'BANK_STATUS_CHANGE',
+      oldValue: existing.bank_status,
+      newValue: bankStatus,
+    });
     res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Full audit history for one registration.
+app.get('/api/registrations/:id/audit', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const rows = await dbAll(
+      `SELECT action, old_value, new_value, actor_name, actor_role, actor_phone, created_at
+         FROM audit_log
+        WHERE entity_type = 'registration' AND entity_id = ?
+        ORDER BY id DESC`,
+      [String(req.params.id)]
+    );
+    res.json({ audit: rows || [] });
   } catch (err) {
     next(err);
   }
@@ -672,10 +748,19 @@ app.put('/api/users/:phone/role', requireRole('SUPER_ADMIN'), async (req, res, n
   }
 });
 
-// Abstract review desk (super admin or academic reviewer).
+// Abstract review desk (super admin or academic reviewer). Each abstract is
+// annotated with who last changed its status, and when.
 app.get('/api/abstracts', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEWER'), async (req, res, next) => {
   try {
-    const rows = await dbAll('SELECT * FROM abstracts ORDER BY id DESC');
+    const rows = await dbAll(`
+      SELECT abstracts.*,
+        (SELECT actor_name FROM audit_log a
+           WHERE a.entity_type = 'abstract' AND a.entity_id = CAST(abstracts.id AS TEXT)
+           ORDER BY a.id DESC LIMIT 1) AS last_action_by,
+        (SELECT created_at FROM audit_log a
+           WHERE a.entity_type = 'abstract' AND a.entity_id = CAST(abstracts.id AS TEXT)
+           ORDER BY a.id DESC LIMIT 1) AS last_action_at
+      FROM abstracts ORDER BY id DESC`);
     res.json({ abstracts: rows || [] });
   } catch (err) {
     next(err);
@@ -689,7 +774,21 @@ app.put('/api/abstracts/:id/status', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEW
     if (!allowed.includes(status)) {
       return res.status(400).json({ success: false, error: 'Invalid abstract status.' });
     }
+
+    const existing = await dbGet('SELECT status FROM abstracts WHERE id = ?', [req.params.id]);
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'Abstract not found.' });
+    }
+
     await dbRun('UPDATE abstracts SET status = ? WHERE id = ?', [status, req.params.id]);
+    await recordAudit({
+      req,
+      entityType: 'abstract',
+      entityId: req.params.id,
+      action: 'ABSTRACT_STATUS_CHANGE',
+      oldValue: existing.status,
+      newValue: status,
+    });
     res.json({ success: true });
   } catch (err) {
     next(err);

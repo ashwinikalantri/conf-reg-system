@@ -395,6 +395,13 @@ function setText(id, value) {
   if (el) el.textContent = value;
 }
 
+// Format an epoch-ms audit timestamp for display; '' when absent.
+function fmtAuditTime(ms) {
+  if (!ms) return '';
+  const d = new Date(Number(ms));
+  return isNaN(d) ? '' : d.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
 // Show only the nav tabs and default to the first section this admin's role
 // is allowed to use.
 function applyRoleVisibility(role) {
@@ -483,6 +490,10 @@ async function renderBackendPayments() {
         <span class="${p.bank_status === 'BANK_VERIFIED' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'} text-xs px-2.5 py-1 rounded-full font-bold">
           ${esc(p.bank_status)}
         </span>
+        ${p.last_action_by
+          ? `<br><span class="text-[10px] text-slate-400">by ${esc(p.last_action_by)} · ${esc(fmtAuditTime(p.last_action_at))}</span>`
+          : ''
+        }
       </td>
       <td class="p-4 text-right">
         ${p.bank_status !== 'BANK_VERIFIED'
@@ -581,7 +592,13 @@ async function renderBackendAbstracts() {
             ${esc(a.author_name)} · ${esc(a.format)} · ${Number(a.word_count) || 0} words
           </p>
         </div>
-        <span class="${badge} text-xs px-2.5 py-1 rounded-full font-bold whitespace-nowrap">${esc(status.replace('_', ' '))}</span>
+        <div class="text-right shrink-0">
+          <span class="${badge} text-xs px-2.5 py-1 rounded-full font-bold whitespace-nowrap">${esc(status.replace('_', ' '))}</span>
+          ${a.last_action_by
+            ? `<p class="text-[10px] text-slate-400 mt-1">by ${esc(a.last_action_by)} · ${esc(fmtAuditTime(a.last_action_at))}</p>`
+            : ''
+          }
+        </div>
       </div>
       <p class="text-sm text-slate-600 mt-3 whitespace-pre-wrap">${esc(a.text)}</p>
       <div class="flex gap-2 mt-4">
