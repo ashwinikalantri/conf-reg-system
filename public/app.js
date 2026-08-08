@@ -98,8 +98,15 @@ async function requestOTP(context) {
 
   if (data.success) {
     document.getElementById(`${context}-otp-container`).classList.remove('hidden');
-    document.getElementById(`${context}-otp-hint`).innerText = `Demo OTP: ${data.demoOTP}`;
-    alert(`OTP sent to +91 ${phone}.\nYour 6-Digit OTP is: ${data.demoOTP}`);
+    if (data.devOtp) {
+      document.getElementById(`${context}-otp-hint`).innerText = `Demo OTP: ${data.devOtp}`;
+      alert(`OTP sent to +91 ${phone}.\nYour 6-Digit OTP is: ${data.devOtp}`);
+    } else {
+      document.getElementById(`${context}-otp-hint`).innerText = 'Sent via SMS';
+      alert(`A 6-digit OTP has been sent to +91 ${phone}.`);
+    }
+  } else {
+    alert(data.error || 'Could not send OTP. Please try again.');
   }
 }
 
@@ -170,7 +177,7 @@ async function loadDashboard() {
   const confBtn = document.getElementById('register-conf-btn');
   const reverifyBanner = document.getElementById('reverify-banner');
 
-  const regRes = await fetch(`/api/registrations/user/${currentDelegate.phone_number || currentDelegate.phone}`);
+  const regRes = await fetch('/api/registrations/me');
   const regData = await regRes.json();
   const reg = regData.registration;
 
@@ -260,7 +267,6 @@ async function verifyAndSubmitPayment(e) {
     }
 
     const payload = {
-      phone: currentDelegate.phone_number || currentDelegate.phone,
       delegateName: currentDelegate.full_name || currentDelegate.name,
       categoryKey: document.getElementById('payment-category').value,
       categoryLabel: PRICING_TIERS[document.getElementById('payment-category').value].label,
@@ -314,7 +320,6 @@ async function handleAbstractSubmit(e) {
   const wordCount = text.trim().split(/\s+/).filter(w => w.length > 0).length;
 
   const payload = {
-    phone: currentDelegate.phone_number || currentDelegate.phone,
     authorName: currentDelegate.full_name || currentDelegate.name,
     format: document.getElementById('abstract-format').value,
     title: document.getElementById('abstract-title').value,
@@ -338,11 +343,48 @@ async function handleAbstractSubmit(e) {
 
 function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
-function logout() { localStorage.removeItem('nqocn_current_user'); navigateTo('main-page'); }
+
+async function logout() {
+  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
+  currentDelegate = null;
+  localStorage.removeItem('nqocn_current_user');
+  navigateTo('main-page');
+}
+
+// Restore an active server session on page load. The session cookie is the
+// source of truth; localStorage only caches display fields.
+async function restoreSession() {
+  try {
+    const res = await fetch('/api/auth/me');
+    if (!res.ok) {
+      localStorage.removeItem('nqocn_current_user');
+      return;
+    }
+    const data = await res.json();
+    if (data.success && data.user) {
+      currentDelegate = data.user;
+      localStorage.setItem('nqocn_current_user', JSON.stringify(currentDelegate));
+      loadDashboard();
+    }
+  } catch (e) {
+    /* offline — stay on the landing page */
+  }
+}
 
 // --- ADMIN & BACKEND LOGIC ---
 async function initBackendPortal() {
   const res = await fetch('/api/users');
+  if (res.status === 401) {
+    alert('Please log in through the delegate portal with an administrator account.');
+    window.location.href = '/';
+    return;
+  }
+  if (res.status === 403) {
+    // Signed in, but not a super admin — user management is off-limits.
+    // Still render the sections this role is allowed to see.
+    renderBackendPayments();
+    return;
+  }
   const data = await res.json();
   const users = data.users || [];
   const adminUsers = users.filter(u => u.role !== 'DELEGATE');

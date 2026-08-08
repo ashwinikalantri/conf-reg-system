@@ -1,6 +1,6 @@
 # NQOCN 2026 Conference Portal & RBAC Operations
 
-## How to Run (Automatic Database Setup on First Run)
+## How to Run
 
 1. Open your terminal in the project directory.
 2. Install dependencies:
@@ -9,10 +9,10 @@
    npm install
    ```
 
-3. Set the admin credentials and start the server:
+3. Start the server:
 
    ```bash
-   ADMIN_USER=admin ADMIN_PASSWORD='<a-long-random-password>' npm start
+   npm start
    ```
 
 4. Delegate portal: <http://localhost:3000>
@@ -20,53 +20,70 @@
 
 `conference.db` is created automatically on first run.
 
-## Admin access
+## Authentication & sessions
 
-The admin panel and its APIs are behind HTTP Basic auth, configured entirely
-through two environment variables:
+Login is phone + OTP. On success the server issues a server-side session
+and sets an `httpOnly`, `SameSite=Lax` cookie (`nqocn_sid`, 12-hour life).
+Only a hash of the session token and of the OTP is stored in the database.
 
-| Variable         | Purpose                          |
-| ---------------- | -------------------------------- |
-| `ADMIN_USER`     | Admin username                   |
-| `ADMIN_PASSWORD` | Admin password                   |
-| `PORT`           | Optional, defaults to `3000`     |
+- OTP is a random 6-digit code, valid for 5 minutes, single-use, capped at
+  5 wrong attempts, with a 30-second resend throttle per number.
+- There is **no SMS gateway wired up yet.** Outside production the code is
+  logged to the server console and returned in the API response
+  (`devOtp`) so you can log in during development. Set `NODE_ENV=production`
+  (or `OTP_ECHO=false`) to stop returning it — but then you must integrate a
+  real SMS provider first, or nobody can log in.
 
-If either credential is missing the server still starts and serves the
-delegate portal, but **every admin route returns 401** — it fails closed.
-The browser will prompt for the credentials when you open `/admin`.
+### Roles (enforced server-side)
 
-Generate a password with:
+| Role                | Access                                              |
+| ------------------- | --------------------------------------------------- |
+| `SUPER_ADMIN`       | Everything, including user & role management        |
+| `FINANCE_ADMIN`     | Payment reconciliation (view + verify)              |
+| `ACADEMIC_REVIEWER` | Admin panel (abstract desk — not yet built)         |
+| `DELEGATE`          | Own registration, payment, and abstract submission  |
 
-```bash
-openssl rand -base64 24
-```
+Admins log in through the normal portal with their own phone number; their
+DB role grants access. The database ships with one `SUPER_ADMIN`. Roles can
+only be changed by a `SUPER_ADMIN` via the user-management screen — they are
+never accepted from a login or registration request body.
 
-Never commit credentials. `.env` is git-ignored.
+### Environment variables
 
-### Protected routes
+| Variable        | Default        | Purpose                                        |
+| --------------- | -------------- | ---------------------------------------------- |
+| `PORT`          | `3000`         | HTTP port                                      |
+| `NODE_ENV`      | –              | `production` disables the dev OTP echo         |
+| `OTP_ECHO`      | on if not prod | Force the OTP echo on (`true`) or off (`false`)|
+| `COOKIE_SECURE` | `false`        | Set `true` when served over HTTPS              |
 
-| Route                             | Access    |
-| --------------------------------- | --------- |
-| `GET /admin`                      | Admin     |
-| `GET /api/registrations`          | Admin     |
-| `PUT /api/registrations/:id/status` | Admin   |
-| `GET /api/users`                  | Admin     |
-| `POST /api/users`                 | Admin     |
-| `PUT /api/users/:phone/role`      | Admin     |
-| everything else                   | Public    |
+Serve over HTTPS in production and set `COOKIE_SECURE=true` so the session
+cookie is only sent over TLS.
+
+## Route protection
+
+| Route                                 | Access                          |
+| ------------------------------------- | ------------------------------- |
+| `POST /api/otp/request`               | Public (throttled)              |
+| `POST /api/auth/register` / `login`   | Public (OTP-gated)              |
+| `GET  /api/auth/me`                   | Authenticated                   |
+| `POST /api/auth/logout`               | Authenticated                   |
+| `POST /api/registrations`             | Authenticated (own record)      |
+| `GET  /api/registrations/me`          | Authenticated (own record)      |
+| `POST /api/abstracts`                 | Authenticated (own record)      |
+| `GET  /admin`                         | Any admin role                  |
+| `GET  /api/registrations`             | `SUPER_ADMIN`, `FINANCE_ADMIN`  |
+| `PUT  /api/registrations/:id/status`  | `SUPER_ADMIN`, `FINANCE_ADMIN`  |
+| `GET/POST /api/users`, `PUT .../role` | `SUPER_ADMIN`                   |
 
 ## Known limitations
 
-This is a prototype. Before handling real delegate data at scale, note:
+Still outstanding (tracked for follow-up work):
 
-- Delegate login uses a hardcoded OTP (`123456`) that the API returns to the
-  client. Anyone who knows a mobile number can log in as that delegate.
-- `GET /api/registrations/user/:phone` is unauthenticated — any phone number
-  can be queried for its registration.
-- Basic auth gates the admin panel as a whole; the per-role permissions
-  (`FINANCE_ADMIN` vs `ACADEMIC_REVIEWER` vs `SUPER_ADMIN`) shown in the UI
-  are not enforced server-side.
 - Registration fee amounts are supplied by the client and not re-checked
   against the server's price list.
 - Admin tables render database values as raw HTML (XSS risk).
 - Payment screenshots are stored as base64 inside SQLite.
+- The abstract review desk in the admin panel is not yet functional, and
+  there is no `GET /api/abstracts` endpoint.
+- No SMS gateway; OTP delivery is console/echo only (see above).
