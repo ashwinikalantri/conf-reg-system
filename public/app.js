@@ -181,18 +181,23 @@ async function loadDashboard() {
   const regData = await regRes.json();
   const reg = regData.registration;
 
-  if (reg) {
-    if (reg.bank_status === 'BANK_VERIFIED') {
-      statusTag.className = "text-xs bg-emerald-100 text-emerald-800 font-bold px-3 py-1 rounded-full border border-emerald-300";
-      statusTag.innerText = "Registration Confirmed ✓";
-      confBtn.innerText = "View Verified Details";
-      reverifyBanner.classList.add('hidden');
-    } else {
-      statusTag.className = "text-xs bg-amber-100 text-amber-800 font-bold px-3 py-1 rounded-full border border-amber-300";
-      statusTag.innerText = reg.is_flagged ? "Flagged - Awaiting Manual Audit" : "Registration Pending (Awaiting Verification)";
-      confBtn.innerText = "Edit Submitted Payment";
-      reverifyBanner.classList.add('hidden');
-    }
+  if (!reg) {
+    // No payment submitted yet — reset to the initial pending state.
+    statusTag.className = "text-xs bg-amber-100 text-amber-800 font-bold px-2.5 py-1 rounded-full border border-amber-200";
+    statusTag.innerText = "Registration Pending";
+    confBtn.innerText = "Register & Pay Now";
+    reverifyBanner.classList.add('hidden');
+  } else if (reg.bank_status === 'BANK_VERIFIED') {
+    statusTag.className = "text-xs bg-emerald-100 text-emerald-800 font-bold px-3 py-1 rounded-full border border-emerald-300";
+    statusTag.innerText = "Registration Confirmed ✓";
+    confBtn.innerText = "View Verified Details";
+    reverifyBanner.classList.add('hidden');
+  } else {
+    const needsAction = reg.is_flagged || reg.bank_status === 'REJECTED';
+    statusTag.className = "text-xs bg-amber-100 text-amber-800 font-bold px-3 py-1 rounded-full border border-amber-300";
+    statusTag.innerText = needsAction ? "Flagged - Awaiting Manual Audit" : "Registration Pending (Awaiting Verification)";
+    confBtn.innerText = "Edit Submitted Payment";
+    reverifyBanner.classList.toggle('hidden', !needsAction);
   }
 
   navigateTo('dashboard-page');
@@ -211,18 +216,6 @@ function calculateFee() {
   document.getElementById('qr-container').classList.remove('hidden');
 }
 
-// --- SCREENSHOT DISCREPANCY ANALYSIS ---
-async function analyzeScreenshotDiscrepancies(base64Image, enteredUtr, enteredAmount) {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      const utrInvalid = enteredUtr.length < 12;
-      const mockRandomFlag = Math.random() > 0.7;
-      const hasDiscrepancy = utrInvalid || mockRandomFlag;
-      resolve(hasDiscrepancy);
-    }, 1000); 
-  });
-}
-
 // --- PAYMENT SUBMISSION ---
 async function verifyAndSubmitPayment(e) {
   e.preventDefault();
@@ -236,46 +229,23 @@ async function verifyAndSubmitPayment(e) {
 
   const submitBtn = document.getElementById('submit-payment-btn');
   const originalBtnText = submitBtn.innerText;
-  submitBtn.innerText = "Scanning Screenshot...";
+  submitBtn.innerText = "Submitting...";
   submitBtn.disabled = true;
 
   const reader = new FileReader();
   reader.onload = async function(event) {
     const base64Screenshot = event.target.result;
     const utr = document.getElementById('entered-utr').value.trim();
-    const amount = parseFloat(document.getElementById('entered-amount').value);
-    
-    let isFlagged = false;
 
-    const hasDiscrepancy = await analyzeScreenshotDiscrepancies(base64Screenshot, utr, amount);
-
-    if (hasDiscrepancy) {
-      const userProceeds = confirm(
-        "⚠️ DISCREPANCY DETECTED IN SCREENSHOT SCAN\n\n" +
-        "Our automated scanner could not cleanly match the entered UTR or Amount with the image provided.\n\n" +
-        "Click OK to proceed anyway (your transaction will be FLAGGED for strict manual audit by the finance team).\n" +
-        "Click Cancel to re-check your UTR or upload a clearer screenshot."
-      );
-
-      if (!userProceeds) {
-        submitBtn.innerText = originalBtnText;
-        submitBtn.disabled = false;
-        return;
-      }
-      
-      isFlagged = true;
-    }
-
+    // The fee is computed and verified server-side from the category; the
+    // server flags the registration if the claimed amount does not match.
     const payload = {
-      delegateName: currentDelegate.full_name || currentDelegate.name,
       categoryKey: document.getElementById('payment-category').value,
-      categoryLabel: PRICING_TIERS[document.getElementById('payment-category').value].label,
       workshop: document.getElementById('payment-workshop').value,
       qiExposure: document.getElementById('payment-qi-exposure').value,
-      amount: amount,
+      amount: parseFloat(document.getElementById('entered-amount').value),
       utr: utr,
-      screenshot: base64Screenshot,
-      isFlagged: isFlagged
+      screenshot: base64Screenshot
     };
 
     try {
@@ -293,8 +263,8 @@ async function verifyAndSubmitPayment(e) {
       const data = await res.json();
 
       if (data.success) {
-        alert(isFlagged 
-          ? "Flagged submission received. It has been queued for manual finance audit." 
+        alert(data.amountMismatch
+          ? "Submission received, but the amount did not match the category fee. It has been flagged for manual finance audit."
           : "Payment details & screenshot submitted successfully! Registration is PENDING manual verification."
         );
         closeModal('modal-conference');
@@ -310,7 +280,7 @@ async function verifyAndSubmitPayment(e) {
       submitBtn.disabled = false;
     }
   };
-  
+
   reader.readAsDataURL(file);
 }
 
@@ -348,7 +318,8 @@ async function logout() {
   try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
   currentDelegate = null;
   localStorage.removeItem('nqocn_current_user');
-  navigateTo('main-page');
+  // Full navigation so this works from both the delegate portal and /admin.
+  window.location.href = '/';
 }
 
 // Restore an active server session on page load. The session cookie is the
@@ -416,34 +387,62 @@ function setupAdminDelegation() {
       if (sel) updateRole(sel.dataset.phone, sel.value);
     });
   }
+
+  const abstractBox = document.getElementById('abstracts-container');
+  if (abstractBox) {
+    abstractBox.addEventListener('click', (e) => {
+      const btn = e.target.closest('.abstract-status-btn');
+      if (btn) updateAbstractStatus(btn.dataset.id, btn.dataset.status);
+    });
+  }
+}
+
+// Set the text of an element if it exists.
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+// Show only the nav tabs and default to the first section this admin's role
+// is allowed to use.
+function applyRoleVisibility(role) {
+  const isSuper = role === 'SUPER_ADMIN';
+  const isFinance = isSuper || role === 'FINANCE_ADMIN';
+  const isReviewer = isSuper || role === 'ACADEMIC_REVIEWER';
+
+  const tabPayments = document.getElementById('nav-tab-payments');
+  const tabAbstracts = document.getElementById('nav-tab-abstracts');
+  const tabUsers = document.getElementById('nav-tab-users');
+  if (tabPayments) tabPayments.classList.toggle('hidden', !isFinance);
+  if (tabAbstracts) tabAbstracts.classList.toggle('hidden', !isReviewer);
+  if (tabUsers) tabUsers.classList.toggle('hidden', !isSuper);
+
+  return { isSuper, isFinance, isReviewer };
 }
 
 async function initBackendPortal() {
   setupAdminDelegation();
-  const res = await fetch('/api/users');
-  if (res.status === 401) {
+
+  // Identify the logged-in admin from the session, not a client-side switcher.
+  const meRes = await fetch('/api/auth/me');
+  if (!meRes.ok) {
     alert('Please log in through the delegate portal with an administrator account.');
     window.location.href = '/';
     return;
   }
-  if (res.status === 403) {
-    // Signed in, but not a super admin — user management is off-limits.
-    // Still render the sections this role is allowed to see.
-    renderBackendPayments();
-    return;
-  }
-  const data = await res.json();
-  const users = data.users || [];
-  const adminUsers = users.filter(u => u.role !== 'DELEGATE');
+  activeAdminUser = (await meRes.json()).user;
+  setText('active-admin-role-badge', `${activeAdminUser.full_name} · ${activeAdminUser.role}`);
 
-  const switcher = document.getElementById('admin-user-switcher');
-  if (switcher) {
-    switcher.innerHTML = adminUsers.map(u => `<option value="${esc(u.phone_number)}">${esc(u.full_name)} (${esc(u.role)})</option>`).join('');
-    if (!activeAdminUser && adminUsers.length) activeAdminUser = adminUsers[0];
-  }
+  const { isSuper, isFinance, isReviewer } = applyRoleVisibility(activeAdminUser.role);
 
-  renderBackendPayments();
-  renderBackendUsers();
+  // Render every section this role may see (this also fills the tab badges).
+  if (isFinance) await renderBackendPayments();
+  if (isReviewer) await renderBackendAbstracts();
+  if (isSuper) await renderBackendUsers();
+
+  // Land on the first section the role can actually use.
+  const defaultTab = isFinance ? 'payments' : isReviewer ? 'abstracts' : 'users';
+  switchBackendTab(defaultTab);
 }
 
 async function renderBackendPayments() {
@@ -452,7 +451,20 @@ async function renderBackendPayments() {
   const tbody = document.getElementById('payment-table-body');
   if (!tbody) return;
 
-  tbody.innerHTML = (data.registrations || []).map(p => {
+  const regs = data.registrations || [];
+
+  // Summary metrics and the pending-payments tab badge.
+  const verified = regs.filter(r => r.bank_status === 'BANK_VERIFIED');
+  const pending = regs.filter(r => r.bank_status !== 'BANK_VERIFIED');
+  const flagged = regs.filter(r => r.is_flagged);
+  const totalCleared = verified.reduce((sum, r) => sum + (Number(r.paid_amount) || 0), 0);
+  setText('metric-total-amount', `₹${totalCleared}`);
+  setText('metric-verified-count', verified.length);
+  setText('metric-pending-count', pending.length);
+  setText('metric-flagged-count', flagged.length);
+  setText('badge-pending-payments', pending.length);
+
+  tbody.innerHTML = regs.map(p => {
     const img = safeImageSrc(p.screenshot);
     return `
     <tr class="border-b border-slate-100 ${p.is_flagged ? 'bg-red-50/50' : ''}">
@@ -511,7 +523,10 @@ async function renderBackendUsers() {
   const tbody = document.getElementById('user-table-body');
   if (!tbody) return;
 
-  tbody.innerHTML = (data.users || []).map(u => `
+  const users = data.users || [];
+  setText('badge-user-count', users.length);
+
+  tbody.innerHTML = users.map(u => `
     <tr>
       <td class="p-4 font-bold">${esc(u.full_name)}<br><span class="text-xs text-slate-400">+91 ${esc(u.phone_number)}</span></td>
       <td class="p-4">${esc(u.designation)} (${esc(u.institution)})</td>
@@ -534,7 +549,67 @@ async function updateRole(phone, role) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ role })
   });
-  initBackendPortal();
+  renderBackendUsers();
+}
+
+const ABSTRACT_STATUS_STYLES = {
+  UNDER_REVIEW: 'bg-amber-100 text-amber-800',
+  ACCEPTED: 'bg-emerald-100 text-emerald-800',
+  REJECTED: 'bg-rose-100 text-rose-800',
+};
+
+async function renderBackendAbstracts() {
+  const res = await fetch('/api/abstracts');
+  const container = document.getElementById('abstracts-container');
+  if (!container) return;
+
+  if (!res.ok) {
+    container.innerHTML = `<p class="text-sm text-slate-500 p-4">Unable to load abstracts.</p>`;
+    return;
+  }
+
+  const data = await res.json();
+  const abstracts = data.abstracts || [];
+  const underReview = abstracts.filter(a => (a.status || 'UNDER_REVIEW') === 'UNDER_REVIEW');
+  setText('badge-pending-abstracts', underReview.length);
+
+  if (!abstracts.length) {
+    container.innerHTML = `<p class="text-sm text-slate-500 p-4">No abstracts submitted yet.</p>`;
+    return;
+  }
+
+  container.innerHTML = abstracts.map(a => {
+    const status = a.status || 'UNDER_REVIEW';
+    const badge = ABSTRACT_STATUS_STYLES[status] || 'bg-slate-100 text-slate-700';
+    return `
+    <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+      <div class="flex justify-between items-start gap-4">
+        <div>
+          <h4 class="font-bold text-slate-800">${esc(a.title)}</h4>
+          <p class="text-xs text-slate-500 mt-0.5">
+            ${esc(a.author_name)} · ${esc(a.format)} · ${Number(a.word_count) || 0} words
+          </p>
+        </div>
+        <span class="${badge} text-xs px-2.5 py-1 rounded-full font-bold whitespace-nowrap">${esc(status.replace('_', ' '))}</span>
+      </div>
+      <p class="text-sm text-slate-600 mt-3 whitespace-pre-wrap">${esc(a.text)}</p>
+      <div class="flex gap-2 mt-4">
+        <button class="abstract-status-btn px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-status="ACCEPTED">Accept</button>
+        <button class="abstract-status-btn px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-status="REJECTED">Reject</button>
+        <button class="abstract-status-btn px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-status="UNDER_REVIEW">Reset</button>
+      </div>
+    </div>
+  `;
+  }).join('');
+}
+
+async function updateAbstractStatus(id, status) {
+  await fetch(`/api/abstracts/${encodeURIComponent(id)}/status`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status })
+  });
+  renderBackendAbstracts();
 }
 
 function openCreateUserModal() { openModal('modal-create-user'); }
@@ -560,8 +635,17 @@ async function handleCreateUserSubmit(e) {
 }
 
 function switchBackendTab(tab) {
-  document.getElementById('section-payments').classList.add('hidden');
-  document.getElementById('section-abstracts').classList.add('hidden');
-  document.getElementById('section-users').classList.add('hidden');
-  document.getElementById(`section-${tab}`).classList.remove('hidden');
+  ['payments', 'abstracts', 'users'].forEach(t => {
+    const section = document.getElementById(`section-${t}`);
+    if (section) section.classList.toggle('hidden', t !== tab);
+
+    const btn = document.getElementById(`nav-tab-${t}`);
+    if (btn) {
+      const active = t === tab;
+      btn.classList.toggle('text-indigo-600', active);
+      btn.classList.toggle('border-b-2', active);
+      btn.classList.toggle('border-indigo-600', active);
+      btn.classList.toggle('text-slate-500', !active);
+    }
+  });
 }

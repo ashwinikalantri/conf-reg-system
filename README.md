@@ -82,6 +82,7 @@ cookie is only sent over TLS.
 Still outstanding (tracked for follow-up work):
 
 - Payment screenshots are stored as base64 inside SQLite.
-- The abstract review desk in the admin panel is not yet functional, and
-  there is no `GET /api/abstracts` endpoint.
 - No SMS gateway; OTP delivery is console/echo only (see above).
+- The displayed fee (`calculateFee`) always uses the `early` column; if
+  `REGISTRATION_PHASE` is changed, the client display and QR will lag the
+  server's expected fee until a pricing endpoint is added.

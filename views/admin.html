@@ -22,15 +22,12 @@
     </div>
 
     <div class="flex flex-wrap items-center gap-3">
-      <div class="bg-slate-800 p-2 rounded-xl border border-slate-700 text-xs space-y-1">
-        <label class="block text-[10px] text-slate-400 uppercase font-bold">Switch Active Admin Account</label>
-        <select id="admin-user-switcher" onchange="switchAdminUser(this.value)" class="bg-slate-900 text-white p-1.5 rounded border border-slate-700 text-xs outline-none">
-        </select>
-      </div>
-
-      <a href="index.html" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-sm font-semibold transition">
+      <a href="/" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-sm font-semibold transition">
         ← Delegate Portal
       </a>
+      <button onclick="logout()" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-sm font-semibold transition">
+        Logout
+      </button>
     </div>
   </header>
 

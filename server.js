@@ -119,9 +119,18 @@ db.serialize(() => {
       format TEXT,
       title TEXT,
       text TEXT,
-      word_count INTEGER
+      word_count INTEGER,
+      status TEXT DEFAULT 'UNDER_REVIEW'
     )
   `);
+
+  // Additive migration for databases created before the review workflow.
+  db.all('PRAGMA table_info(abstracts)', (err, cols) => {
+    if (err) return console.error('Schema check failed:', err.message);
+    if (!cols.some((c) => c.name === 'status')) {
+      db.run("ALTER TABLE abstracts ADD COLUMN status TEXT DEFAULT 'UNDER_REVIEW'");
+    }
+  });
 
   // One-time password codes, keyed by phone (one active code per number).
   db.run(`
@@ -536,6 +545,30 @@ app.put('/api/users/:phone/role', requireRole('SUPER_ADMIN'), async (req, res, n
       return res.status(400).json({ success: false, error: 'Invalid role.' });
     }
     await dbRun('UPDATE users SET role = ? WHERE phone_number = ?', [role, req.params.phone]);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Abstract review desk (super admin or academic reviewer).
+app.get('/api/abstracts', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEWER'), async (req, res, next) => {
+  try {
+    const rows = await dbAll('SELECT * FROM abstracts ORDER BY id DESC');
+    res.json({ abstracts: rows || [] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/abstracts/:id/status', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEWER'), async (req, res, next) => {
+  try {
+    const { status } = req.body;
+    const allowed = ['UNDER_REVIEW', 'ACCEPTED', 'REJECTED'];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ success: false, error: 'Invalid abstract status.' });
+    }
+    await dbRun('UPDATE abstracts SET status = ? WHERE id = ?', [status, req.params.id]);
     res.json({ success: true });
   } catch (err) {
     next(err);
