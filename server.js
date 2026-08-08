@@ -1,15 +1,82 @@
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// --- ADMIN GATE ---------------------------------------------------------
+// Interim protection for the admin surface: HTTP Basic auth from the
+// environment. This is a stopgap until per-user sessions land -- it gates
+// the panel as a whole and does not distinguish FINANCE_ADMIN from
+// SUPER_ADMIN. Delegate-facing routes are deliberately left open.
+
+const ADMIN_USER = process.env.ADMIN_USER;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+if (!ADMIN_USER || !ADMIN_PASSWORD) {
+  console.warn(
+    '\n  WARNING: ADMIN_USER and/or ADMIN_PASSWORD are not set.\n' +
+    '  Every admin route is locked and will return 401 until both are provided.\n' +
+    '  Start with: ADMIN_USER=... ADMIN_PASSWORD=... npm start\n'
+  );
+}
+
+function safeEqual(a, b) {
+  const bufA = Buffer.from(String(a), 'utf8');
+  const bufB = Buffer.from(String(b), 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+function adminAuth(req, res, next) {
+  const deny = () => {
+    res.set('WWW-Authenticate', 'Basic realm="NQOCN 2026 Admin", charset="UTF-8"');
+    res.set('Cache-Control', 'no-store');
+    return res.status(401).json({ success: false, error: 'Administrator authentication required.' });
+  };
+
+  // Fail closed when no credentials are configured.
+  if (!ADMIN_USER || !ADMIN_PASSWORD) return deny();
+
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Basic ')) return deny();
+
+  let decoded;
+  try {
+    decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
+  } catch (err) {
+    return deny();
+  }
+
+  const separator = decoded.indexOf(':');
+  if (separator === -1) return deny();
+
+  // Evaluate both comparisons before combining so a wrong username and a
+  // wrong password cost the same amount of time.
+  const userOk = safeEqual(decoded.slice(0, separator), ADMIN_USER);
+  const passOk = safeEqual(decoded.slice(separator + 1), ADMIN_PASSWORD);
+  if (!(userOk && passOk)) {
+    console.warn(`Rejected admin request from ${req.ip} for ${req.method} ${req.originalUrl}`);
+    return deny();
+  }
+
+  res.set('Cache-Control', 'no-store');
+  next();
+}
 
 // Increase request body limit to 50MB for Base64 image payload handling
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Admin panel lives outside the static root so it is only ever reachable
+// through this guarded route.
+app.get('/admin', adminAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'admin.html'));
+});
 
 // Database setup
 const db = new sqlite3.Database('./conference.db', (err) => {
@@ -145,14 +212,14 @@ app.get('/api/registrations/user/:phone', (req, res) => {
 });
 
 // Fetch All Registrations (Admin)
-app.get('/api/registrations', (req, res) => {
+app.get('/api/registrations', adminAuth, (req, res) => {
   db.all(`SELECT * FROM registrations ORDER BY id DESC`, [], (err, rows) => {
     res.json({ registrations: rows || [] });
   });
 });
 
 // Update Bank Verification Status (Admin)
-app.put('/api/registrations/:id/status', (req, res) => {
+app.put('/api/registrations/:id/status', adminAuth, (req, res) => {
   const { bankStatus } = req.body;
   db.run(`UPDATE registrations SET bank_status = ? WHERE id = ?`, [bankStatus, req.params.id], function(err) {
     if (err) return res.status(500).json({ success: false, error: err.message });
@@ -161,14 +228,14 @@ app.put('/api/registrations/:id/status', (req, res) => {
 });
 
 // Fetch Users List (Admin)
-app.get('/api/users', (req, res) => {
+app.get('/api/users', adminAuth, (req, res) => {
   db.all(`SELECT * FROM users`, [], (err, rows) => {
     res.json({ users: rows || [] });
   });
 });
 
 // Admin Manual Create User
-app.post('/api/users', (req, res) => {
+app.post('/api/users', adminAuth, (req, res) => {
   const { name, phone, designation, institute, role } = req.body;
   const sql = `INSERT INTO users (phone_number, full_name, designation, institution, role) VALUES (?, ?, ?, ?, ?)`;
   db.run(sql, [phone, name, designation, institute, role], function(err) {
@@ -178,7 +245,7 @@ app.post('/api/users', (req, res) => {
 });
 
 // Update User Role (Admin)
-app.put('/api/users/:phone/role', (req, res) => {
+app.put('/api/users/:phone/role', adminAuth, (req, res) => {
   const { role } = req.body;
   db.run(`UPDATE users SET role = ? WHERE phone_number = ?`, [role, req.params.phone], function(err) {
     res.json({ success: true });
