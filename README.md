@@ -52,10 +52,11 @@ never accepted from a login or registration request body.
 
 | Variable        | Default        | Purpose                                        |
 | --------------- | -------------- | ---------------------------------------------- |
-| `PORT`          | `3000`         | HTTP port                                      |
-| `NODE_ENV`      | –              | `production` disables the dev OTP echo         |
-| `OTP_ECHO`      | on if not prod | Force the OTP echo on (`true`) or off (`false`)|
-| `COOKIE_SECURE` | `false`        | Set `true` when served over HTTPS              |
+| `PORT`               | `3000`         | HTTP port                                      |
+| `NODE_ENV`           | –              | `production` disables the dev OTP echo         |
+| `OTP_ECHO`           | on if not prod | Force the OTP echo on (`true`) or off (`false`)|
+| `COOKIE_SECURE`      | `false`        | Set `true` when served over HTTPS              |
+| `REGISTRATION_PHASE` | `early`        | Fee column in effect: `early`/`regular`/`late` |
 
 Serve over HTTPS in production and set `COOKIE_SECURE=true` so the session
 cookie is only sent over TLS.
@@ -80,8 +81,6 @@ cookie is only sent over TLS.
 
 Still outstanding (tracked for follow-up work):
 
-- Registration fee amounts are supplied by the client and not re-checked
-  against the server's price list.
 - Admin tables render database values as raw HTML (XSS risk).
 - Payment screenshots are stored as base64 inside SQLite.
 - The abstract review desk in the admin panel is not yet functional, and

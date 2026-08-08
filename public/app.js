@@ -412,7 +412,15 @@ async function renderBackendPayments() {
         ${p.is_flagged ? `<br><span class="inline-block mt-1 text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">⚠️ Flagged</span>` : ''}
       </td>
       <td class="p-4 font-mono text-xs">${p.utr_number}</td>
-      <td class="p-4 text-sm font-semibold text-slate-700">₹${p.paid_amount}</td>
+      <td class="p-4 text-sm">
+        <span class="font-semibold text-slate-700">₹${Number(p.paid_amount)}</span>
+        ${p.expected_amount == null
+          ? ''
+          : Number(p.paid_amount) !== Number(p.expected_amount)
+            ? `<br><span class="text-[10px] text-rose-600 font-bold">≠ expected ₹${Number(p.expected_amount)}</span>`
+            : `<br><span class="text-[10px] text-emerald-600">✓ matches fee</span>`
+        }
+      </td>
       <td class="p-4 text-center">
         ${p.screenshot 
           ? `<a href="${p.screenshot}" target="_blank" class="text-indigo-600 hover:text-indigo-800 font-semibold underline text-xs">View Image</a>` 

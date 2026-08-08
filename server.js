@@ -26,6 +26,25 @@ if (COOKIE_SECURE) app.set('trust proxy', 1);
 
 const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER'];
 
+// Authoritative fee schedule. The client has its own copy for display, but
+// the amount charged and recorded is always computed here from the
+// category key -- never taken from the request body.
+const PRICING_TIERS = {
+  nursing_ug:  { early: 500,  regular: 1000, late: 2000, label: 'Nursing Student UG' },
+  nursing_pg:  { early: 750,  regular: 1500, late: 2500, label: 'Nursing Student PG' },
+  med_student: { early: 1500, regular: 2200, late: 3000, label: 'Medical Student UG' },
+  nurse_cho:   { early: 2000, regular: 2800, late: 3500, label: 'Nurse / Paramedical / CHO' },
+  pg_doctor:   { early: 3000, regular: 4000, late: 5000, label: 'PG Student / Resident Doctor' },
+  faculty_mo:  { early: 3000, regular: 4000, late: 5000, label: 'Doctors / Faculty / NHM MO' },
+  chw:         { early: 200,  regular: 200,  late: 200,  label: 'Frontline CHWs (ASHA/ANM/AWW)' },
+};
+
+// Which column of the fee schedule is currently in effect. There are no
+// cutoff dates defined yet, so this is configuration, defaulting to early.
+const REGISTRATION_PHASE = ['early', 'regular', 'late'].includes(process.env.REGISTRATION_PHASE)
+  ? process.env.REGISTRATION_PHASE
+  : 'early';
+
 // --- CRYPTO / COOKIE HELPERS --------------------------------------------
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 
@@ -125,6 +144,15 @@ db.serialize(() => {
       expires_at INTEGER NOT NULL
     )
   `);
+
+  // Additive migration: record the server-computed fee separately from the
+  // amount the delegate claims to have paid.
+  db.all('PRAGMA table_info(registrations)', (err, cols) => {
+    if (err) return console.error('Schema check failed:', err.message);
+    if (!cols.some((c) => c.name === 'expected_amount')) {
+      db.run('ALTER TABLE registrations ADD COLUMN expected_amount REAL');
+    }
+  });
 });
 
 // Periodically purge expired OTPs and sessions. unref() so it never keeps
@@ -369,32 +397,48 @@ app.post('/api/auth/logout', async (req, res, next) => {
 // Submit / update the caller's own payment registration.
 app.post('/api/registrations', requireAuth, async (req, res, next) => {
   try {
-    const { delegateName, categoryKey, categoryLabel, workshop, qiExposure, amount, utr, screenshot, isFlagged } = req.body;
+    const { categoryKey, workshop, qiExposure, amount, utr, screenshot, isFlagged } = req.body;
     if (!utr || !screenshot) {
       return res.status(400).json({ success: false, error: 'Missing required registration details.' });
     }
 
+    // Fee and label are derived server-side from the category; the client's
+    // amount and label are not trusted.
+    const tier = PRICING_TIERS[categoryKey];
+    if (!tier) {
+      return res.status(400).json({ success: false, error: 'Invalid delegate category.' });
+    }
+    const expectedAmount = tier[REGISTRATION_PHASE];
+    const categoryLabel = tier.label;
+
+    // What the delegate claims to have paid, for the finance audit trail.
+    const claimedAmount = Number(amount);
+    const amountMismatch = !Number.isFinite(claimedAmount) || Math.round(claimedAmount) !== expectedAmount;
+
     const phone = req.session.phone; // never from the client
-    const name = req.session.name || delegateName;
+    const name = req.session.name;
+    const flagged = isFlagged || amountMismatch ? 1 : 0;
+    const paidAmount = Number.isFinite(claimedAmount) ? claimedAmount : null;
 
     const result = await dbRun(
       `INSERT INTO registrations
-        (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, paid_amount, utr_number, screenshot, is_flagged, bank_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+        (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, expected_amount, paid_amount, utr_number, screenshot, is_flagged, bank_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
         ON CONFLICT(phone_number) DO UPDATE SET
           delegate_name = excluded.delegate_name,
           category_key = excluded.category_key,
           category_label = excluded.category_label,
           workshop = excluded.workshop,
           qi_exposure = excluded.qi_exposure,
+          expected_amount = excluded.expected_amount,
           paid_amount = excluded.paid_amount,
           utr_number = excluded.utr_number,
           screenshot = excluded.screenshot,
           is_flagged = excluded.is_flagged,
           bank_status = 'PENDING'`,
-      [phone, name, categoryKey, categoryLabel, workshop, qiExposure, amount, utr, screenshot, isFlagged ? 1 : 0]
+      [phone, name, categoryKey, categoryLabel, workshop, qiExposure, expectedAmount, paidAmount, utr, screenshot, flagged]
     );
-    res.json({ success: true, id: result.lastID });
+    res.json({ success: true, id: result.lastID, expectedAmount, amountMismatch });
   } catch (err) {
     console.error('Database Insert Error:', err);
     res.status(500).json({ success: false, error: 'Database save failed.' });
