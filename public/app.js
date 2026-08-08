@@ -229,7 +229,7 @@ async function verifyAndSubmitPayment(e) {
 
   const submitBtn = document.getElementById('submit-payment-btn');
   const originalBtnText = submitBtn.innerText;
-  submitBtn.innerText = "Submitting...";
+  submitBtn.innerText = "Checking screenshot...";
   submitBtn.disabled = true;
 
   const reader = new FileReader();
@@ -237,9 +237,9 @@ async function verifyAndSubmitPayment(e) {
     const base64Screenshot = event.target.result;
     const utr = document.getElementById('entered-utr').value.trim();
 
-    // The fee is computed and verified server-side from the category; the
-    // server flags the registration if the claimed amount does not match.
-    const payload = {
+    // The server derives the fee from the category and reads the screenshot
+    // to check the amount, conference UPI ID, and UTR.
+    const basePayload = {
       categoryKey: document.getElementById('payment-category').value,
       workshop: document.getElementById('payment-workshop').value,
       qiExposure: document.getElementById('payment-qi-exposure').value,
@@ -248,23 +248,47 @@ async function verifyAndSubmitPayment(e) {
       screenshot: base64Screenshot
     };
 
-    try {
+    async function submit(acknowledged) {
       const res = await fetch('/api/registrations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ ...basePayload, acknowledged })
       });
-
       if (!res.ok) {
         const errorText = await res.text();
         throw new Error(`Server status ${res.status}: ${errorText.substring(0, 100)}`);
       }
+      return res.json();
+    }
 
-      const data = await res.json();
+    try {
+      let data = await submit(false);
+
+      // Server couldn't verify one or more details from the screenshot.
+      if (data.needsConfirmation) {
+        const c = data.checks || {};
+        const problems = [];
+        if (!c.amount) problems.push(`• The amount ₹${data.expectedAmount} could not be found in the screenshot`);
+        if (!c.vpa) problems.push('• The conference UPI ID could not be found in the screenshot');
+        if (!c.utr) problems.push('• The UTR number you entered could not be found in the screenshot');
+
+        const proceed = await showConfirm(
+          "We could not verify the following from your uploaded screenshot:\n\n" +
+          problems.join('\n') +
+          "\n\nYou can submit anyway, but the payment will be FLAGGED for manual scrutiny by the finance team.",
+          "Submit anyway", "Cancel & re-check"
+        );
+        if (!proceed) {
+          submitBtn.innerText = originalBtnText;
+          submitBtn.disabled = false;
+          return;
+        }
+        data = await submit(true);
+      }
 
       if (data.success) {
-        alert(data.amountMismatch
-          ? "Submission received, but the amount did not match the category fee. It has been flagged for manual finance audit."
+        alert(data.flagged
+          ? "Submission received and FLAGGED for manual finance scrutiny (some details did not match the screenshot)."
           : "Payment details & screenshot submitted successfully! Registration is PENDING manual verification."
         );
         closeModal('modal-conference');
@@ -313,6 +337,37 @@ async function handleAbstractSubmit(e) {
 
 function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+// In-page confirmation dialog. Native confirm() is unreliable — browsers
+// suppress repeated dialogs and then it silently returns false — so the
+// admin panel uses this modal instead. Resolves true/false.
+function showConfirm(message, okText = 'Confirm', cancelText = 'Cancel') {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('modal-confirm');
+    if (!modal) return resolve(window.confirm(message)); // fallback
+    document.getElementById('confirm-message').textContent = message;
+    const ok = document.getElementById('confirm-ok');
+    const cancel = document.getElementById('confirm-cancel');
+    ok.textContent = okText;
+    cancel.textContent = cancelText;
+    const done = (val) => {
+      modal.classList.add('hidden');
+      ok.onclick = null;
+      cancel.onclick = null;
+      resolve(val);
+    };
+    ok.onclick = () => done(true);
+    cancel.onclick = () => done(false);
+    modal.classList.remove('hidden');
+  });
+}
+
+// Show a payment screenshot in a modal rather than navigating away.
+function openScreenshot(id) {
+  const img = document.getElementById('screenshot-modal-img');
+  if (img) img.src = `/api/registrations/${encodeURIComponent(id)}/screenshot`;
+  openModal('modal-screenshot');
+}
 
 async function logout() {
   try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
@@ -367,8 +422,10 @@ function setupAdminDelegation() {
   const paymentBody = document.getElementById('payment-table-body');
   if (paymentBody) {
     paymentBody.addEventListener('click', (e) => {
-      const btn = e.target.closest('.approve-btn');
-      if (btn) approvePayment(btn.dataset.id);
+      const approve = e.target.closest('.approve-btn');
+      if (approve) return approvePayment(approve.dataset.id);
+      const view = e.target.closest('.view-image-btn');
+      if (view) return openScreenshot(view.dataset.id);
     });
   }
 
@@ -393,6 +450,17 @@ function setupAdminDelegation() {
 function setText(id, value) {
   const el = document.getElementById(id);
   if (el) el.textContent = value;
+}
+
+// One line of the screenshot OCR check result: 1 = match, 0 = mismatch,
+// null/undefined = not checked (legacy rows).
+function ocrCheckLine(label, val) {
+  if (val == null) {
+    return `<span class="text-[10px] text-slate-400">${esc(label)}: — not checked</span>`;
+  }
+  return Number(val) === 1
+    ? `<span class="text-[10px] text-emerald-600">✓ ${esc(label)} matches</span>`
+    : `<span class="text-[10px] text-rose-600 font-bold">✗ ${esc(label)} mismatch</span>`;
 }
 
 // Format an epoch-ms audit timestamp for display; '' when absent.
@@ -479,10 +547,15 @@ async function renderBackendPayments() {
             ? `<br><span class="text-[10px] text-rose-600 font-bold">≠ expected ₹${Number(p.expected_amount)}</span>`
             : `<br><span class="text-[10px] text-emerald-600">✓ matches fee</span>`
         }
+        <div class="mt-1.5 flex flex-col gap-0.5">
+          ${ocrCheckLine('Amount', p.ocr_amount_match)}
+          ${ocrCheckLine('UPI ID', p.ocr_vpa_match)}
+          ${ocrCheckLine('UTR', p.ocr_utr_match)}
+        </div>
       </td>
       <td class="p-4 text-center">
         ${p.has_screenshot
-          ? `<a href="/api/registrations/${esc(p.id)}/screenshot" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-800 font-semibold underline text-xs">View Image</a>`
+          ? `<button type="button" class="view-image-btn text-indigo-600 hover:text-indigo-800 font-semibold underline text-xs" data-id="${esc(p.id)}">View Image</button>`
           : `<span class="text-xs text-slate-400">N/A</span>`
         }
       </td>
@@ -509,7 +582,7 @@ async function renderBackendPayments() {
 }
 
 async function approvePayment(id) {
-  if (confirm("Have you cross-checked the payment screenshot and bank record?")) {
+  if (await showConfirm("Have you cross-checked the payment screenshot and bank record?")) {
     await fetch(`/api/registrations/${encodeURIComponent(id)}/status`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

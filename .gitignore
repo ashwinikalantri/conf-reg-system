@@ -13,6 +13,10 @@ node_modules/
 # Uploaded payment screenshots (once moved off base64-in-DB)
 uploads/
 
+# OCR language model cache (downloaded at runtime by tesseract.js)
+.ocr-cache/
+*.traineddata
+
 # Secrets
 .env
 .env.*

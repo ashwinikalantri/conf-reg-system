@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
+const { createWorker } = require('tesseract.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -61,6 +62,10 @@ const REGISTRATION_PHASE = ['early', 'regular', 'late'].includes(process.env.REG
   ? process.env.REGISTRATION_PHASE
   : 'early';
 
+// The conference's own UPI ID (VPA). A payment screenshot should show this as
+// the payee; OCR checks the uploaded image against it.
+const OFFICIAL_UPI_ID = process.env.OFFICIAL_UPI_ID || 'abhishekraut@cbin';
+
 // --- CRYPTO / COOKIE HELPERS --------------------------------------------
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 
@@ -72,20 +77,67 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
-// Decode a `data:image/...;base64,...` URI, validate type and size, and
-// write it to the upload dir. Returns { filename } or { error }.
-async function saveScreenshot(dataUri) {
+// Decode a `data:image/...;base64,...` URI and validate type and size.
+// Returns { buffer, ext } or { error }. Does not touch disk.
+function decodeScreenshot(dataUri) {
   const m = /^data:(image\/(?:png|jpe?g|gif|webp));base64,([A-Za-z0-9+/=]+)$/i.exec(dataUri || '');
   if (!m) return { error: 'A valid PNG, JPEG, GIF, or WebP image is required.' };
 
   const ext = IMAGE_EXT[m[1].toLowerCase()] || 'png';
-  const buf = Buffer.from(m[2], 'base64');
-  if (buf.length === 0) return { error: 'The uploaded image is empty.' };
-  if (buf.length > MAX_IMAGE_BYTES) return { error: 'Image exceeds the 5 MB limit.' };
+  const buffer = Buffer.from(m[2], 'base64');
+  if (buffer.length === 0) return { error: 'The uploaded image is empty.' };
+  if (buffer.length > MAX_IMAGE_BYTES) return { error: 'Image exceeds the 5 MB limit.' };
+  return { buffer, ext };
+}
 
+// Write a validated image buffer to the upload dir; returns the filename.
+async function writeScreenshotBuffer(buffer, ext) {
   const filename = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
-  await fs.promises.writeFile(path.join(UPLOAD_DIR, filename), buf);
-  return { filename };
+  await fs.promises.writeFile(path.join(UPLOAD_DIR, filename), buffer);
+  return filename;
+}
+
+// Lazily-created, reused OCR worker (creating one per request is expensive).
+// The language model is cached under .ocr-cache/ (git-ignored) rather than
+// the working directory.
+let ocrWorkerPromise = null;
+function getOcrWorker() {
+  if (!ocrWorkerPromise) {
+    ocrWorkerPromise = createWorker('eng', 1, { cachePath: path.join(__dirname, '.ocr-cache') });
+  }
+  return ocrWorkerPromise;
+}
+
+// OCR a screenshot buffer and check it against the expected values. Every
+// check is advisory; a failure to read the image yields all-false (flagged),
+// never an error that blocks submission. Returns { amount, vpa, utr } booleans.
+async function runOcrChecks(buffer, { expectedAmount, utr }) {
+  let text = '';
+  try {
+    const worker = await getOcrWorker();
+    const { data } = await worker.recognize(buffer);
+    text = data.text || '';
+  } catch (err) {
+    console.error('OCR failed:', err.message);
+    return { amount: false, vpa: false, utr: false };
+  }
+
+  const compact = text.replace(/\s+/g, '').toLowerCase();
+  const digitsOnly = text.replace(/[^0-9]/g, '');
+  const enteredUtrDigits = String(utr || '').replace(/[^0-9]/g, '');
+
+  // Amount: the expected fee appears in the text as a standalone number, with
+  // or without a thousands separator (e.g. 3000, 3,000, or 3 000).
+  const amtWithSep = String(expectedAmount).replace(/\B(?=(\d{3})+(?!\d))/g, '[,\\s]?');
+  const amount = new RegExp(`(?<!\\d)${amtWithSep}(?!\\d)`).test(text);
+
+  // VPA: the conference UPI id appears (compare ignoring whitespace/case).
+  const vpa = compact.includes(OFFICIAL_UPI_ID.replace(/\s+/g, '').toLowerCase());
+
+  // UTR: the entered UTR digits appear in the image text.
+  const utrMatch = enteredUtrDigits.length >= 6 && digitsOnly.includes(enteredUtrDigits);
+
+  return { amount, vpa, utr: utrMatch };
 }
 
 // Best-effort removal of a stored screenshot file (ignores legacy data URIs
@@ -234,13 +286,15 @@ db.serialize(() => {
     )
   `);
 
-  // Additive migration: record the server-computed fee separately from the
-  // amount the delegate claims to have paid.
+  // Additive migrations: server-computed fee, and the three OCR check results
+  // (nullable -- NULL means "not checked", e.g. legacy rows).
   db.all('PRAGMA table_info(registrations)', (err, cols) => {
     if (err) return console.error('Schema check failed:', err.message);
-    if (!cols.some((c) => c.name === 'expected_amount')) {
-      db.run('ALTER TABLE registrations ADD COLUMN expected_amount REAL');
-    }
+    const names = cols.map((c) => c.name);
+    if (!names.includes('expected_amount')) db.run('ALTER TABLE registrations ADD COLUMN expected_amount REAL');
+    if (!names.includes('ocr_amount_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_amount_match INTEGER');
+    if (!names.includes('ocr_vpa_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_vpa_match INTEGER');
+    if (!names.includes('ocr_utr_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_utr_match INTEGER');
   });
 });
 
@@ -251,13 +305,14 @@ db.serialize(() => {
   db.all("SELECT id, screenshot FROM registrations WHERE screenshot LIKE 'data:image/%'", async (err, rows) => {
     if (err) return console.error('Screenshot migration check failed:', err.message);
     for (const row of rows) {
-      const saved = await saveScreenshot(row.screenshot);
-      if (saved.error) {
-        console.error(`Skipping screenshot migration for registration ${row.id}: ${saved.error}`);
+      const decoded = decodeScreenshot(row.screenshot);
+      if (decoded.error) {
+        console.error(`Skipping screenshot migration for registration ${row.id}: ${decoded.error}`);
         continue;
       }
-      db.run('UPDATE registrations SET screenshot = ? WHERE id = ?', [saved.filename, row.id]);
-      console.log(`Migrated screenshot for registration ${row.id} -> ${saved.filename}`);
+      const filename = await writeScreenshotBuffer(decoded.buffer, decoded.ext);
+      db.run('UPDATE registrations SET screenshot = ? WHERE id = ?', [filename, row.id]);
+      console.log(`Migrated screenshot for registration ${row.id} -> ${filename}`);
     }
   });
 });
@@ -506,7 +561,7 @@ app.post('/api/auth/logout', async (req, res, next) => {
 // Submit / update the caller's own payment registration.
 app.post('/api/registrations', requireAuth, async (req, res, next) => {
   try {
-    const { categoryKey, workshop, qiExposure, amount, utr, screenshot, isFlagged } = req.body;
+    const { categoryKey, workshop, qiExposure, amount, utr, screenshot, acknowledged } = req.body;
     if (!utr || !screenshot) {
       return res.status(400).json({ success: false, error: 'Missing required registration details.' });
     }
@@ -520,28 +575,42 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     const expectedAmount = tier[REGISTRATION_PHASE];
     const categoryLabel = tier.label;
 
-    // Persist the screenshot to disk; the DB stores only the filename.
-    const saved = await saveScreenshot(screenshot);
-    if (saved.error) {
-      return res.status(400).json({ success: false, error: saved.error });
+    // Validate the image (in memory; not written to disk yet).
+    const decoded = decodeScreenshot(screenshot);
+    if (decoded.error) {
+      return res.status(400).json({ success: false, error: decoded.error });
+    }
+
+    // Read the screenshot and check amount / conference UPI ID / UTR against it.
+    const checks = await runOcrChecks(decoded.buffer, { expectedAmount, utr });
+    const allChecksPass = checks.amount && checks.vpa && checks.utr;
+
+    // If any check failed and the delegate hasn't acknowledged the warning,
+    // don't commit -- let the client warn and re-submit with acknowledged=true.
+    if (!allChecksPass && !acknowledged) {
+      return res.json({ success: false, needsConfirmation: true, checks, expectedAmount });
     }
 
     // What the delegate claims to have paid, for the finance audit trail.
     const claimedAmount = Number(amount);
-    const amountMismatch = !Number.isFinite(claimedAmount) || Math.round(claimedAmount) !== expectedAmount;
+    const amountTampered = !Number.isFinite(claimedAmount) || Math.round(claimedAmount) !== expectedAmount;
+    const paidAmount = Number.isFinite(claimedAmount) ? claimedAmount : null;
+
+    // Flag for manual scrutiny if any screenshot check failed or the claimed
+    // amount was tampered with.
+    const flagged = !allChecksPass || amountTampered ? 1 : 0;
 
     const phone = req.session.phone; // never from the client
     const name = req.session.name;
-    const flagged = isFlagged || amountMismatch ? 1 : 0;
-    const paidAmount = Number.isFinite(claimedAmount) ? claimedAmount : null;
 
     // Remember any previous file so it can be removed after a successful update.
     const prev = await dbGet('SELECT screenshot FROM registrations WHERE phone_number = ?', [phone]);
+    const filename = await writeScreenshotBuffer(decoded.buffer, decoded.ext);
 
     const result = await dbRun(
       `INSERT INTO registrations
-        (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, expected_amount, paid_amount, utr_number, screenshot, is_flagged, bank_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+        (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, expected_amount, paid_amount, utr_number, screenshot, ocr_amount_match, ocr_vpa_match, ocr_utr_match, is_flagged, bank_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
         ON CONFLICT(phone_number) DO UPDATE SET
           delegate_name = excluded.delegate_name,
           category_key = excluded.category_key,
@@ -552,16 +621,20 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
           paid_amount = excluded.paid_amount,
           utr_number = excluded.utr_number,
           screenshot = excluded.screenshot,
+          ocr_amount_match = excluded.ocr_amount_match,
+          ocr_vpa_match = excluded.ocr_vpa_match,
+          ocr_utr_match = excluded.ocr_utr_match,
           is_flagged = excluded.is_flagged,
           bank_status = 'PENDING'`,
-      [phone, name, categoryKey, categoryLabel, workshop, qiExposure, expectedAmount, paidAmount, utr, saved.filename, flagged]
+      [phone, name, categoryKey, categoryLabel, workshop, qiExposure, expectedAmount, paidAmount, utr, filename,
+        checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, flagged]
     );
 
-    if (prev && prev.screenshot && prev.screenshot !== saved.filename) {
+    if (prev && prev.screenshot && prev.screenshot !== filename) {
       await deleteScreenshotFile(prev.screenshot);
     }
 
-    res.json({ success: true, id: result.lastID, expectedAmount, amountMismatch });
+    res.json({ success: true, id: result.lastID, expectedAmount, checks, flagged: !!flagged });
   } catch (err) {
     console.error('Database Insert Error:', err);
     res.status(500).json({ success: false, error: 'Database save failed.' });
@@ -573,6 +646,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 const REGISTRATION_PUBLIC_COLUMNS =
   `id, phone_number, delegate_name, category_key, category_label, workshop,
    qi_exposure, expected_amount, paid_amount, utr_number, is_flagged, bank_status,
+   ocr_amount_match, ocr_vpa_match, ocr_utr_match,
    (screenshot IS NOT NULL AND screenshot != '') AS has_screenshot`;
 
 // Fetch the caller's own registration (replaces the old IDOR-prone

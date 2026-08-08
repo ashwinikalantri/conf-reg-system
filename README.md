@@ -99,6 +99,28 @@ base64 screenshots still in the database are migrated to files automatically.
 
 Back up `uploads/` alongside `conference.db`; it is not tracked in git.
 
+## Screenshot OCR checks
+
+On submission the server runs OCR (tesseract.js) over the payment screenshot
+and checks three things against it:
+
+1. **Amount** — the category fee appears in the image.
+2. **UPI ID** — the conference VPA (`OFFICIAL_UPI_ID`, default `abhishekraut@cbin`) appears.
+3. **UTR** — the UTR the delegate typed appears in the image.
+
+If any check fails the delegate sees a warning listing what could not be
+verified and may submit anyway; the registration is then **flagged for manual
+scrutiny** (`is_flagged`), and the three results are stored
+(`ocr_amount_match`, `ocr_vpa_match`, `ocr_utr_match`) and shown in the finance
+table. Checks run **server-side**, so the flag cannot be bypassed by a tampered
+client. OCR is advisory — imperfect reads are expected, which is why failures
+warn-and-flag rather than block, and manual finance verification remains the
+real control.
+
+The English language model (~15 MB) is downloaded once at runtime and cached
+under `.ocr-cache/` (git-ignored). First OCR after a fresh deploy needs network
+access to fetch it.
+
 ## Known limitations
 
 Still outstanding (tracked for follow-up work):
