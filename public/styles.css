@@ -1,0 +1,23 @@
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+div::-webkit-scrollbar, section::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+div::-webkit-scrollbar-track, section::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 8px;
+}
+
+div::-webkit-scrollbar-thumb, section::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 8px;
+}
+
+div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}

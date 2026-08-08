@@ -1,0 +1,15 @@
+{
+  "name": "nqocn-2026-portal",
+  "version": "2.0.0",
+  "description": "Full-stack Conference Portal with Phone OTP Auth, RBAC Admin Panel, and Auto-Initializing DB on First Run",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "sqlite3": "^5.1.7"
+  }
+}
