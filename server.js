@@ -404,10 +404,10 @@ db.serialize(() => {
       'Improvement in Quality and safety through Simulation in Surgery',
     ].forEach((name) => stmt.run('WORKSHOP', name, 50, now));
     [
-      'Exposure A: Neonatal ICU (SNCU / NICU QI)',
-      'Exposure B: Emergency Department',
-      'Exposure C: Surgical Safety & Infection Control',
-      'Exposure D: Labor Room Quality (Maternal Care)',
+      'Midwifery-led Care Units',
+      'Quality Improvement for Child Development',
+      'Quality Improvement for Community Health',
+      'Student Parliament for Quality Improvement',
     ].forEach((name) => stmt.run('QI', name, 50, now));
     stmt.finalize();
     console.log('Seeded default workshop and QI practice options.');
