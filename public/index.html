@@ -11,7 +11,7 @@
   <!-- TOP DELEGATE HEADER WITH ADMIN ACCESS -->
   <div class="w-full max-w-4xl flex justify-between items-center mb-4 px-2">
     <span class="text-xs font-bold text-indigo-700 bg-indigo-100 px-3 py-1 rounded-full">NQOCN & MGIMS Sevagram</span>
-    <a href="/admin" class="text-xs font-bold text-slate-600 hover:text-indigo-600 bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1 transition">
+    <a id="admin-nav-btn" href="/admin" class="hidden text-xs font-bold text-slate-600 hover:text-indigo-600 bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1 transition">
       ⚙️ Admin Backend Panel
     </a>
   </div>
@@ -98,6 +98,22 @@
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
+          <label class="block text-sm font-medium text-slate-700">Age</label>
+          <input type="number" id="reg-age" min="1" max="120" placeholder="e.g., 28" required class="w-full mt-1 p-3 border rounded-lg outline-none">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Gender</label>
+          <select id="reg-gender" required class="w-full mt-1 p-3 border rounded-lg bg-white outline-none">
+            <option value="">Select</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
           <label class="block text-sm font-medium text-slate-700">Designation</label>
           <input type="text" id="reg-designation" placeholder="e.g., Resident, Professor" required class="w-full mt-1 p-3 border rounded-lg outline-none">
         </div>
@@ -124,13 +140,6 @@
             <label class="block text-xs font-medium text-slate-600">District</label>
             <input type="text" id="reg-district" readonly required class="w-full mt-1 p-2.5 border rounded-lg bg-slate-100 text-slate-600 focus:outline-none">
           </div>
-        </div>
-
-        <div>
-          <label class="block text-xs font-medium text-slate-600">Post Office (PO)</label>
-          <select id="reg-po" required class="w-full mt-1 p-2.5 border rounded-lg bg-white outline-none">
-            <option value="">Select Post Office</option>
-          </select>
         </div>
       </div>
 
@@ -209,7 +218,7 @@
           <h3 class="text-xl font-bold text-slate-800 mt-1">Submit Abstract</h3>
           <p class="text-sm text-slate-600 mt-2">Submit papers or posters under Healthcare Quality & Patient Safety.</p>
         </div>
-        <button onclick="openModal('modal-abstract')" class="mt-6 w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow-md">Submit Abstract</button>
+        <button id="abstract-action-btn" onclick="openModal('modal-abstract')" class="mt-6 w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow-md">Submit Abstract</button>
       </div>
     </div>
   </section>

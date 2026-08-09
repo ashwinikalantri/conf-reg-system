@@ -131,6 +131,17 @@ payment is verified; before that the dashboard shows the register/pay action.
 registration, verified only). Verification also backfills a number for any
 older row that lacked one.
 
+## Fees (categories × date tiers)
+
+Category fees live in an admin-editable `fee_categories` master (per-category
+early/regular/late fees) plus a global `fee_config` with the two cutoff dates.
+The active phase is computed from today's date (on/before early cutoff = early;
+on/before regular cutoff = regular; after = late). The delegate form and the
+authoritative fee both come from the master via `GET /api/fees`; the admin
+**Fees** tab edits the dates and per-category fees. Deleting a category in use
+is refused (deactivate instead). This replaces the old hardcoded price table
+and `REGISTRATION_PHASE` env.
+
 ## Workshops & QI practices (capacity-limited)
 
 Workshops and QI practice tracks live in an admin-editable `program_options`

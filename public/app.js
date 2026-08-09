@@ -1,15 +1,5 @@
 const OFFICIAL_UPI_ID = "abhishekraut@cbin";
 
-const PRICING_TIERS = {
-  nursing_ug: { early: 500, regular: 1000, late: 2000, label: "Nursing Student UG" },
-  nursing_pg: { early: 750, regular: 1500, late: 2500, label: "Nursing Student PG" },
-  med_student: { early: 1500, regular: 2200, late: 3000, label: "Medical Student UG" },
-  nurse_cho: { early: 2000, regular: 2800, late: 3500, label: "Nurse / Paramedical / CHO" },
-  pg_doctor: { early: 3000, regular: 4000, late: 5000, label: "PG Student / Resident Doctor" },
-  faculty_mo: { early: 3000, regular: 4000, late: 5000, label: "Doctors / Faculty / NHM MO" },
-  chw: { early: 200, regular: 200, late: 200, label: "Frontline CHWs (ASHA/ANM/AWW)" }
-};
-
 // Categories that must upload a student ID card (kept in sync with the server).
 const STUDENT_CATEGORIES = ['nursing_ug', 'nursing_pg', 'med_student', 'pg_doctor'];
 
@@ -32,11 +22,24 @@ function readFileAsDataURL(file) {
   });
 }
 
+const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER'];
+function isAdminUser() {
+  return !!currentDelegate && ADMIN_ROLES.includes(currentDelegate.role);
+}
+
+// Show the admin backend link only to a logged-in admin on the dashboard.
+function updateAdminNav(show) {
+  const btn = document.getElementById('admin-nav-btn');
+  if (btn) btn.classList.toggle('hidden', !show);
+}
+
 // --- NAVIGATION & UI TOGGLES ---
 function navigateTo(pageId) {
   document.querySelectorAll('main, section').forEach(el => el.classList.add('hidden'));
   const target = document.getElementById(pageId);
   if (target) target.classList.remove('hidden');
+  // The backend button is only for admins on the dashboard; hide it elsewhere.
+  updateAdminNav(pageId === 'dashboard-page' && isAdminUser());
 }
 
 function toggleAuth(view) {
@@ -57,19 +60,17 @@ async function fetchAddressDetails(pincode) {
   const statusSpan = document.getElementById('pincode-status');
   const stateInput = document.getElementById('reg-state');
   const districtInput = document.getElementById('reg-district');
-  const poSelect = document.getElementById('reg-po');
 
   if (pincode.length !== 6) {
     statusSpan.innerText = '';
     stateInput.value = '';
     districtInput.value = '';
-    poSelect.innerHTML = '<option value="">Select Post Office</option>';
     return;
   }
 
   statusSpan.innerText = 'Fetching details...';
   statusSpan.className = 'text-xs mt-1 block text-indigo-600';
-  
+
   try {
     const res = await fetch(`https://api.postalpincode.in/pincode/${pincode}`);
     const data = await res.json();
@@ -78,14 +79,6 @@ async function fetchAddressDetails(pincode) {
       const postOffices = data[0].PostOffice;
       stateInput.value = postOffices[0].State;
       districtInput.value = postOffices[0].District;
-      
-      poSelect.innerHTML = '<option value="">Select Post Office</option>';
-      postOffices.forEach(po => {
-        const option = document.createElement('option');
-        option.value = po.Name;
-        option.innerText = po.Name;
-        poSelect.appendChild(option);
-      });
 
       statusSpan.innerText = '✓ PIN Code verified';
       statusSpan.className = 'text-xs mt-1 block text-emerald-600 font-bold';
@@ -97,7 +90,6 @@ async function fetchAddressDetails(pincode) {
     statusSpan.className = 'text-xs mt-1 block text-rose-600 font-bold';
     stateInput.value = '';
     districtInput.value = '';
-    poSelect.innerHTML = '<option value="">Select Post Office</option>';
   }
 }
 
@@ -138,12 +130,13 @@ async function handleRegistration(e) {
     phone,
     otp,
     name: document.getElementById('reg-name').value,
+    age: document.getElementById('reg-age').value,
+    gender: document.getElementById('reg-gender').value,
     designation: document.getElementById('reg-designation').value,
     institute: document.getElementById('reg-institute').value,
     pincode: document.getElementById('reg-pincode').value,
     state: document.getElementById('reg-state').value,
-    district: document.getElementById('reg-district').value,
-    po: document.getElementById('reg-po').value
+    district: document.getElementById('reg-district').value
   };
 
   const res = await fetch('/api/auth/register', {
@@ -180,6 +173,14 @@ async function handleLogin(e) {
     localStorage.setItem('nqocn_current_user', JSON.stringify(currentDelegate));
     alert(`Welcome back, ${currentDelegate.full_name || currentDelegate.name}!`);
     loadDashboard();
+  } else if (data.notRegistered) {
+    // New number — switch to sign-up, carrying the phone and (still-valid) OTP.
+    toggleAuth('register');
+    document.getElementById('reg-phone').value = phone;
+    document.getElementById('reg-otp-container').classList.remove('hidden');
+    document.getElementById('reg-otp').value = otp;
+    document.getElementById('reg-otp-hint').innerText = otp ? 'OTP carried over' : '';
+    alert("This number isn't registered yet — please complete the sign-up form to create your account.");
   } else {
     alert(data.error || "Login failed.");
   }
@@ -256,7 +257,33 @@ async function loadDashboard() {
     reverifyBanner.classList.add('hidden');
   }
 
+  await loadAbstractStatus();
   navigateTo('dashboard-page');
+}
+
+// Reflect the delegate's abstract status on the dashboard.
+async function loadAbstractStatus() {
+  const tag = document.getElementById('abstract-status-tag');
+  const btn = document.getElementById('abstract-action-btn');
+  if (!tag) return;
+  const STYLES = {
+    UNDER_REVIEW: ['Under Review', 'bg-amber-100 text-amber-700'],
+    ACCEPTED: ['Accepted ✓', 'bg-emerald-100 text-emerald-700'],
+    REJECTED: ['Not Accepted', 'bg-rose-100 text-rose-700'],
+  };
+  try {
+    const abs = (await (await fetch('/api/abstracts/me')).json()).abstract;
+    if (abs) {
+      const [label, cls] = STYLES[abs.status] || ['Submitted', 'bg-slate-100 text-slate-600'];
+      tag.className = `text-xs font-bold px-2 py-0.5 rounded-full ${cls}`;
+      tag.innerText = label;
+      if (btn) btn.innerText = 'Update Abstract';
+    } else {
+      tag.className = 'text-xs bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-full';
+      tag.innerText = 'Not Submitted';
+      if (btn) btn.innerText = 'Submit Abstract';
+    }
+  } catch (e) { /* leave as-is */ }
 }
 
 function calculateFee() {
@@ -268,7 +295,7 @@ function calculateFee() {
 
   if (!catKey) return;
 
-  const currentFee = PRICING_TIERS[catKey].early;
+  const currentFee = (feeCategories[catKey] || {}).fee || 0;
   document.getElementById('calculated-fee-display').innerText = `₹${currentFee}`;
   document.getElementById('entered-amount').value = currentFee;
 
@@ -301,9 +328,28 @@ async function loadProgramOptions() {
   }
 }
 
-// Refresh capacity then open the payment modal.
+// Categories + current-phase fee, loaded from the fee master.
+let feeCategories = {};
+async function loadFees() {
+  try {
+    const data = await (await fetch('/api/fees')).json();
+    feeCategories = {};
+    (data.categories || []).forEach((c) => { feeCategories[c.key] = c; });
+    const sel = document.getElementById('payment-category');
+    if (sel) {
+      const current = sel.value;
+      sel.innerHTML = '<option value="">-- Select Category --</option>' +
+        (data.categories || []).map((c) => `<option value="${esc(c.key)}">${esc(c.label)} — ₹${Number(c.fee)}</option>`).join('');
+      if (current) sel.value = current;
+    }
+  } catch (e) {
+    /* keep any hardcoded fallback options */
+  }
+}
+
+// Refresh capacity + fees then open the payment modal.
 async function openPaymentModal() {
-  await loadProgramOptions();
+  await Promise.all([loadProgramOptions(), loadFees()]);
   openModal('modal-conference');
 }
 
@@ -599,6 +645,18 @@ function setupAdminDelegation() {
       if (del) return deleteProgram(del.dataset.id);
     });
   }
+
+  const feeBody = document.getElementById('fee-table-body');
+  if (feeBody) {
+    feeBody.addEventListener('click', (e) => {
+      const save = e.target.closest('.fee-save');
+      if (save) return saveFeeCategory(save.dataset.id);
+      const toggle = e.target.closest('.fee-toggle');
+      if (toggle) return toggleFeeCategory(toggle.dataset.id, toggle.dataset.active === '1' ? 0 : 1);
+      const del = e.target.closest('.fee-delete');
+      if (del) return deleteFeeCategory(del.dataset.id);
+    });
+  }
 }
 
 // Set the text of an element if it exists.
@@ -636,10 +694,12 @@ function applyRoleVisibility(role) {
   const tabAbstracts = document.getElementById('nav-tab-abstracts');
   const tabUsers = document.getElementById('nav-tab-users');
   const tabPrograms = document.getElementById('nav-tab-programs');
+  const tabFees = document.getElementById('nav-tab-fees');
   if (tabPayments) tabPayments.classList.toggle('hidden', !isFinance);
   if (tabAbstracts) tabAbstracts.classList.toggle('hidden', !isReviewer);
   if (tabUsers) tabUsers.classList.toggle('hidden', !isSuper);
   if (tabPrograms) tabPrograms.classList.toggle('hidden', !isSuper);
+  if (tabFees) tabFees.classList.toggle('hidden', !isSuper);
 
   return { isSuper, isFinance, isReviewer };
 }
@@ -664,6 +724,7 @@ async function initBackendPortal() {
   if (isReviewer) await renderBackendAbstracts();
   if (isSuper) await renderBackendUsers();
   if (isSuper) await renderBackendPrograms();
+  if (isSuper) await renderBackendFees();
 
   // Land on the first section the role can actually use.
   const defaultTab = isFinance ? 'payments' : isReviewer ? 'abstracts' : 'users';
@@ -872,6 +933,96 @@ async function deleteProgram(id) {
   renderBackendPrograms();
 }
 
+// --- FEES (admin) ---
+async function renderBackendFees() {
+  const res = await fetch('/api/admin/fees');
+  const tbody = document.getElementById('fee-table-body');
+  if (!tbody || !res.ok) return;
+  const data = await res.json();
+  setText('fee-current-phase', data.phase || '—');
+  const cfg = data.config || {};
+  const early = document.getElementById('fee-early-until');
+  const regular = document.getElementById('fee-regular-until');
+  if (early) early.value = cfg.early_until || '';
+  if (regular) regular.value = cfg.regular_until || '';
+
+  tbody.innerHTML = (data.categories || []).map((c) => `
+    <tr class="${c.active ? '' : 'opacity-50'}" data-id="${esc(c.id)}">
+      <td class="p-4">
+        <p class="font-semibold text-slate-800">${esc(c.label)}</p>
+        <p class="text-[10px] font-mono text-slate-400">${esc(c.category_key)}${c.active ? '' : ' · inactive'}</p>
+      </td>
+      <td class="p-4"><input type="number" min="0" value="${esc(c.early_fee)}" class="fee-early w-20 p-1.5 border rounded text-sm" data-id="${esc(c.id)}"></td>
+      <td class="p-4"><input type="number" min="0" value="${esc(c.regular_fee)}" class="fee-regular w-20 p-1.5 border rounded text-sm" data-id="${esc(c.id)}"></td>
+      <td class="p-4"><input type="number" min="0" value="${esc(c.late_fee)}" class="fee-late w-20 p-1.5 border rounded text-sm" data-id="${esc(c.id)}"></td>
+      <td class="p-4 text-right whitespace-nowrap">
+        <button class="fee-save px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(c.id)}">Save</button>
+        <button class="fee-toggle px-3 py-1.5 ${c.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(c.id)}" data-active="${c.active ? 1 : 0}">${c.active ? 'Deactivate' : 'Activate'}</button>
+        <button class="fee-delete px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(c.id)}">Delete</button>
+      </td>
+    </tr>`).join('');
+}
+
+async function saveFeeConfig() {
+  const data = await (await fetch('/api/admin/fees/config', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      earlyUntil: document.getElementById('fee-early-until').value || null,
+      regularUntil: document.getElementById('fee-regular-until').value || null,
+    })
+  })).json();
+  if (!data.success) return alert(data.error || 'Could not save dates.');
+  renderBackendFees();
+}
+
+async function handleAddFeeCategory(e) {
+  e.preventDefault();
+  const body = {
+    categoryKey: document.getElementById('new-fee-key').value.trim(),
+    label: document.getElementById('new-fee-label').value.trim(),
+    earlyFee: Number(document.getElementById('new-fee-early').value),
+    regularFee: Number(document.getElementById('new-fee-regular').value),
+    lateFee: Number(document.getElementById('new-fee-late').value),
+  };
+  const data = await (await fetch('/api/admin/fees/categories', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  })).json();
+  if (!data.success) return alert(data.error || 'Could not add category.');
+  document.getElementById('new-fee-key').value = '';
+  document.getElementById('new-fee-label').value = '';
+  renderBackendFees();
+}
+
+async function saveFeeCategory(id) {
+  const q = (cls) => document.querySelector(`.${cls}[data-id="${id}"]`);
+  const data = await (await fetch(`/api/admin/fees/categories/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      earlyFee: Number(q('fee-early').value),
+      regularFee: Number(q('fee-regular').value),
+      lateFee: Number(q('fee-late').value),
+    })
+  })).json();
+  if (!data.success) alert(data.error || 'Update failed.');
+  renderBackendFees();
+}
+
+async function toggleFeeCategory(id, active) {
+  const q = (cls) => document.querySelector(`.${cls}[data-id="${id}"]`);
+  await fetch(`/api/admin/fees/categories/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ active, earlyFee: Number(q('fee-early').value), regularFee: Number(q('fee-regular').value), lateFee: Number(q('fee-late').value) })
+  });
+  renderBackendFees();
+}
+
+async function deleteFeeCategory(id) {
+  if (!(await showConfirm('Delete this category? This cannot be undone.'))) return;
+  const data = await (await fetch(`/api/admin/fees/categories/${encodeURIComponent(id)}`, { method: 'DELETE' })).json();
+  if (!data.success) alert(data.error || 'Delete failed.');
+  renderBackendFees();
+}
+
 const ABSTRACT_STATUS_STYLES = {
   UNDER_REVIEW: 'bg-amber-100 text-amber-800',
   ACCEPTED: 'bg-emerald-100 text-emerald-800',
@@ -968,7 +1119,7 @@ async function handleCreateUserSubmit(e) {
 }
 
 function switchBackendTab(tab) {
-  ['payments', 'abstracts', 'programs', 'users'].forEach(t => {
+  ['payments', 'abstracts', 'programs', 'fees', 'users'].forEach(t => {
     const section = document.getElementById(`section-${t}`);
     if (section) section.classList.toggle('hidden', t !== tab);
 

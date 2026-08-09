@@ -43,24 +43,8 @@ if (COOKIE_SECURE) app.set('trust proxy', 1);
 
 const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER'];
 
-// Authoritative fee schedule. The client has its own copy for display, but
-// the amount charged and recorded is always computed here from the
-// category key -- never taken from the request body.
-const PRICING_TIERS = {
-  nursing_ug:  { early: 500,  regular: 1000, late: 2000, label: 'Nursing Student UG' },
-  nursing_pg:  { early: 750,  regular: 1500, late: 2500, label: 'Nursing Student PG' },
-  med_student: { early: 1500, regular: 2200, late: 3000, label: 'Medical Student UG' },
-  nurse_cho:   { early: 2000, regular: 2800, late: 3500, label: 'Nurse / Paramedical / CHO' },
-  pg_doctor:   { early: 3000, regular: 4000, late: 5000, label: 'PG Student / Resident Doctor' },
-  faculty_mo:  { early: 3000, regular: 4000, late: 5000, label: 'Doctors / Faculty / NHM MO' },
-  chw:         { early: 200,  regular: 200,  late: 200,  label: 'Frontline CHWs (ASHA/ANM/AWW)' },
-};
-
-// Which column of the fee schedule is currently in effect. There are no
-// cutoff dates defined yet, so this is configuration, defaulting to early.
-const REGISTRATION_PHASE = ['early', 'regular', 'late'].includes(process.env.REGISTRATION_PHASE)
-  ? process.env.REGISTRATION_PHASE
-  : 'early';
+// Fees are stored in the admin-editable fee_categories master and resolved at
+// today's pricing phase (see resolveFee); nothing is taken from the request body.
 
 // The conference's own UPI ID (VPA). A payment screenshot should show this as
 // the payee; OCR checks the uploaded image against it.
@@ -287,6 +271,27 @@ async function resolveOption(id, type, ownRegId) {
   return { opt };
 }
 
+// Which pricing phase is in effect today, from the configured cutoff dates.
+function currentPhase(config, today = new Date()) {
+  const d = today.toISOString().slice(0, 10); // YYYY-MM-DD
+  if (config && config.early_until && d <= config.early_until) return 'early';
+  if (config && config.regular_until && d <= config.regular_until) return 'regular';
+  return 'late';
+}
+
+function getFeeConfig() {
+  return dbGet('SELECT early_until, regular_until FROM fee_config WHERE id = 1');
+}
+
+// Resolve the authoritative fee and label for a category at today's phase.
+async function resolveFee(categoryKey) {
+  const cat = await dbGet('SELECT * FROM fee_categories WHERE category_key = ? AND active = 1', [categoryKey]);
+  if (!cat) return null;
+  const phase = currentPhase(await getFeeConfig());
+  const fee = { early: cat.early_fee, regular: cat.regular_fee, late: cat.late_fee }[phase];
+  return { amount: fee, label: cat.label, phase };
+}
+
 function parseCookies(req) {
   const out = {};
   const header = req.headers.cookie;
@@ -325,6 +330,14 @@ db.serialize(() => {
     )
   `);
 
+  // Additive migration: age and gender captured at first registration.
+  db.all('PRAGMA table_info(users)', (err, cols) => {
+    if (err) return console.error('Schema check failed:', err.message);
+    const names = cols.map((c) => c.name);
+    if (!names.includes('age')) db.run('ALTER TABLE users ADD COLUMN age INTEGER');
+    if (!names.includes('gender')) db.run('ALTER TABLE users ADD COLUMN gender TEXT');
+  });
+
   db.run(`
     CREATE TABLE IF NOT EXISTS registrations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -357,11 +370,20 @@ db.serialize(() => {
 
   // Additive migration for databases created before the review workflow and
   // before PDF uploads (abstract_file holds the stored PDF filename).
-  db.all('PRAGMA table_info(abstracts)', (err, cols) => {
+  db.all('PRAGMA table_info(abstracts)', async (err, cols) => {
     if (err) return console.error('Schema check failed:', err.message);
     const names = cols.map((c) => c.name);
     if (!names.includes('status')) db.run("ALTER TABLE abstracts ADD COLUMN status TEXT DEFAULT 'UNDER_REVIEW'");
     if (!names.includes('abstract_file')) db.run('ALTER TABLE abstracts ADD COLUMN abstract_file TEXT');
+
+    // Enforce one abstract per author: drop duplicates (keep the latest) BEFORE
+    // creating the unique index. Sequenced so the index can't fail on dupes.
+    try {
+      await dbRun('DELETE FROM abstracts WHERE id NOT IN (SELECT MAX(id) FROM abstracts GROUP BY phone_number)');
+      await dbRun('CREATE UNIQUE INDEX IF NOT EXISTS idx_abstracts_phone ON abstracts(phone_number)');
+    } catch (e) {
+      console.error('Abstract unique-index migration failed:', e.message);
+    }
   });
 
   // One-time password codes, keyed by phone (one active code per number).
@@ -413,6 +435,28 @@ db.serialize(() => {
       capacity INTEGER NOT NULL DEFAULT 50,
       active INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL
+    )
+  `);
+
+  // Fee master: per-category fees for each pricing phase, plus the global
+  // early/regular cutoff dates. Admin-editable.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS fee_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      category_key TEXT UNIQUE NOT NULL,
+      label TEXT NOT NULL,
+      early_fee REAL NOT NULL DEFAULT 0,
+      regular_fee REAL NOT NULL DEFAULT 0,
+      late_fee REAL NOT NULL DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS fee_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      early_until TEXT,
+      regular_until TEXT
     )
   `);
 
@@ -477,6 +521,25 @@ db.serialize(() => {
     stmt.finalize();
     console.log('Seeded default workshop and QI practice options.');
   });
+
+  // Seed the fee master on first run from the original hardcoded tiers.
+  db.get('SELECT COUNT(*) AS n FROM fee_categories', (err, r) => {
+    if (err || (r && r.n > 0)) return;
+    const stmt = db.prepare('INSERT INTO fee_categories (category_key, label, early_fee, regular_fee, late_fee, active, sort_order) VALUES (?, ?, ?, ?, ?, 1, ?)');
+    const seed = [
+      ['nursing_ug', 'Nursing Student UG', 500, 1000, 2000],
+      ['nursing_pg', 'Nursing Student PG', 750, 1500, 2500],
+      ['med_student', 'Medical Student UG', 1500, 2200, 3000],
+      ['nurse_cho', 'Nurse / Paramedical / CHO', 2000, 2800, 3500],
+      ['pg_doctor', 'PG Student / Resident Doctor', 3000, 4000, 5000],
+      ['faculty_mo', 'Doctors / Faculty / NHM MO', 3000, 4000, 5000],
+      ['chw', 'Frontline CHWs (ASHA/ANM/AWW)', 200, 200, 200],
+    ];
+    seed.forEach((s, i) => stmt.run(s[0], s[1], s[2], s[3], s[4], i));
+    stmt.finalize();
+    console.log('Seeded default fee categories.');
+  });
+  db.run("INSERT OR IGNORE INTO fee_config (id, early_until, regular_until) VALUES (1, '2026-09-30', '2026-10-31')");
 });
 
 // One-time migration: move any base64 screenshots still stored in the DB out
@@ -658,13 +721,18 @@ app.post('/api/otp/request', async (req, res, next) => {
 // Register (or update own profile) after OTP verification, then log in.
 app.post('/api/auth/register', async (req, res, next) => {
   try {
-    const { phone, otp, name, designation, institute, pincode, state, district, po } = req.body;
+    const { phone, otp, name, designation, institute, pincode, state, district, age, gender } = req.body;
     if (!phone || !/^\d{10}$/.test(phone)) {
       return res.status(400).json({ success: false, error: 'Invalid phone number.' });
     }
     if (!name) {
       return res.status(400).json({ success: false, error: 'Full name is required.' });
     }
+    const ageNum = age === '' || age == null ? null : parseInt(age, 10);
+    if (ageNum != null && (!Number.isInteger(ageNum) || ageNum < 1 || ageNum > 120)) {
+      return res.status(400).json({ success: false, error: 'Please enter a valid age.' });
+    }
+    const genderVal = ['Male', 'Female', 'Other'].includes(gender) ? gender : null;
 
     const check = await consumeOtp(phone, otp);
     if (!check.ok) return res.status(400).json({ success: false, error: check.error });
@@ -672,8 +740,8 @@ app.post('/api/auth/register', async (req, res, next) => {
     // OTP proves control of this number, so upserting the caller's own
     // record is safe. Role is never set from the request body.
     await dbRun(
-      `INSERT INTO users (phone_number, full_name, designation, institution, pincode, state, district, post_office, role)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE')
+      `INSERT INTO users (phone_number, full_name, designation, institution, pincode, state, district, age, gender, role)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE')
        ON CONFLICT(phone_number) DO UPDATE SET
          full_name = excluded.full_name,
          designation = excluded.designation,
@@ -681,8 +749,9 @@ app.post('/api/auth/register', async (req, res, next) => {
          pincode = excluded.pincode,
          state = excluded.state,
          district = excluded.district,
-         post_office = excluded.post_office`,
-      [phone, name, designation, institute, pincode, state, district, po]
+         age = excluded.age,
+         gender = excluded.gender`,
+      [phone, name, designation, institute, pincode, state, district, ageNum, genderVal]
     );
 
     const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
@@ -701,11 +770,13 @@ app.post('/api/auth/login', async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Invalid phone number.' });
     }
 
+    // If the number isn't registered, tell the client to switch to sign-up.
+    // Done before consuming the OTP so the same code remains valid there.
+    const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
+    if (!user) return res.json({ success: false, notRegistered: true });
+
     const check = await consumeOtp(phone, otp);
     if (!check.ok) return res.status(400).json({ success: false, error: check.error });
-
-    const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
-    if (!user) return res.status(404).json({ success: false, error: 'Mobile number not registered.' });
 
     await startSession(phone, user.role, res);
     res.json({ success: true, user });
@@ -747,14 +818,14 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Missing required registration details.' });
     }
 
-    // Fee and label are derived server-side from the category; the client's
-    // amount and label are not trusted.
-    const tier = PRICING_TIERS[categoryKey];
-    if (!tier) {
+    // Fee and label are derived server-side from the fee master at today's
+    // pricing phase; the client's amount and label are not trusted.
+    const feeInfo = await resolveFee(categoryKey);
+    if (!feeInfo) {
       return res.status(400).json({ success: false, error: 'Invalid delegate category.' });
     }
-    const expectedAmount = tier[REGISTRATION_PHASE];
-    const categoryLabel = tier.label;
+    const expectedAmount = feeInfo.amount;
+    const categoryLabel = feeInfo.label;
 
     const phone = req.session.phone; // never from the client
     const name = req.session.name;
@@ -902,6 +973,27 @@ app.get('/api/program-options', requireAuth, async (req, res, next) => {
     res.json({
       workshops: rows.filter((o) => o.type === 'WORKSHOP').map(shape),
       qiPractices: rows.filter((o) => o.type === 'QI').map(shape),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Active fee categories with the fee at today's phase, for the payment form.
+app.get('/api/fees', requireAuth, async (req, res, next) => {
+  try {
+    const config = await getFeeConfig();
+    const phase = currentPhase(config);
+    const cats = await dbAll('SELECT category_key, label, early_fee, regular_fee, late_fee FROM fee_categories WHERE active = 1 ORDER BY sort_order, id');
+    res.json({
+      phase,
+      earlyUntil: config ? config.early_until : null,
+      regularUntil: config ? config.regular_until : null,
+      categories: cats.map((c) => ({
+        key: c.category_key,
+        label: c.label,
+        fee: { early: c.early_fee, regular: c.regular_fee, late: c.late_fee }[phase],
+      })),
     });
   } catch (err) {
     next(err);
@@ -1071,11 +1163,38 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
     }
 
     const filename = await writeUploadBuffer(decoded.buffer, decoded.ext);
+
+    // One abstract per author: replace any existing one (and its old file),
+    // resetting review status.
+    const prev = await dbGet('SELECT abstract_file FROM abstracts WHERE phone_number = ?', [req.session.phone]);
     await dbRun(
-      'INSERT INTO abstracts (phone_number, author_name, format, title, abstract_file) VALUES (?, ?, ?, ?, ?)',
+      `INSERT INTO abstracts (phone_number, author_name, format, title, abstract_file, status)
+        VALUES (?, ?, ?, ?, ?, 'UNDER_REVIEW')
+        ON CONFLICT(phone_number) DO UPDATE SET
+          author_name = excluded.author_name,
+          format = excluded.format,
+          title = excluded.title,
+          abstract_file = excluded.abstract_file,
+          status = 'UNDER_REVIEW'`,
       [req.session.phone, req.session.name, format, String(title).trim(), filename]
     );
+    if (prev && prev.abstract_file && prev.abstract_file !== filename) {
+      await deleteScreenshotFile(prev.abstract_file);
+    }
     res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The caller's own abstract (for the dashboard status), or null.
+app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
+  try {
+    const row = await dbGet(
+      'SELECT id, format, title, status FROM abstracts WHERE phone_number = ?',
+      [req.session.phone]
+    );
+    res.json({ abstract: row || null });
   } catch (err) {
     next(err);
   }
@@ -1321,6 +1440,99 @@ app.delete('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (
       return res.status(409).json({ success: false, error: `Cannot delete: ${used.n} delegate(s) enrolled. Deactivate it instead.` });
     }
     await dbRun('DELETE FROM program_options WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- FEE MASTER ADMIN ---------------------------------------------------
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const feeFields = (b) => ({
+  early: Number(b.earlyFee), regular: Number(b.regularFee), late: Number(b.lateFee),
+});
+
+app.get('/api/admin/fees', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const config = await getFeeConfig();
+    const categories = await dbAll('SELECT * FROM fee_categories ORDER BY sort_order, id');
+    res.json({ config: config || {}, phase: currentPhase(config), categories });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/admin/fees/config', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const { earlyUntil, regularUntil } = req.body;
+    if ((earlyUntil && !DATE_RE.test(earlyUntil)) || (regularUntil && !DATE_RE.test(regularUntil))) {
+      return res.status(400).json({ success: false, error: 'Dates must be YYYY-MM-DD.' });
+    }
+    if (earlyUntil && regularUntil && earlyUntil > regularUntil) {
+      return res.status(400).json({ success: false, error: 'Early cutoff must be on or before the regular cutoff.' });
+    }
+    await dbRun('UPDATE fee_config SET early_until = ?, regular_until = ? WHERE id = 1', [earlyUntil || null, regularUntil || null]);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/admin/fees/categories', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const { categoryKey, label } = req.body;
+    const f = feeFields(req.body);
+    if (!categoryKey || !/^[a-z0-9_]+$/.test(categoryKey)) {
+      return res.status(400).json({ success: false, error: 'Category key must be lowercase letters, digits, or underscores.' });
+    }
+    if (!label || !String(label).trim()) return res.status(400).json({ success: false, error: 'Label is required.' });
+    if ([f.early, f.regular, f.late].some((x) => !Number.isFinite(x) || x < 0)) {
+      return res.status(400).json({ success: false, error: 'Fees must be non-negative numbers.' });
+    }
+    const max = await dbGet('SELECT COALESCE(MAX(sort_order), -1) AS m FROM fee_categories');
+    await dbRun(
+      'INSERT INTO fee_categories (category_key, label, early_fee, regular_fee, late_fee, active, sort_order) VALUES (?, ?, ?, ?, ?, 1, ?)',
+      [categoryKey, String(label).trim(), f.early, f.regular, f.late, max.m + 1]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    if (err.code === 'SQLITE_CONSTRAINT') {
+      return res.status(409).json({ success: false, error: 'A category with that key already exists.' });
+    }
+    next(err);
+  }
+});
+
+app.put('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const existing = await dbGet('SELECT * FROM fee_categories WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ success: false, error: 'Category not found.' });
+    const { label, active } = req.body;
+    const f = feeFields(req.body);
+    if ([f.early, f.regular, f.late].some((x) => !Number.isFinite(x) || x < 0)) {
+      return res.status(400).json({ success: false, error: 'Fees must be non-negative numbers.' });
+    }
+    await dbRun(
+      'UPDATE fee_categories SET label = ?, early_fee = ?, regular_fee = ?, late_fee = ?, active = ? WHERE id = ?',
+      [label !== undefined ? String(label).trim() : existing.label, f.early, f.regular, f.late,
+        active !== undefined ? (active ? 1 : 0) : existing.active, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const cat = await dbGet('SELECT * FROM fee_categories WHERE id = ?', [req.params.id]);
+    if (!cat) return res.status(404).json({ success: false, error: 'Category not found.' });
+    const used = await dbGet('SELECT COUNT(*) AS n FROM registrations WHERE category_key = ?', [cat.category_key]);
+    if (used.n > 0) {
+      return res.status(409).json({ success: false, error: `Cannot delete: ${used.n} registration(s) use this category. Deactivate it instead.` });
+    }
+    await dbRun('DELETE FROM fee_categories WHERE id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (err) {
     next(err);
