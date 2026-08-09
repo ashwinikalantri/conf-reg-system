@@ -367,6 +367,14 @@ db.serialize(() => {
     if (!names.includes('registration_number')) db.run('ALTER TABLE registrations ADD COLUMN registration_number TEXT');
     if (!names.includes('workshop_option_id')) db.run('ALTER TABLE registrations ADD COLUMN workshop_option_id INTEGER');
     if (!names.includes('qi_option_id')) db.run('ALTER TABLE registrations ADD COLUMN qi_option_id INTEGER');
+
+    // Backfill a number for any already-verified registration that predates
+    // number assignment. Idempotent -- matches nothing once filled.
+    db.run(
+      `UPDATE registrations
+          SET registration_number = 'NQOCN2026-' || printf('%04d', id)
+        WHERE bank_status = 'BANK_VERIFIED' AND (registration_number IS NULL OR registration_number = '')`
+    );
   });
 
   // Seed the program master on first run from the original fixed options.
