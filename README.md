@@ -32,13 +32,15 @@ blocking OTP issuance.
 
 ## Email notifications (AWS SES)
 
-Delegates provide an email at signup. When SES SMTP is configured the portal
-emails on payment verification, rejection, abstract acceptance, and abstract
-allocation. **You must set this up in your AWS account:** verify a sender
-(or domain), request production access (out of the SES sandbox), create SMTP
-credentials, then set `SES_SMTP_HOST`, `SES_SMTP_PORT` (587), `SES_SMTP_USER`,
-`SES_SMTP_PASS`, and `SES_FROM` (a verified From address). Dormant until all are
-set; sends are best-effort and never block a request.
+Delegates provide an email at signup. When SES is configured the portal emails
+on payment verification, rejection, abstract acceptance, and abstract
+allocation, using the AWS SES v2 SDK. Config comes from the environment
+(loaded from a git-ignored `.env` via dotenv):
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, and `SES_FROM`
+(a verified sender). Dormant until set; sends are best-effort and never block a
+request. **In your AWS account** you still need to verify the sender/domain,
+grant the IAM user `ses:SendEmail`, and request production access to leave the
+SES sandbox (in sandbox, only verified recipients receive mail).
 
 ## Authentication & sessions
 

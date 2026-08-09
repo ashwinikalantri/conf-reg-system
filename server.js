@@ -1,10 +1,12 @@
+require('dotenv').config(); // load .env before any process.env is read
+
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 const { createWorker } = require('tesseract.js');
-const nodemailer = require('nodemailer');
+const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -85,26 +87,23 @@ async function sendOtpSms(phone, otp) {
   }
 }
 
-// --- EMAIL (AWS SES via SMTP) -------------------------------------------
-// Configure with SES SMTP credentials (create them in the SES console) and a
-// verified From address. Dormant until all four are set.
-const EMAIL = {
-  host: process.env.SES_SMTP_HOST || '', // e.g. email-smtp.ap-south-1.amazonaws.com
-  port: Number(process.env.SES_SMTP_PORT || 587),
-  user: process.env.SES_SMTP_USER || '',
-  pass: process.env.SES_SMTP_PASS || '',
-  from: process.env.SES_FROM || 'NQOCN 2026 <no-reply@example.com>',
-};
-const EMAIL_ENABLED = !!(EMAIL.host && EMAIL.user && EMAIL.pass);
-const mailTransport = EMAIL_ENABLED
-  ? nodemailer.createTransport({ host: EMAIL.host, port: EMAIL.port, secure: EMAIL.port === 465, auth: { user: EMAIL.user, pass: EMAIL.pass } })
-  : null;
+// --- EMAIL (AWS SES v2 SDK) ---------------------------------------------
+// Uses IAM credentials + region from the environment (AWS_ACCESS_KEY_ID,
+// AWS_SECRET_ACCESS_KEY, AWS_REGION). SES_FROM must be a verified sender.
+// Dormant until credentials, region, and a From address are all present.
+const EMAIL_FROM = (process.env.SES_FROM || '').trim();
+const EMAIL_ENABLED = !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_REGION && EMAIL_FROM);
+const sesClient = EMAIL_ENABLED ? new SESv2Client({ region: process.env.AWS_REGION }) : null;
 
 // Send an email if configured; never throws (notifications are best-effort).
 async function sendEmail(to, subject, html) {
   if (!EMAIL_ENABLED || !to) return;
   try {
-    await mailTransport.sendMail({ from: EMAIL.from, to, subject, html });
+    await sesClient.send(new SendEmailCommand({
+      FromEmailAddress: EMAIL_FROM,
+      Destination: { ToAddresses: [to] },
+      Content: { Simple: { Subject: { Data: subject, Charset: 'UTF-8' }, Body: { Html: { Data: html, Charset: 'UTF-8' } } } },
+    }));
   } catch (err) {
     console.error(`Email to ${to} failed:`, err.message);
   }
@@ -847,7 +846,8 @@ app.post('/api/otp/request', async (req, res, next) => {
     if (SMS_ENABLED) sendOtpSms(phone, otp); // fire-and-forget; logs on failure
 
     const payload = { success: true, smsSent: SMS_ENABLED };
-    if (OTP_ECHO) payload.devOtp = otp;
+    // Never echo the OTP once SMS delivery is configured.
+    if (OTP_ECHO && !SMS_ENABLED) payload.devOtp = otp;
     res.json(payload);
   } catch (err) {
     next(err);
@@ -1877,5 +1877,7 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
-  if (OTP_ECHO) console.log('[dev] OTP echo is ON — codes are returned to the client and logged here.');
+  console.log(`SMS OTP: ${SMS_ENABLED ? 'ENABLED (Vynttra)' : 'disabled (no SMS_API_KEY)'}`);
+  console.log(`Email: ${EMAIL_ENABLED ? `ENABLED (SES, from ${EMAIL_FROM})` : 'disabled (no AWS/SES config)'}`);
+  if (OTP_ECHO && !SMS_ENABLED) console.log('[dev] OTP echo is ON — codes are returned to the client and logged here.');
 });

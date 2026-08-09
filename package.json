@@ -8,9 +8,10 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@aws-sdk/client-sesv2": "^3.1106.0",
     "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
     "express": "^4.19.2",
-    "nodemailer": "^9.0.5",
     "sqlite3": "^5.1.7",
     "tesseract.js": "^7.0.0"
   }
