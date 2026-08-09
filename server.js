@@ -100,12 +100,26 @@ function decodeScreenshot(dataUri) {
   return { buffer, ext };
 }
 
-// Write a validated image buffer to the upload dir; returns the filename.
-async function writeScreenshotBuffer(buffer, ext) {
+// Decode a `data:application/pdf;base64,...` URI, validating type, PDF magic
+// bytes, and size. Returns { buffer, ext } or { error }.
+function decodePdf(dataUri) {
+  const m = /^data:application\/pdf;base64,([A-Za-z0-9+/=]+)$/i.exec(dataUri || '');
+  if (!m) return { error: 'A valid PDF file is required.' };
+
+  const buffer = Buffer.from(m[1], 'base64');
+  if (buffer.length === 0) return { error: 'The uploaded PDF is empty.' };
+  if (buffer.length > MAX_IMAGE_BYTES) return { error: 'PDF exceeds the 5 MB limit.' };
+  if (buffer.slice(0, 5).toString('latin1') !== '%PDF-') return { error: 'The uploaded file is not a valid PDF.' };
+  return { buffer, ext: 'pdf' };
+}
+
+// Write a validated upload buffer to the upload dir; returns the filename.
+async function writeUploadBuffer(buffer, ext) {
   const filename = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
   await fs.promises.writeFile(path.join(UPLOAD_DIR, filename), buffer);
   return filename;
 }
+const writeScreenshotBuffer = writeUploadBuffer; // back-compat alias
 
 // tesseract.js can throw ASYNCHRONOUSLY (outside the recognize() promise, via
 // process.nextTick) when handed a corrupt image, which would otherwise crash
@@ -295,12 +309,13 @@ db.serialize(() => {
     )
   `);
 
-  // Additive migration for databases created before the review workflow.
+  // Additive migration for databases created before the review workflow and
+  // before PDF uploads (abstract_file holds the stored PDF filename).
   db.all('PRAGMA table_info(abstracts)', (err, cols) => {
     if (err) return console.error('Schema check failed:', err.message);
-    if (!cols.some((c) => c.name === 'status')) {
-      db.run("ALTER TABLE abstracts ADD COLUMN status TEXT DEFAULT 'UNDER_REVIEW'");
-    }
+    const names = cols.map((c) => c.name);
+    if (!names.includes('status')) db.run("ALTER TABLE abstracts ADD COLUMN status TEXT DEFAULT 'UNDER_REVIEW'");
+    if (!names.includes('abstract_file')) db.run('ALTER TABLE abstracts ADD COLUMN abstract_file TEXT');
   });
 
   // One-time password codes, keyed by phone (one active code per number).
@@ -942,14 +957,49 @@ app.get('/api/registrations/:id/screenshot', requireAuth, async (req, res, next)
 });
 
 // Submit an abstract under the caller's own identity.
+const ABSTRACT_FORMATS = ['Oral Paper', 'Poster Presentation'];
+
 app.post('/api/abstracts', requireAuth, async (req, res, next) => {
   try {
-    const { format, title, text, wordCount } = req.body;
+    const { format, title, pdf } = req.body;
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({ success: false, error: 'Abstract title is required.' });
+    }
+    if (!ABSTRACT_FORMATS.includes(format)) {
+      return res.status(400).json({ success: false, error: 'Please choose a valid presentation format.' });
+    }
+    const decoded = decodePdf(pdf);
+    if (decoded.error) {
+      return res.status(400).json({ success: false, error: decoded.error });
+    }
+
+    const filename = await writeUploadBuffer(decoded.buffer, decoded.ext);
     await dbRun(
-      'INSERT INTO abstracts (phone_number, author_name, format, title, text, word_count) VALUES (?, ?, ?, ?, ?, ?)',
-      [req.session.phone, req.session.name, format, title, text, wordCount]
+      'INSERT INTO abstracts (phone_number, author_name, format, title, abstract_file) VALUES (?, ?, ?, ?, ?)',
+      [req.session.phone, req.session.name, format, String(title).trim(), filename]
     );
     res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Serve an abstract PDF to a reviewer/super admin or the submitting author.
+app.get('/api/abstracts/:id/file', requireAuth, async (req, res, next) => {
+  try {
+    const row = await dbGet('SELECT phone_number, abstract_file FROM abstracts WHERE id = ?', [req.params.id]);
+    if (!row || !row.abstract_file) {
+      return res.status(404).json({ success: false, error: 'Abstract file not found.' });
+    }
+    const isReviewer = req.session.role === 'SUPER_ADMIN' || req.session.role === 'ACADEMIC_REVIEWER';
+    if (!isReviewer && req.session.phone !== row.phone_number) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to view this abstract.' });
+    }
+    res.set('Cache-Control', 'private, no-store');
+    res.type('application/pdf');
+    res.sendFile(path.join(UPLOAD_DIR, path.basename(row.abstract_file)), (err) => {
+      if (err && !res.headersSent) res.status(404).json({ success: false, error: 'Abstract file not found.' });
+    });
   } catch (err) {
     next(err);
   }

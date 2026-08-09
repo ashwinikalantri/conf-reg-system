@@ -357,29 +357,37 @@ async function verifyAndSubmitPayment(e) {
 
 async function handleAbstractSubmit(e) {
   e.preventDefault();
-  const text = document.getElementById('abstract-text').value;
-  const wordCount = text.trim().split(/\s+/).filter(w => w.length > 0).length;
+  const file = document.getElementById('abstract-pdf').files[0];
+  if (!file) return alert('Please attach your abstract PDF.');
+  if (file.type !== 'application/pdf') return alert('The abstract must be a PDF file.');
 
-  const payload = {
-    authorName: currentDelegate.full_name || currentDelegate.name,
-    format: document.getElementById('abstract-format').value,
-    title: document.getElementById('abstract-title').value,
-    text: text,
-    wordCount: wordCount
+  const reader = new FileReader();
+  reader.onload = async function (event) {
+    const payload = {
+      format: document.getElementById('abstract-format').value,
+      title: document.getElementById('abstract-title').value,
+      pdf: event.target.result
+    };
+    try {
+      const res = await fetch('/api/abstracts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert('Abstract submitted for review!');
+        document.getElementById('abstract-pdf').value = '';
+        closeModal('modal-abstract');
+        loadDashboard();
+      } else {
+        alert(data.error || 'Submission failed.');
+      }
+    } catch (err) {
+      alert(`Submission error: ${err.message}`);
+    }
   };
-
-  const res = await fetch('/api/abstracts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  const data = await res.json();
-
-  if (data.success) {
-    alert("Abstract submitted for review!");
-    closeModal('modal-abstract');
-    loadDashboard();
-  }
+  reader.readAsDataURL(file);
 }
 
 function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
@@ -802,7 +810,7 @@ async function renderBackendAbstracts() {
         <div>
           <h4 class="font-bold text-slate-800">${esc(a.title)}</h4>
           <p class="text-xs text-slate-500 mt-0.5">
-            ${esc(a.author_name)} · ${esc(a.format)} · ${Number(a.word_count) || 0} words
+            ${esc(a.author_name)} · ${esc(a.format)}
           </p>
         </div>
         <div class="text-right shrink-0">
@@ -813,7 +821,14 @@ async function renderBackendAbstracts() {
           }
         </div>
       </div>
-      <p class="text-sm text-slate-600 mt-3 whitespace-pre-wrap">${esc(a.text)}</p>
+      <div class="mt-3">
+        ${a.abstract_file
+          ? `<a href="/api/abstracts/${esc(a.id)}/file" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-semibold underline text-xs">📄 Download abstract PDF</a>`
+          : a.text
+            ? `<p class="text-sm text-slate-600 whitespace-pre-wrap">${esc(a.text)}</p>`
+            : `<span class="text-xs text-slate-400">No file</span>`
+        }
+      </div>
       <div class="flex gap-2 mt-4">
         <button class="abstract-status-btn px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-status="ACCEPTED">Accept</button>
         <button class="abstract-status-btn px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-status="REJECTED">Reject</button>
