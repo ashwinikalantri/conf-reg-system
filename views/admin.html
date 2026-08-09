@@ -41,6 +41,10 @@
         <span>📄 Abstract Review Desk</span>
         <span id="badge-pending-abstracts" class="bg-indigo-100 text-indigo-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
       </button>
+      <button id="nav-tab-programs" onclick="switchBackendTab('programs')" class="py-3 px-5 font-bold text-slate-500 hover:text-slate-700 text-sm flex items-center gap-2 shrink-0">
+        <span>🗓️ Workshops & QI Practices</span>
+        <span id="badge-program-count" class="bg-slate-200 text-slate-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
+      </button>
       <button id="nav-tab-users" onclick="switchBackendTab('users')" class="py-3 px-5 font-bold text-slate-500 hover:text-slate-700 text-sm flex items-center gap-2 shrink-0">
         <span>👥 User Roles & Access Control</span>
         <span id="badge-user-count" class="bg-slate-200 text-slate-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
@@ -89,6 +93,32 @@
     <section id="section-abstracts" class="hidden space-y-6">
       <div id="abstracts-container" class="space-y-4">
       </div>
+    </section>
+
+    <!-- TAB: WORKSHOPS & QI PRACTICES -->
+    <section id="section-programs" class="hidden space-y-6">
+      <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-800 mb-3">Add Workshop / QI Practice</h3>
+        <form onsubmit="handleAddProgram(event)" class="flex flex-col sm:flex-row flex-wrap gap-3 sm:items-end">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Type</label>
+            <select id="new-program-type" class="p-2.5 border rounded-lg text-sm bg-white outline-none">
+              <option value="WORKSHOP">Workshop</option>
+              <option value="QI">QI Practice</option>
+            </select>
+          </div>
+          <div class="flex-1 min-w-[200px]">
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Name</label>
+            <input id="new-program-name" required placeholder="e.g. WS 5: Data for QI" class="w-full p-2.5 border rounded-lg text-sm outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Capacity</label>
+            <input id="new-program-capacity" type="number" min="0" value="50" required class="w-28 p-2.5 border rounded-lg text-sm outline-none">
+          </div>
+          <button type="submit" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md">+ Add</button>
+        </form>
+      </div>
+      <div id="programs-container" class="space-y-6"></div>
     </section>
 
     <!-- TAB 3: USER ROLES -->

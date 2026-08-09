@@ -131,6 +131,17 @@ payment is verified; before that the dashboard shows the register/pay action.
 registration, verified only). Verification also backfills a number for any
 older row that lacked one.
 
+## Workshops & QI practices (capacity-limited)
+
+Workshops and QI practice tracks live in an admin-editable `program_options`
+master (type, name, capacity, active). A super admin manages them under the
+**Workshops & QI Practices** tab (add, edit capacity, activate/deactivate,
+delete — delete is refused while anyone is enrolled). The delegate payment form
+is populated from `GET /api/program-options`, showing remaining spots and
+disabling full options. On submit the server records the chosen option ids and
+enforces capacity: a slot is held by any non-rejected registration, and a full
+option is rejected. The default eight options are seeded on first run.
+
 ## Robustness notes
 
 OCR runs on delegate-supplied images, which may be corrupt. tesseract.js can

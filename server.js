@@ -197,6 +197,36 @@ async function recordAudit({ req, entityType, entityId, action, oldValue, newVal
   );
 }
 
+// Fetch program options annotated with live enrollment counts. A slot is held
+// by any non-rejected registration referencing the option.
+function fetchProgramOptions({ activeOnly } = {}) {
+  return dbAll(`
+    SELECT o.id, o.type, o.name, o.capacity, o.active,
+      (SELECT COUNT(*) FROM registrations r
+         WHERE r.bank_status != 'REJECTED'
+           AND ((o.type = 'WORKSHOP' AND r.workshop_option_id = o.id)
+             OR (o.type = 'QI' AND r.qi_option_id = o.id))) AS enrolled
+    FROM program_options o
+    ${activeOnly ? 'WHERE o.active = 1' : ''}
+    ORDER BY o.type, o.id`);
+}
+
+// Validate a chosen option and confirm it still has room. `ownRegId` is the
+// caller's existing registration (excluded from the count on re-submission).
+async function resolveOption(id, type, ownRegId) {
+  const opt = await dbGet('SELECT * FROM program_options WHERE id = ? AND type = ? AND active = 1', [id, type]);
+  const label = type === 'WORKSHOP' ? 'workshop' : 'QI practice';
+  if (!opt) return { error: `Please choose an available ${label}.` };
+
+  const col = type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
+  const { n } = await dbGet(
+    `SELECT COUNT(*) AS n FROM registrations WHERE ${col} = ? AND bank_status != 'REJECTED' AND id != ?`,
+    [id, ownRegId == null ? -1 : ownRegId]
+  );
+  if (n >= opt.capacity) return { error: `"${opt.name}" is full. Please choose another ${label}.` };
+  return { opt };
+}
+
 function parseCookies(req) {
   const out = {};
   const header = req.headers.cookie;
@@ -312,8 +342,21 @@ db.serialize(() => {
     )
   `);
 
-  // Additive migrations: server-computed fee, and the three OCR check results
-  // (nullable -- NULL means "not checked", e.g. legacy rows).
+  // Master of enrollable programs (workshops and QI practice tracks) with a
+  // per-option participant cap. Admin-editable.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS program_options (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL,          -- 'WORKSHOP' | 'QI'
+      name TEXT NOT NULL,
+      capacity INTEGER NOT NULL DEFAULT 50,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL
+    )
+  `);
+
+  // Additive migrations: server-computed fee, OCR check results, registration
+  // number, and the chosen program-option ids (for capacity accounting).
   db.all('PRAGMA table_info(registrations)', (err, cols) => {
     if (err) return console.error('Schema check failed:', err.message);
     const names = cols.map((c) => c.name);
@@ -322,6 +365,29 @@ db.serialize(() => {
     if (!names.includes('ocr_vpa_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_vpa_match INTEGER');
     if (!names.includes('ocr_utr_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_utr_match INTEGER');
     if (!names.includes('registration_number')) db.run('ALTER TABLE registrations ADD COLUMN registration_number TEXT');
+    if (!names.includes('workshop_option_id')) db.run('ALTER TABLE registrations ADD COLUMN workshop_option_id INTEGER');
+    if (!names.includes('qi_option_id')) db.run('ALTER TABLE registrations ADD COLUMN qi_option_id INTEGER');
+  });
+
+  // Seed the program master on first run from the original fixed options.
+  db.get('SELECT COUNT(*) AS n FROM program_options', (err, r) => {
+    if (err || (r && r.n > 0)) return;
+    const now = Date.now();
+    const stmt = db.prepare('INSERT INTO program_options (type, name, capacity, active, created_at) VALUES (?, ?, ?, 1, ?)');
+    [
+      'WS 1: Point-of-Care Quality Improvement (POCQI)',
+      'WS 2: Clinical Audits & Patient Safety',
+      'WS 3: Root Cause Analysis (RCA)',
+      'WS 4: Medication Safety',
+    ].forEach((name) => stmt.run('WORKSHOP', name, 50, now));
+    [
+      'Exposure A: Neonatal ICU (SNCU / NICU QI)',
+      'Exposure B: Emergency Department',
+      'Exposure C: Surgical Safety & Infection Control',
+      'Exposure D: Labor Room Quality (Maternal Care)',
+    ].forEach((name) => stmt.run('QI', name, 50, now));
+    stmt.finalize();
+    console.log('Seeded default workshop and QI practice options.');
   });
 });
 
@@ -588,7 +654,7 @@ app.post('/api/auth/logout', async (req, res, next) => {
 // Submit / update the caller's own payment registration.
 app.post('/api/registrations', requireAuth, async (req, res, next) => {
   try {
-    const { categoryKey, workshop, qiExposure, amount, utr, screenshot, acknowledged } = req.body;
+    const { categoryKey, workshopOptionId, qiOptionId, amount, utr, screenshot, acknowledged } = req.body;
     if (!utr || !screenshot) {
       return res.status(400).json({ success: false, error: 'Missing required registration details.' });
     }
@@ -601,6 +667,21 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     }
     const expectedAmount = tier[REGISTRATION_PHASE];
     const categoryLabel = tier.label;
+
+    const phone = req.session.phone; // never from the client
+    const name = req.session.name;
+
+    // Existing registration: reuse the id to free the delegate's own slot on
+    // re-submission, and the old filename for cleanup.
+    const prev = await dbGet('SELECT id, screenshot FROM registrations WHERE phone_number = ?', [phone]);
+    const ownRegId = prev ? prev.id : null;
+
+    // Resolve the chosen workshop / QI practice and enforce capacity. Done
+    // before OCR so a full option fails fast.
+    const ws = await resolveOption(workshopOptionId, 'WORKSHOP', ownRegId);
+    if (ws.error) return res.status(400).json({ success: false, error: ws.error });
+    const qi = await resolveOption(qiOptionId, 'QI', ownRegId);
+    if (qi.error) return res.status(400).json({ success: false, error: qi.error });
 
     // Validate the image (in memory; not written to disk yet).
     const decoded = decodeScreenshot(screenshot);
@@ -627,23 +708,20 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     // amount was tampered with.
     const flagged = !allChecksPass || amountTampered ? 1 : 0;
 
-    const phone = req.session.phone; // never from the client
-    const name = req.session.name;
-
-    // Remember any previous file so it can be removed after a successful update.
-    const prev = await dbGet('SELECT screenshot FROM registrations WHERE phone_number = ?', [phone]);
     const filename = await writeScreenshotBuffer(decoded.buffer, decoded.ext);
 
     const result = await dbRun(
       `INSERT INTO registrations
-        (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, expected_amount, paid_amount, utr_number, screenshot, ocr_amount_match, ocr_vpa_match, ocr_utr_match, is_flagged, bank_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+        (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, workshop_option_id, qi_option_id, expected_amount, paid_amount, utr_number, screenshot, ocr_amount_match, ocr_vpa_match, ocr_utr_match, is_flagged, bank_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
         ON CONFLICT(phone_number) DO UPDATE SET
           delegate_name = excluded.delegate_name,
           category_key = excluded.category_key,
           category_label = excluded.category_label,
           workshop = excluded.workshop,
           qi_exposure = excluded.qi_exposure,
+          workshop_option_id = excluded.workshop_option_id,
+          qi_option_id = excluded.qi_option_id,
           expected_amount = excluded.expected_amount,
           paid_amount = excluded.paid_amount,
           utr_number = excluded.utr_number,
@@ -653,7 +731,8 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
           ocr_utr_match = excluded.ocr_utr_match,
           is_flagged = excluded.is_flagged,
           bank_status = 'PENDING'`,
-      [phone, name, categoryKey, categoryLabel, workshop, qiExposure, expectedAmount, paidAmount, utr, filename,
+      [phone, name, categoryKey, categoryLabel, ws.opt.name, qi.opt.name, ws.opt.id, qi.opt.id,
+        expectedAmount, paidAmount, utr, filename,
         checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, flagged]
     );
 
@@ -695,6 +774,23 @@ app.get('/api/registrations/me', requireAuth, async (req, res, next) => {
       [req.session.phone]
     );
     res.json({ registration: row || null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Active program options with remaining capacity, for the payment form.
+app.get('/api/program-options', requireAuth, async (req, res, next) => {
+  try {
+    const rows = await fetchProgramOptions({ activeOnly: true });
+    const shape = (o) => {
+      const remaining = Math.max(0, o.capacity - o.enrolled);
+      return { id: o.id, name: o.name, capacity: o.capacity, remaining, full: remaining <= 0 };
+    };
+    res.json({
+      workshops: rows.filter((o) => o.type === 'WORKSHOP').map(shape),
+      qiPractices: rows.filter((o) => o.type === 'QI').map(shape),
+    });
   } catch (err) {
     next(err);
   }
@@ -953,6 +1049,90 @@ app.put('/api/users/:phone/role', requireRole('SUPER_ADMIN'), async (req, res, n
       return res.status(400).json({ success: false, error: 'Invalid role.' });
     }
     await dbRun('UPDATE users SET role = ? WHERE phone_number = ?', [role, req.params.phone]);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- PROGRAM OPTIONS ADMIN (workshops & QI practices) -------------------
+
+function validProgramInput({ type, name, capacity }, { partial } = {}) {
+  if (!partial || type !== undefined) {
+    if (type !== 'WORKSHOP' && type !== 'QI') return 'Type must be WORKSHOP or QI.';
+  }
+  if (!partial || name !== undefined) {
+    if (!name || !String(name).trim()) return 'Name is required.';
+  }
+  if (!partial || capacity !== undefined) {
+    if (!Number.isInteger(capacity) || capacity < 0) return 'Capacity must be a non-negative integer.';
+  }
+  return null;
+}
+
+// List every option (active or not) with enrollment counts.
+app.get('/api/admin/program-options', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    res.json({ options: await fetchProgramOptions({ activeOnly: false }) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/admin/program-options', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const { type, name, capacity } = req.body;
+    const bad = validProgramInput({ type, name, capacity });
+    if (bad) return res.status(400).json({ success: false, error: bad });
+    const result = await dbRun(
+      'INSERT INTO program_options (type, name, capacity, active, created_at) VALUES (?, ?, ?, 1, ?)',
+      [type, String(name).trim(), capacity, Date.now()]
+    );
+    res.json({ success: true, id: result.lastID });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const { name, capacity, active } = req.body;
+    const bad = validProgramInput({ name, capacity }, { partial: true });
+    if (bad) return res.status(400).json({ success: false, error: bad });
+
+    const existing = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ success: false, error: 'Option not found.' });
+
+    await dbRun(
+      'UPDATE program_options SET name = ?, capacity = ?, active = ? WHERE id = ?',
+      [
+        name !== undefined ? String(name).trim() : existing.name,
+        capacity !== undefined ? capacity : existing.capacity,
+        active !== undefined ? (active ? 1 : 0) : existing.active,
+        req.params.id,
+      ]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Delete an option, but only if nobody is enrolled (otherwise deactivate it).
+app.delete('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
+    if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
+
+    const col = opt.type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
+    const used = await dbGet(
+      `SELECT COUNT(*) AS n FROM registrations WHERE ${col} = ? AND bank_status != 'REJECTED'`,
+      [opt.id]
+    );
+    if (used.n > 0) {
+      return res.status(409).json({ success: false, error: `Cannot delete: ${used.n} delegate(s) enrolled. Deactivate it instead.` });
+    }
+    await dbRun('DELETE FROM program_options WHERE id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (err) {
     next(err);

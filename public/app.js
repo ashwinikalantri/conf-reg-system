@@ -233,6 +233,36 @@ function calculateFee() {
   document.getElementById('qr-container').classList.remove('hidden');
 }
 
+// Populate a <select> from program-option data, showing remaining spots and
+// disabling full options.
+function fillOptionSelect(id, options, placeholder) {
+  const sel = document.getElementById(id);
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = `<option value="">-- ${esc(placeholder)} --</option>` +
+    (options || []).map(o =>
+      `<option value="${o.id}" ${o.full ? 'disabled' : ''}>${esc(o.name)}${o.full ? ' — FULL' : ` (${o.remaining} left)`}</option>`
+    ).join('');
+  if (current) sel.value = current;
+}
+
+// Load workshops and QI practices (with live capacity) into the payment form.
+async function loadProgramOptions() {
+  try {
+    const data = await (await fetch('/api/program-options')).json();
+    fillOptionSelect('payment-workshop', data.workshops, 'Choose 1 Workshop');
+    fillOptionSelect('payment-qi-exposure', data.qiPractices, 'Choose 1 QI Practice');
+  } catch (e) {
+    /* leave the placeholders in place if the fetch fails */
+  }
+}
+
+// Refresh capacity then open the payment modal.
+async function openPaymentModal() {
+  await loadProgramOptions();
+  openModal('modal-conference');
+}
+
 // --- PAYMENT SUBMISSION ---
 async function verifyAndSubmitPayment(e) {
   e.preventDefault();
@@ -258,8 +288,8 @@ async function verifyAndSubmitPayment(e) {
     // to check the amount, conference UPI ID, and UTR.
     const basePayload = {
       categoryKey: document.getElementById('payment-category').value,
-      workshop: document.getElementById('payment-workshop').value,
-      qiExposure: document.getElementById('payment-qi-exposure').value,
+      workshopOptionId: Number(document.getElementById('payment-workshop').value) || null,
+      qiOptionId: Number(document.getElementById('payment-qi-exposure').value) || null,
       amount: parseFloat(document.getElementById('entered-amount').value),
       utr: utr,
       screenshot: base64Screenshot
@@ -461,6 +491,21 @@ function setupAdminDelegation() {
       if (btn) updateAbstractStatus(btn.dataset.id, btn.dataset.status);
     });
   }
+
+  const programsBox = document.getElementById('programs-container');
+  if (programsBox) {
+    programsBox.addEventListener('click', (e) => {
+      const save = e.target.closest('.prog-save');
+      if (save) {
+        const input = programsBox.querySelector(`.prog-capacity[data-id="${save.dataset.id}"]`);
+        return saveProgramCapacity(save.dataset.id, parseInt(input.value, 10));
+      }
+      const toggle = e.target.closest('.prog-toggle');
+      if (toggle) return toggleProgram(toggle.dataset.id, toggle.dataset.active === '1' ? 0 : 1);
+      const del = e.target.closest('.prog-delete');
+      if (del) return deleteProgram(del.dataset.id);
+    });
+  }
 }
 
 // Set the text of an element if it exists.
@@ -497,9 +542,11 @@ function applyRoleVisibility(role) {
   const tabPayments = document.getElementById('nav-tab-payments');
   const tabAbstracts = document.getElementById('nav-tab-abstracts');
   const tabUsers = document.getElementById('nav-tab-users');
+  const tabPrograms = document.getElementById('nav-tab-programs');
   if (tabPayments) tabPayments.classList.toggle('hidden', !isFinance);
   if (tabAbstracts) tabAbstracts.classList.toggle('hidden', !isReviewer);
   if (tabUsers) tabUsers.classList.toggle('hidden', !isSuper);
+  if (tabPrograms) tabPrograms.classList.toggle('hidden', !isSuper);
 
   return { isSuper, isFinance, isReviewer };
 }
@@ -523,6 +570,7 @@ async function initBackendPortal() {
   if (isFinance) await renderBackendPayments();
   if (isReviewer) await renderBackendAbstracts();
   if (isSuper) await renderBackendUsers();
+  if (isSuper) await renderBackendPrograms();
 
   // Land on the first section the role can actually use.
   const defaultTab = isFinance ? 'payments' : isReviewer ? 'abstracts' : 'users';
@@ -648,6 +696,77 @@ async function updateRole(phone, role) {
   renderBackendUsers();
 }
 
+// --- WORKSHOPS & QI PRACTICES (admin) ---
+async function renderBackendPrograms() {
+  const res = await fetch('/api/admin/program-options');
+  const container = document.getElementById('programs-container');
+  if (!container) return;
+  if (!res.ok) {
+    container.innerHTML = '<p class="text-sm text-slate-500 p-4">Unable to load programs.</p>';
+    return;
+  }
+  const options = (await res.json()).options || [];
+  setText('badge-program-count', options.length);
+
+  const groupHtml = (type, title) => {
+    const rows = options.filter(o => o.type === type).map(o => {
+      const remaining = Math.max(0, o.capacity - o.enrolled);
+      return `
+      <div class="flex flex-wrap items-center gap-3 py-3 border-b border-slate-100 ${o.active ? '' : 'opacity-60'}">
+        <div class="flex-1 min-w-[180px]">
+          <p class="font-semibold text-sm text-slate-800">${esc(o.name)}</p>
+          <p class="text-[11px] text-slate-500">Enrolled ${Number(o.enrolled)} / ${Number(o.capacity)} · ${remaining} left${o.active ? '' : ' · inactive'}</p>
+        </div>
+        <input type="number" min="0" value="${esc(o.capacity)}" class="prog-capacity w-20 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
+        <button class="prog-save px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Save</button>
+        <button class="prog-toggle px-3 py-1.5 ${o.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}" data-active="${o.active ? 1 : 0}">${o.active ? 'Deactivate' : 'Activate'}</button>
+        <button class="prog-delete px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Delete</button>
+      </div>`;
+    }).join('') || '<p class="text-sm text-slate-400 py-2">None yet.</p>';
+    return `<div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+        <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide mb-2">${esc(title)}</h3>${rows}</div>`;
+  };
+
+  container.innerHTML = groupHtml('WORKSHOP', 'Workshops') + groupHtml('QI', 'QI Practices');
+}
+
+async function handleAddProgram(e) {
+  e.preventDefault();
+  const payload = {
+    type: document.getElementById('new-program-type').value,
+    name: document.getElementById('new-program-name').value,
+    capacity: parseInt(document.getElementById('new-program-capacity').value, 10),
+  };
+  const data = await (await fetch('/api/admin/program-options', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })).json();
+  if (!data.success) return alert(data.error || 'Could not add option.');
+  document.getElementById('new-program-name').value = '';
+  renderBackendPrograms();
+}
+
+async function saveProgramCapacity(id, capacity) {
+  const data = await (await fetch(`/api/admin/program-options/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ capacity }),
+  })).json();
+  if (!data.success) alert(data.error || 'Update failed.');
+  renderBackendPrograms();
+}
+
+async function toggleProgram(id, active) {
+  await fetch(`/api/admin/program-options/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }),
+  });
+  renderBackendPrograms();
+}
+
+async function deleteProgram(id) {
+  if (!(await showConfirm('Delete this option? This cannot be undone.'))) return;
+  const data = await (await fetch(`/api/admin/program-options/${encodeURIComponent(id)}`, { method: 'DELETE' })).json();
+  if (!data.success) alert(data.error || 'Delete failed.');
+  renderBackendPrograms();
+}
+
 const ABSTRACT_STATUS_STYLES = {
   UNDER_REVIEW: 'bg-amber-100 text-amber-800',
   ACCEPTED: 'bg-emerald-100 text-emerald-800',
@@ -737,7 +856,7 @@ async function handleCreateUserSubmit(e) {
 }
 
 function switchBackendTab(tab) {
-  ['payments', 'abstracts', 'users'].forEach(t => {
+  ['payments', 'abstracts', 'programs', 'users'].forEach(t => {
     const section = document.getElementById(`section-${t}`);
     if (section) section.classList.toggle('hidden', t !== tab);
 
