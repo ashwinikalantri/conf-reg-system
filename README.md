@@ -142,6 +142,27 @@ disabling full options. On submit the server records the chosen option ids and
 enforces capacity: a slot is held by any non-rejected registration, and a full
 option is rejected. The default eight options are seeded on first run.
 
+## Student ID verification
+
+Nursing UG/PG, Medical UG, and PG/Resident categories must upload a student ID
+card with their registration. The server OCRs the card and does a preliminary
+check that its discipline (nursing vs medical) and level (UG vs PG) match the
+chosen category. Like the payment checks this is advisory: a mismatch flags the
+registration for manual review rather than blocking it. The card is stored in
+`uploads/` and served only through the authed `GET /api/registrations/:id/id-card`
+route (owner or finance admin). Finance sees the ID check result and a link to
+view the card.
+
+## Rejection workflow
+
+When rejecting a registration the admin picks a reason — **Payment discrepancy**,
+**ID discrepancy**, or **Other** (with a typed note) — stored on the row and
+shown in the audit trail. The delegate's dashboard then shows the reason and the
+matching next step: an ID rejection prompts them to change category or re-upload
+the ID card; a payment rejection prompts them to resubmit payment details; both
+reopen the registration form. Re-submitting clears the rejection and returns the
+row to PENDING.
+
 ## Robustness notes
 
 OCR runs on delegate-supplied images, which may be corrupt. tesseract.js can

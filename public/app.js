@@ -10,8 +10,27 @@ const PRICING_TIERS = {
   chw: { early: 200, regular: 200, late: 200, label: "Frontline CHWs (ASHA/ANM/AWW)" }
 };
 
+// Categories that must upload a student ID card (kept in sync with the server).
+const STUDENT_CATEGORIES = ['nursing_ug', 'nursing_pg', 'med_student', 'pg_doctor'];
+
+const REJECTION_LABELS = {
+  PAYMENT: 'Payment discrepancy',
+  ID: 'ID discrepancy',
+  OTHER: 'Other',
+};
+
 let currentDelegate = JSON.parse(localStorage.getItem('nqocn_current_user')) || null;
 let activeAdminUser = null;
+
+// Read a File into a base64 data URL.
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = (e) => resolve(e.target.result);
+    r.onerror = () => reject(new Error('Could not read file.'));
+    r.readAsDataURL(file);
+  });
+}
 
 // --- NAVIGATION & UI TOGGLES ---
 function navigateTo(pageId) {
@@ -209,12 +228,32 @@ async function loadDashboard() {
     statusTag.className = "text-xs bg-emerald-100 text-emerald-800 font-bold px-3 py-1 rounded-full border border-emerald-300";
     statusTag.innerText = "Registration Confirmed ✓";
     reverifyBanner.classList.add('hidden');
+  } else if (reg.bank_status === 'REJECTED') {
+    // Rejected: show the reason and the action the delegate should take.
+    statusTag.className = "text-xs bg-rose-100 text-rose-800 font-bold px-3 py-1 rounded-full border border-rose-300";
+    statusTag.innerText = "Registration Rejected";
+    confBtn.innerText = "Update & Resubmit";
+
+    let msg, label;
+    if (reg.rejection_reason === 'PAYMENT') {
+      msg = 'Your payment was rejected due to a discrepancy. Please resubmit your correct payment details and screenshot.';
+      label = 'Resubmit Payment';
+    } else if (reg.rejection_reason === 'ID') {
+      msg = 'Your ID could not be verified for the selected category. Please change your category or re-upload the correct student ID card.';
+      label = 'Update Category / ID';
+    } else {
+      msg = 'Your registration was rejected' + (reg.rejection_note ? `: ${reg.rejection_note}` : '.') + ' Please review and resubmit.';
+      label = 'Update Registration';
+    }
+    document.getElementById('reverify-msg').innerText = msg;
+    document.getElementById('reverify-btn').innerText = label;
+    reverifyBanner.classList.remove('hidden');
   } else {
-    const needsAction = reg.is_flagged || reg.bank_status === 'REJECTED';
+    // Pending manual verification (possibly flagged — no delegate action needed).
     statusTag.className = "text-xs bg-amber-100 text-amber-800 font-bold px-3 py-1 rounded-full border border-amber-300";
-    statusTag.innerText = needsAction ? "Flagged - Awaiting Manual Audit" : "Registration Pending (Awaiting Verification)";
+    statusTag.innerText = reg.is_flagged ? "Flagged - Awaiting Manual Audit" : "Registration Pending (Awaiting Verification)";
     confBtn.innerText = "Edit Submitted Payment";
-    reverifyBanner.classList.toggle('hidden', !needsAction);
+    reverifyBanner.classList.add('hidden');
   }
 
   navigateTo('dashboard-page');
@@ -222,6 +261,11 @@ async function loadDashboard() {
 
 function calculateFee() {
   const catKey = document.getElementById('payment-category').value;
+
+  // Student categories must upload an ID card.
+  const idBlock = document.getElementById('id-card-block');
+  if (idBlock) idBlock.classList.toggle('hidden', !STUDENT_CATEGORIES.includes(catKey));
+
   if (!catKey) return;
 
   const currentFee = PRICING_TIERS[catKey].early;
@@ -267,32 +311,35 @@ async function openPaymentModal() {
 async function verifyAndSubmitPayment(e) {
   e.preventDefault();
 
-  const fileInput = document.getElementById('payment-screenshot');
-  const file = fileInput.files[0];
+  const categoryKey = document.getElementById('payment-category').value;
+  const isStudent = STUDENT_CATEGORIES.includes(categoryKey);
 
-  if (!file) {
-    return alert("Please upload your payment screenshot.");
-  }
+  const file = document.getElementById('payment-screenshot').files[0];
+  if (!file) return alert('Please upload your payment screenshot.');
+
+  const idFile = document.getElementById('payment-id-card').files[0];
+  if (isStudent && !idFile) return alert('Please upload your student ID card for this category.');
 
   const submitBtn = document.getElementById('submit-payment-btn');
   const originalBtnText = submitBtn.innerText;
-  submitBtn.innerText = "Checking screenshot...";
+  submitBtn.innerText = 'Checking uploads...';
   submitBtn.disabled = true;
 
-  const reader = new FileReader();
-  reader.onload = async function(event) {
-    const base64Screenshot = event.target.result;
+  try {
+    const screenshot = await readFileAsDataURL(file);
+    const idCard = isStudent ? await readFileAsDataURL(idFile) : undefined;
     const utr = document.getElementById('entered-utr').value.trim();
 
     // The server derives the fee from the category and reads the screenshot
-    // to check the amount, conference UPI ID, and UTR.
+    // (amount / UPI ID / UTR) and, for students, the ID card.
     const basePayload = {
-      categoryKey: document.getElementById('payment-category').value,
+      categoryKey,
       workshopOptionId: Number(document.getElementById('payment-workshop').value) || null,
       qiOptionId: Number(document.getElementById('payment-qi-exposure').value) || null,
       amount: parseFloat(document.getElementById('entered-amount').value),
-      utr: utr,
-      screenshot: base64Screenshot
+      utr,
+      screenshot,
+      idCard,
     };
 
     async function submit(acknowledged) {
@@ -308,51 +355,44 @@ async function verifyAndSubmitPayment(e) {
       return res.json();
     }
 
-    try {
-      let data = await submit(false);
+    let data = await submit(false);
 
-      // Server couldn't verify one or more details from the screenshot.
-      if (data.needsConfirmation) {
-        const c = data.checks || {};
-        const problems = [];
-        if (!c.amount) problems.push(`• The amount ₹${data.expectedAmount} could not be found in the screenshot`);
-        if (!c.vpa) problems.push('• The conference UPI ID could not be found in the screenshot');
-        if (!c.utr) problems.push('• The UTR number you entered could not be found in the screenshot');
+    // Server couldn't verify one or more details.
+    if (data.needsConfirmation) {
+      const c = data.checks || {};
+      const problems = [];
+      if (!c.amount) problems.push(`• The amount ₹${data.expectedAmount} could not be found in the screenshot`);
+      if (!c.vpa) problems.push('• The conference UPI ID could not be found in the screenshot');
+      if (!c.utr) problems.push('• The UTR number you entered could not be found in the screenshot');
+      if (c.id === false) problems.push('• Your ID card could not be confirmed to match the selected category');
 
-        const proceed = await showConfirm(
-          "We could not verify the following from your uploaded screenshot:\n\n" +
-          problems.join('\n') +
-          "\n\nYou can submit anyway, but the payment will be FLAGGED for manual scrutiny by the finance team.",
-          "Submit anyway", "Cancel & re-check"
-        );
-        if (!proceed) {
-          submitBtn.innerText = originalBtnText;
-          submitBtn.disabled = false;
-          return;
-        }
-        data = await submit(true);
-      }
-
-      if (data.success) {
-        alert(data.flagged
-          ? "Submission received and FLAGGED for manual finance scrutiny (some details did not match the screenshot)."
-          : "Payment details & screenshot submitted successfully! Registration is PENDING manual verification."
-        );
-        closeModal('modal-conference');
-        loadDashboard();
-      } else {
-        alert(data.error || "Submission failed.");
-      }
-    } catch (err) {
-      console.error("Payment Submission Error:", err);
-      alert(`Submission Error: ${err.message}`);
-    } finally {
-      submitBtn.innerText = originalBtnText;
-      submitBtn.disabled = false;
+      const proceed = await showConfirm(
+        "We could not verify the following from your uploads:\n\n" +
+        problems.join('\n') +
+        "\n\nYou can submit anyway, but your registration will be FLAGGED for manual scrutiny by the team.",
+        "Submit anyway", "Cancel & re-check"
+      );
+      if (!proceed) return;
+      data = await submit(true);
     }
-  };
 
-  reader.readAsDataURL(file);
+    if (data.success) {
+      alert(data.flagged
+        ? "Submission received and FLAGGED for manual scrutiny (some details could not be auto-verified)."
+        : "Registration submitted successfully! It is PENDING manual verification."
+      );
+      closeModal('modal-conference');
+      loadDashboard();
+    } else {
+      alert(data.error || 'Submission failed.');
+    }
+  } catch (err) {
+    console.error('Payment Submission Error:', err);
+    alert(`Submission Error: ${err.message}`);
+  } finally {
+    submitBtn.innerText = originalBtnText;
+    submitBtn.disabled = false;
+  }
 }
 
 async function handleAbstractSubmit(e) {
@@ -419,9 +459,50 @@ function showConfirm(message, okText = 'Confirm', cancelText = 'Cancel') {
 
 // Show a payment screenshot in a modal rather than navigating away.
 function openScreenshot(id) {
+  const title = document.getElementById('screenshot-modal-title');
+  if (title) title.textContent = 'Payment Screenshot';
   const img = document.getElementById('screenshot-modal-img');
   if (img) img.src = `/api/registrations/${encodeURIComponent(id)}/screenshot`;
   openModal('modal-screenshot');
+}
+
+// Show a student ID card in the same image modal.
+function openIdCard(id) {
+  const title = document.getElementById('screenshot-modal-title');
+  if (title) title.textContent = 'Student ID Card';
+  const img = document.getElementById('screenshot-modal-img');
+  if (img) img.src = `/api/registrations/${encodeURIComponent(id)}/id-card`;
+  openModal('modal-screenshot');
+}
+
+// --- REJECT WITH REASON (admin) ---
+let rejectTargetId = null;
+function openRejectModal(id) {
+  rejectTargetId = id;
+  const sel = document.getElementById('reject-reason');
+  const note = document.getElementById('reject-note');
+  if (sel) sel.value = 'PAYMENT';
+  if (note) note.value = '';
+  toggleRejectNote();
+  openModal('modal-reject');
+}
+function toggleRejectNote() {
+  const sel = document.getElementById('reject-reason');
+  const wrap = document.getElementById('reject-note-wrap');
+  if (sel && wrap) wrap.classList.toggle('hidden', sel.value !== 'OTHER');
+}
+async function submitReject() {
+  const reason = document.getElementById('reject-reason').value;
+  const note = document.getElementById('reject-note').value.trim();
+  if (reason === 'OTHER' && !note) return alert('Please describe the reason.');
+  const data = await (await fetch(`/api/registrations/${encodeURIComponent(rejectTargetId)}/status`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bankStatus: 'REJECTED', rejectionReason: reason, rejectionNote: note })
+  })).json();
+  if (!data.success) return alert(data.error || 'Rejection failed.');
+  closeModal('modal-reject');
+  renderBackendPayments();
 }
 
 async function logout() {
@@ -479,8 +560,12 @@ function setupAdminDelegation() {
     paymentBody.addEventListener('click', (e) => {
       const approve = e.target.closest('.approve-btn');
       if (approve) return approvePayment(approve.dataset.id);
+      const reject = e.target.closest('.reject-btn');
+      if (reject) return openRejectModal(reject.dataset.id);
       const view = e.target.closest('.view-image-btn');
       if (view) return openScreenshot(view.dataset.id);
+      const viewId = e.target.closest('.view-id-btn');
+      if (viewId) return openIdCard(viewId.dataset.id);
     });
   }
 
@@ -628,18 +713,27 @@ async function renderBackendPayments() {
           ${ocrCheckLine('Amount', p.ocr_amount_match)}
           ${ocrCheckLine('UPI ID', p.ocr_vpa_match)}
           ${ocrCheckLine('UTR', p.ocr_utr_match)}
+          ${p.ocr_id_match == null ? '' : ocrCheckLine('ID', p.ocr_id_match)}
         </div>
       </td>
-      <td class="p-4 text-center">
+      <td class="p-4 text-center whitespace-nowrap">
         ${p.has_screenshot
-          ? `<button type="button" class="view-image-btn text-indigo-600 hover:text-indigo-800 font-semibold underline text-xs" data-id="${esc(p.id)}">View Image</button>`
+          ? `<button type="button" class="view-image-btn text-indigo-600 hover:text-indigo-800 font-semibold underline text-xs" data-id="${esc(p.id)}">Payment</button>`
           : `<span class="text-xs text-slate-400">N/A</span>`
+        }
+        ${p.has_id_card
+          ? `<br><button type="button" class="view-id-btn text-indigo-600 hover:text-indigo-800 font-semibold underline text-xs mt-1" data-id="${esc(p.id)}">ID Card</button>`
+          : ''
         }
       </td>
       <td class="p-4">
-        <span class="${p.bank_status === 'BANK_VERIFIED' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'} text-xs px-2.5 py-1 rounded-full font-bold">
+        <span class="${p.bank_status === 'BANK_VERIFIED' ? 'bg-emerald-100 text-emerald-800' : p.bank_status === 'REJECTED' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'} text-xs px-2.5 py-1 rounded-full font-bold">
           ${esc(p.bank_status)}
         </span>
+        ${p.bank_status === 'REJECTED' && p.rejection_reason
+          ? `<br><span class="text-[10px] text-rose-600 font-semibold">${esc(REJECTION_LABELS[p.rejection_reason] || p.rejection_reason)}${p.rejection_note ? ': ' + esc(p.rejection_note) : ''}</span>`
+          : ''
+        }
         ${p.last_action_by
           ? `<br><span class="text-[10px] text-slate-400">by ${esc(p.last_action_by)} · ${esc(fmtAuditTime(p.last_action_at))}</span>`
           : ''
@@ -647,9 +741,12 @@ async function renderBackendPayments() {
       </td>
       <td class="p-4 text-right">
         ${p.bank_status !== 'BANK_VERIFIED'
-          ? `<button class="approve-btn px-3 py-1.5 ${p.is_flagged ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'} text-white font-semibold rounded-lg text-xs shadow-sm" data-id="${esc(p.id)}">
-              ${p.is_flagged ? 'Force Verify' : 'Verify Payment'}
-             </button>`
+          ? `<div class="flex flex-col gap-1.5 items-end">
+              <button class="approve-btn px-3 py-1.5 ${p.is_flagged ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'} text-white font-semibold rounded-lg text-xs shadow-sm" data-id="${esc(p.id)}">
+                ${p.is_flagged ? 'Force Verify' : 'Verify Payment'}
+              </button>
+              <button class="reject-btn px-3 py-1.5 bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 font-semibold rounded-lg text-xs" data-id="${esc(p.id)}">Reject…</button>
+             </div>`
           : `<span class="text-xs text-slate-400 font-medium">Verified</span>`
         }
       </td>

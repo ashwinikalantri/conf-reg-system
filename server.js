@@ -66,6 +66,15 @@ const REGISTRATION_PHASE = ['early', 'regular', 'late'].includes(process.env.REG
 // the payee; OCR checks the uploaded image against it.
 const OFFICIAL_UPI_ID = process.env.OFFICIAL_UPI_ID || 'abhishekraut@cbin';
 
+// Categories that must upload a student ID card, with the discipline and level
+// the card is expected to show. OCR does a preliminary check against these.
+const STUDENT_CATEGORIES = {
+  nursing_ug:  { discipline: 'nursing', level: 'UG', label: 'Nursing UG' },
+  nursing_pg:  { discipline: 'nursing', level: 'PG', label: 'Nursing PG' },
+  med_student: { discipline: 'medical', level: 'UG', label: 'Medical UG' },
+  pg_doctor:   { discipline: 'medical', level: 'PG', label: 'Medical PG / Resident' },
+};
+
 // --- CRYPTO / COOKIE HELPERS --------------------------------------------
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 
@@ -178,6 +187,43 @@ async function runOcrChecks(buffer, { expectedAmount, utr }) {
   const utrMatch = enteredUtrDigits.length >= 6 && digitsOnly.includes(enteredUtrDigits);
 
   return { amount, vpa, utr: utrMatch };
+}
+
+// Roughly detect discipline and level from an ID card's OCR text. Deliberately
+// permissive keyword matching -- this is a preliminary, advisory check.
+function detectIdAttributes(text) {
+  const t = text.toLowerCase();
+  let discipline = null;
+  if (/nursing|g\.?n\.?m|a\.?n\.?m/.test(t)) discipline = 'nursing';
+  else if (/mbbs|m\.?b\.?b\.?s|medic|medicine|surgery|\bmd\b|\bms\b/.test(t)) discipline = 'medical';
+
+  let level = null;
+  if (/post[-\s]?grad|\bpg\b|m\.?sc|\bmd\b|\bms\b|resident|master|\bdnb\b/.test(t)) level = 'PG';
+  else if (/under[-\s]?grad|\bug\b|b\.?sc|mbbs|bachelor|(1st|2nd|3rd|first|second|third|final)\s+year/.test(t)) level = 'UG';
+
+  return { discipline, level };
+}
+
+// OCR a student ID card and check it against the claimed category. Advisory:
+// an unreadable or ambiguous card yields false (flagged), never an error.
+async function runIdCardCheck(buffer, categoryKey) {
+  const expect = STUDENT_CATEGORIES[categoryKey];
+  if (!expect) return null; // category does not require an ID card
+  let text = '';
+  try {
+    const worker = await getOcrWorker();
+    const result = await Promise.race([
+      worker.recognize(buffer),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('OCR timed out')), 15000)),
+    ]);
+    text = (result && result.data && result.data.text) || '';
+  } catch (err) {
+    console.error('ID OCR failed:', err.message);
+    ocrWorkerPromise = null;
+    return false;
+  }
+  const { discipline, level } = detectIdAttributes(text);
+  return discipline === expect.discipline && level === expect.level;
 }
 
 // Best-effort removal of a stored screenshot file (ignores legacy data URIs
@@ -382,6 +428,10 @@ db.serialize(() => {
     if (!names.includes('registration_number')) db.run('ALTER TABLE registrations ADD COLUMN registration_number TEXT');
     if (!names.includes('workshop_option_id')) db.run('ALTER TABLE registrations ADD COLUMN workshop_option_id INTEGER');
     if (!names.includes('qi_option_id')) db.run('ALTER TABLE registrations ADD COLUMN qi_option_id INTEGER');
+    if (!names.includes('id_card')) db.run('ALTER TABLE registrations ADD COLUMN id_card TEXT');
+    if (!names.includes('ocr_id_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_id_match INTEGER');
+    if (!names.includes('rejection_reason')) db.run('ALTER TABLE registrations ADD COLUMN rejection_reason TEXT');
+    if (!names.includes('rejection_note')) db.run('ALTER TABLE registrations ADD COLUMN rejection_note TEXT');
 
     // Backfill a number for any already-verified registration that predates
     // number assignment. Idempotent -- matches nothing once filled.
@@ -692,7 +742,7 @@ app.post('/api/auth/logout', async (req, res, next) => {
 // Submit / update the caller's own payment registration.
 app.post('/api/registrations', requireAuth, async (req, res, next) => {
   try {
-    const { categoryKey, workshopOptionId, qiOptionId, amount, utr, screenshot, acknowledged } = req.body;
+    const { categoryKey, workshopOptionId, qiOptionId, amount, utr, screenshot, idCard, acknowledged } = req.body;
     if (!utr || !screenshot) {
       return res.status(400).json({ success: false, error: 'Missing required registration details.' });
     }
@@ -710,8 +760,8 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     const name = req.session.name;
 
     // Existing registration: reuse the id to free the delegate's own slot on
-    // re-submission, and the old filename for cleanup.
-    const prev = await dbGet('SELECT id, screenshot FROM registrations WHERE phone_number = ?', [phone]);
+    // re-submission, and the old filenames for cleanup.
+    const prev = await dbGet('SELECT id, screenshot, id_card FROM registrations WHERE phone_number = ?', [phone]);
     const ownRegId = prev ? prev.id : null;
 
     // Resolve the chosen workshop / QI practice and enforce capacity. Done
@@ -721,15 +771,29 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     const qi = await resolveOption(qiOptionId, 'QI', ownRegId);
     if (qi.error) return res.status(400).json({ success: false, error: qi.error });
 
-    // Validate the image (in memory; not written to disk yet).
+    // Validate the payment screenshot (in memory; not written to disk yet).
     const decoded = decodeScreenshot(screenshot);
     if (decoded.error) {
       return res.status(400).json({ success: false, error: decoded.error });
     }
 
-    // Read the screenshot and check amount / conference UPI ID / UTR against it.
+    // Student categories must upload an ID card, checked against the category.
+    const needsId = !!STUDENT_CATEGORIES[categoryKey];
+    let idDecoded = null;
+    if (needsId) {
+      if (!idCard) {
+        return res.status(400).json({ success: false, error: 'A student ID card is required for this category.' });
+      }
+      idDecoded = decodeScreenshot(idCard);
+      if (idDecoded.error) {
+        return res.status(400).json({ success: false, error: `ID card: ${idDecoded.error}` });
+      }
+    }
+
+    // Read the screenshot (amount / UPI ID / UTR) and, for students, the ID card.
     const checks = await runOcrChecks(decoded.buffer, { expectedAmount, utr });
-    const allChecksPass = checks.amount && checks.vpa && checks.utr;
+    if (needsId) checks.id = await runIdCardCheck(idDecoded.buffer, categoryKey);
+    const allChecksPass = checks.amount && checks.vpa && checks.utr && (!needsId || checks.id);
 
     // If any check failed and the delegate hasn't acknowledged the warning,
     // don't commit -- let the client warn and re-submit with acknowledged=true.
@@ -747,11 +811,13 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     const flagged = !allChecksPass || amountTampered ? 1 : 0;
 
     const filename = await writeScreenshotBuffer(decoded.buffer, decoded.ext);
+    const idFilename = idDecoded ? await writeUploadBuffer(idDecoded.buffer, idDecoded.ext) : null;
+    const idMatch = needsId ? (checks.id ? 1 : 0) : null;
 
     const result = await dbRun(
       `INSERT INTO registrations
-        (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, workshop_option_id, qi_option_id, expected_amount, paid_amount, utr_number, screenshot, ocr_amount_match, ocr_vpa_match, ocr_utr_match, is_flagged, bank_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+        (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, workshop_option_id, qi_option_id, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, is_flagged, bank_status, rejection_reason, rejection_note)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL)
         ON CONFLICT(phone_number) DO UPDATE SET
           delegate_name = excluded.delegate_name,
           category_key = excluded.category_key,
@@ -764,18 +830,25 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
           paid_amount = excluded.paid_amount,
           utr_number = excluded.utr_number,
           screenshot = excluded.screenshot,
+          id_card = excluded.id_card,
           ocr_amount_match = excluded.ocr_amount_match,
           ocr_vpa_match = excluded.ocr_vpa_match,
           ocr_utr_match = excluded.ocr_utr_match,
+          ocr_id_match = excluded.ocr_id_match,
           is_flagged = excluded.is_flagged,
-          bank_status = 'PENDING'`,
+          bank_status = 'PENDING',
+          rejection_reason = NULL,
+          rejection_note = NULL`,
       [phone, name, categoryKey, categoryLabel, ws.opt.name, qi.opt.name, ws.opt.id, qi.opt.id,
-        expectedAmount, paidAmount, utr, filename,
-        checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, flagged]
+        expectedAmount, paidAmount, utr, filename, idFilename,
+        checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, idMatch, flagged]
     );
 
     if (prev && prev.screenshot && prev.screenshot !== filename) {
       await deleteScreenshotFile(prev.screenshot);
+    }
+    if (prev && prev.id_card && prev.id_card !== idFilename) {
+      await deleteScreenshotFile(prev.id_card);
     }
 
     // Assign a stable, unique registration number on first submission. It is
@@ -800,8 +873,9 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 const REGISTRATION_PUBLIC_COLUMNS =
   `id, registration_number, phone_number, delegate_name, category_key, category_label, workshop,
    qi_exposure, expected_amount, paid_amount, utr_number, is_flagged, bank_status,
-   ocr_amount_match, ocr_vpa_match, ocr_utr_match,
-   (screenshot IS NOT NULL AND screenshot != '') AS has_screenshot`;
+   ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, rejection_reason, rejection_note,
+   (screenshot IS NOT NULL AND screenshot != '') AS has_screenshot,
+   (id_card IS NOT NULL AND id_card != '') AS has_id_card`;
 
 // Fetch the caller's own registration (replaces the old IDOR-prone
 // /api/registrations/user/:phone route).
@@ -956,6 +1030,29 @@ app.get('/api/registrations/:id/screenshot', requireAuth, async (req, res, next)
   }
 });
 
+// Serve an uploaded student ID card to the owning delegate or a finance admin.
+app.get('/api/registrations/:id/id-card', requireAuth, async (req, res, next) => {
+  try {
+    const row = await dbGet('SELECT phone_number, id_card FROM registrations WHERE id = ?', [req.params.id]);
+    if (!row || !row.id_card) {
+      return res.status(404).json({ success: false, error: 'ID card not found.' });
+    }
+    const isFinance = req.session.role === 'SUPER_ADMIN' || req.session.role === 'FINANCE_ADMIN';
+    if (!isFinance && req.session.phone !== row.phone_number) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to view this ID card.' });
+    }
+    res.set('Cache-Control', 'private, no-store');
+    const safeName = path.basename(row.id_card);
+    const ext = path.extname(safeName).slice(1).toLowerCase();
+    if (EXT_MIME[ext]) res.type(EXT_MIME[ext]);
+    res.sendFile(path.join(UPLOAD_DIR, safeName), (err) => {
+      if (err && !res.headersSent) res.status(404).json({ success: false, error: 'ID card not found.' });
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Submit an abstract under the caller's own identity.
 const ABSTRACT_FORMATS = ['Oral Paper', 'Poster Presentation'];
 
@@ -1029,10 +1126,25 @@ app.get('/api/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async
 // Finance reconciliation: update bank verification status (audited).
 app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
-    const { bankStatus } = req.body;
+    const { bankStatus, rejectionReason, rejectionNote } = req.body;
     const allowed = ['PENDING', 'BANK_VERIFIED', 'REJECTED'];
     if (!allowed.includes(bankStatus)) {
       return res.status(400).json({ success: false, error: 'Invalid bank status.' });
+    }
+
+    // A rejection must state why, so the delegate gets the right next step.
+    const REJECTION_REASONS = ['PAYMENT', 'ID', 'OTHER'];
+    let reason = null;
+    let note = null;
+    if (bankStatus === 'REJECTED') {
+      if (!REJECTION_REASONS.includes(rejectionReason)) {
+        return res.status(400).json({ success: false, error: 'A rejection reason is required (payment, ID, or other).' });
+      }
+      reason = rejectionReason;
+      note = rejectionNote ? String(rejectionNote).slice(0, 500) : null;
+      if (reason === 'OTHER' && !note) {
+        return res.status(400).json({ success: false, error: 'Please describe the reason for an "Other" rejection.' });
+      }
     }
 
     const existing = await dbGet('SELECT bank_status FROM registrations WHERE id = ?', [req.params.id]);
@@ -1040,7 +1152,10 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
       return res.status(404).json({ success: false, error: 'Registration not found.' });
     }
 
-    await dbRun('UPDATE registrations SET bank_status = ? WHERE id = ?', [bankStatus, req.params.id]);
+    await dbRun(
+      'UPDATE registrations SET bank_status = ?, rejection_reason = ?, rejection_note = ? WHERE id = ?',
+      [bankStatus, reason, note, req.params.id]
+    );
 
     // Safety net: ensure a verified registration always has a number, even if
     // it was created before numbers were assigned at submission.
@@ -1059,7 +1174,7 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
       entityId: req.params.id,
       action: 'BANK_STATUS_CHANGE',
       oldValue: existing.bank_status,
-      newValue: bankStatus,
+      newValue: bankStatus === 'REJECTED' ? `REJECTED (${reason})` : bankStatus,
     });
     res.json({ success: true });
   } catch (err) {
