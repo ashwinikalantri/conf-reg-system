@@ -176,10 +176,26 @@ async function loadDashboard() {
   const statusTag = document.getElementById('payment-status-tag');
   const confBtn = document.getElementById('register-conf-btn');
   const reverifyBanner = document.getElementById('reverify-banner');
+  const confirmedBlock = document.getElementById('confirmed-block');
 
   const regRes = await fetch('/api/registrations/me');
   const regData = await regRes.json();
   const reg = regData.registration;
+
+  // Registration number, receipt, and the chosen workshop / QI practice are
+  // revealed only once the payment is verified. The register/edit action and
+  // the pending note are hidden in that state.
+  const verified = reg && reg.bank_status === 'BANK_VERIFIED';
+  const actionArea = document.getElementById('payment-action-area');
+  const paymentDesc = document.getElementById('payment-desc');
+  if (confirmedBlock) confirmedBlock.classList.toggle('hidden', !verified);
+  if (actionArea) actionArea.classList.toggle('hidden', verified);
+  if (paymentDesc) paymentDesc.classList.toggle('hidden', verified);
+  if (verified) {
+    document.getElementById('reg-number-display').innerText = reg.registration_number || '—';
+    document.getElementById('conf-workshop').innerText = reg.workshop || '—';
+    document.getElementById('conf-qi').innerText = reg.qi_exposure || '—';
+  }
 
   if (!reg) {
     // No payment submitted yet — reset to the initial pending state.
@@ -187,10 +203,11 @@ async function loadDashboard() {
     statusTag.innerText = "Registration Pending";
     confBtn.innerText = "Register & Pay Now";
     reverifyBanner.classList.add('hidden');
-  } else if (reg.bank_status === 'BANK_VERIFIED') {
+  } else if (verified) {
+    // Confirmed: the action button/note are hidden; only the confirmed block
+    // (number, workshop, QI, receipt) is shown.
     statusTag.className = "text-xs bg-emerald-100 text-emerald-800 font-bold px-3 py-1 rounded-full border border-emerald-300";
     statusTag.innerText = "Registration Confirmed ✓";
-    confBtn.innerText = "View Verified Details";
     reverifyBanner.classList.add('hidden');
   } else {
     const needsAction = reg.is_flagged || reg.bank_status === 'REJECTED';
@@ -536,6 +553,10 @@ async function renderBackendPayments() {
     <tr class="border-b border-slate-100 ${p.is_flagged ? 'bg-red-50/50' : ''}">
       <td class="p-4 font-bold text-sm">
         ${esc(p.delegate_name)}
+        ${p.bank_status === 'BANK_VERIFIED' && p.registration_number
+          ? `<br><span class="text-[10px] font-mono text-emerald-700">${esc(p.registration_number)}</span>`
+          : ''
+        }
         ${p.is_flagged ? `<br><span class="inline-block mt-1 text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">⚠️ Flagged</span>` : ''}
       </td>
       <td class="p-4 font-mono text-xs">${esc(p.utr_number)}</td>

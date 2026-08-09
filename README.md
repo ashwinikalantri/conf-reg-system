@@ -121,6 +121,24 @@ The English language model (~15 MB) is downloaded once at runtime and cached
 under `.ocr-cache/` (git-ignored). First OCR after a fresh deploy needs network
 access to fetch it.
 
+## Registration number & receipt
+
+Each registration is assigned a stable unique number (`NQOCN2026-000N`, derived
+from its row id) at submission. The number, the chosen workshop and QI practice,
+and a **View / Download Receipt** button are shown to the delegate only once the
+payment is verified; before that the dashboard shows the register/pay action.
+`GET /api/registrations/me/receipt` returns a printable HTML receipt (own
+registration, verified only). Verification also backfills a number for any
+older row that lacked one.
+
+## Robustness notes
+
+OCR runs on delegate-supplied images, which may be corrupt. tesseract.js can
+throw out-of-band on a bad image; the server guards this (bounded recognize
+timeout, worker reset, and an uncaught-exception safety net) so a malformed
+upload results in all-false checks and a flagged registration rather than a
+crash.
+
 ## Known limitations
 
 Still outstanding (tracked for follow-up work):

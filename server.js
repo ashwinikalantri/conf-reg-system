@@ -69,6 +69,16 @@ const OFFICIAL_UPI_ID = process.env.OFFICIAL_UPI_ID || 'abhishekraut@cbin';
 // --- CRYPTO / COOKIE HELPERS --------------------------------------------
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 
+// Escape a value for safe interpolation into server-rendered HTML.
+function escapeHtml(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Constant-time comparison of two equal-length strings.
 function safeEqual(a, b) {
   const bufA = Buffer.from(String(a), 'utf8');
@@ -97,6 +107,16 @@ async function writeScreenshotBuffer(buffer, ext) {
   return filename;
 }
 
+// tesseract.js can throw ASYNCHRONOUSLY (outside the recognize() promise, via
+// process.nextTick) when handed a corrupt image, which would otherwise crash
+// the whole server. This safety net keeps it alive; the affected submission
+// just gets all-false checks and is flagged. The realistic source of an
+// uncaught async throw in this app is the OCR worker on bad input.
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception (continuing):', (err && err.message) || err);
+  ocrWorkerPromise = null; // drop a possibly-dead worker; a fresh one is made next time
+});
+
 // Lazily-created, reused OCR worker (creating one per request is expensive).
 // The language model is cached under .ocr-cache/ (git-ignored) rather than
 // the working directory.
@@ -115,10 +135,16 @@ async function runOcrChecks(buffer, { expectedAmount, utr }) {
   let text = '';
   try {
     const worker = await getOcrWorker();
-    const { data } = await worker.recognize(buffer);
-    text = data.text || '';
+    // Bound the wait: a corrupt image can make the worker throw out-of-band
+    // and never settle this promise, which would otherwise hang the request.
+    const result = await Promise.race([
+      worker.recognize(buffer),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('OCR timed out')), 15000)),
+    ]);
+    text = (result && result.data && result.data.text) || '';
   } catch (err) {
     console.error('OCR failed:', err.message);
+    ocrWorkerPromise = null; // drop a possibly-dead worker
     return { amount: false, vpa: false, utr: false };
   }
 
@@ -295,6 +321,7 @@ db.serialize(() => {
     if (!names.includes('ocr_amount_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_amount_match INTEGER');
     if (!names.includes('ocr_vpa_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_vpa_match INTEGER');
     if (!names.includes('ocr_utr_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_utr_match INTEGER');
+    if (!names.includes('registration_number')) db.run('ALTER TABLE registrations ADD COLUMN registration_number TEXT');
   });
 });
 
@@ -634,6 +661,16 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
       await deleteScreenshotFile(prev.screenshot);
     }
 
+    // Assign a stable, unique registration number on first submission. It is
+    // derived from the row id (already unique) and never reassigned; the
+    // client only reveals it once the payment is verified.
+    await dbRun(
+      `UPDATE registrations
+          SET registration_number = 'NQOCN2026-' || printf('%04d', id)
+        WHERE phone_number = ? AND (registration_number IS NULL OR registration_number = '')`,
+      [phone]
+    );
+
     res.json({ success: true, id: result.lastID, expectedAmount, checks, flagged: !!flagged });
   } catch (err) {
     console.error('Database Insert Error:', err);
@@ -644,7 +681,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 // Columns to expose for a registration -- everything except the raw
 // screenshot filename, plus a boolean the client can use to build the link.
 const REGISTRATION_PUBLIC_COLUMNS =
-  `id, phone_number, delegate_name, category_key, category_label, workshop,
+  `id, registration_number, phone_number, delegate_name, category_key, category_label, workshop,
    qi_exposure, expected_amount, paid_amount, utr_number, is_flagged, bank_status,
    ocr_amount_match, ocr_vpa_match, ocr_utr_match,
    (screenshot IS NOT NULL AND screenshot != '') AS has_screenshot`;
@@ -658,6 +695,94 @@ app.get('/api/registrations/me', requireAuth, async (req, res, next) => {
       [req.session.phone]
     );
     res.json({ registration: row || null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Printable payment receipt for the caller's own registration. Only available
+// once the payment has been verified.
+app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => {
+  try {
+    const reg = await dbGet('SELECT * FROM registrations WHERE phone_number = ?', [req.session.phone]);
+    if (!reg) {
+      return res.status(404).send('<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;text-align:center;margin-top:4rem">No registration found.</body>');
+    }
+    if (reg.bank_status !== 'BANK_VERIFIED') {
+      return res.status(403).send('<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;text-align:center;margin-top:4rem"><h2>Receipt not available yet</h2><p>Your receipt will be available once the finance team verifies your payment.</p><p><a href="/">Return to portal</a></p></body>');
+    }
+
+    const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [req.session.phone]);
+    const verifiedRow = await dbGet(
+      `SELECT created_at FROM audit_log
+        WHERE entity_type = 'registration' AND entity_id = ? AND new_value = 'BANK_VERIFIED'
+        ORDER BY id DESC LIMIT 1`,
+      [String(reg.id)]
+    );
+    const verifiedOn = verifiedRow
+      ? new Date(verifiedRow.created_at).toLocaleString('en-IN', { dateStyle: 'long', timeStyle: 'short' })
+      : '—';
+
+    const row = (label, value) =>
+      `<tr><td class="k">${escapeHtml(label)}</td><td class="v">${escapeHtml(value)}</td></tr>`;
+
+    res.set('Cache-Control', 'private, no-store');
+    res.type('html').send(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payment Receipt — ${escapeHtml(reg.registration_number)}</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:#f1f5f9; margin:0; padding:2rem; color:#0f172a; }
+  .receipt { max-width: 640px; margin: 0 auto; background:#fff; border:1px solid #e2e8f0; border-radius:16px; overflow:hidden; box-shadow:0 10px 30px rgba(2,6,23,.08); }
+  .head { background:#312e81; color:#fff; padding:1.75rem 2rem; }
+  .head .tag { font-size:.7rem; letter-spacing:.12em; text-transform:uppercase; color:#c7d2fe; }
+  .head h1 { font-size:1.15rem; margin:.35rem 0 0; line-height:1.3; }
+  .head p { margin:.35rem 0 0; font-size:.8rem; color:#c7d2fe; }
+  .body { padding:1.5rem 2rem 2rem; }
+  .num { display:flex; justify-content:space-between; align-items:center; background:#eef2ff; border:1px solid #c7d2fe; border-radius:12px; padding:1rem 1.25rem; margin-bottom:1.5rem; }
+  .num .label { font-size:.7rem; text-transform:uppercase; letter-spacing:.1em; color:#4338ca; font-weight:700; }
+  .num .value { font-size:1.35rem; font-weight:800; font-family:ui-monospace, monospace; color:#312e81; }
+  .status { display:inline-block; background:#dcfce7; color:#166534; font-size:.7rem; font-weight:800; padding:.25rem .65rem; border-radius:999px; text-transform:uppercase; letter-spacing:.06em; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  td { padding:.6rem 0; border-bottom:1px solid #f1f5f9; vertical-align:top; }
+  td.k { color:#64748b; width:42%; }
+  td.v { font-weight:600; text-align:right; }
+  .foot { margin-top:1.5rem; font-size:.72rem; color:#94a3b8; text-align:center; line-height:1.5; }
+  .actions { text-align:center; margin-top:1.5rem; }
+  button { background:#4f46e5; color:#fff; border:0; border-radius:10px; padding:.65rem 1.5rem; font-size:.85rem; font-weight:700; cursor:pointer; }
+  @media print { body { background:#fff; padding:0; } .receipt { box-shadow:none; border:none; } .actions { display:none; } }
+</style></head>
+<body>
+  <div class="receipt">
+    <div class="head">
+      <div class="tag">NQOCN &amp; MGIMS Sevagram · Payment Receipt</div>
+      <h1>5th International Conference on Healthcare Quality &amp; Patient Safety</h1>
+      <p>21–22 November 2026 · MGIMS, Sevagram, Wardha</p>
+    </div>
+    <div class="body">
+      <div class="num">
+        <span class="label">Registration No.</span>
+        <span class="value">${escapeHtml(reg.registration_number)}</span>
+      </div>
+      <table>
+        ${row('Status', 'Confirmed — Payment Verified')}
+        ${row('Delegate', reg.delegate_name)}
+        ${row('Designation', user ? user.designation : '')}
+        ${row('Institution', user ? user.institution : '')}
+        ${row('Mobile', '+91 ' + reg.phone_number)}
+        ${row('Category', reg.category_label)}
+        ${row('Workshop', reg.workshop)}
+        ${row('QI Exposure', reg.qi_exposure)}
+        ${row('Amount Paid', '₹' + (reg.expected_amount != null ? reg.expected_amount : reg.paid_amount))}
+        ${row('UTR / Txn Ref', reg.utr_number)}
+        ${row('Verified On', verifiedOn)}
+      </table>
+      <div class="actions"><button onclick="window.print()">Print / Save as PDF</button></div>
+      <p class="foot">This is a computer-generated receipt for conference registration.<br>Registration number <b>${escapeHtml(reg.registration_number)}</b> — please quote it in all correspondence.</p>
+    </div>
+  </div>
+</body></html>`);
   } catch (err) {
     next(err);
   }
@@ -747,6 +872,18 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
     }
 
     await dbRun('UPDATE registrations SET bank_status = ? WHERE id = ?', [bankStatus, req.params.id]);
+
+    // Safety net: ensure a verified registration always has a number, even if
+    // it was created before numbers were assigned at submission.
+    if (bankStatus === 'BANK_VERIFIED') {
+      await dbRun(
+        `UPDATE registrations
+            SET registration_number = 'NQOCN2026-' || printf('%04d', id)
+          WHERE id = ? AND (registration_number IS NULL OR registration_number = '')`,
+        [req.params.id]
+      );
+    }
+
     await recordAudit({
       req,
       entityType: 'registration',
