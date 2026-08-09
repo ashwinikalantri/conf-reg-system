@@ -391,10 +391,17 @@ db.serialize(() => {
     const now = Date.now();
     const stmt = db.prepare('INSERT INTO program_options (type, name, capacity, active, created_at) VALUES (?, ?, ?, 1, ?)');
     [
-      'WS 1: Point-of-Care Quality Improvement (POCQI)',
-      'WS 2: Clinical Audits & Patient Safety',
-      'WS 3: Root Cause Analysis (RCA)',
-      'WS 4: Medication Safety',
+      'POCQI Methodology for Healthcare Professionals',
+      'Quality Improvement Workshop for Undergraduates',
+      'The Art of Birthing: Learn, Empower and Birth',
+      'Psychology of Change',
+      'AI in Healthcare: Unlock the Potential',
+      'Workshops on Patient Safety & Infection Control Topics',
+      'Quality Improvement for enhancing Healthcare Professions Education',
+      'Leadership in Nursing care',
+      'Empathetic care for Quality Improvement',
+      'Quality Improvement Workshop for Primary Healthcare Providers',
+      'Improvement in Quality and safety through Simulation in Surgery',
     ].forEach((name) => stmt.run('WORKSHOP', name, 50, now));
     [
       'Exposure A: Neonatal ICU (SNCU / NICU QI)',
