@@ -20,6 +20,26 @@
 
 `conference.db` is created automatically on first run.
 
+## SMS OTP (Vynttra)
+
+OTPs are delivered by SMS via the Vynttra JSON API using the registered DLT
+template. Set `SMS_API_KEY` to enable it; the sender/entity/template/header IDs
+default to the NQOCN values and are overridable via env (`SMS_SENDER`,
+`SMS_ENTITY_ID`, `SMS_TEMPLATE_ID`, `SMS_HEADER_ID`, `SMS_TYPE`, `SMS_URL`).
+Without an API key, SMS is skipped and (outside production) the OTP is echoed
+for local testing. Sending is fire-and-forget — failures are logged, never
+blocking OTP issuance.
+
+## Email notifications (AWS SES)
+
+Delegates provide an email at signup. When SES SMTP is configured the portal
+emails on payment verification, rejection, abstract acceptance, and abstract
+allocation. **You must set this up in your AWS account:** verify a sender
+(or domain), request production access (out of the SES sandbox), create SMTP
+credentials, then set `SES_SMTP_HOST`, `SES_SMTP_PORT` (587), `SES_SMTP_USER`,
+`SES_SMTP_PASS`, and `SES_FROM` (a verified From address). Dormant until all are
+set; sends are best-effort and never block a request.
+
 ## Authentication & sessions
 
 Login is phone + OTP. On success the server issues a server-side session

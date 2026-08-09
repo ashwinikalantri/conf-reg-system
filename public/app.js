@@ -28,9 +28,15 @@ function isAdminUser() {
 }
 
 // Show the admin backend link only to a logged-in admin on the dashboard.
+// When it is hidden (login/signup/landing) the NQOCN pill is centred.
 function updateAdminNav(show) {
   const btn = document.getElementById('admin-nav-btn');
   if (btn) btn.classList.toggle('hidden', !show);
+  const header = document.getElementById('top-header');
+  if (header) {
+    header.classList.toggle('justify-between', show);
+    header.classList.toggle('justify-center', !show);
+  }
 }
 
 // --- NAVIGATION & UI TOGGLES ---
@@ -134,6 +140,7 @@ async function handleRegistration(e) {
     gender: document.getElementById('reg-gender').value,
     designation: document.getElementById('reg-designation').value,
     institute: document.getElementById('reg-institute').value,
+    email: document.getElementById('reg-email').value,
     pincode: document.getElementById('reg-pincode').value,
     state: document.getElementById('reg-state').value,
     district: document.getElementById('reg-district').value
@@ -261,10 +268,12 @@ async function loadDashboard() {
   navigateTo('dashboard-page');
 }
 
-// Reflect the delegate's abstract status on the dashboard.
+// Reflect the delegate's abstract status on the dashboard. The abstract is
+// locked once submitted (no updates).
 async function loadAbstractStatus() {
   const tag = document.getElementById('abstract-status-tag');
   const btn = document.getElementById('abstract-action-btn');
+  const desc = document.getElementById('abstract-desc');
   if (!tag) return;
   const STYLES = {
     UNDER_REVIEW: ['Under Review', 'bg-amber-100 text-amber-700'],
@@ -274,14 +283,31 @@ async function loadAbstractStatus() {
   try {
     const abs = (await (await fetch('/api/abstracts/me')).json()).abstract;
     if (abs) {
-      const [label, cls] = STYLES[abs.status] || ['Submitted', 'bg-slate-100 text-slate-600'];
+      let [label, cls] = STYLES[abs.status] || ['Submitted', 'bg-slate-100 text-slate-600'];
+      if (abs.status === 'ACCEPTED' && abs.allocation) {
+        label = `Accepted · ${abs.allocation === 'ORAL' ? 'Oral' : 'Poster'}`;
+      }
       tag.className = `text-xs font-bold px-2 py-0.5 rounded-full ${cls}`;
       tag.innerText = label;
-      if (btn) btn.innerText = 'Update Abstract';
+
+      // Locked after submission.
+      if (btn) { btn.innerText = 'Abstract Submitted'; btn.disabled = true; btn.classList.add('opacity-60', 'cursor-not-allowed'); }
+      if (desc) {
+        if (abs.status === 'ACCEPTED' && abs.allocation) {
+          const kind = abs.allocation === 'ORAL' ? 'oral' : 'poster';
+          desc.innerHTML = `Your abstract has been <b>accepted for ${kind} presentation</b>. Details will be communicated.`;
+        } else if (abs.status === 'ACCEPTED') {
+          desc.innerHTML = 'Your abstract has been <b>accepted</b>. The presentation format will be communicated.';
+        } else if (abs.status === 'REJECTED') {
+          desc.innerText = 'Your abstract was not accepted.';
+        } else {
+          desc.innerText = 'Your abstract has been submitted and is under review. It cannot be changed.';
+        }
+      }
     } else {
       tag.className = 'text-xs bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-full';
       tag.innerText = 'Not Submitted';
-      if (btn) btn.innerText = 'Submit Abstract';
+      if (btn) { btn.innerText = 'Submit Abstract'; btn.disabled = false; btn.classList.remove('opacity-60', 'cursor-not-allowed'); }
     }
   } catch (e) { /* leave as-is */ }
 }
@@ -299,8 +325,12 @@ function calculateFee() {
   document.getElementById('calculated-fee-display').innerText = `₹${currentFee}`;
   document.getElementById('entered-amount').value = currentFee;
 
-  const upiUri = `upi://pay?pa=${OFFICIAL_UPI_ID}&pn=NQOCN2026%20Conference&am=${currentFee}.00&cu=INR`;
+  // Reference is the delegate's registration number (assigned at signup).
+  const ref = (currentDelegate && (currentDelegate.registration_number || currentDelegate.phone_number || currentDelegate.phone)) || '';
+  const upiUri = `upi://pay?pa=${OFFICIAL_UPI_ID}&pn=${encodeURIComponent('NQOCN 2026')}&am=${currentFee}.00&cu=INR&tn=${encodeURIComponent(ref)}`;
   document.getElementById('upi-qr-image').src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiUri)}`;
+  const payLink = document.getElementById('upi-pay-link');
+  if (payLink) payLink.href = upiUri;
   document.getElementById('qr-container').classList.remove('hidden');
 }
 
@@ -627,7 +657,9 @@ function setupAdminDelegation() {
   if (abstractBox) {
     abstractBox.addEventListener('click', (e) => {
       const btn = e.target.closest('.abstract-status-btn');
-      if (btn) updateAbstractStatus(btn.dataset.id, btn.dataset.status);
+      if (btn) return updateAbstractStatus(btn.dataset.id, btn.dataset.status);
+      const alloc = e.target.closest('.abstract-alloc-btn');
+      if (alloc) return updateAbstractAllocation(alloc.dataset.id, alloc.dataset.alloc);
     });
   }
 
@@ -1094,11 +1126,18 @@ async function renderBackendAbstracts() {
             : `<span class="text-xs text-slate-400">No file</span>`
         }
       </div>
-      <div class="flex gap-2 mt-4">
+      <div class="flex flex-wrap gap-2 mt-4">
         <button class="abstract-status-btn px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-status="ACCEPTED">Accept</button>
         <button class="abstract-status-btn px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-status="REJECTED">Reject</button>
         <button class="abstract-status-btn px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-status="UNDER_REVIEW">Reset</button>
       </div>
+      ${status === 'ACCEPTED' ? `
+      <div class="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-slate-100">
+        <span class="text-[11px] font-semibold text-slate-500">Allocate:</span>
+        <button class="abstract-alloc-btn px-3 py-1.5 ${a.allocation === 'ORAL' ? 'bg-indigo-600' : 'bg-white border border-indigo-300 text-indigo-700'} ${a.allocation === 'ORAL' ? 'text-white' : ''} font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-alloc="ORAL">Oral</button>
+        <button class="abstract-alloc-btn px-3 py-1.5 ${a.allocation === 'POSTER' ? 'bg-indigo-600' : 'bg-white border border-indigo-300 text-indigo-700'} ${a.allocation === 'POSTER' ? 'text-white' : ''} font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-alloc="POSTER">Poster</button>
+        ${a.allocation ? `<span class="text-[11px] text-emerald-600 font-semibold">Allocated: ${esc(a.allocation === 'ORAL' ? 'Oral' : 'Poster')}</span>` : ''}
+      </div>` : ''}
     </div>
   `;
   }).join('');
@@ -1110,6 +1149,14 @@ async function updateAbstractStatus(id, status) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status })
   });
+  renderBackendAbstracts();
+}
+
+async function updateAbstractAllocation(id, allocation) {
+  const data = await (await fetch(`/api/abstracts/${encodeURIComponent(id)}/allocation`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allocation })
+  })).json();
+  if (!data.success) alert(data.error || 'Allocation failed.');
   renderBackendAbstracts();
 }
 

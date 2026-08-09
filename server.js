@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 const { createWorker } = require('tesseract.js');
+const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -42,6 +43,91 @@ const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
 if (COOKIE_SECURE) app.set('trust proxy', 1);
 
 const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER'];
+
+const CONFERENCE_NAME = 'International Conference on Healthcare Quality & Patient Safety 2026';
+
+// --- SMS (Vynttra) ------------------------------------------------------
+// Only the API key is a secret; the DLT sender/entity/template/header IDs are
+// registration identifiers and default to the NQOCN values, overridable by env.
+const SMS = {
+  apiKey: process.env.SMS_API_KEY || '',
+  url: process.env.SMS_URL || 'https://api.vynttra.in/index.php/sms/json',
+  sender: process.env.SMS_SENDER || 'KHSBDC',
+  entityId: process.env.SMS_ENTITY_ID || '1201160068107545972',
+  templateId: process.env.SMS_TEMPLATE_ID || '1077505970001758294',
+  headerId: process.env.SMS_HEADER_ID || '1005654540639709445',
+  type: process.env.SMS_TYPE || 'UNI',
+};
+const SMS_ENABLED = !!SMS.apiKey;
+
+// Send the registration OTP over SMS using the registered DLT template.
+// Fire-and-forget: failures are logged, never block OTP issuance.
+async function sendOtpSms(phone, otp) {
+  if (!SMS_ENABLED) return;
+  const text = `Dear Delegate, Thank you for registering for the NQOCN Conference. Your OTP for registration verification is ${otp} NQOCN Conference MGIMS`;
+  try {
+    const res = await fetch(SMS.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: SMS.apiKey },
+      body: JSON.stringify({
+        sender: SMS.sender,
+        message: [{ number: `91${phone}`, text }],
+        messagetype: SMS.type,
+        dltentityid: SMS.entityId,
+        dlttempid: SMS.templateId,
+        dltheaderid: SMS.headerId,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data.code !== 200) console.error(`SMS to ${phone} not accepted:`, JSON.stringify(data));
+  } catch (err) {
+    console.error(`SMS to ${phone} failed:`, err.message);
+  }
+}
+
+// --- EMAIL (AWS SES via SMTP) -------------------------------------------
+// Configure with SES SMTP credentials (create them in the SES console) and a
+// verified From address. Dormant until all four are set.
+const EMAIL = {
+  host: process.env.SES_SMTP_HOST || '', // e.g. email-smtp.ap-south-1.amazonaws.com
+  port: Number(process.env.SES_SMTP_PORT || 587),
+  user: process.env.SES_SMTP_USER || '',
+  pass: process.env.SES_SMTP_PASS || '',
+  from: process.env.SES_FROM || 'NQOCN 2026 <no-reply@example.com>',
+};
+const EMAIL_ENABLED = !!(EMAIL.host && EMAIL.user && EMAIL.pass);
+const mailTransport = EMAIL_ENABLED
+  ? nodemailer.createTransport({ host: EMAIL.host, port: EMAIL.port, secure: EMAIL.port === 465, auth: { user: EMAIL.user, pass: EMAIL.pass } })
+  : null;
+
+// Send an email if configured; never throws (notifications are best-effort).
+async function sendEmail(to, subject, html) {
+  if (!EMAIL_ENABLED || !to) return;
+  try {
+    await mailTransport.sendMail({ from: EMAIL.from, to, subject, html });
+  } catch (err) {
+    console.error(`Email to ${to} failed:`, err.message);
+  }
+}
+
+// Look up a delegate's email and fire a notification (best-effort, async).
+async function notifyDelegate(phone, subject, html) {
+  const u = await dbGet('SELECT email FROM users WHERE phone_number = ?', [phone]).catch(() => null);
+  if (u && u.email) sendEmail(u.email, subject, html);
+}
+
+const emailWrap = (title, bodyHtml) =>
+  `<div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;color:#0f172a">
+     <div style="background:#312e81;color:#fff;padding:1.25rem 1.5rem;border-radius:12px 12px 0 0">
+       <div style="font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:#c7d2fe">NQOCN &amp; MGIMS Sevagram</div>
+       <h1 style="font-size:1.05rem;margin:.35rem 0 0">${escapeHtml(CONFERENCE_NAME)}</h1>
+     </div>
+     <div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:1.5rem">
+       <h2 style="font-size:1rem;margin:0 0 .75rem">${escapeHtml(title)}</h2>
+       ${bodyHtml}
+       <p style="color:#94a3b8;font-size:.72rem;margin-top:1.5rem">This is an automated message from the conference registration portal.</p>
+     </div>
+   </div>`;
 
 // Fees are stored in the admin-editable fee_categories master and resolved at
 // today's pricing phase (see resolveFee); nothing is taken from the request body.
@@ -292,6 +378,21 @@ async function resolveFee(categoryKey) {
   return { amount: fee, label: cat.label, phase };
 }
 
+// Assign (once) and return a delegate's registration number, drawn from a
+// monotonic sequence at signup so it exists before any payment.
+async function assignUserRegNumber(phone) {
+  const u = await dbGet('SELECT registration_number FROM users WHERE phone_number = ?', [phone]);
+  if (u && u.registration_number) return u.registration_number;
+  const seq = await dbRun('INSERT INTO reg_seq DEFAULT VALUES');
+  const number = 'NQOCN2026' + String(seq.lastID).padStart(4, '0');
+  await dbRun(
+    "UPDATE users SET registration_number = ? WHERE phone_number = ? AND (registration_number IS NULL OR registration_number = '')",
+    [number, phone]
+  );
+  const after = await dbGet('SELECT registration_number FROM users WHERE phone_number = ?', [phone]);
+  return after ? after.registration_number : number;
+}
+
 function parseCookies(req) {
   const out = {};
   const header = req.headers.cookie;
@@ -330,13 +431,19 @@ db.serialize(() => {
     )
   `);
 
-  // Additive migration: age and gender captured at first registration.
-  db.all('PRAGMA table_info(users)', (err, cols) => {
-    if (err) return console.error('Schema check failed:', err.message);
-    const names = cols.map((c) => c.name);
-    if (!names.includes('age')) db.run('ALTER TABLE users ADD COLUMN age INTEGER');
-    if (!names.includes('gender')) db.run('ALTER TABLE users ADD COLUMN gender TEXT');
-  });
+  // Additive user columns: age, gender, email, and the registration number
+  // assigned at signup. Queued unconditionally (the no-op callback swallows the
+  // "duplicate column" error on later runs) so they exist before the backfill.
+  ['ALTER TABLE users ADD COLUMN age INTEGER',
+   'ALTER TABLE users ADD COLUMN gender TEXT',
+   'ALTER TABLE users ADD COLUMN email TEXT',
+   'ALTER TABLE users ADD COLUMN registration_number TEXT',
+  ].forEach((sql) => db.run(sql, () => {}));
+
+  // Monotonic source for registration numbers. Reserved to start at 1001 so
+  // new numbers never collide with older registration-id-derived ones.
+  db.run('CREATE TABLE IF NOT EXISTS reg_seq (id INTEGER PRIMARY KEY AUTOINCREMENT)');
+  db.run('INSERT OR IGNORE INTO reg_seq (id) VALUES (1000)');
 
   db.run(`
     CREATE TABLE IF NOT EXISTS registrations (
@@ -375,6 +482,7 @@ db.serialize(() => {
     const names = cols.map((c) => c.name);
     if (!names.includes('status')) db.run("ALTER TABLE abstracts ADD COLUMN status TEXT DEFAULT 'UNDER_REVIEW'");
     if (!names.includes('abstract_file')) db.run('ALTER TABLE abstracts ADD COLUMN abstract_file TEXT');
+    if (!names.includes('allocation')) db.run('ALTER TABLE abstracts ADD COLUMN allocation TEXT'); // ORAL | POSTER
 
     // Enforce one abstract per author: drop duplicates (keep the latest) BEFORE
     // creating the unique index. Sequenced so the index can't fail on dupes.
@@ -561,6 +669,32 @@ db.serialize(() => {
   });
 });
 
+// One-time backfill: give every existing user a registration number (reusing
+// their registration's number if it has one), then sync registrations to it.
+db.serialize(() => {
+  db.all(
+    `SELECT phone_number,
+       (SELECT registration_number FROM registrations r WHERE r.phone_number = users.phone_number) AS reg_num
+     FROM users WHERE registration_number IS NULL OR registration_number = ''`,
+    async (err, rows) => {
+      if (err) return console.error('Reg-number backfill failed:', err.message);
+      for (const row of rows) {
+        let number = row.reg_num;
+        if (!number) {
+          const seq = await dbRun('INSERT INTO reg_seq DEFAULT VALUES');
+          number = 'NQOCN2026' + String(seq.lastID).padStart(4, '0');
+        }
+        await dbRun('UPDATE users SET registration_number = ? WHERE phone_number = ?', [number, row.phone_number]);
+      }
+      await dbRun(
+        `UPDATE registrations SET registration_number =
+           (SELECT registration_number FROM users u WHERE u.phone_number = registrations.phone_number)
+         WHERE EXISTS (SELECT 1 FROM users u WHERE u.phone_number = registrations.phone_number AND u.registration_number IS NOT NULL)`
+      );
+    }
+  );
+});
+
 // Periodically purge expired OTPs and sessions. unref() so it never keeps
 // the process (or a test run) alive on its own.
 setInterval(() => {
@@ -710,7 +844,9 @@ app.post('/api/otp/request', async (req, res, next) => {
     );
 
     console.log(`[OTP] ${phone} -> ${otp} (valid ${OTP_TTL_MS / 60000} min)`);
-    const payload = { success: true };
+    if (SMS_ENABLED) sendOtpSms(phone, otp); // fire-and-forget; logs on failure
+
+    const payload = { success: true, smsSent: SMS_ENABLED };
     if (OTP_ECHO) payload.devOtp = otp;
     res.json(payload);
   } catch (err) {
@@ -721,7 +857,7 @@ app.post('/api/otp/request', async (req, res, next) => {
 // Register (or update own profile) after OTP verification, then log in.
 app.post('/api/auth/register', async (req, res, next) => {
   try {
-    const { phone, otp, name, designation, institute, pincode, state, district, age, gender } = req.body;
+    const { phone, otp, name, designation, institute, pincode, state, district, age, gender, email } = req.body;
     if (!phone || !/^\d{10}$/.test(phone)) {
       return res.status(400).json({ success: false, error: 'Invalid phone number.' });
     }
@@ -733,6 +869,10 @@ app.post('/api/auth/register', async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Please enter a valid age.' });
     }
     const genderVal = ['Male', 'Female', 'Other'].includes(gender) ? gender : null;
+    const emailVal = email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim()) ? String(email).trim() : null;
+    if (email && !emailVal) {
+      return res.status(400).json({ success: false, error: 'Please enter a valid email address.' });
+    }
 
     const check = await consumeOtp(phone, otp);
     if (!check.ok) return res.status(400).json({ success: false, error: check.error });
@@ -740,8 +880,8 @@ app.post('/api/auth/register', async (req, res, next) => {
     // OTP proves control of this number, so upserting the caller's own
     // record is safe. Role is never set from the request body.
     await dbRun(
-      `INSERT INTO users (phone_number, full_name, designation, institution, pincode, state, district, age, gender, role)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE')
+      `INSERT INTO users (phone_number, full_name, designation, institution, pincode, state, district, age, gender, email, role)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE')
        ON CONFLICT(phone_number) DO UPDATE SET
          full_name = excluded.full_name,
          designation = excluded.designation,
@@ -750,10 +890,12 @@ app.post('/api/auth/register', async (req, res, next) => {
          state = excluded.state,
          district = excluded.district,
          age = excluded.age,
-         gender = excluded.gender`,
-      [phone, name, designation, institute, pincode, state, district, ageNum, genderVal]
+         gender = excluded.gender,
+         email = excluded.email`,
+      [phone, name, designation, institute, pincode, state, district, ageNum, genderVal, emailVal]
     );
 
+    await assignUserRegNumber(phone); // ensure a registration number exists
     const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
     await startSession(phone, user.role, res);
     res.json({ success: true, user });
@@ -922,15 +1064,9 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
       await deleteScreenshotFile(prev.id_card);
     }
 
-    // Assign a stable, unique registration number on first submission. It is
-    // derived from the row id (already unique) and never reassigned; the
-    // client only reveals it once the payment is verified.
-    await dbRun(
-      `UPDATE registrations
-          SET registration_number = 'NQOCN2026' || printf('%04d', id)
-        WHERE phone_number = ? AND (registration_number IS NULL OR registration_number = '')`,
-      [phone]
-    );
+    // Stamp the registration with the delegate's signup-assigned number.
+    const regNo = await assignUserRegNumber(phone);
+    await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
 
     res.json({ success: true, id: result.lastID, expectedAmount, checks, flagged: !!flagged });
   } catch (err) {
@@ -1057,7 +1193,7 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
   <div class="receipt">
     <div class="head">
       <div class="tag">NQOCN &amp; MGIMS Sevagram · Payment Receipt</div>
-      <h1>5th International Conference on Healthcare Quality &amp; Patient Safety</h1>
+      <h1>${escapeHtml(CONFERENCE_NAME)}</h1>
       <p>21–22 November 2026 · MGIMS, Sevagram, Wardha</p>
     </div>
     <div class="body">
@@ -1162,25 +1298,17 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
       return res.status(400).json({ success: false, error: decoded.error });
     }
 
-    const filename = await writeUploadBuffer(decoded.buffer, decoded.ext);
+    // One abstract per author, and it is locked once submitted.
+    const prev = await dbGet('SELECT id FROM abstracts WHERE phone_number = ?', [req.session.phone]);
+    if (prev) {
+      return res.status(409).json({ success: false, error: 'You have already submitted an abstract; it cannot be changed.' });
+    }
 
-    // One abstract per author: replace any existing one (and its old file),
-    // resetting review status.
-    const prev = await dbGet('SELECT abstract_file FROM abstracts WHERE phone_number = ?', [req.session.phone]);
+    const filename = await writeUploadBuffer(decoded.buffer, decoded.ext);
     await dbRun(
-      `INSERT INTO abstracts (phone_number, author_name, format, title, abstract_file, status)
-        VALUES (?, ?, ?, ?, ?, 'UNDER_REVIEW')
-        ON CONFLICT(phone_number) DO UPDATE SET
-          author_name = excluded.author_name,
-          format = excluded.format,
-          title = excluded.title,
-          abstract_file = excluded.abstract_file,
-          status = 'UNDER_REVIEW'`,
+      "INSERT INTO abstracts (phone_number, author_name, format, title, abstract_file, status) VALUES (?, ?, ?, ?, ?, 'UNDER_REVIEW')",
       [req.session.phone, req.session.name, format, String(title).trim(), filename]
     );
-    if (prev && prev.abstract_file && prev.abstract_file !== filename) {
-      await deleteScreenshotFile(prev.abstract_file);
-    }
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -1191,7 +1319,7 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
 app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
   try {
     const row = await dbGet(
-      'SELECT id, format, title, status FROM abstracts WHERE phone_number = ?',
+      'SELECT id, format, title, status, allocation FROM abstracts WHERE phone_number = ?',
       [req.session.phone]
     );
     res.json({ abstract: row || null });
@@ -1276,17 +1404,6 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
       [bankStatus, reason, note, req.params.id]
     );
 
-    // Safety net: ensure a verified registration always has a number, even if
-    // it was created before numbers were assigned at submission.
-    if (bankStatus === 'BANK_VERIFIED') {
-      await dbRun(
-        `UPDATE registrations
-            SET registration_number = 'NQOCN2026' || printf('%04d', id)
-          WHERE id = ? AND (registration_number IS NULL OR registration_number = '')`,
-        [req.params.id]
-      );
-    }
-
     await recordAudit({
       req,
       entityType: 'registration',
@@ -1295,6 +1412,26 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
       oldValue: existing.bank_status,
       newValue: bankStatus === 'REJECTED' ? `REJECTED (${reason})` : bankStatus,
     });
+
+    // Email the delegate about the outcome (best-effort).
+    if (bankStatus !== existing.bank_status) {
+      const reg = await dbGet('SELECT phone_number, delegate_name, registration_number FROM registrations WHERE id = ?', [req.params.id]);
+      if (reg && bankStatus === 'BANK_VERIFIED') {
+        notifyDelegate(reg.phone_number, 'Registration Confirmed',
+          emailWrap('Your registration is confirmed',
+            `<p>Dear ${escapeHtml(reg.delegate_name)},</p>
+             <p>Your payment has been verified and your registration is <b>confirmed</b>.</p>
+             <p>Registration number: <b>${escapeHtml(reg.registration_number)}</b></p>
+             <p>You can download your receipt from the delegate portal.</p>`));
+      } else if (reg && bankStatus === 'REJECTED') {
+        const reasonText = { PAYMENT: 'a payment discrepancy', ID: 'an ID verification issue', OTHER: 'the reason noted below' }[reason] || 'a discrepancy';
+        notifyDelegate(reg.phone_number, 'Action needed on your registration',
+          emailWrap('Your registration needs attention',
+            `<p>Dear ${escapeHtml(reg.delegate_name)},</p>
+             <p>Your registration could not be verified due to ${escapeHtml(reasonText)}${note ? `: <i>${escapeHtml(note)}</i>` : ''}.</p>
+             <p>Please log in to the delegate portal to review and resubmit.</p>`));
+      }
+    }
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -1670,7 +1807,12 @@ app.put('/api/abstracts/:id/status', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEW
       return res.status(404).json({ success: false, error: 'Abstract not found.' });
     }
 
-    await dbRun('UPDATE abstracts SET status = ? WHERE id = ?', [status, req.params.id]);
+    // Resetting away from ACCEPTED clears any allocation.
+    if (status !== 'ACCEPTED') {
+      await dbRun('UPDATE abstracts SET status = ?, allocation = NULL WHERE id = ?', [status, req.params.id]);
+    } else {
+      await dbRun('UPDATE abstracts SET status = ? WHERE id = ?', [status, req.params.id]);
+    }
     await recordAudit({
       req,
       entityType: 'abstract',
@@ -1679,6 +1821,44 @@ app.put('/api/abstracts/:id/status', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEW
       oldValue: existing.status,
       newValue: status,
     });
+
+    if (status === 'ACCEPTED' && existing.status !== 'ACCEPTED') {
+      const a = await dbGet('SELECT phone_number, author_name, title FROM abstracts WHERE id = ?', [req.params.id]);
+      if (a) notifyDelegate(a.phone_number, 'Your abstract has been accepted',
+        emailWrap('Abstract accepted',
+          `<p>Dear ${escapeHtml(a.author_name)},</p>
+           <p>We are pleased to inform you that your abstract <b>"${escapeHtml(a.title)}"</b> has been <b>accepted</b>.</p>
+           <p>The presentation format (oral or poster) will be communicated separately.</p>`));
+    }
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Allocate an accepted abstract to oral or poster presentation.
+app.put('/api/abstracts/:id/allocation', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEWER'), async (req, res, next) => {
+  try {
+    const { allocation } = req.body;
+    if (!['ORAL', 'POSTER'].includes(allocation)) {
+      return res.status(400).json({ success: false, error: 'Allocation must be ORAL or POSTER.' });
+    }
+    const a = await dbGet('SELECT status, phone_number, author_name, title FROM abstracts WHERE id = ?', [req.params.id]);
+    if (!a) return res.status(404).json({ success: false, error: 'Abstract not found.' });
+    if (a.status !== 'ACCEPTED') {
+      return res.status(400).json({ success: false, error: 'Only accepted abstracts can be allocated.' });
+    }
+    await dbRun('UPDATE abstracts SET allocation = ? WHERE id = ?', [allocation, req.params.id]);
+    await recordAudit({
+      req, entityType: 'abstract', entityId: req.params.id,
+      action: 'ABSTRACT_ALLOCATION', oldValue: null, newValue: allocation,
+    });
+    const kind = allocation === 'ORAL' ? 'oral' : 'poster';
+    notifyDelegate(a.phone_number, `Your abstract: ${kind} presentation`,
+      emailWrap('Presentation format allocated',
+        `<p>Dear ${escapeHtml(a.author_name)},</p>
+         <p>Your accepted abstract <b>"${escapeHtml(a.title)}"</b> has been allocated for <b>${kind} presentation</b>.</p>
+         <p>Further details will be communicated.</p>`));
     res.json({ success: true });
   } catch (err) {
     next(err);
