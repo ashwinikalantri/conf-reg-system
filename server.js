@@ -1539,6 +1539,105 @@ app.delete('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (
   }
 });
 
+// --- REPORTS (Excel/CSV + printable PDF) --------------------------------
+
+async function buildReport(type) {
+  if (type === 'verified') {
+    const rows = await dbAll(
+      `SELECT registration_number, delegate_name, phone_number, category_label, workshop, qi_exposure, paid_amount
+         FROM registrations WHERE bank_status = 'BANK_VERIFIED'
+         ORDER BY registration_number`);
+    return {
+      title: 'Registered Users with Verified Payment',
+      columns: ['Reg No', 'Name', 'Mobile', 'Category', 'Workshop', 'QI Practice', 'Amount'],
+      rows: rows.map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label, r.workshop, r.qi_exposure, r.paid_amount]),
+    };
+  }
+  if (type === 'workshops') {
+    const rows = await dbAll(
+      `SELECT workshop, delegate_name, phone_number, category_label, bank_status
+         FROM registrations
+        WHERE workshop IS NOT NULL AND workshop != '' AND bank_status != 'REJECTED'
+        ORDER BY workshop, delegate_name`);
+    return {
+      title: 'Registered Users per Workshop',
+      columns: ['Workshop', 'Delegate', 'Mobile', 'Category', 'Status'],
+      rows: rows.map((r) => [r.workshop, r.delegate_name, r.phone_number, r.category_label, r.bank_status]),
+    };
+  }
+  if (type === 'abstracts') {
+    const rows = await dbAll(
+      `SELECT title, author_name, format, phone_number FROM abstracts WHERE status = 'ACCEPTED' ORDER BY title`);
+    return {
+      title: 'Accepted Abstracts',
+      columns: ['Title', 'Author', 'Format', 'Mobile'],
+      rows: rows.map((r) => [r.title, r.author_name, r.format, r.phone_number]),
+    };
+  }
+  return null;
+}
+
+const REPORT_ROLES = {
+  verified: ['SUPER_ADMIN', 'FINANCE_ADMIN'],
+  workshops: ['SUPER_ADMIN', 'FINANCE_ADMIN'],
+  abstracts: ['SUPER_ADMIN', 'ACADEMIC_REVIEWER'],
+};
+
+function toCsv({ columns, rows }) {
+  const cell = (v) => {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  return [columns, ...rows].map((r) => r.map(cell).join(',')).join('\r\n');
+}
+
+function reportHtml(rep) {
+  const th = rep.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join('');
+  const trs = rep.rows.map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('') ||
+    `<tr><td colspan="${rep.columns.length}" style="text-align:center;color:#94a3b8">No records</td></tr>`;
+  const now = new Date().toLocaleString('en-IN', { dateStyle: 'long', timeStyle: 'short' });
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(rep.title)}</title>
+<style>
+  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#0f172a;margin:2rem;}
+  h1{font-size:1.2rem;margin:0 0 .25rem;}
+  .sub{color:#64748b;font-size:.8rem;margin-bottom:1rem;}
+  table{width:100%;border-collapse:collapse;font-size:.8rem;}
+  th,td{border:1px solid #e2e8f0;padding:.5rem .6rem;text-align:left;vertical-align:top;}
+  th{background:#f1f5f9;text-transform:uppercase;font-size:.68rem;letter-spacing:.04em;color:#475569;}
+  tr:nth-child(even) td{background:#f8fafc;}
+  .actions{margin:1.25rem 0;}
+  button{background:#4f46e5;color:#fff;border:0;border-radius:8px;padding:.55rem 1.25rem;font-weight:700;cursor:pointer;}
+  @media print{body{margin:0;}.actions{display:none;}}
+</style></head><body>
+  <h1>NQOCN 2026 · ${escapeHtml(rep.title)}</h1>
+  <p class="sub">Generated ${escapeHtml(now)} · ${rep.rows.length} record(s)</p>
+  <div class="actions"><button onclick="window.print()">Print / Save as PDF</button></div>
+  <table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>
+</body></html>`;
+}
+
+app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
+  try {
+    const type = req.params.type;
+    const roles = REPORT_ROLES[type];
+    if (!roles) return res.status(404).json({ success: false, error: 'Unknown report.' });
+    if (!roles.includes(req.session.role)) {
+      return res.status(403).json({ success: false, error: 'You do not have permission for this report.' });
+    }
+    const rep = await buildReport(type);
+    res.set('Cache-Control', 'private, no-store');
+    if (req.query.format === 'csv') {
+      res.set('Content-Type', 'text/csv; charset=utf-8');
+      res.set('Content-Disposition', `attachment; filename="nqocn-${type}-report.csv"`);
+      return res.send(toCsv(rep));
+    }
+    res.type('html').send(reportHtml(rep));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Abstract review desk (super admin or academic reviewer). Each abstract is
 // annotated with who last changed its status, and when.
 app.get('/api/abstracts', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEWER'), async (req, res, next) => {

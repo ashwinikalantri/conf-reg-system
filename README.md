@@ -131,6 +131,14 @@ payment is verified; before that the dashboard shows the register/pay action.
 registration, verified only). Verification also backfills a number for any
 older row that lacked one.
 
+## Reports
+
+The admin **Reports** tab offers three exportable reports: verified
+registrations, registrations per workshop (finance/super), and accepted
+abstracts (reviewer/super). Each is available via `GET /api/admin/reports/:type`
+as a **printable HTML page** (Print / Save as PDF) or, with `?format=csv`, as a
+**CSV download** that opens in Excel. Role is enforced per report.
+
 ## Fees (categories × date tiers)
 
 Category fees live in an admin-editable `fee_categories` master (per-category

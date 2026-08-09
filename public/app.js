@@ -695,11 +695,21 @@ function applyRoleVisibility(role) {
   const tabUsers = document.getElementById('nav-tab-users');
   const tabPrograms = document.getElementById('nav-tab-programs');
   const tabFees = document.getElementById('nav-tab-fees');
+  const tabReports = document.getElementById('nav-tab-reports');
   if (tabPayments) tabPayments.classList.toggle('hidden', !isFinance);
   if (tabAbstracts) tabAbstracts.classList.toggle('hidden', !isReviewer);
   if (tabUsers) tabUsers.classList.toggle('hidden', !isSuper);
   if (tabPrograms) tabPrograms.classList.toggle('hidden', !isSuper);
   if (tabFees) tabFees.classList.toggle('hidden', !isSuper);
+  if (tabReports) tabReports.classList.toggle('hidden', !(isFinance || isReviewer));
+
+  // Show only the report cards this role can access.
+  const rv = document.getElementById('report-verified');
+  const rw = document.getElementById('report-workshops');
+  const ra = document.getElementById('report-abstracts');
+  if (rv) rv.classList.toggle('hidden', !isFinance);
+  if (rw) rw.classList.toggle('hidden', !isFinance);
+  if (ra) ra.classList.toggle('hidden', !isReviewer);
 
   return { isSuper, isFinance, isReviewer };
 }
@@ -1023,6 +1033,13 @@ async function deleteFeeCategory(id) {
   renderBackendFees();
 }
 
+// --- REPORTS (admin) ---
+// CSV downloads; HTML opens a printable report (Print / Save as PDF).
+function downloadReport(type, format) {
+  const url = `/api/admin/reports/${encodeURIComponent(type)}` + (format === 'csv' ? '?format=csv' : '');
+  window.open(url, '_blank');
+}
+
 const ABSTRACT_STATUS_STYLES = {
   UNDER_REVIEW: 'bg-amber-100 text-amber-800',
   ACCEPTED: 'bg-emerald-100 text-emerald-800',
@@ -1119,7 +1136,7 @@ async function handleCreateUserSubmit(e) {
 }
 
 function switchBackendTab(tab) {
-  ['payments', 'abstracts', 'programs', 'fees', 'users'].forEach(t => {
+  ['payments', 'abstracts', 'programs', 'fees', 'reports', 'users'].forEach(t => {
     const section = document.getElementById(`section-${t}`);
     if (section) section.classList.toggle('hidden', t !== tab);
 
