@@ -372,8 +372,16 @@ db.serialize(() => {
     // number assignment. Idempotent -- matches nothing once filled.
     db.run(
       `UPDATE registrations
-          SET registration_number = 'NQOCN2026-' || printf('%04d', id)
+          SET registration_number = 'NQOCN2026' || printf('%04d', id)
         WHERE bank_status = 'BANK_VERIFIED' AND (registration_number IS NULL OR registration_number = '')`
+    );
+
+    // One-time reformat: drop the hyphen from older NQOCN2026-000N numbers.
+    // Idempotent -- matches nothing once no hyphenated numbers remain.
+    db.run(
+      `UPDATE registrations
+          SET registration_number = REPLACE(registration_number, 'NQOCN2026-', 'NQOCN2026')
+        WHERE registration_number LIKE 'NQOCN2026-%'`
     );
   });
 
@@ -753,7 +761,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     // client only reveals it once the payment is verified.
     await dbRun(
       `UPDATE registrations
-          SET registration_number = 'NQOCN2026-' || printf('%04d', id)
+          SET registration_number = 'NQOCN2026' || printf('%04d', id)
         WHERE phone_number = ? AND (registration_number IS NULL OR registration_number = '')`,
       [phone]
     );
@@ -982,7 +990,7 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
     if (bankStatus === 'BANK_VERIFIED') {
       await dbRun(
         `UPDATE registrations
-            SET registration_number = 'NQOCN2026-' || printf('%04d', id)
+            SET registration_number = 'NQOCN2026' || printf('%04d', id)
           WHERE id = ? AND (registration_number IS NULL OR registration_number = '')`,
         [req.params.id]
       );
