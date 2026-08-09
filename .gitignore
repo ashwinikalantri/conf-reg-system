@@ -9,6 +9,8 @@ node_modules/
 *.db-shm
 *.sqlite
 *.sqlite3
+*.db.bak-*
+*.bak
 
 # Uploaded payment screenshots (once moved off base64-in-DB)
 uploads/
