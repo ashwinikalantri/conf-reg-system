@@ -1,5 +1,13 @@
 require('dotenv').config(); // load .env before any process.env is read
 
+// Node 16 exposes node:crypto as globalThis.crypto, which lacks the Web Crypto
+// getRandomValues that the AWS SDK v3 (SES) requires. Install the real Web
+// Crypto implementation so email sending works (Node 20+ does this natively).
+const { webcrypto } = require('crypto');
+if (typeof (globalThis.crypto && globalThis.crypto.getRandomValues) !== 'function') {
+  Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true, writable: true });
+}
+
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
@@ -7,6 +15,8 @@ const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 const { createWorker } = require('tesseract.js');
 const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
+// Node 16 has no global fetch; node-fetch (v2, CommonJS) provides it for SMS.
+const fetch = require('node-fetch');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -81,7 +91,12 @@ async function sendOtpSms(phone, otp) {
       }),
     });
     const data = await res.json().catch(() => ({}));
-    if (data.code !== 200) console.error(`SMS to ${phone} not accepted:`, JSON.stringify(data));
+    if (data.code !== 200) {
+      console.error(`SMS to ${phone} not accepted (HTTP ${res.status}):`, JSON.stringify(data));
+    } else {
+      const id = data.data && data.data[0] && data.data[0].uniqueid;
+      console.log(`SMS to ${phone} accepted by gateway${id ? ` (uniqueid ${id})` : ''}`);
+    }
   } catch (err) {
     console.error(`SMS to ${phone} failed:`, err.message);
   }
@@ -977,12 +992,19 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     const prev = await dbGet('SELECT id, screenshot, id_card FROM registrations WHERE phone_number = ?', [phone]);
     const ownRegId = prev ? prev.id : null;
 
-    // Resolve the chosen workshop / QI practice and enforce capacity. Done
-    // before OCR so a full option fails fast.
-    const ws = await resolveOption(workshopOptionId, 'WORKSHOP', ownRegId);
-    if (ws.error) return res.status(400).json({ success: false, error: ws.error });
-    const qi = await resolveOption(qiOptionId, 'QI', ownRegId);
-    if (qi.error) return res.status(400).json({ success: false, error: qi.error });
+    // Workshop and QI practice are optional. When chosen, validate the option
+    // and enforce capacity (before OCR so a full option fails fast); when left
+    // blank, record no selection.
+    let ws = { opt: null };
+    if (workshopOptionId) {
+      ws = await resolveOption(workshopOptionId, 'WORKSHOP', ownRegId);
+      if (ws.error) return res.status(400).json({ success: false, error: ws.error });
+    }
+    let qi = { opt: null };
+    if (qiOptionId) {
+      qi = await resolveOption(qiOptionId, 'QI', ownRegId);
+      if (qi.error) return res.status(400).json({ success: false, error: qi.error });
+    }
 
     // Validate the payment screenshot (in memory; not written to disk yet).
     const decoded = decodeScreenshot(screenshot);
@@ -1052,7 +1074,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
           bank_status = 'PENDING',
           rejection_reason = NULL,
           rejection_note = NULL`,
-      [phone, name, categoryKey, categoryLabel, ws.opt.name, qi.opt.name, ws.opt.id, qi.opt.id,
+      [phone, name, categoryKey, categoryLabel, ws.opt ? ws.opt.name : null, qi.opt ? qi.opt.name : null, ws.opt ? ws.opt.id : null, qi.opt ? qi.opt.id : null,
         expectedAmount, paidAmount, utr, filename, idFilename,
         checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, idMatch, flagged]
     );
@@ -1067,6 +1089,15 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     // Stamp the registration with the delegate's signup-assigned number.
     const regNo = await assignUserRegNumber(phone);
     await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
+
+    // Acknowledge the payment; registration is confirmed later on verification.
+    notifyDelegate(phone, 'Payment received — verification pending',
+      emailWrap('We’ve received your payment details',
+        `<p>Dear ${escapeHtml(name)},</p>
+         <p>Thank you for submitting your payment for the ${escapeHtml(CONFERENCE_NAME)}.</p>
+         <p>Your payment reference (<b>UTR ${escapeHtml(utr)}</b>) has been received and is now <b>pending verification</b> by our team.</p>
+         <p>Registration number: <b>${escapeHtml(regNo)}</b></p>
+         <p>Your registration will be <b>confirmed once your payment is verified</b> — you’ll receive a confirmation email at that point. No further action is needed for now.</p>`));
 
     res.json({ success: true, id: result.lastID, expectedAmount, checks, flagged: !!flagged });
   } catch (err) {
@@ -1305,10 +1336,20 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
     }
 
     const filename = await writeUploadBuffer(decoded.buffer, decoded.ext);
+    const cleanTitle = String(title).trim();
     await dbRun(
       "INSERT INTO abstracts (phone_number, author_name, format, title, abstract_file, status) VALUES (?, ?, ?, ?, ?, 'UNDER_REVIEW')",
-      [req.session.phone, req.session.name, format, String(title).trim(), filename]
+      [req.session.phone, req.session.name, format, cleanTitle, filename]
     );
+
+    // Acknowledge receipt; acceptance is communicated after committee review.
+    notifyDelegate(req.session.phone, 'Abstract received — under review',
+      emailWrap('We’ve received your abstract',
+        `<p>Dear ${escapeHtml(req.session.name)},</p>
+         <p>Thank you for submitting your abstract, <b>"${escapeHtml(cleanTitle)}"</b>, for the ${escapeHtml(CONFERENCE_NAME)}.</p>
+         <p>Your submission has been received and is now <b>under review</b> by the scientific committee.</p>
+         <p>You’ll be notified by email once a decision has been made. No further action is needed for now.</p>`));
+
     res.json({ success: true });
   } catch (err) {
     next(err);

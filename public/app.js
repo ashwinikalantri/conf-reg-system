@@ -351,8 +351,8 @@ function fillOptionSelect(id, options, placeholder) {
 async function loadProgramOptions() {
   try {
     const data = await (await fetch('/api/program-options')).json();
-    fillOptionSelect('payment-workshop', data.workshops, 'Choose 1 Workshop');
-    fillOptionSelect('payment-qi-exposure', data.qiPractices, 'Choose 1 QI Practice');
+    fillOptionSelect('payment-workshop', data.workshops, 'Choose 1 Workshop (optional)');
+    fillOptionSelect('payment-qi-exposure', data.qiPractices, 'Choose 1 QI Practice (optional)');
   } catch (e) {
     /* leave the placeholders in place if the fetch fails */
   }

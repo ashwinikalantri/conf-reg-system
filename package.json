@@ -12,7 +12,8 @@
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^4.19.2",
-    "sqlite3": "^5.1.7",
+    "node-fetch": "^2.7.0",
+    "sqlite3": "^5.0.2",
     "tesseract.js": "^7.0.0"
   }
 }
