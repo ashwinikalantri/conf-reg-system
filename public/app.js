@@ -732,17 +732,18 @@ function setupAdminDelegation() {
   if (adminDelegationReady) return;
   adminDelegationReady = true;
 
-  const paymentBody = document.getElementById('payment-table-body');
-  if (paymentBody) {
-    paymentBody.addEventListener('click', (e) => {
-      const review = e.target.closest('.review-btn');
-      if (review) return openReviewModal(review.dataset.id);
-      const view = e.target.closest('.view-image-btn');
-      if (view) return openScreenshot(view.dataset.id);
-      const viewId = e.target.closest('.view-id-btn');
-      if (viewId) return openIdCard(viewId.dataset.id);
-    });
-  }
+  const paymentClickHandler = (e) => {
+    const review = e.target.closest('.review-btn');
+    if (review) return openReviewModal(review.dataset.id);
+    const view = e.target.closest('.view-image-btn');
+    if (view) return openScreenshot(view.dataset.id);
+    const viewId = e.target.closest('.view-id-btn');
+    if (viewId) return openIdCard(viewId.dataset.id);
+  };
+  ['payment-table-body', 'rejected-table-body'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', paymentClickHandler);
+  });
 
   const userBody = document.getElementById('user-table-body');
   if (userBody) {
@@ -888,32 +889,10 @@ const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT / RTGS' };
 // Cached so the review modal can look a row up by id without a second fetch.
 let cachedPaymentRegs = [];
 
-async function renderBackendPayments() {
-  const res = await fetch('/api/registrations');
-  const data = await res.json();
-  const tbody = document.getElementById('payment-table-body');
-  if (!tbody) return;
-
-  const allRegs = data.registrations || [];
-  cachedPaymentRegs = allRegs;
-
-  // Metrics reflect everyone; the worklist below only shows what still needs
-  // a decision -- a verified delegate drops off it (see Reports for the
-  // full verified list).
-  const verified = allRegs.filter(r => r.bank_status === 'BANK_VERIFIED');
-  const pending = allRegs.filter(r => r.bank_status !== 'BANK_VERIFIED');
-  const flagged = allRegs.filter(r => r.is_flagged);
-  const totalCleared = verified.reduce((sum, r) => sum + (Number(r.paid_amount) || 0), 0);
-  setText('metric-total-amount', `₹${totalCleared}`);
-  setText('metric-verified-count', verified.length);
-  setText('metric-pending-count', pending.length);
-  setText('metric-flagged-count', flagged.length);
-  setText('badge-pending-payments', pending.length);
-
-  const regs = pending; // worklist excludes already-verified delegates
-
-  tbody.innerHTML = regs.map(p => {
-    return `
+// Shared row markup for both the main worklist and the collapsed rejected
+// list below it.
+function paymentRowHtml(p) {
+  return `
     <tr class="border-b border-slate-100 ${p.is_flagged ? 'bg-red-50/50' : ''}">
       <td class="p-4 font-bold text-sm">
         ${esc(p.delegate_name)}
@@ -971,11 +950,43 @@ async function renderBackendPayments() {
       </td>
     </tr>
   `;
-  }).join('');
+}
 
-  if (!regs.length) {
+async function renderBackendPayments() {
+  const res = await fetch('/api/registrations');
+  const data = await res.json();
+  const tbody = document.getElementById('payment-table-body');
+  if (!tbody) return;
+
+  const allRegs = data.registrations || [];
+  cachedPaymentRegs = allRegs;
+
+  // Metrics reflect everyone; the worklist below only shows what still needs
+  // a decision -- a verified delegate drops off it (see Reports for the
+  // full verified list). Rejected registrations already have a decision
+  // (the delegate needs to resubmit), so they're not "pending" and live in
+  // their own collapsed section instead of the main worklist/metric/badge.
+  const verified = allRegs.filter(r => r.bank_status === 'BANK_VERIFIED');
+  const pendingOnly = allRegs.filter(r => r.bank_status === 'PENDING');
+  const rejected = allRegs.filter(r => r.bank_status === 'REJECTED');
+  const flagged = allRegs.filter(r => r.is_flagged);
+  const totalCleared = verified.reduce((sum, r) => sum + (Number(r.paid_amount) || 0), 0);
+  setText('metric-total-amount', `₹${totalCleared}`);
+  setText('metric-verified-count', verified.length);
+  setText('metric-pending-count', pendingOnly.length);
+  setText('metric-flagged-count', flagged.length);
+  setText('badge-pending-payments', pendingOnly.length);
+
+  tbody.innerHTML = pendingOnly.map(paymentRowHtml).join('');
+  if (!pendingOnly.length) {
     tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-sm text-slate-400">Nothing awaiting a decision.</td></tr>`;
   }
+
+  const rejectedSection = document.getElementById('rejected-section');
+  const rejectedBody = document.getElementById('rejected-table-body');
+  setText('badge-rejected-count', rejected.length);
+  if (rejectedSection) rejectedSection.classList.toggle('hidden', rejected.length === 0);
+  if (rejectedBody) rejectedBody.innerHTML = rejected.map(paymentRowHtml).join('');
 }
 
 // --- PAYMENT REVIEW MODAL (verify / force-verify / reject entry point) ---

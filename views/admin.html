@@ -90,6 +90,28 @@
           </tbody>
         </table>
       </div>
+
+      <details id="rejected-section" class="hidden bg-white rounded-2xl border border-rose-200 shadow-sm overflow-hidden">
+        <summary class="cursor-pointer select-none px-4 py-3.5 font-bold text-rose-700 text-sm flex items-center gap-2 hover:bg-rose-50/50">
+          <span>🚫 Rejected Registrations</span>
+          <span id="badge-rejected-count" class="bg-rose-100 text-rose-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
+        </summary>
+        <div class="overflow-x-auto border-t border-rose-100">
+          <table class="w-full text-left border-collapse min-w-[900px]">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+                <th class="py-3.5 px-4">Delegate & Category</th>
+                <th class="py-3.5 px-4">Transaction / Mode / Date</th>
+                <th class="py-3.5 px-4">Fee &amp; Auto-Checks</th>
+                <th class="py-3.5 px-4">Documents</th>
+                <th class="py-3.5 px-4">Status</th>
+                <th class="py-3.5 px-4 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody id="rejected-table-body" class="divide-y divide-slate-100 text-sm"></tbody>
+          </table>
+        </div>
+      </details>
     </section>
 
     <!-- TAB 2: ABSTRACT REVIEW -->
