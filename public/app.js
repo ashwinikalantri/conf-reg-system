@@ -396,9 +396,13 @@ async function loadAbstractStatus() {
 function calculateFee() {
   const catKey = document.getElementById('payment-category').value;
 
-  // Student categories must upload an ID card.
+  // Student categories must upload an ID card, and confirm it verifies their
+  // status. Reset the confirmation on any category change so it can never
+  // silently carry over from a previous (possibly different) category.
   const idBlock = document.getElementById('id-card-block');
   if (idBlock) idBlock.classList.toggle('hidden', !STUDENT_CATEGORIES.includes(catKey));
+  const idConfirm = document.getElementById('id-card-confirm');
+  if (idConfirm) idConfirm.checked = false;
 
   if (!catKey) return;
 
@@ -406,9 +410,14 @@ function calculateFee() {
   document.getElementById('calculated-fee-display').innerText = `₹${currentFee}`;
   document.getElementById('entered-amount').value = currentFee;
 
-  // Reference is the delegate's registration number (assigned at signup).
+  // Reference is the delegate's registration number plus name, so the
+  // transaction note (and therefore the QR code and the "Pay via UPI App"
+  // link, which both encode the same note) let finance match a payment to a
+  // delegate on sight, not just by number.
   const ref = (currentDelegate && (currentDelegate.registration_number || currentDelegate.phone_number || currentDelegate.phone)) || '';
-  const upiUri = `upi://pay?pa=${OFFICIAL_UPI_ID}&pn=${encodeURIComponent('NQOCN 2026')}&am=${currentFee}.00&cu=INR&tn=${encodeURIComponent(ref)}`;
+  const name = (currentDelegate && (currentDelegate.full_name || currentDelegate.name)) || '';
+  const note = name ? `${ref}_${name}` : ref;
+  const upiUri = `upi://pay?pa=${OFFICIAL_UPI_ID}&pn=${encodeURIComponent('NQOCN 2026')}&am=${currentFee}.00&cu=INR&tn=${encodeURIComponent(note)}`;
   document.getElementById('upi-qr-image').src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiUri)}`;
   const payLink = document.getElementById('upi-pay-link');
   if (payLink) payLink.href = upiUri;
@@ -493,6 +502,9 @@ async function verifyAndSubmitPayment(e) {
 
   const idFile = document.getElementById('payment-id-card').files[0];
   if (isStudent && !idFile) return showToast('Please upload your student ID card for this category.');
+  if (isStudent && !document.getElementById('id-card-confirm').checked) {
+    return showToast('Please confirm that your uploaded ID card verifies your student status.');
+  }
 
   const submitBtn = document.getElementById('submit-payment-btn');
   const originalBtnText = submitBtn.innerText;
@@ -812,13 +824,16 @@ function setText(id, value) {
 
 // One line of the screenshot OCR check result: 1 = match, 0 = mismatch,
 // null/undefined = not checked (legacy rows).
+// Rendered as a small chip rather than a plain colored line, so a row of
+// checks reads at a glance (used both in the compact table cell and the
+// larger review modal).
 function ocrCheckLine(label, val) {
   if (val == null) {
-    return `<span class="text-[10px] text-slate-400">${esc(label)}: — not checked</span>`;
+    return `<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">${esc(label)} <span class="opacity-70">·  not checked</span></span>`;
   }
   return Number(val) === 1
-    ? `<span class="text-[10px] text-emerald-600">✓ ${esc(label)} matches</span>`
-    : `<span class="text-[10px] text-rose-600 font-bold">✗ ${esc(label)} mismatch</span>`;
+    ? `<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✓ ${esc(label)}</span>`
+    : `<span class="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-300 rounded-full px-2 py-0.5">✗ ${esc(label)}</span>`;
 }
 
 // Format an epoch-ms audit timestamp for display; '' when absent.
@@ -912,7 +927,7 @@ function paymentRowHtml(p) {
             ? `<br><span class="text-[10px] text-rose-600 font-bold">≠ expected ₹${Number(p.expected_amount)}</span>`
             : `<br><span class="text-[10px] text-emerald-600">✓ matches fee</span>`
         }
-        <div class="mt-1.5 flex flex-col gap-0.5">
+        <div class="mt-1.5 flex flex-wrap gap-1">
           ${ocrCheckLine('Amount', p.ocr_amount_match)}
           ${p.payment_mode === 'NEFT_RTGS' ? '' : ocrCheckLine('UPI ID', p.ocr_vpa_match)}
           ${ocrCheckLine('UTR', p.ocr_utr_match)}
@@ -1000,6 +1015,7 @@ function openReviewModal(id) {
   setText('review-title', p.is_flagged ? 'Review Payment (Flagged)' : 'Review Payment');
   setText('review-name', p.delegate_name);
   setText('review-category', p.category_label);
+  setText('review-regno', p.registration_number ? `Reg No. ${p.registration_number}` : '');
   setText('review-mode', PAYMENT_MODE_LABELS[p.payment_mode] || p.payment_mode || 'UPI');
   setText('review-amount', `₹${Number(p.paid_amount)}` + (p.expected_amount != null && Number(p.paid_amount) !== Number(p.expected_amount) ? ` (expected ₹${Number(p.expected_amount)})` : ''));
   setText('review-utr', p.utr_number);
