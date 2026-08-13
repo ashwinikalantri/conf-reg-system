@@ -204,6 +204,7 @@ async function handleRegistration(e) {
   const payload = {
     phone,
     otp,
+    salutation: document.getElementById('reg-salutation').value,
     name: document.getElementById('reg-name').value,
     age: document.getElementById('reg-age').value,
     gender: document.getElementById('reg-gender').value,
@@ -247,7 +248,8 @@ async function handleLogin(e) {
   if (data.success) {
     currentDelegate = data.user;
     persistDelegate(currentDelegate);
-    showToast(`Welcome back, ${currentDelegate.full_name || currentDelegate.name}!`, 'success');
+    const welcomeName = currentDelegate.full_name || currentDelegate.name;
+    showToast(`Welcome back, ${currentDelegate.salutation ? currentDelegate.salutation + ' ' : ''}${welcomeName}!`, 'success');
     loadDashboard();
   } else if (data.notRegistered) {
     // New number — switch to sign-up, carrying the phone and (still-valid) OTP.
@@ -266,7 +268,8 @@ async function handleLogin(e) {
 async function loadDashboard() {
   if (!currentDelegate) return navigateTo('auth-page');
 
-  document.getElementById('user-display-name').innerText = currentDelegate.full_name || currentDelegate.name;
+  const displayName = currentDelegate.full_name || currentDelegate.name;
+  document.getElementById('user-display-name').innerText = currentDelegate.salutation ? `${currentDelegate.salutation} ${displayName}` : displayName;
   document.getElementById('user-display-sub').innerText = `${currentDelegate.designation} | ${currentDelegate.institution || currentDelegate.institute} (+91 ${currentDelegate.phone_number || currentDelegate.phone})`;
 
   const statusTag = document.getElementById('payment-status-tag');
@@ -1192,7 +1195,7 @@ async function renderBackendUsers() {
 
   tbody.innerHTML = users.map(u => `
     <tr>
-      <td class="p-4 font-bold">${esc(u.full_name)}<br><span class="text-xs text-slate-400">+91 ${esc(u.phone_number)}</span></td>
+      <td class="p-4 font-bold">${u.salutation ? esc(u.salutation) + ' ' : ''}${esc(u.full_name)}<br><span class="text-xs text-slate-400">+91 ${esc(u.phone_number)}</span></td>
       <td class="p-4">${esc(u.designation)} (${esc(u.institution)})</td>
       <td class="p-4"><span class="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-full">${esc(roleLabel(u.role))}</span></td>
       <td class="p-4 text-right">

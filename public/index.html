@@ -63,11 +63,24 @@
       <h2 class="text-xl font-bold text-slate-800 mb-1">Delegate Registration</h2>
       <p class="text-xs text-slate-500 mb-4">Verification via 6-digit Mobile OTP required.</p>
       
-      <div>
-        <label class="block text-sm font-medium text-slate-700">Full Name</label>
-        <input type="text" id="reg-name" required class="w-full mt-1 p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none">
-        <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-1.5">⚠️ Enter your name exactly as you want it printed on your certificate.</p>
+      <div class="flex gap-3">
+        <div class="w-28 shrink-0">
+          <label class="block text-sm font-medium text-slate-700">Salutation</label>
+          <select id="reg-salutation" class="w-full mt-1 p-3 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none">
+            <option value="">—</option>
+            <option value="Mr">Mr</option>
+            <option value="Mrs">Mrs</option>
+            <option value="Ms">Ms</option>
+            <option value="Dr">Dr</option>
+            <option value="Prof">Prof</option>
+          </select>
+        </div>
+        <div class="flex-1">
+          <label class="block text-sm font-medium text-slate-700">Full Name</label>
+          <input type="text" id="reg-name" required class="w-full mt-1 p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none">
+        </div>
       </div>
+      <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">⚠️ Enter your name (without any title/salutation) exactly as you want it printed on your certificate.</p>
 
       <div class="bg-indigo-50/60 p-4 rounded-xl border border-indigo-100 space-y-3">
         <label class="block text-xs font-bold text-indigo-800 uppercase tracking-wide">Mobile Number & Verification</label>

@@ -210,6 +210,21 @@ function titleCase(v) {
   return s.toLowerCase().replace(/(^|[\s\-'.])([a-z])/g, (_, sep, ch) => sep + ch.toUpperCase());
 }
 
+// Salutations offered on the signup form -- a separate field from Full Name.
+const SALUTATIONS = ['Mr', 'Mrs', 'Ms', 'Dr', 'Prof'];
+
+// If a name starts with one of these titles (with or without a trailing
+// period), split it into { salutation, name } with the title removed.
+// Requires a period or whitespace right after the title so "Mrunal" or
+// "Drashti" are never mistaken for "Mr"/"Dr" + a name.
+function splitSalutation(fullName) {
+  const s = String(fullName == null ? '' : fullName).trim();
+  const m = /^(mrs|mr|ms|dr|prof)[.\s]+(.*)$/i.exec(s);
+  if (!m || !m[2].trim()) return { salutation: null, name: s };
+  const canonical = SALUTATIONS.find((x) => x.toLowerCase() === m[1].toLowerCase());
+  return { salutation: canonical, name: m[2].trim() };
+}
+
 // Constant-time comparison of two equal-length strings.
 function safeEqual(a, b) {
   const bufA = Buffer.from(String(a), 'utf8');
@@ -493,6 +508,7 @@ db.serialize(() => {
    'ALTER TABLE users ADD COLUMN gender TEXT',
    'ALTER TABLE users ADD COLUMN email TEXT',
    'ALTER TABLE users ADD COLUMN registration_number TEXT',
+   'ALTER TABLE users ADD COLUMN salutation TEXT',
   ].forEach((sql) => db.run(sql, () => {}));
 
   // Monotonic source for registration numbers. Reserved to start at 1001 so
@@ -805,6 +821,27 @@ async function retitleNamesOnBoot() {
   await dbRun("INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('titlecase_backfill_done', ?)", [String(Date.now())]);
 }
 
+// One-time-ever: the signup form used to have no separate salutation field,
+// so people typed "Dr Abhishek Raut" etc. straight into Full Name. Split any
+// already-stored name that starts with a title into salutation + clean name.
+// Same run-once-ever + pre-listen gating as retitleNamesOnBoot, and for the
+// same reason: this must never touch a name typed after the split field
+// already existed.
+async function splitSalutationsOnBoot() {
+  const already = await dbGet("SELECT value FROM schema_meta WHERE key = 'salutation_split_done'");
+  if (already) return;
+
+  const rows = await dbAll("SELECT phone_number, full_name FROM users WHERE full_name IS NOT NULL AND full_name != ''");
+  for (const row of rows) {
+    const { salutation, name } = splitSalutation(row.full_name);
+    if (salutation) {
+      await dbRun('UPDATE users SET salutation = ?, full_name = ? WHERE phone_number = ?', [salutation, name, row.phone_number]);
+    }
+  }
+
+  await dbRun("INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('salutation_split_done', ?)", [String(Date.now())]);
+}
+
 // One-time migration: move any base64 screenshots still stored in the DB out
 // to files, leaving only the filename behind. Idempotent -- once migrated,
 // the LIKE no longer matches. Runs after table creation via db.serialize.
@@ -1014,13 +1051,14 @@ app.post('/api/otp/request', async (req, res, next) => {
 // Register (or update own profile) after OTP verification, then log in.
 app.post('/api/auth/register', async (req, res, next) => {
   try {
-    const { phone, otp, name, designation, institute, pincode, state, district, age, gender, email } = req.body;
+    const { phone, otp, salutation, name, designation, institute, pincode, state, district, age, gender, email } = req.body;
     if (!phone || !/^\d{10}$/.test(phone)) {
       return res.status(400).json({ success: false, error: 'Invalid phone number.' });
     }
     if (!name) {
       return res.status(400).json({ success: false, error: 'Full name is required.' });
     }
+    const salutationVal = SALUTATIONS.includes(salutation) ? salutation : null;
     const ageNum = age === '' || age == null ? null : parseInt(age, 10);
     if (ageNum != null && (!Number.isInteger(ageNum) || ageNum < 1 || ageNum > 120)) {
       return res.status(400).json({ success: false, error: 'Please enter a valid age.' });
@@ -1037,9 +1075,10 @@ app.post('/api/auth/register', async (req, res, next) => {
     // OTP proves control of this number, so upserting the caller's own
     // record is safe. Role is never set from the request body.
     await dbRun(
-      `INSERT INTO users (phone_number, full_name, designation, institution, pincode, state, district, age, gender, email, role)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE')
+      `INSERT INTO users (phone_number, salutation, full_name, designation, institution, pincode, state, district, age, gender, email, role)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE')
        ON CONFLICT(phone_number) DO UPDATE SET
+         salutation = excluded.salutation,
          full_name = excluded.full_name,
          designation = excluded.designation,
          institution = excluded.institution,
@@ -1049,7 +1088,7 @@ app.post('/api/auth/register', async (req, res, next) => {
          age = excluded.age,
          gender = excluded.gender,
          email = excluded.email`,
-      [phone, name, designation, institute, pincode, state, district, ageNum, genderVal, emailVal]
+      [phone, salutationVal, name, designation, institute, pincode, state, district, ageNum, genderVal, emailVal]
     );
 
     await assignUserRegNumber(phone); // ensure a registration number exists
@@ -2529,13 +2568,14 @@ app.use((err, req, res, next) => {
 });
 
 // Run one-time-safe boot tasks to completion before opening the port: the
-// Title Case backfill (see retitleNamesOnBoot -- must not race a real
-// signup) and a pass of bank-transaction auto-linking (picks up any
-// statement rows imported before this boot that match already-submitted
-// registrations). Bounded and logged rather than awaited unconditionally,
-// so a DB hiccup doesn't block startup forever.
+// Title Case backfill and the salutation split (both must not race a real
+// signup -- see retitleNamesOnBoot) and a pass of bank-transaction
+// auto-linking (picks up any statement rows imported before this boot that
+// match already-submitted registrations). Bounded and logged rather than
+// awaited unconditionally, so a DB hiccup doesn't block startup forever.
 retitleNamesOnBoot()
   .catch((err) => console.error('Title-case backfill failed (continuing to start):', err.message))
+  .then(() => splitSalutationsOnBoot().catch((err) => console.error('Salutation split failed (continuing to start):', err.message)))
   .then(() => autoLinkTransactions().catch((err) => console.error('Bank-transaction auto-link failed (continuing to start):', err.message)))
   .then(startServer);
 
