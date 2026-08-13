@@ -227,11 +227,21 @@ async function loadDashboard() {
   // revealed only once the payment is verified. The register/edit action and
   // the pending note are hidden in that state.
   const verified = reg && reg.bank_status === 'BANK_VERIFIED';
+  // Locked: submitted and awaiting review -- payment details can't be
+  // edited until an admin either verifies or rejects it.
+  const locked = reg && reg.bank_status === 'PENDING';
   const actionArea = document.getElementById('payment-action-area');
   const paymentDesc = document.getElementById('payment-desc');
+  const actionNote = document.getElementById('payment-action-note');
   if (confirmedBlock) confirmedBlock.classList.toggle('hidden', !verified);
   if (actionArea) actionArea.classList.toggle('hidden', verified);
   if (paymentDesc) paymentDesc.classList.toggle('hidden', verified);
+  if (confBtn) confBtn.classList.toggle('hidden', locked);
+  if (actionNote) {
+    actionNote.innerHTML = locked
+      ? '<b>Your payment details are locked</b> while awaiting verification by the finance admin. Contact the finance team if a correction is needed.'
+      : '<b>Note:</b> Registration remains <b>Pending</b> until payment is verified manually by the finance admin.';
+  }
   if (verified) {
     document.getElementById('reg-number-display').innerText = reg.registration_number || '—';
     document.getElementById('conf-workshop').innerText = reg.workshop || '—';
@@ -271,10 +281,12 @@ async function loadDashboard() {
     document.getElementById('reverify-btn').innerText = label;
     reverifyBanner.classList.remove('hidden');
   } else {
-    // Pending manual verification (possibly flagged — no delegate action needed).
+    // Pending manual verification: payment details are locked once
+    // submitted, so there is nothing for the delegate to edit here. Hide
+    // the action button entirely rather than opening a form the server
+    // will just reject.
     statusTag.className = "text-xs bg-amber-100 text-amber-800 font-bold px-3 py-1 rounded-full border border-amber-300";
     statusTag.innerText = reg.is_flagged ? "Flagged - Awaiting Manual Audit" : "Registration Pending (Awaiting Verification)";
-    confBtn.innerText = "Edit Submitted Payment";
     reverifyBanner.classList.add('hidden');
   }
 

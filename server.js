@@ -1258,7 +1258,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 // Columns to expose for a registration -- everything except the raw
 // screenshot filename, plus a boolean the client can use to build the link.
 const REGISTRATION_PUBLIC_COLUMNS =
-  `id, registration_number, phone_number, delegate_name, category_key, category_label, workshop,
+  `registrations.id, registration_number, phone_number, delegate_name, category_key, category_label, workshop,
    qi_exposure, expected_amount, paid_amount, utr_number, is_flagged, bank_status,
    ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, rejection_reason, rejection_note,
    payment_mode, submitted_at,
@@ -2191,18 +2191,26 @@ app.get('/api/admin/bank-statement', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
 app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
     const regs = await dbAll(
-      `SELECT id, registration_number, delegate_name, phone_number, utr_number, paid_amount, expected_amount, payment_mode, bank_status
+      `SELECT id, registration_number, delegate_name, phone_number, utr_number, paid_amount, expected_amount, payment_mode, bank_status, bank_txn_id
          FROM registrations WHERE utr_number IS NOT NULL AND utr_number != '' AND bank_status != 'REJECTED'`);
     const txns = await dbAll(`SELECT * FROM bank_statement_transactions WHERE credit IS NOT NULL AND credit > 0`);
 
     const digits = (v) => String(v || '').replace(/\D/g, '');
     const byRef = new Map();
-    txns.forEach((t) => { if (t.extracted_ref) byRef.set(digits(t.extracted_ref), t); });
+    const byId = new Map();
+    txns.forEach((t) => {
+      if (t.extracted_ref) byRef.set(digits(t.extracted_ref), t);
+      byId.set(t.id, t);
+    });
 
     const matched = [];
     const unmatched = [];
     for (const r of regs) {
-      const txn = byRef.get(digits(r.utr_number));
+      // A persisted link (auto- or manually-made) is the ground truth; only
+      // fall back to a live UTR-ref lookup when there isn't one yet (so an
+      // IMPS/NEFT payment that was manually linked doesn't show as
+      // "not found" just because it has no extractable reference).
+      const txn = (r.bank_txn_id && byId.get(r.bank_txn_id)) || byRef.get(digits(r.utr_number));
       if (!txn) {
         unmatched.push({ ...r, reason: 'No matching transaction found in the statement.' });
         continue;
@@ -2212,8 +2220,8 @@ app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINAN
       matched.push({ ...r, transaction: txn, amountOk });
     }
 
-    const matchedRefs = new Set(matched.map((m) => digits(m.utr_number)));
-    const unmatchedCredits = txns.filter((t) => !t.extracted_ref || !matchedRefs.has(digits(t.extracted_ref)));
+    const matchedTxnIds = new Set(matched.map((m) => m.transaction.id));
+    const unmatchedCredits = txns.filter((t) => !matchedTxnIds.has(t.id));
 
     res.json({
       matched,
