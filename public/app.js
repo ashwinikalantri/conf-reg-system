@@ -10,7 +10,28 @@ const REJECTION_LABELS = {
   OTHER: 'Other',
 };
 
-let currentDelegate = JSON.parse(localStorage.getItem('nqocn_current_user')) || null;
+// Defensively parsed: a bad/corrupted value here (e.g. the literal string
+// "undefined", which JSON.parse rejects) must never throw at module load --
+// that would abort every later top-level const/let in this file, leaving
+// them in the temporal-dead-zone and breaking the whole page.
+function readStoredDelegate() {
+  const raw = localStorage.getItem('nqocn_current_user');
+  if (!raw || raw === 'undefined' || raw === 'null') return null;
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    localStorage.removeItem('nqocn_current_user');
+    return null;
+  }
+}
+let currentDelegate = readStoredDelegate();
+
+// Never store undefined/null -- JSON.stringify(undefined) is the string
+// "undefined", not valid JSON, which is exactly what corrupts the next load.
+function persistDelegate(user) {
+  if (user) localStorage.setItem('nqocn_current_user', JSON.stringify(user));
+  else localStorage.removeItem('nqocn_current_user');
+}
 let activeAdminUser = null;
 
 // Read a File into a base64 data URL.
@@ -203,7 +224,7 @@ async function handleRegistration(e) {
 
   if (data.success) {
     currentDelegate = data.user;
-    localStorage.setItem('nqocn_current_user', JSON.stringify(currentDelegate));
+    persistDelegate(currentDelegate);
     showToast("Mobile OTP Verified! Account registered.", 'success');
     loadDashboard();
   } else {
@@ -225,7 +246,7 @@ async function handleLogin(e) {
 
   if (data.success) {
     currentDelegate = data.user;
-    localStorage.setItem('nqocn_current_user', JSON.stringify(currentDelegate));
+    persistDelegate(currentDelegate);
     showToast(`Welcome back, ${currentDelegate.full_name || currentDelegate.name}!`, 'success');
     loadDashboard();
   } else if (data.notRegistered) {
@@ -681,7 +702,7 @@ async function restoreSession() {
     const data = await res.json();
     if (data.success && data.user) {
       currentDelegate = data.user;
-      localStorage.setItem('nqocn_current_user', JSON.stringify(currentDelegate));
+      persistDelegate(currentDelegate);
       loadDashboard();
     }
   } catch (e) {

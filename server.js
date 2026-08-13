@@ -96,6 +96,12 @@ const SMS_ENABLED = !!SMS.apiKey;
 async function sendOtpSms(phone, otp) {
   if (!SMS_ENABLED) return;
   const text = `Dear Delegate, Thank you for registering for the NQOCN Conference. Your OTP for registration verification is ${otp} NQOCN Conference MGIMS`;
+  // Without a bound, a stalled connection to the gateway (network blip,
+  // upstream not closing) hangs this fire-and-forget call forever -- no
+  // success, no error, nothing logged, silently and permanently unable to
+  // tell that the SMS never went out.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
   try {
     const res = await fetch(SMS.url, {
       method: 'POST',
@@ -108,6 +114,7 @@ async function sendOtpSms(phone, otp) {
         dlttempid: SMS.templateId,
         dltheaderid: SMS.headerId,
       }),
+      signal: controller.signal,
     });
     const data = await res.json().catch(() => ({}));
     if (data.code !== 200) {
@@ -117,7 +124,9 @@ async function sendOtpSms(phone, otp) {
       console.log(`SMS to ${phone} accepted by gateway${id ? ` (uniqueid ${id})` : ''}`);
     }
   } catch (err) {
-    console.error(`SMS to ${phone} failed:`, err.message);
+    console.error(`SMS to ${phone} failed:`, err.name === 'AbortError' ? 'timed out after 10s' : err.message);
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
