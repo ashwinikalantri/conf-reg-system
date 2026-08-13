@@ -17,6 +17,8 @@ const { createWorker } = require('tesseract.js');
 const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 // Node 16 has no global fetch; node-fetch (v2, CommonJS) provides it for SMS.
 const fetch = require('node-fetch');
+const multer = require('multer');
+const XLSX = require('xlsx');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -25,6 +27,15 @@ const PORT = process.env.PORT || 3000;
 // served only through an authenticated route -- not from the static root.
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// Uploaded bank statement files (source-of-truth copies for audit), separate
+// from delegate uploads. Never served directly; admin-only, never committed.
+const STATEMENT_DIR = path.join(__dirname, 'bank-statements');
+fs.mkdirSync(STATEMENT_DIR, { recursive: true });
+const statementUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+});
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB decoded
 const IMAGE_EXT = {
@@ -178,6 +189,16 @@ function escapeHtml(v) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// Normalise a person's name to Title Case (idempotent -- safe to re-run on
+// already-cased input). Lower-cases everything, then capitalises the first
+// letter after start-of-string, whitespace, hyphen, period, or apostrophe, so
+// "DR SMITA J." -> "Dr Smita J." and "jean-pierre" -> "Jean-Pierre".
+function titleCase(v) {
+  const s = String(v == null ? '' : v).trim().replace(/\s+/g, ' ');
+  if (!s) return s;
+  return s.toLowerCase().replace(/(^|[\s\-'.])([a-z])/g, (_, sep, ch) => sep + ch.toUpperCase());
 }
 
 // Constant-time comparison of two equal-length strings.
@@ -380,15 +401,18 @@ async function resolveOption(id, type, ownRegId) {
 }
 
 // Which pricing phase is in effect today, from the configured cutoff dates.
+// Four phases: early (<= early_until), regular (<= regular_until),
+// late (<= late_until), spot (after late_until, or if no cutoffs are set).
 function currentPhase(config, today = new Date()) {
   const d = today.toISOString().slice(0, 10); // YYYY-MM-DD
   if (config && config.early_until && d <= config.early_until) return 'early';
   if (config && config.regular_until && d <= config.regular_until) return 'regular';
-  return 'late';
+  if (config && config.late_until && d <= config.late_until) return 'late';
+  return 'spot';
 }
 
 function getFeeConfig() {
-  return dbGet('SELECT early_until, regular_until FROM fee_config WHERE id = 1');
+  return dbGet('SELECT early_until, regular_until, late_until FROM fee_config WHERE id = 1');
 }
 
 // Resolve the authoritative fee and label for a category at today's phase.
@@ -396,7 +420,7 @@ async function resolveFee(categoryKey) {
   const cat = await dbGet('SELECT * FROM fee_categories WHERE category_key = ? AND active = 1', [categoryKey]);
   if (!cat) return null;
   const phase = currentPhase(await getFeeConfig());
-  const fee = { early: cat.early_fee, regular: cat.regular_fee, late: cat.late_fee }[phase];
+  const fee = { early: cat.early_fee, regular: cat.regular_fee, late: cat.late_fee, spot: cat.spot_fee }[phase];
   return { amount: fee, label: cat.label, phase };
 }
 
@@ -569,7 +593,7 @@ db.serialize(() => {
   `);
 
   // Fee master: per-category fees for each pricing phase, plus the global
-  // early/regular cutoff dates. Admin-editable.
+  // early/regular/late cutoff dates. Admin-editable.
   db.run(`
     CREATE TABLE IF NOT EXISTS fee_categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -578,6 +602,7 @@ db.serialize(() => {
       early_fee REAL NOT NULL DEFAULT 0,
       regular_fee REAL NOT NULL DEFAULT 0,
       late_fee REAL NOT NULL DEFAULT 0,
+      spot_fee REAL NOT NULL DEFAULT 0,
       active INTEGER NOT NULL DEFAULT 1,
       sort_order INTEGER NOT NULL DEFAULT 0
     )
@@ -586,9 +611,52 @@ db.serialize(() => {
     CREATE TABLE IF NOT EXISTS fee_config (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       early_until TEXT,
-      regular_until TEXT
+      regular_until TEXT,
+      late_until TEXT
     )
   `);
+  // Additive migration for fee tables created before the spot-registration
+  // phase existed.
+  db.all('PRAGMA table_info(fee_categories)', (err, cols) => {
+    if (err) return console.error('Schema check failed:', err.message);
+    const names = cols.map((c) => c.name);
+    if (!names.includes('spot_fee')) {
+      db.run('ALTER TABLE fee_categories ADD COLUMN spot_fee REAL NOT NULL DEFAULT 0', () => {
+        // Default the new spot fee to the late fee so existing categories
+        // keep charging something sane until an admin sets it explicitly.
+        db.run('UPDATE fee_categories SET spot_fee = late_fee WHERE spot_fee = 0');
+      });
+    }
+  });
+  db.all('PRAGMA table_info(fee_config)', (err, cols) => {
+    if (err) return console.error('Schema check failed:', err.message);
+    const names = cols.map((c) => c.name);
+    if (!names.includes('late_until')) db.run('ALTER TABLE fee_config ADD COLUMN late_until TEXT');
+  });
+
+  // Bank statement transactions, imported from admin-uploaded statement
+  // files. dedupe_hash is a stable fingerprint of the row so re-uploading an
+  // overlapping statement silently skips rows already imported -- this is
+  // how multiple uploads "compile into one" statement.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS bank_statement_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      post_date TEXT,
+      value_date TEXT,
+      branch_code TEXT,
+      cheque_number TEXT,
+      description TEXT,
+      debit REAL,
+      credit REAL,
+      balance REAL,
+      extracted_ref TEXT,
+      dedupe_hash TEXT UNIQUE NOT NULL,
+      source_file TEXT,
+      imported_at INTEGER NOT NULL,
+      imported_by TEXT
+    )
+  `);
+  db.run('CREATE INDEX IF NOT EXISTS idx_stmt_ref ON bank_statement_transactions(extracted_ref)');
 
   // Additive migrations: server-computed fee, OCR check results, registration
   // number, and the chosen program-option ids (for capacity accounting).
@@ -606,6 +674,8 @@ db.serialize(() => {
     if (!names.includes('ocr_id_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_id_match INTEGER');
     if (!names.includes('rejection_reason')) db.run('ALTER TABLE registrations ADD COLUMN rejection_reason TEXT');
     if (!names.includes('rejection_note')) db.run('ALTER TABLE registrations ADD COLUMN rejection_note TEXT');
+    if (!names.includes('payment_mode')) db.run("ALTER TABLE registrations ADD COLUMN payment_mode TEXT DEFAULT 'UPI'");
+    if (!names.includes('submitted_at')) db.run('ALTER TABLE registrations ADD COLUMN submitted_at INTEGER');
 
     // Backfill a number for any already-verified registration that predates
     // number assignment. Idempotent -- matches nothing once filled.
@@ -652,24 +722,46 @@ db.serialize(() => {
     console.log('Seeded default workshop and QI practice options.');
   });
 
-  // Seed the fee master on first run from the original hardcoded tiers.
+  // Seed the fee master on first run from the original hardcoded tiers. The
+  // spot (walk-in) fee defaults to a step above the late fee.
   db.get('SELECT COUNT(*) AS n FROM fee_categories', (err, r) => {
     if (err || (r && r.n > 0)) return;
-    const stmt = db.prepare('INSERT INTO fee_categories (category_key, label, early_fee, regular_fee, late_fee, active, sort_order) VALUES (?, ?, ?, ?, ?, 1, ?)');
+    const stmt = db.prepare('INSERT INTO fee_categories (category_key, label, early_fee, regular_fee, late_fee, spot_fee, active, sort_order) VALUES (?, ?, ?, ?, ?, ?, 1, ?)');
     const seed = [
-      ['nursing_ug', 'Nursing Student UG', 500, 1000, 2000],
-      ['nursing_pg', 'Nursing Student PG', 750, 1500, 2500],
-      ['med_student', 'Medical Student UG', 1500, 2200, 3000],
-      ['nurse_cho', 'Nurse / Paramedical / CHO', 2000, 2800, 3500],
-      ['pg_doctor', 'PG Student / Resident Doctor', 3000, 4000, 5000],
-      ['faculty_mo', 'Doctors / Faculty / NHM MO', 3000, 4000, 5000],
-      ['chw', 'Frontline CHWs (ASHA/ANM/AWW)', 200, 200, 200],
+      ['nursing_ug', 'Nursing Student UG', 500, 1000, 2000, 2500],
+      ['nursing_pg', 'Nursing Student PG', 750, 1500, 2500, 3000],
+      ['med_student', 'Medical Student UG', 1500, 2200, 3000, 3500],
+      ['nurse_cho', 'Nurse / Paramedical / CHO', 2000, 2800, 3500, 4000],
+      ['pg_doctor', 'PG Student / Resident Doctor', 3000, 4000, 5000, 5500],
+      ['faculty_mo', 'Doctors / Faculty / NHM MO', 3000, 4000, 5000, 5500],
+      ['chw', 'Frontline CHWs (ASHA/ANM/AWW)', 200, 200, 200, 200],
     ];
-    seed.forEach((s, i) => stmt.run(s[0], s[1], s[2], s[3], s[4], i));
+    seed.forEach((s, i) => stmt.run(s[0], s[1], s[2], s[3], s[4], s[5], i));
     stmt.finalize();
     console.log('Seeded default fee categories.');
   });
-  db.run("INSERT OR IGNORE INTO fee_config (id, early_until, regular_until) VALUES (1, '2026-09-30', '2026-10-31')");
+  // Four pricing phases: Early Bird till 31 Aug 2026, Regular till 30 Sep
+  // 2026, Late till 31 Oct 2026, Spot Registration after.
+  db.run("INSERT OR IGNORE INTO fee_config (id, early_until, regular_until, late_until) VALUES (1, '2026-08-31', '2026-09-30', '2026-10-31')");
+  db.run("UPDATE fee_config SET late_until = '2026-10-31' WHERE id = 1 AND (late_until IS NULL OR late_until = '')");
+});
+
+// One-time-per-startup backfill: normalise stored person names to Title
+// Case. Idempotent (titleCase() is stable on already-cased input), so this
+// is safe to run on every boot rather than tracking a migration flag.
+db.serialize(() => {
+  const retitle = (table, col, keyCol) => {
+    db.all(`SELECT ${keyCol} AS k, ${col} AS v FROM ${table} WHERE ${col} IS NOT NULL AND ${col} != ''`, (err, rows) => {
+      if (err) return console.error(`Title-case backfill (${table}) failed:`, err.message);
+      rows.forEach((row) => {
+        const fixed = titleCase(row.v);
+        if (fixed !== row.v) db.run(`UPDATE ${table} SET ${col} = ? WHERE ${keyCol} = ?`, [fixed, row.k]);
+      });
+    });
+  };
+  retitle('users', 'full_name', 'phone_number');
+  retitle('registrations', 'delegate_name', 'id');
+  retitle('abstracts', 'author_name', 'id');
 });
 
 // One-time migration: move any base64 screenshots still stored in the DB out
@@ -979,10 +1071,11 @@ app.post('/api/auth/logout', async (req, res, next) => {
 // Submit / update the caller's own payment registration.
 app.post('/api/registrations', requireAuth, async (req, res, next) => {
   try {
-    const { categoryKey, workshopOptionId, qiOptionId, amount, utr, screenshot, idCard, acknowledged } = req.body;
+    const { categoryKey, workshopOptionId, qiOptionId, amount, utr, screenshot, idCard, acknowledged, paymentMode } = req.body;
     if (!utr || !screenshot) {
       return res.status(400).json({ success: false, error: 'Missing required registration details.' });
     }
+    const mode = paymentMode === 'NEFT_RTGS' ? 'NEFT_RTGS' : 'UPI';
 
     // Fee and label are derived server-side from the fee master at today's
     // pricing phase; the client's amount and label are not trusted.
@@ -998,8 +1091,21 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 
     // Existing registration: reuse the id to free the delegate's own slot on
     // re-submission, and the old filenames for cleanup.
-    const prev = await dbGet('SELECT id, screenshot, id_card FROM registrations WHERE phone_number = ?', [phone]);
+    const prev = await dbGet('SELECT id, screenshot, id_card, bank_status FROM registrations WHERE phone_number = ?', [phone]);
     const ownRegId = prev ? prev.id : null;
+
+    // Once submitted, payment details are locked: no further edits while
+    // under review or after verification. Only a rejection re-opens editing
+    // (the delegate needs to fix and resubmit), and a fresh submission is
+    // always allowed when nothing exists yet.
+    if (prev && prev.bank_status !== 'REJECTED') {
+      return res.status(409).json({
+        success: false,
+        error: prev.bank_status === 'BANK_VERIFIED'
+          ? 'Your registration is already confirmed; payment details cannot be changed.'
+          : 'Your payment details have already been submitted and are locked pending verification. Contact the finance team if a correction is needed.',
+      });
+    }
 
     // Workshop and QI practice are optional. When chosen, validate the option
     // and enforce capacity (before OCR so a full option fails fast); when left
@@ -1035,7 +1141,10 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     }
 
     // Read the screenshot (amount / UPI ID / UTR) and, for students, the ID card.
+    // The VPA check only applies to UPI payments -- an NEFT/RTGS receipt has
+    // no UPI ID to find, so that check is not applicable (treated as passed).
     const checks = await runOcrChecks(decoded.buffer, { expectedAmount, utr });
+    if (mode === 'NEFT_RTGS') checks.vpa = true;
     if (needsId) checks.id = await runIdCardCheck(idDecoded.buffer, categoryKey);
     const allChecksPass = checks.amount && checks.vpa && checks.utr && (!needsId || checks.id);
 
@@ -1060,8 +1169,8 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 
     const result = await dbRun(
       `INSERT INTO registrations
-        (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, workshop_option_id, qi_option_id, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, is_flagged, bank_status, rejection_reason, rejection_note)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL)
+        (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, workshop_option_id, qi_option_id, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL, ?, ?)
         ON CONFLICT(phone_number) DO UPDATE SET
           delegate_name = excluded.delegate_name,
           category_key = excluded.category_key,
@@ -1082,10 +1191,12 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
           is_flagged = excluded.is_flagged,
           bank_status = 'PENDING',
           rejection_reason = NULL,
-          rejection_note = NULL`,
+          rejection_note = NULL,
+          payment_mode = excluded.payment_mode,
+          submitted_at = excluded.submitted_at`,
       [phone, name, categoryKey, categoryLabel, ws.opt ? ws.opt.name : null, qi.opt ? qi.opt.name : null, ws.opt ? ws.opt.id : null, qi.opt ? qi.opt.id : null,
         expectedAmount, paidAmount, utr, filename, idFilename,
-        checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, idMatch, flagged]
+        checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, idMatch, flagged, mode, Date.now()]
     );
 
     if (prev && prev.screenshot && prev.screenshot !== filename) {
@@ -1121,6 +1232,7 @@ const REGISTRATION_PUBLIC_COLUMNS =
   `id, registration_number, phone_number, delegate_name, category_key, category_label, workshop,
    qi_exposure, expected_amount, paid_amount, utr_number, is_flagged, bank_status,
    ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, rejection_reason, rejection_note,
+   payment_mode, submitted_at,
    (screenshot IS NOT NULL AND screenshot != '') AS has_screenshot,
    (id_card IS NOT NULL AND id_card != '') AS has_id_card`;
 
@@ -1160,15 +1272,16 @@ app.get('/api/fees', requireAuth, async (req, res, next) => {
   try {
     const config = await getFeeConfig();
     const phase = currentPhase(config);
-    const cats = await dbAll('SELECT category_key, label, early_fee, regular_fee, late_fee FROM fee_categories WHERE active = 1 ORDER BY sort_order, id');
+    const cats = await dbAll('SELECT category_key, label, early_fee, regular_fee, late_fee, spot_fee FROM fee_categories WHERE active = 1 ORDER BY sort_order, id');
     res.json({
       phase,
       earlyUntil: config ? config.early_until : null,
       regularUntil: config ? config.regular_until : null,
+      lateUntil: config ? config.late_until : null,
       categories: cats.map((c) => ({
         key: c.category_key,
         label: c.label,
-        fee: { early: c.early_fee, regular: c.regular_fee, late: c.late_fee }[phase],
+        fee: { early: c.early_fee, regular: c.regular_fee, late: c.late_fee, spot: c.spot_fee }[phase],
       })),
     });
   } catch (err) {
@@ -1633,11 +1746,78 @@ app.delete('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (
   }
 });
 
+// List delegates currently enrolled in one workshop/QI option (manual roster
+// view, alongside the capacity count already shown in the list).
+app.get('/api/admin/program-options/:id/enrolled', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
+    if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
+    const col = opt.type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
+    const rows = await dbAll(
+      `SELECT id, phone_number, delegate_name, registration_number, bank_status
+         FROM registrations WHERE ${col} = ? AND bank_status != 'REJECTED' ORDER BY delegate_name`,
+      [opt.id]
+    );
+    res.json({ option: opt, enrolled: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Manually enroll a delegate (by phone) into a workshop/QI option, bypassing
+// the normal self-service capacity check -- an admin override for edge cases
+// (a delegate who paid offline, a late add, correcting a mistaken choice).
+app.post('/api/admin/program-options/:id/enroll', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
+    if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
+    const phone = String(req.body.phone || '').trim();
+    if (!/^\d{10}$/.test(phone)) {
+      return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+    }
+    const reg = await dbGet('SELECT id, workshop_option_id, qi_option_id FROM registrations WHERE phone_number = ?', [phone]);
+    if (!reg) {
+      return res.status(404).json({ success: false, error: 'This delegate has no payment registration yet -- they must register before being enrolled.' });
+    }
+    const col = opt.type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
+    const nameCol = opt.type === 'WORKSHOP' ? 'workshop' : 'qi_exposure';
+    await dbRun(`UPDATE registrations SET ${col} = ?, ${nameCol} = ? WHERE id = ?`, [opt.id, opt.name, reg.id]);
+    await recordAudit({
+      req, entityType: 'registration', entityId: reg.id,
+      action: 'ADMIN_ENROLL', oldValue: opt.type === 'WORKSHOP' ? reg.workshop_option_id : reg.qi_option_id, newValue: opt.id,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Remove a delegate from a workshop/QI option's roster (clears their choice;
+// does not touch their registration otherwise).
+app.delete('/api/admin/program-options/:id/enroll/:phone', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
+    if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
+    const col = opt.type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
+    const nameCol = opt.type === 'WORKSHOP' ? 'workshop' : 'qi_exposure';
+    const reg = await dbGet(`SELECT id FROM registrations WHERE phone_number = ? AND ${col} = ?`, [req.params.phone, opt.id]);
+    if (!reg) return res.status(404).json({ success: false, error: 'This delegate is not enrolled in this option.' });
+    await dbRun(`UPDATE registrations SET ${col} = NULL, ${nameCol} = NULL WHERE id = ?`, [reg.id]);
+    await recordAudit({
+      req, entityType: 'registration', entityId: reg.id,
+      action: 'ADMIN_UNENROLL', oldValue: opt.id, newValue: null,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- FEE MASTER ADMIN ---------------------------------------------------
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const feeFields = (b) => ({
-  early: Number(b.earlyFee), regular: Number(b.regularFee), late: Number(b.lateFee),
+  early: Number(b.earlyFee), regular: Number(b.regularFee), late: Number(b.lateFee), spot: Number(b.spotFee),
 });
 
 app.get('/api/admin/fees', requireRole('SUPER_ADMIN'), async (req, res, next) => {
@@ -1652,14 +1832,18 @@ app.get('/api/admin/fees', requireRole('SUPER_ADMIN'), async (req, res, next) =>
 
 app.put('/api/admin/fees/config', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
-    const { earlyUntil, regularUntil } = req.body;
-    if ((earlyUntil && !DATE_RE.test(earlyUntil)) || (regularUntil && !DATE_RE.test(regularUntil))) {
+    const { earlyUntil, regularUntil, lateUntil } = req.body;
+    if ([earlyUntil, regularUntil, lateUntil].some((d) => d && !DATE_RE.test(d))) {
       return res.status(400).json({ success: false, error: 'Dates must be YYYY-MM-DD.' });
     }
     if (earlyUntil && regularUntil && earlyUntil > regularUntil) {
       return res.status(400).json({ success: false, error: 'Early cutoff must be on or before the regular cutoff.' });
     }
-    await dbRun('UPDATE fee_config SET early_until = ?, regular_until = ? WHERE id = 1', [earlyUntil || null, regularUntil || null]);
+    if (regularUntil && lateUntil && regularUntil > lateUntil) {
+      return res.status(400).json({ success: false, error: 'Regular cutoff must be on or before the late cutoff.' });
+    }
+    await dbRun('UPDATE fee_config SET early_until = ?, regular_until = ?, late_until = ? WHERE id = 1',
+      [earlyUntil || null, regularUntil || null, lateUntil || null]);
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -1674,13 +1858,13 @@ app.post('/api/admin/fees/categories', requireRole('SUPER_ADMIN'), async (req, r
       return res.status(400).json({ success: false, error: 'Category key must be lowercase letters, digits, or underscores.' });
     }
     if (!label || !String(label).trim()) return res.status(400).json({ success: false, error: 'Label is required.' });
-    if ([f.early, f.regular, f.late].some((x) => !Number.isFinite(x) || x < 0)) {
+    if ([f.early, f.regular, f.late, f.spot].some((x) => !Number.isFinite(x) || x < 0)) {
       return res.status(400).json({ success: false, error: 'Fees must be non-negative numbers.' });
     }
     const max = await dbGet('SELECT COALESCE(MAX(sort_order), -1) AS m FROM fee_categories');
     await dbRun(
-      'INSERT INTO fee_categories (category_key, label, early_fee, regular_fee, late_fee, active, sort_order) VALUES (?, ?, ?, ?, ?, 1, ?)',
-      [categoryKey, String(label).trim(), f.early, f.regular, f.late, max.m + 1]
+      'INSERT INTO fee_categories (category_key, label, early_fee, regular_fee, late_fee, spot_fee, active, sort_order) VALUES (?, ?, ?, ?, ?, ?, 1, ?)',
+      [categoryKey, String(label).trim(), f.early, f.regular, f.late, f.spot, max.m + 1]
     );
     res.json({ success: true });
   } catch (err) {
@@ -1697,12 +1881,12 @@ app.put('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (req
     if (!existing) return res.status(404).json({ success: false, error: 'Category not found.' });
     const { label, active } = req.body;
     const f = feeFields(req.body);
-    if ([f.early, f.regular, f.late].some((x) => !Number.isFinite(x) || x < 0)) {
+    if ([f.early, f.regular, f.late, f.spot].some((x) => !Number.isFinite(x) || x < 0)) {
       return res.status(400).json({ success: false, error: 'Fees must be non-negative numbers.' });
     }
     await dbRun(
-      'UPDATE fee_categories SET label = ?, early_fee = ?, regular_fee = ?, late_fee = ?, active = ? WHERE id = ?',
-      [label !== undefined ? String(label).trim() : existing.label, f.early, f.regular, f.late,
+      'UPDATE fee_categories SET label = ?, early_fee = ?, regular_fee = ?, late_fee = ?, spot_fee = ?, active = ? WHERE id = ?',
+      [label !== undefined ? String(label).trim() : existing.label, f.early, f.regular, f.late, f.spot,
         active !== undefined ? (active ? 1 : 0) : existing.active, req.params.id]
     );
     res.json({ success: true });
@@ -1726,8 +1910,184 @@ app.delete('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (
   }
 });
 
+// --- BANK STATEMENT RECONCILIATION --------------------------------------
+// Parses admin-uploaded statement files (.xls/.xlsx, as downloaded from net
+// banking) into transaction rows, dedupes them against what's already been
+// imported (so overlapping re-uploads "compile into one" statement), and
+// matches credits against registrations' payment references for finance to
+// reconcile UTR-by-UTR.
+
+// dd/mm/yyyy -> yyyy-mm-dd (sortable, filterable). Returns null if unparsable.
+function parseStatementDate(v) {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(v || '').trim());
+  if (!m) return null;
+  return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+}
+
+// "  3,000.00 " / "3000.00" -> 3000. Returns null for blank/whitespace cells.
+function parseStatementAmount(v) {
+  const s = String(v || '').replace(/,/g, '').replace(/\s*(CR|DR)\s*$/i, '').trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+// A UPI transaction description embeds the RRN (the UTR delegates enter) as
+// "UPI/RRN <digits>/...". Other modes (IMPS, NEFT) don't follow this pattern
+// and are left unmatched by reference (still visible for manual reconciliation).
+function extractStatementRef(description) {
+  const m = /RRN\s*(\d{6,})/i.exec(String(description || ''));
+  return m ? m[1] : null;
+}
+
+// Stable fingerprint of a statement row, used to dedupe across uploads of
+// overlapping date ranges.
+function statementRowHash(row) {
+  return sha256([row.post_date, row.value_date, row.branch_code, row.cheque_number,
+    row.description, row.debit, row.credit, row.balance].map((v) => (v == null ? '' : String(v).trim())).join('|'));
+}
+
+// Parse an uploaded statement workbook into transaction rows. The bank's
+// export has a few metadata rows, then a header row starting "Post Date",
+// then one data row per transaction, then trailer notes -- this locates the
+// header by content rather than a fixed offset, and stops at the first row
+// whose date column doesn't parse.
+function parseStatementBuffer(buffer) {
+  const wb = XLSX.read(buffer, { type: 'buffer' });
+  const sheetName = wb.SheetNames.find((n) => /statement/i.test(n)) || wb.SheetNames[0];
+  const sheet = wb.Sheets[sheetName];
+  const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
+
+  const headerIdx = grid.findIndex((r) => String(r[0] || '').trim().toLowerCase() === 'post date');
+  if (headerIdx === -1) throw new Error('Could not find the "Post Date" header row in this file. Is it a Central Bank of India account statement export?');
+
+  const rows = [];
+  for (let i = headerIdx + 1; i < grid.length; i++) {
+    const r = grid[i];
+    const postDate = parseStatementDate(r[0]);
+    if (!postDate) break; // trailer text / end of table
+    const row = {
+      post_date: postDate,
+      value_date: parseStatementDate(r[1]) || postDate,
+      branch_code: String(r[2] || '').trim(),
+      cheque_number: String(r[3] || '').trim(),
+      description: String(r[4] || '').trim(),
+      debit: parseStatementAmount(r[5]),
+      credit: parseStatementAmount(r[6]),
+      balance: parseStatementAmount(r[7]),
+    };
+    row.extracted_ref = extractStatementRef(row.description);
+    rows.push(row);
+  }
+  return rows;
+}
+
+// Upload a statement file. Rows already imported (by an overlapping earlier
+// upload) are silently skipped via the UNIQUE dedupe_hash; this is how
+// re-uploading updated statements "compiles" into one running master.
+app.post('/api/admin/bank-statement/upload', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'),
+  statementUpload.single('file'), async (req, res, next) => {
+    try {
+      if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded.' });
+      if (!/\.(xls|xlsx)$/i.test(req.file.originalname || '')) {
+        return res.status(400).json({ success: false, error: 'Please upload an .xls or .xlsx bank statement.' });
+      }
+
+      let rows;
+      try {
+        rows = parseStatementBuffer(req.file.buffer);
+      } catch (parseErr) {
+        return res.status(400).json({ success: false, error: parseErr.message });
+      }
+      if (!rows.length) {
+        return res.status(400).json({ success: false, error: 'No transaction rows were found in this file.' });
+      }
+
+      // Keep a copy of the raw upload for audit purposes (never served over HTTP).
+      const savedName = `${Date.now()}-${(req.file.originalname || 'statement').replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+      await fs.promises.writeFile(path.join(STATEMENT_DIR, savedName), req.file.buffer);
+
+      let imported = 0;
+      for (const row of rows) {
+        const hash = statementRowHash(row);
+        const result = await dbRun(
+          `INSERT OR IGNORE INTO bank_statement_transactions
+            (post_date, value_date, branch_code, cheque_number, description, debit, credit, balance, extracted_ref, dedupe_hash, source_file, imported_at, imported_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [row.post_date, row.value_date, row.branch_code, row.cheque_number, row.description,
+            row.debit, row.credit, row.balance, row.extracted_ref, hash, savedName, Date.now(), req.session.name]
+        );
+        if (result.changes > 0) imported++;
+      }
+      res.json({ success: true, total: rows.length, imported, duplicates: rows.length - imported });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+app.get('/api/admin/bank-statement', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const rows = await dbAll('SELECT * FROM bank_statement_transactions ORDER BY post_date DESC, id DESC');
+    res.json({ transactions: rows || [] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Reconcile registrations' payment references against imported statement
+// credits. A registration matches when a statement credit row's extracted
+// reference equals its UTR/transaction number (digits-only comparison, so
+// formatting differences don't break the match).
+app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const regs = await dbAll(
+      `SELECT id, registration_number, delegate_name, phone_number, utr_number, paid_amount, expected_amount, payment_mode, bank_status
+         FROM registrations WHERE utr_number IS NOT NULL AND utr_number != '' AND bank_status != 'REJECTED'`);
+    const txns = await dbAll(`SELECT * FROM bank_statement_transactions WHERE credit IS NOT NULL AND credit > 0`);
+
+    const digits = (v) => String(v || '').replace(/\D/g, '');
+    const byRef = new Map();
+    txns.forEach((t) => { if (t.extracted_ref) byRef.set(digits(t.extracted_ref), t); });
+
+    const matched = [];
+    const unmatched = [];
+    for (const r of regs) {
+      const txn = byRef.get(digits(r.utr_number));
+      if (!txn) {
+        unmatched.push({ ...r, reason: 'No matching transaction found in the statement.' });
+        continue;
+      }
+      const claimedAmount = r.paid_amount != null ? r.paid_amount : r.expected_amount;
+      const amountOk = claimedAmount == null || Number(txn.credit) === Number(claimedAmount);
+      matched.push({ ...r, transaction: txn, amountOk });
+    }
+
+    const matchedRefs = new Set(matched.map((m) => digits(m.utr_number)));
+    const unmatchedCredits = txns.filter((t) => !t.extracted_ref || !matchedRefs.has(digits(t.extracted_ref)));
+
+    res.json({
+      matched,
+      unmatched,
+      unmatchedCredits,
+      summary: {
+        registrations: regs.length,
+        matched: matched.length,
+        amountMismatches: matched.filter((m) => !m.amountOk).length,
+        unmatched: unmatched.length,
+        unmatchedCredits: unmatchedCredits.length,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- REPORTS (Excel/CSV + printable PDF) --------------------------------
 
+// Every report is { title, sections: [{ name, columns, rows }, ...] }. Most
+// reports have a single unnamed section; the workshops report has one
+// section per workshop/QI practice option so each can be viewed or exported
+// on its own.
 async function buildReport(type) {
   if (type === 'verified') {
     const rows = await dbAll(
@@ -1736,29 +2096,35 @@ async function buildReport(type) {
          ORDER BY registration_number`);
     return {
       title: 'Registered Users with Verified Payment',
-      columns: ['Reg No', 'Name', 'Mobile', 'Category', 'Workshop', 'QI Practice', 'Amount'],
-      rows: rows.map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label, r.workshop, r.qi_exposure, r.paid_amount]),
+      sections: [{
+        columns: ['Reg No', 'Name', 'Mobile', 'Category', 'Workshop', 'QI Practice', 'Amount'],
+        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label, r.workshop, r.qi_exposure, r.paid_amount]),
+      }],
     };
   }
   if (type === 'workshops') {
-    const rows = await dbAll(
-      `SELECT workshop, delegate_name, phone_number, category_label, bank_status
-         FROM registrations
-        WHERE workshop IS NOT NULL AND workshop != '' AND bank_status != 'REJECTED'
-        ORDER BY workshop, delegate_name`);
-    return {
-      title: 'Registered Users per Workshop',
-      columns: ['Workshop', 'Delegate', 'Mobile', 'Category', 'Status'],
-      rows: rows.map((r) => [r.workshop, r.delegate_name, r.phone_number, r.category_label, r.bank_status]),
-    };
+    const options = await fetchProgramOptions({ activeOnly: false });
+    const regs = await dbAll(
+      `SELECT workshop_option_id, qi_option_id, registration_number, delegate_name, phone_number, category_label, bank_status
+         FROM registrations WHERE bank_status != 'REJECTED'`);
+    const columns = ['Reg No', 'Delegate', 'Mobile', 'Category', 'Status'];
+    const rowsFor = (col, id) => regs.filter((r) => r[col] === id)
+      .map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label, r.bank_status]);
+    const sections = [
+      ...options.filter((o) => o.type === 'WORKSHOP').map((o) => ({ name: `Workshop: ${o.name}`, columns, rows: rowsFor('workshop_option_id', o.id) })),
+      ...options.filter((o) => o.type === 'QI').map((o) => ({ name: `QI Practice: ${o.name}`, columns, rows: rowsFor('qi_option_id', o.id) })),
+    ];
+    return { title: 'Registrations per Workshop / QI Practice', sections };
   }
   if (type === 'abstracts') {
     const rows = await dbAll(
       `SELECT title, author_name, format, phone_number FROM abstracts WHERE status = 'ACCEPTED' ORDER BY title`);
     return {
       title: 'Accepted Abstracts',
-      columns: ['Title', 'Author', 'Format', 'Mobile'],
-      rows: rows.map((r) => [r.title, r.author_name, r.format, r.phone_number]),
+      sections: [{
+        columns: ['Title', 'Author', 'Format', 'Mobile'],
+        rows: rows.map((r) => [r.title, r.author_name, r.format, r.phone_number]),
+      }],
     };
   }
   return null;
@@ -1770,24 +2136,35 @@ const REPORT_ROLES = {
   abstracts: ['SUPER_ADMIN', 'ACADEMIC_REVIEWER'],
 };
 
-function toCsv({ columns, rows }) {
+function toCsv(rep) {
   const cell = (v) => {
     const s = v == null ? '' : String(v);
     return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
-  return [columns, ...rows].map((r) => r.map(cell).join(',')).join('\r\n');
+  const multi = rep.sections.length > 1;
+  return rep.sections.map((sec) => {
+    const heading = multi && sec.name ? [[sec.name], []] : [];
+    return [...heading, sec.columns, ...sec.rows].map((r) => r.map(cell).join(',')).join('\r\n');
+  }).join('\r\n\r\n');
 }
 
 function reportHtml(rep) {
-  const th = rep.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join('');
-  const trs = rep.rows.map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('') ||
-    `<tr><td colspan="${rep.columns.length}" style="text-align:center;color:#94a3b8">No records</td></tr>`;
+  const table = (sec) => {
+    const th = sec.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join('');
+    const trs = sec.rows.map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('') ||
+      `<tr><td colspan="${sec.columns.length}" style="text-align:center;color:#94a3b8">No records</td></tr>`;
+    return `${sec.name ? `<h2>${escapeHtml(sec.name)} <span class="count">(${sec.rows.length})</span></h2>` : ''}
+      <table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
+  };
   const now = new Date().toLocaleString('en-IN', { dateStyle: 'long', timeStyle: 'short' });
+  const total = rep.sections.reduce((n, s) => n + s.rows.length, 0);
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(rep.title)}</title>
 <style>
   body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#0f172a;margin:2rem;}
   h1{font-size:1.2rem;margin:0 0 .25rem;}
+  h2{font-size:.95rem;margin:1.5rem 0 .5rem;color:#312e81;}
+  .count{color:#94a3b8;font-weight:400;font-size:.8rem;}
   .sub{color:#64748b;font-size:.8rem;margin-bottom:1rem;}
   table{width:100%;border-collapse:collapse;font-size:.8rem;}
   th,td{border:1px solid #e2e8f0;padding:.5rem .6rem;text-align:left;vertical-align:top;}
@@ -1798,9 +2175,9 @@ function reportHtml(rep) {
   @media print{body{margin:0;}.actions{display:none;}}
 </style></head><body>
   <h1>NQOCN 2026 · ${escapeHtml(rep.title)}</h1>
-  <p class="sub">Generated ${escapeHtml(now)} · ${rep.rows.length} record(s)</p>
+  <p class="sub">Generated ${escapeHtml(now)} · ${total} record(s)</p>
   <div class="actions"><button onclick="window.print()">Print / Save as PDF</button></div>
-  <table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>
+  ${rep.sections.map(table).join('')}
 </body></html>`;
 }
 
@@ -1818,6 +2195,9 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
       res.set('Content-Type', 'text/csv; charset=utf-8');
       res.set('Content-Disposition', `attachment; filename="nqocn-${type}-report.csv"`);
       return res.send(toCsv(rep));
+    }
+    if (req.query.format === 'json') {
+      return res.json({ success: true, report: rep });
     }
     res.type('html').send(reportHtml(rep));
   } catch (err) {
@@ -1844,6 +2224,12 @@ app.get('/api/abstracts', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEWER'), async
   }
 });
 
+// Step 1 of abstract review: Approval. Accept/reject/reset. Deliberately
+// silent -- no delegate email fires here. Approval only unlocks the abstract
+// for the separate Assignment step (below); the delegate hears from us once,
+// when that step gives the final decision (accepted + oral/poster, or not
+// accepted). This lets approval and assignment happen as two independent
+// actions, in separate sessions, possibly by different reviewers.
 app.put('/api/abstracts/:id/status', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEWER'), async (req, res, next) => {
   try {
     const { status } = req.body;
@@ -1857,7 +2243,7 @@ app.put('/api/abstracts/:id/status', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEW
       return res.status(404).json({ success: false, error: 'Abstract not found.' });
     }
 
-    // Resetting away from ACCEPTED clears any allocation.
+    // Resetting away from ACCEPTED clears any assignment.
     if (status !== 'ACCEPTED') {
       await dbRun('UPDATE abstracts SET status = ?, allocation = NULL WHERE id = ?', [status, req.params.id]);
     } else {
@@ -1872,13 +2258,14 @@ app.put('/api/abstracts/:id/status', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEW
       newValue: status,
     });
 
-    if (status === 'ACCEPTED' && existing.status !== 'ACCEPTED') {
+    // Rejecting at the approval step IS a final decision (there is no
+    // assignment step to follow), so that's the one case this step emails.
+    if (status === 'REJECTED' && existing.status !== 'REJECTED') {
       const a = await dbGet('SELECT phone_number, author_name, title FROM abstracts WHERE id = ?', [req.params.id]);
-      if (a) notifyDelegate(a.phone_number, 'Your abstract has been accepted',
-        emailWrap('Abstract accepted',
+      if (a) notifyDelegate(a.phone_number, 'Your abstract submission — decision',
+        emailWrap('Abstract decision',
           `<p>Dear ${escapeHtml(a.author_name)},</p>
-           <p>We are pleased to inform you that your abstract <b>"${escapeHtml(a.title)}"</b> has been <b>accepted</b>.</p>
-           <p>The presentation format (oral or poster) will be communicated separately.</p>`));
+           <p>Thank you for submitting your abstract, <b>"${escapeHtml(a.title)}"</b>. After review by the scientific committee, we regret that it has not been accepted for the ${escapeHtml(CONFERENCE_NAME)}.</p>`));
     }
     res.json({ success: true });
   } catch (err) {
@@ -1886,29 +2273,35 @@ app.put('/api/abstracts/:id/status', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEW
   }
 });
 
-// Allocate an accepted abstract to oral or poster presentation.
+// Step 2 of abstract review: Assignment (oral/poster), for approved
+// abstracts only. This is the delegate's one and only decision email --
+// it states both that the abstract was accepted and the final format.
 app.put('/api/abstracts/:id/allocation', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEWER'), async (req, res, next) => {
   try {
     const { allocation } = req.body;
     if (!['ORAL', 'POSTER'].includes(allocation)) {
       return res.status(400).json({ success: false, error: 'Allocation must be ORAL or POSTER.' });
     }
-    const a = await dbGet('SELECT status, phone_number, author_name, title FROM abstracts WHERE id = ?', [req.params.id]);
+    const a = await dbGet('SELECT status, allocation, phone_number, author_name, title FROM abstracts WHERE id = ?', [req.params.id]);
     if (!a) return res.status(404).json({ success: false, error: 'Abstract not found.' });
     if (a.status !== 'ACCEPTED') {
-      return res.status(400).json({ success: false, error: 'Only accepted abstracts can be allocated.' });
+      return res.status(400).json({ success: false, error: 'Only approved abstracts can be assigned a presentation format.' });
     }
+    const isFirstAssignment = !a.allocation;
     await dbRun('UPDATE abstracts SET allocation = ? WHERE id = ?', [allocation, req.params.id]);
     await recordAudit({
       req, entityType: 'abstract', entityId: req.params.id,
-      action: 'ABSTRACT_ALLOCATION', oldValue: null, newValue: allocation,
+      action: 'ABSTRACT_ALLOCATION', oldValue: a.allocation, newValue: allocation,
     });
-    const kind = allocation === 'ORAL' ? 'oral' : 'poster';
-    notifyDelegate(a.phone_number, `Your abstract: ${kind} presentation`,
-      emailWrap('Presentation format allocated',
-        `<p>Dear ${escapeHtml(a.author_name)},</p>
-         <p>Your accepted abstract <b>"${escapeHtml(a.title)}"</b> has been allocated for <b>${kind} presentation</b>.</p>
-         <p>Further details will be communicated.</p>`));
+    // Only email on the first assignment (or a change of format); re-saving
+    // the same value shouldn't re-notify the delegate.
+    if (isFirstAssignment || a.allocation !== allocation) {
+      const kind = allocation === 'ORAL' ? 'oral' : 'poster';
+      notifyDelegate(a.phone_number, 'Your abstract has been accepted',
+        emailWrap('Abstract accepted', `<p>Dear ${escapeHtml(a.author_name)},</p>
+           <p>We are pleased to inform you that your abstract <b>"${escapeHtml(a.title)}"</b> has been <b>accepted</b> for the ${escapeHtml(CONFERENCE_NAME)}, for <b>${kind} presentation</b>.</p>
+           <p>Further details (time and venue) will be communicated separately.</p>`));
+    }
     res.json({ success: true });
   } catch (err) {
     next(err);
