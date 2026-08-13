@@ -23,6 +23,40 @@ function readFileAsDataURL(file) {
   });
 }
 
+// Non-blocking toast notifications, replacing native alert() (which blocks
+// script execution and reads as jarring/dated on top of being untestable by
+// browser automation). Creates its own container lazily so it works on any
+// page that loads this script, delegate portal or admin panel alike.
+const TOAST_STYLES = {
+  error: 'bg-rose-600 text-white',
+  success: 'bg-emerald-600 text-white',
+  info: 'bg-slate-800 text-white',
+};
+function showToast(message, type = 'error') {
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[200] flex flex-col gap-2 w-full max-w-sm px-4 pointer-events-none';
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement('div');
+  toast.className = `pointer-events-auto ${TOAST_STYLES[type] || TOAST_STYLES.error} rounded-xl shadow-lg px-4 py-3 text-sm font-semibold flex items-start justify-between gap-3`;
+  const text = document.createElement('span');
+  text.className = 'flex-1 whitespace-pre-line';
+  text.textContent = message == null ? '' : String(message);
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'shrink-0 opacity-80 hover:opacity-100 font-bold leading-none';
+  closeBtn.setAttribute('aria-label', 'Dismiss');
+  closeBtn.textContent = '✕';
+  closeBtn.onclick = () => toast.remove();
+  toast.appendChild(text);
+  toast.appendChild(closeBtn);
+  container.appendChild(toast);
+  setTimeout(() => toast.remove(), type === 'error' ? 7000 : 4000);
+}
+
 const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC'];
 function isAdminUser() {
   return !!currentDelegate && ADMIN_ROLES.includes(currentDelegate.role);
@@ -117,7 +151,7 @@ async function fetchAddressDetails(pincode) {
 async function requestOTP(context) {
   const phone = document.getElementById(`${context}-phone`).value.trim();
   if (phone.length !== 10 || isNaN(phone)) {
-    return alert("Please enter a valid 10-digit Indian Mobile Number.");
+    return showToast("Please enter a valid 10-digit Indian Mobile Number.");
   }
 
   const res = await fetch('/api/otp/request', {
@@ -131,13 +165,13 @@ async function requestOTP(context) {
     document.getElementById(`${context}-otp-container`).classList.remove('hidden');
     if (data.devOtp) {
       document.getElementById(`${context}-otp-hint`).innerText = `Demo OTP: ${data.devOtp}`;
-      alert(`OTP sent to +91 ${phone}.\nYour 6-Digit OTP is: ${data.devOtp}`);
+      showToast(`OTP sent to +91 ${phone}.\nYour 6-Digit OTP is: ${data.devOtp}`, 'info');
     } else {
       document.getElementById(`${context}-otp-hint`).innerText = 'Sent via SMS';
-      alert(`A 6-digit OTP has been sent to +91 ${phone}.`);
+      showToast(`A 6-digit OTP has been sent to +91 ${phone}.`, 'info');
     }
   } else {
-    alert(data.error || 'Could not send OTP. Please try again.');
+    showToast(data.error || 'Could not send OTP. Please try again.');
   }
 }
 
@@ -170,10 +204,10 @@ async function handleRegistration(e) {
   if (data.success) {
     currentDelegate = data.user;
     localStorage.setItem('nqocn_current_user', JSON.stringify(currentDelegate));
-    alert("Mobile OTP Verified! Account registered.");
+    showToast("Mobile OTP Verified! Account registered.", 'success');
     loadDashboard();
   } else {
-    alert(data.error || "Registration failed.");
+    showToast(data.error || "Registration failed.");
   }
 }
 
@@ -192,7 +226,7 @@ async function handleLogin(e) {
   if (data.success) {
     currentDelegate = data.user;
     localStorage.setItem('nqocn_current_user', JSON.stringify(currentDelegate));
-    alert(`Welcome back, ${currentDelegate.full_name || currentDelegate.name}!`);
+    showToast(`Welcome back, ${currentDelegate.full_name || currentDelegate.name}!`, 'success');
     loadDashboard();
   } else if (data.notRegistered) {
     // New number — switch to sign-up, carrying the phone and (still-valid) OTP.
@@ -201,9 +235,9 @@ async function handleLogin(e) {
     document.getElementById('reg-otp-container').classList.remove('hidden');
     document.getElementById('reg-otp').value = otp;
     document.getElementById('reg-otp-hint').innerText = otp ? 'OTP carried over' : '';
-    alert("This number isn't registered yet — please complete the sign-up form to create your account.");
+    showToast("This number isn't registered yet — please complete the sign-up form to create your account.", 'info');
   } else {
-    alert(data.error || "Login failed.");
+    showToast(data.error || "Login failed.");
   }
 }
 
@@ -434,10 +468,10 @@ async function verifyAndSubmitPayment(e) {
   const isStudent = STUDENT_CATEGORIES.includes(categoryKey);
 
   const file = document.getElementById('payment-screenshot').files[0];
-  if (!file) return alert('Please upload your payment screenshot.');
+  if (!file) return showToast('Please upload your payment screenshot.');
 
   const idFile = document.getElementById('payment-id-card').files[0];
-  if (isStudent && !idFile) return alert('Please upload your student ID card for this category.');
+  if (isStudent && !idFile) return showToast('Please upload your student ID card for this category.');
 
   const submitBtn = document.getElementById('submit-payment-btn');
   const originalBtnText = submitBtn.innerText;
@@ -497,18 +531,19 @@ async function verifyAndSubmitPayment(e) {
     }
 
     if (data.success) {
-      alert(data.flagged
+      showToast(data.flagged
         ? "Submission received and FLAGGED for manual scrutiny (some details could not be auto-verified)."
-        : "Registration submitted successfully! It is PENDING manual verification."
+        : "Registration submitted successfully! It is PENDING manual verification.",
+        data.flagged ? 'info' : 'success'
       );
       closeModal('modal-conference');
       loadDashboard();
     } else {
-      alert(data.error || 'Submission failed.');
+      showToast(data.error || 'Submission failed.');
     }
   } catch (err) {
     console.error('Payment Submission Error:', err);
-    alert(`Submission Error: ${err.message}`);
+    showToast(`Submission Error: ${err.message}`);
   } finally {
     submitBtn.innerText = originalBtnText;
     submitBtn.disabled = false;
@@ -518,8 +553,8 @@ async function verifyAndSubmitPayment(e) {
 async function handleAbstractSubmit(e) {
   e.preventDefault();
   const file = document.getElementById('abstract-pdf').files[0];
-  if (!file) return alert('Please attach your abstract PDF.');
-  if (file.type !== 'application/pdf') return alert('The abstract must be a PDF file.');
+  if (!file) return showToast('Please attach your abstract PDF.');
+  if (file.type !== 'application/pdf') return showToast('The abstract must be a PDF file.');
 
   const reader = new FileReader();
   reader.onload = async function (event) {
@@ -536,15 +571,15 @@ async function handleAbstractSubmit(e) {
       });
       const data = await res.json();
       if (data.success) {
-        alert('Abstract submitted for review!');
+        showToast('Abstract submitted for review!', 'success');
         document.getElementById('abstract-pdf').value = '';
         closeModal('modal-abstract');
         loadDashboard();
       } else {
-        alert(data.error || 'Submission failed.');
+        showToast(data.error || 'Submission failed.');
       }
     } catch (err) {
-      alert(`Submission error: ${err.message}`);
+      showToast(`Submission error: ${err.message}`);
     }
   };
   reader.readAsDataURL(file);
@@ -614,13 +649,13 @@ function toggleRejectNote() {
 async function submitReject() {
   const reason = document.getElementById('reject-reason').value;
   const note = document.getElementById('reject-note').value.trim();
-  if (reason === 'OTHER' && !note) return alert('Please describe the reason.');
+  if (reason === 'OTHER' && !note) return showToast('Please describe the reason.');
   const data = await (await fetch(`/api/registrations/${encodeURIComponent(rejectTargetId)}/status`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ bankStatus: 'REJECTED', rejectionReason: reason, rejectionNote: note })
   })).json();
-  if (!data.success) return alert(data.error || 'Rejection failed.');
+  if (!data.success) return showToast(data.error || 'Rejection failed.');
   closeModal('modal-reject');
   closeModal('modal-review');
   renderBackendPayments();
@@ -650,7 +685,7 @@ async function restoreSession() {
       loadDashboard();
     }
   } catch (e) {
-    /* offline — stay on the landing page */
+    /* offline — stay on the login page */
   }
 }
 
@@ -806,7 +841,7 @@ async function initBackendPortal() {
   // Identify the logged-in admin from the session, not a client-side switcher.
   const meRes = await fetch('/api/auth/me');
   if (!meRes.ok) {
-    alert('Please log in through the delegate portal with an administrator account.');
+    showToast('Please log in through the delegate portal with an administrator account.');
     window.location.href = '/';
     return;
   }
@@ -1010,7 +1045,7 @@ async function reviewLinkTransaction(transactionId) {
   const data = await (await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/link-transaction`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transactionId }),
   })).json();
-  if (!data.success) return alert(data.error || 'Could not link this transaction.');
+  if (!data.success) return showToast(data.error || 'Could not link this transaction.');
   await renderBackendPayments();
   openReviewModal(reviewTargetId); // re-open with fresh cached data to reflect the new link
 }
@@ -1018,7 +1053,7 @@ async function reviewLinkTransaction(transactionId) {
 async function reviewUnlinkTransaction() {
   if (!(await showConfirm('Unlink this transaction? You will need to link one before this can be verified.'))) return;
   const data = await (await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/link-transaction`, { method: 'DELETE' })).json();
-  if (!data.success) return alert(data.error || 'Could not unlink.');
+  if (!data.success) return showToast(data.error || 'Could not unlink.');
   await renderBackendPayments();
   openReviewModal(reviewTargetId);
 }
@@ -1030,7 +1065,7 @@ async function reviewAccept() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ bankStatus: 'BANK_VERIFIED' })
   })).json();
-  if (!data.success) return alert(data.error || 'Verification failed.');
+  if (!data.success) return showToast(data.error || 'Verification failed.');
   closeModal('modal-review');
   renderBackendPayments();
 }
@@ -1121,7 +1156,7 @@ async function handleAddProgram(e) {
   const data = await (await fetch('/api/admin/program-options', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   })).json();
-  if (!data.success) return alert(data.error || 'Could not add option.');
+  if (!data.success) return showToast(data.error || 'Could not add option.');
   document.getElementById('new-program-name').value = '';
   renderBackendPrograms();
 }
@@ -1130,7 +1165,7 @@ async function saveProgramCapacity(id, capacity) {
   const data = await (await fetch(`/api/admin/program-options/${encodeURIComponent(id)}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ capacity }),
   })).json();
-  if (!data.success) alert(data.error || 'Update failed.');
+  if (!data.success) showToast(data.error || 'Update failed.');
   renderBackendPrograms();
 }
 
@@ -1144,7 +1179,7 @@ async function toggleProgram(id, active) {
 async function deleteProgram(id) {
   if (!(await showConfirm('Delete this option? This cannot be undone.'))) return;
   const data = await (await fetch(`/api/admin/program-options/${encodeURIComponent(id)}`, { method: 'DELETE' })).json();
-  if (!data.success) alert(data.error || 'Delete failed.');
+  if (!data.success) showToast(data.error || 'Delete failed.');
   renderBackendPrograms();
 }
 
@@ -1182,11 +1217,11 @@ async function loadRoster() {
 async function handleRosterAdd(e) {
   e.preventDefault();
   const phone = document.getElementById('roster-add-phone').value.trim();
-  if (!/^\d{10}$/.test(phone)) return alert('Enter a valid 10-digit mobile number.');
+  if (!/^\d{10}$/.test(phone)) return showToast('Enter a valid 10-digit mobile number.');
   const data = await (await fetch(`/api/admin/program-options/${encodeURIComponent(rosterOptionId)}/enroll`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }),
   })).json();
-  if (!data.success) return alert(data.error || 'Could not enroll this delegate.');
+  if (!data.success) return showToast(data.error || 'Could not enroll this delegate.');
   document.getElementById('roster-add-phone').value = '';
   await loadRoster();
   renderBackendPrograms();
@@ -1197,7 +1232,7 @@ async function handleRosterRemove(phone) {
   const data = await (await fetch(`/api/admin/program-options/${encodeURIComponent(rosterOptionId)}/enroll/${encodeURIComponent(phone)}`, {
     method: 'DELETE',
   })).json();
-  if (!data.success) alert(data.error || 'Could not remove this delegate.');
+  if (!data.success) showToast(data.error || 'Could not remove this delegate.');
   await loadRoster();
   renderBackendPrograms();
 }
@@ -1244,7 +1279,7 @@ async function saveFeeConfig() {
       lateUntil: document.getElementById('fee-late-until').value || null,
     })
   })).json();
-  if (!data.success) return alert(data.error || 'Could not save dates.');
+  if (!data.success) return showToast(data.error || 'Could not save dates.');
   renderBackendFees();
 }
 
@@ -1261,7 +1296,7 @@ async function handleAddFeeCategory(e) {
   const data = await (await fetch('/api/admin/fees/categories', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
   })).json();
-  if (!data.success) return alert(data.error || 'Could not add category.');
+  if (!data.success) return showToast(data.error || 'Could not add category.');
   document.getElementById('new-fee-key').value = '';
   document.getElementById('new-fee-label').value = '';
   renderBackendFees();
@@ -1278,7 +1313,7 @@ async function saveFeeCategory(id) {
       spotFee: Number(q('fee-spot').value),
     })
   })).json();
-  if (!data.success) alert(data.error || 'Update failed.');
+  if (!data.success) showToast(data.error || 'Update failed.');
   renderBackendFees();
 }
 
@@ -1300,7 +1335,7 @@ async function toggleFeeCategory(id, active) {
 async function deleteFeeCategory(id) {
   if (!(await showConfirm('Delete this category? This cannot be undone.'))) return;
   const data = await (await fetch(`/api/admin/fees/categories/${encodeURIComponent(id)}`, { method: 'DELETE' })).json();
-  if (!data.success) alert(data.error || 'Delete failed.');
+  if (!data.success) showToast(data.error || 'Delete failed.');
   renderBackendFees();
 }
 
@@ -1444,7 +1479,7 @@ async function updateAbstractAllocation(id, allocation) {
   const data = await (await fetch(`/api/abstracts/${encodeURIComponent(id)}/allocation`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allocation })
   })).json();
-  if (!data.success) alert(data.error || 'Allocation failed.');
+  if (!data.success) showToast(data.error || 'Allocation failed.');
   renderBackendAbstracts();
 }
 

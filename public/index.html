@@ -9,29 +9,22 @@
 <body class="bg-slate-100 font-sans min-h-screen flex flex-col justify-center items-center p-4">
 
   <!-- TOP DELEGATE HEADER WITH ADMIN ACCESS -->
-  <div id="top-header" class="w-full max-w-4xl flex justify-center items-center mb-4 px-2">
+  <div id="top-header" class="w-full max-w-xl flex justify-center items-center mb-4 px-2">
     <span class="text-xs font-bold text-indigo-700 bg-indigo-100 px-3 py-1 rounded-full">NQOCN & MGIMS Sevagram</span>
     <a id="admin-nav-btn" href="/admin" class="hidden text-xs font-bold text-slate-600 hover:text-indigo-600 bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1 transition">
       ⚙️ Admin Backend Panel
     </a>
   </div>
 
-  <!-- PAGE 1: MAIN LANDING PAGE -->
-  <main id="main-page" class="w-full max-w-2xl bg-white shadow-xl rounded-2xl p-8 text-center border border-slate-200">
-    <div class="mb-6">
-      <span class="text-xs font-bold uppercase tracking-widest text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">21–22 November 2026</span>
-      <h1 class="text-3xl font-extrabold text-slate-800 mt-4">International Conference on Healthcare Quality & Patient Safety 2026</h1>
-      <p class="text-slate-500 text-sm mt-2">MGIMS, Sevagram, Wardha, Maharashtra</p>
-    </div>
+  <div class="w-full max-w-xl text-center mb-4 px-2">
+    <span class="text-[10px] font-bold uppercase tracking-widest text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">21–22 November 2026</span>
+    <h1 class="text-xl font-extrabold text-slate-800 mt-2">International Conference on Healthcare Quality & Patient Safety 2026</h1>
+    <p class="text-slate-500 text-xs mt-1">MGIMS, Sevagram, Wardha, Maharashtra</p>
+  </div>
 
-    <button onclick="navigateTo('auth-page')" class="w-full sm:w-auto px-8 py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-lg rounded-xl shadow-lg transition-all duration-200 transform hover:-translate-y-0.5">
-      Delegate Login / Register
-    </button>
-  </main>
+  <!-- AUTHENTICATION / PHONE + OTP CREATION (the delegate portal starts here) -->
+  <section id="auth-page" class="w-full max-w-xl bg-white shadow-xl rounded-2xl p-8 border border-slate-200">
 
-  <!-- PAGE 2: AUTHENTICATION / PHONE + OTP CREATION -->
-  <section id="auth-page" class="hidden w-full max-w-xl bg-white shadow-xl rounded-2xl p-8 border border-slate-200">
-    
     <!-- Login Form (Visible by Default) -->
     <form id="login-form" onsubmit="handleLogin(event)" class="space-y-4">
       <h2 class="text-xl font-bold text-slate-800 mb-1">Delegate Login</h2>
