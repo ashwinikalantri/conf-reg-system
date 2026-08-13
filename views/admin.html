@@ -472,6 +472,14 @@
             <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Student ID Card</p>
             <img id="review-idcard" src="" alt="Student ID card" class="w-full rounded-lg border border-slate-200">
           </div>
+          <div id="review-idverify-wrap" class="hidden border-t border-slate-100 pt-3">
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Student ID Verification <span class="normal-case font-normal">(required to verify)</span></p>
+            <label class="flex items-start gap-2 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-2.5 cursor-pointer">
+              <input type="checkbox" id="review-idverify-checkbox" class="mt-0.5 shrink-0" onchange="reviewSetIdVerified(this.checked)">
+              <span>I have reviewed the ID card above and confirm it verifies this delegate's student status for the selected category.</span>
+            </label>
+            <p id="review-idverify-note" class="hidden text-[11px] text-emerald-700 font-semibold mt-1"></p>
+          </div>
           <div id="review-flagged-note" class="hidden bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-lg p-2.5">⚠️ Flagged for manual scrutiny — one or more automated checks did not pass.</div>
 
           <div class="border-t border-slate-100 pt-3">

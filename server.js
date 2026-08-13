@@ -698,6 +698,13 @@ db.serialize(() => {
         db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_registrations_bank_txn_id ON registrations(bank_txn_id)');
       });
     }
+    // Admin (approver) confirmation that a student category's uploaded ID
+    // card actually verifies that status -- distinct from ocr_id_match,
+    // which is only the automated advisory check. Required before a student
+    // registration can be verified (see PUT .../status).
+    if (!names.includes('id_verified')) db.run('ALTER TABLE registrations ADD COLUMN id_verified INTEGER DEFAULT 0');
+    if (!names.includes('id_verified_by')) db.run('ALTER TABLE registrations ADD COLUMN id_verified_by TEXT');
+    if (!names.includes('id_verified_at')) db.run('ALTER TABLE registrations ADD COLUMN id_verified_at INTEGER');
 
     // Backfill a number for any already-verified registration that predates
     // number assignment. Idempotent -- matches nothing once filled.
@@ -1270,7 +1277,7 @@ const REGISTRATION_PUBLIC_COLUMNS =
   `registrations.id, registration_number, phone_number, delegate_name, category_key, category_label, workshop,
    qi_exposure, expected_amount, paid_amount, utr_number, is_flagged, bank_status,
    ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, rejection_reason, rejection_note,
-   payment_mode, submitted_at,
+   payment_mode, submitted_at, id_verified, id_verified_by, id_verified_at,
    (screenshot IS NOT NULL AND screenshot != '') AS has_screenshot,
    (id_card IS NOT NULL AND id_card != '') AS has_id_card`;
 
@@ -1600,7 +1607,7 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
       }
     }
 
-    const existing = await dbGet('SELECT bank_status, bank_txn_id FROM registrations WHERE id = ?', [req.params.id]);
+    const existing = await dbGet('SELECT bank_status, bank_txn_id, category_key, id_verified FROM registrations WHERE id = ?', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ success: false, error: 'Registration not found.' });
     }
@@ -1614,6 +1621,16 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
       return res.status(400).json({
         success: false,
         error: 'This registration is not linked to a bank statement transaction yet. Link it (automatically or by picking one manually) before verifying.',
+      });
+    }
+
+    // Student categories additionally require an approver to have confirmed
+    // the uploaded ID card verifies that status (the automated OCR check is
+    // only advisory) -- see PUT .../verify-id.
+    if (bankStatus === 'BANK_VERIFIED' && STUDENT_CATEGORIES[existing.category_key] && !existing.id_verified) {
+      return res.status(400).json({
+        success: false,
+        error: 'This is a student registration and its ID card has not been verified by an approver yet. Verify the student ID before approving.',
       });
     }
 
@@ -1650,6 +1667,32 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
              <p>Please log in to the delegate portal to review and resubmit.</p>`));
       }
     }
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Approver confirmation that a student registration's uploaded ID card
+// actually verifies that status. Required (see PUT .../status) before a
+// student registration can be marked BANK_VERIFIED; the automated OCR check
+// alone is advisory and never sufficient on its own.
+app.put('/api/registrations/:id/verify-id', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const verified = !!req.body.verified;
+    const existing = await dbGet('SELECT id, category_key, id_verified FROM registrations WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ success: false, error: 'Registration not found.' });
+    if (!STUDENT_CATEGORIES[existing.category_key]) {
+      return res.status(400).json({ success: false, error: 'This category does not require student ID verification.' });
+    }
+    await dbRun(
+      'UPDATE registrations SET id_verified = ?, id_verified_by = ?, id_verified_at = ? WHERE id = ?',
+      [verified ? 1 : 0, verified ? req.session.name : null, verified ? Date.now() : null, existing.id]
+    );
+    await recordAudit({
+      req, entityType: 'registration', entityId: req.params.id,
+      action: 'STUDENT_ID_VERIFICATION', oldValue: existing.id_verified ? 'verified' : 'unverified', newValue: verified ? 'verified' : 'unverified',
+    });
     res.json({ success: true });
   } catch (err) {
     next(err);

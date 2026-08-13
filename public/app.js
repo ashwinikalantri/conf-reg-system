@@ -396,13 +396,9 @@ async function loadAbstractStatus() {
 function calculateFee() {
   const catKey = document.getElementById('payment-category').value;
 
-  // Student categories must upload an ID card, and confirm it verifies their
-  // status. Reset the confirmation on any category change so it can never
-  // silently carry over from a previous (possibly different) category.
+  // Student categories must upload an ID card.
   const idBlock = document.getElementById('id-card-block');
   if (idBlock) idBlock.classList.toggle('hidden', !STUDENT_CATEGORIES.includes(catKey));
-  const idConfirm = document.getElementById('id-card-confirm');
-  if (idConfirm) idConfirm.checked = false;
 
   if (!catKey) return;
 
@@ -502,9 +498,6 @@ async function verifyAndSubmitPayment(e) {
 
   const idFile = document.getElementById('payment-id-card').files[0];
   if (isStudent && !idFile) return showToast('Please upload your student ID card for this category.');
-  if (isStudent && !document.getElementById('id-card-confirm').checked) {
-    return showToast('Please confirm that your uploaded ID card verifies your student status.');
-  }
 
   const submitBtn = document.getElementById('submit-payment-btn');
   const originalBtnText = submitBtn.innerText;
@@ -962,6 +955,10 @@ function paymentRowHtml(p) {
           ${p.is_flagged ? 'Review (Force Verify)' : 'Review'}
         </button>
         <p class="text-[10px] mt-1 ${p.bank_txn_id ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${p.bank_txn_id ? '🔗 Linked' : '⚠ Not linked'}</p>
+        ${STUDENT_CATEGORIES.includes(p.category_key)
+          ? `<p class="text-[10px] mt-0.5 ${p.id_verified ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${p.id_verified ? '🎓 ID Verified' : '⚠ ID Not Verified'}</p>`
+          : ''
+        }
       </td>
     </tr>
   `;
@@ -1043,8 +1040,52 @@ function openReviewModal(id) {
   const flaggedNote = document.getElementById('review-flagged-note');
   if (flaggedNote) flaggedNote.classList.toggle('hidden', !p.is_flagged);
 
+  renderReviewIdVerification(p);
   renderReviewTxnLink(p);
   openModal('modal-review');
+}
+
+// Accept & Verify is gated on every applicable requirement being met: a
+// linked bank transaction always, and (for student categories) an
+// approver's confirmation that the ID card verifies that status. Each
+// render function records its own reviewGate flag; this reconciles them.
+const reviewGate = { linked: false, idOk: true };
+function updateReviewAcceptGate() {
+  const acceptBtn = document.getElementById('review-accept-btn');
+  if (acceptBtn) acceptBtn.disabled = !(reviewGate.linked && reviewGate.idOk);
+}
+
+// Student categories require an approver to confirm the uploaded ID card
+// verifies that status before the registration can be verified -- the
+// automated OCR check alone (shown among Automated Checks) is advisory.
+function renderReviewIdVerification(p) {
+  const wrap = document.getElementById('review-idverify-wrap');
+  const checkbox = document.getElementById('review-idverify-checkbox');
+  const note = document.getElementById('review-idverify-note');
+  const isStudent = STUDENT_CATEGORIES.includes(p.category_key);
+
+  if (wrap) wrap.classList.toggle('hidden', !isStudent);
+  reviewGate.idOk = !isStudent || !!p.id_verified;
+
+  if (checkbox) checkbox.checked = !!p.id_verified;
+  if (note) {
+    note.classList.toggle('hidden', !p.id_verified);
+    note.textContent = p.id_verified_by ? `✓ Verified by ${p.id_verified_by} · ${fmtAuditTime(p.id_verified_at)}` : '';
+  }
+  updateReviewAcceptGate();
+}
+
+async function reviewSetIdVerified(checked) {
+  const data = await (await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/verify-id`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ verified: checked }),
+  })).json();
+  if (!data.success) {
+    showToast(data.error || 'Could not update ID verification.');
+    document.getElementById('review-idverify-checkbox').checked = !checked; // revert the click
+    return;
+  }
+  await renderBackendPayments();
+  openReviewModal(reviewTargetId); // re-open with fresh cached data
 }
 
 // Show whether this registration is linked to a statement transaction; if
@@ -1053,12 +1094,12 @@ function openReviewModal(id) {
 function renderReviewTxnLink(p) {
   const linkedBox = document.getElementById('review-txn-linked');
   const unlinkedBox = document.getElementById('review-txn-unlinked');
-  const acceptBtn = document.getElementById('review-accept-btn');
   const isLinked = !!p.bank_txn_id;
 
   if (linkedBox) linkedBox.classList.toggle('hidden', !isLinked);
   if (unlinkedBox) unlinkedBox.classList.toggle('hidden', isLinked);
-  if (acceptBtn) acceptBtn.disabled = !isLinked;
+  reviewGate.linked = isLinked;
+  updateReviewAcceptGate();
 
   if (isLinked) {
     setText('review-txn-details', `${esc(p.bank_txn_date || '')} · ₹${esc(p.bank_txn_credit)} · ${esc(p.bank_txn_description || '')}`);
