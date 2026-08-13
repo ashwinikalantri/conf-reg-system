@@ -899,6 +899,7 @@ async function renderBackendPayments() {
         <button class="review-btn px-3 py-1.5 ${p.is_flagged ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white font-semibold rounded-lg text-xs shadow-sm" data-id="${esc(p.id)}">
           ${p.is_flagged ? 'Review (Force Verify)' : 'Review'}
         </button>
+        <p class="text-[10px] mt-1 ${p.bank_txn_id ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${p.bank_txn_id ? '🔗 Linked' : '⚠ Not linked'}</p>
       </td>
     </tr>
   `;
@@ -947,7 +948,67 @@ function openReviewModal(id) {
   const flaggedNote = document.getElementById('review-flagged-note');
   if (flaggedNote) flaggedNote.classList.toggle('hidden', !p.is_flagged);
 
+  renderReviewTxnLink(p);
   openModal('modal-review');
+}
+
+// Show whether this registration is linked to a statement transaction; if
+// not, load candidates the admin can pick from manually. Verification is
+// blocked (both by the server and by disabling this button) until linked.
+function renderReviewTxnLink(p) {
+  const linkedBox = document.getElementById('review-txn-linked');
+  const unlinkedBox = document.getElementById('review-txn-unlinked');
+  const acceptBtn = document.getElementById('review-accept-btn');
+  const isLinked = !!p.bank_txn_id;
+
+  if (linkedBox) linkedBox.classList.toggle('hidden', !isLinked);
+  if (unlinkedBox) unlinkedBox.classList.toggle('hidden', isLinked);
+  if (acceptBtn) acceptBtn.disabled = !isLinked;
+
+  if (isLinked) {
+    setText('review-txn-details', `${esc(p.bank_txn_date || '')} · ₹${esc(p.bank_txn_credit)} · ${esc(p.bank_txn_description || '')}`);
+    return;
+  }
+  loadReviewTxnCandidates(p.id);
+}
+
+async function loadReviewTxnCandidates(regId) {
+  const box = document.getElementById('review-txn-candidates');
+  if (!box) return;
+  box.innerHTML = '<p class="text-xs text-slate-400 p-2">Loading candidates…</p>';
+  const res = await fetch(`/api/registrations/${encodeURIComponent(regId)}/candidate-transactions`);
+  if (!res.ok) { box.innerHTML = '<p class="text-xs text-rose-600 p-2">Could not load candidates.</p>'; return; }
+  const data = await res.json();
+  const txns = data.transactions || [];
+  box.innerHTML = txns.length ? txns.map(t => `
+    <div class="flex items-center justify-between gap-2 p-2 text-xs">
+      <div class="min-w-0">
+        <p class="font-semibold text-slate-700">${esc(t.post_date)} · ₹${esc(t.credit)}</p>
+        <p class="text-slate-500 truncate">${esc(t.description)}</p>
+      </div>
+      <button type="button" class="review-txn-link-btn shrink-0 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg" data-txn-id="${esc(t.id)}">Link</button>
+    </div>`).join('') : '<p class="text-xs text-slate-400 p-2">No unused credits in the statement yet.</p>';
+
+  box.querySelectorAll('.review-txn-link-btn').forEach((btn) => {
+    btn.addEventListener('click', () => reviewLinkTransaction(btn.dataset.txnId));
+  });
+}
+
+async function reviewLinkTransaction(transactionId) {
+  const data = await (await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/link-transaction`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transactionId }),
+  })).json();
+  if (!data.success) return alert(data.error || 'Could not link this transaction.');
+  await renderBackendPayments();
+  openReviewModal(reviewTargetId); // re-open with fresh cached data to reflect the new link
+}
+
+async function reviewUnlinkTransaction() {
+  if (!(await showConfirm('Unlink this transaction? You will need to link one before this can be verified.'))) return;
+  const data = await (await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/link-transaction`, { method: 'DELETE' })).json();
+  if (!data.success) return alert(data.error || 'Could not unlink.');
+  await renderBackendPayments();
+  openReviewModal(reviewTargetId);
 }
 
 async function reviewAccept() {

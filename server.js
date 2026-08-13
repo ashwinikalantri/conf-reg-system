@@ -681,6 +681,14 @@ db.serialize(() => {
     if (!names.includes('rejection_note')) db.run('ALTER TABLE registrations ADD COLUMN rejection_note TEXT');
     if (!names.includes('payment_mode')) db.run("ALTER TABLE registrations ADD COLUMN payment_mode TEXT DEFAULT 'UPI'");
     if (!names.includes('submitted_at')) db.run('ALTER TABLE registrations ADD COLUMN submitted_at INTEGER');
+    if (!names.includes('bank_txn_id')) {
+      db.run('ALTER TABLE registrations ADD COLUMN bank_txn_id INTEGER', () => {
+        // One statement transaction can back at most one registration. SQLite
+        // treats each NULL as distinct in a UNIQUE index, so unlinked rows
+        // (the common case) never collide with each other.
+        db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_registrations_bank_txn_id ON registrations(bank_txn_id)');
+      });
+    }
 
     // Backfill a number for any already-verified registration that predates
     // number assignment. Idempotent -- matches nothing once filled.
@@ -1227,6 +1235,10 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     const regNo = await assignUserRegNumber(phone);
     await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
 
+    // In case a matching statement transaction was already imported before
+    // this submission arrived, try to link it immediately.
+    await autoLinkTransactions();
+
     // Acknowledge the payment; registration is confirmed later on verification.
     notifyDelegate(phone, 'Payment received — verification pending',
       emailWrap('We’ve received your payment details',
@@ -1537,13 +1549,18 @@ app.get('/api/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async
   try {
     const rows = await dbAll(`
       SELECT ${REGISTRATION_PUBLIC_COLUMNS},
+        registrations.bank_txn_id,
+        t.post_date AS bank_txn_date, t.description AS bank_txn_description,
+        t.credit AS bank_txn_credit, t.extracted_ref AS bank_txn_ref,
         (SELECT actor_name FROM audit_log a
            WHERE a.entity_type = 'registration' AND a.entity_id = CAST(registrations.id AS TEXT)
            ORDER BY a.id DESC LIMIT 1) AS last_action_by,
         (SELECT created_at FROM audit_log a
            WHERE a.entity_type = 'registration' AND a.entity_id = CAST(registrations.id AS TEXT)
            ORDER BY a.id DESC LIMIT 1) AS last_action_at
-      FROM registrations ORDER BY id DESC`);
+      FROM registrations
+      LEFT JOIN bank_statement_transactions t ON t.id = registrations.bank_txn_id
+      ORDER BY registrations.id DESC`);
     res.json({ registrations: rows || [] });
   } catch (err) {
     next(err);
@@ -1574,9 +1591,21 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
       }
     }
 
-    const existing = await dbGet('SELECT bank_status FROM registrations WHERE id = ?', [req.params.id]);
+    const existing = await dbGet('SELECT bank_status, bank_txn_id FROM registrations WHERE id = ?', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ success: false, error: 'Registration not found.' });
+    }
+
+    // Verification requires this registration to be linked to a specific
+    // bank statement transaction first -- either auto-matched by UTR on
+    // upload/submission, or picked manually. This is what actually confirms
+    // money landed in the account, rather than trusting the delegate's
+    // self-reported UTR alone. Rejection never needs a link.
+    if (bankStatus === 'BANK_VERIFIED' && !existing.bank_txn_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'This registration is not linked to a bank statement transaction yet. Link it (automatically or by picking one manually) before verifying.',
+      });
     }
 
     await dbRun(
@@ -1612,6 +1641,72 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
              <p>Please log in to the delegate portal to review and resubmit.</p>`));
       }
     }
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Candidate statement transactions for manually linking a registration --
+// unused credits, closest-amount-first, so the admin can eyeball date and
+// description (e.g. an IMPS/NEFT credit with no machine-readable reference)
+// and pick the right one.
+app.get('/api/registrations/:id/candidate-transactions', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const reg = await dbGet('SELECT id, paid_amount, expected_amount FROM registrations WHERE id = ?', [req.params.id]);
+    if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
+    const targetAmount = reg.paid_amount != null ? reg.paid_amount : reg.expected_amount;
+    const rows = await dbAll(
+      `SELECT * FROM bank_statement_transactions
+        WHERE credit IS NOT NULL AND credit > 0
+          AND id NOT IN (SELECT bank_txn_id FROM registrations WHERE bank_txn_id IS NOT NULL)
+        ORDER BY ABS(COALESCE(credit, 0) - ?) ASC, post_date DESC
+        LIMIT 50`,
+      [targetAmount || 0]
+    );
+    res.json({ transactions: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Manually link a registration to a specific statement transaction (e.g. an
+// IMPS/NEFT credit that can't be auto-matched by reference number).
+app.put('/api/registrations/:id/link-transaction', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const { transactionId } = req.body;
+    const reg = await dbGet('SELECT id, bank_txn_id FROM registrations WHERE id = ?', [req.params.id]);
+    if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
+    const txn = await dbGet('SELECT id FROM bank_statement_transactions WHERE id = ?', [transactionId]);
+    if (!txn) return res.status(404).json({ success: false, error: 'Statement transaction not found.' });
+    const usedBy = await dbGet('SELECT id, registration_number FROM registrations WHERE bank_txn_id = ? AND id != ?', [transactionId, reg.id]);
+    if (usedBy) {
+      return res.status(409).json({ success: false, error: `That transaction is already linked to registration ${usedBy.registration_number || usedBy.id}.` });
+    }
+    await dbRun('UPDATE registrations SET bank_txn_id = ? WHERE id = ?', [transactionId, reg.id]);
+    await recordAudit({
+      req, entityType: 'registration', entityId: req.params.id,
+      action: 'BANK_TXN_LINK', oldValue: reg.bank_txn_id, newValue: transactionId,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    if (err.code === 'SQLITE_CONSTRAINT') {
+      return res.status(409).json({ success: false, error: 'That transaction is already linked to another registration.' });
+    }
+    next(err);
+  }
+});
+
+// Undo a link (auto- or manual), e.g. if the wrong transaction was picked.
+app.delete('/api/registrations/:id/link-transaction', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const reg = await dbGet('SELECT id, bank_txn_id FROM registrations WHERE id = ?', [req.params.id]);
+    if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
+    await dbRun('UPDATE registrations SET bank_txn_id = NULL WHERE id = ?', [reg.id]);
+    await recordAudit({
+      req, entityType: 'registration', entityId: req.params.id,
+      action: 'BANK_TXN_UNLINK', oldValue: reg.bank_txn_id, newValue: null,
+    });
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -1999,6 +2094,43 @@ function parseStatementBuffer(buffer) {
   return rows;
 }
 
+const digitsOnly = (v) => String(v || '').replace(/\D/g, '');
+
+// Auto-link registrations to a statement transaction by UTR/RRN match.
+// Never overrides an existing link (registration or transaction side), so
+// it's safe to call opportunistically -- after every statement upload and
+// after every payment submission -- to catch a match whichever arrives
+// second. Returns the number of new links made.
+async function autoLinkTransactions() {
+  const regs = await dbAll(
+    `SELECT id, utr_number FROM registrations
+      WHERE bank_txn_id IS NULL AND utr_number IS NOT NULL AND utr_number != '' AND bank_status != 'REJECTED'`);
+  if (!regs.length) return 0;
+
+  const txns = await dbAll(
+    `SELECT id, extracted_ref FROM bank_statement_transactions
+      WHERE credit IS NOT NULL AND credit > 0 AND extracted_ref IS NOT NULL
+        AND id NOT IN (SELECT bank_txn_id FROM registrations WHERE bank_txn_id IS NOT NULL)`);
+  const byRef = new Map();
+  txns.forEach((t) => byRef.set(digitsOnly(t.extracted_ref), t.id));
+
+  let linked = 0;
+  for (const reg of regs) {
+    const txnId = byRef.get(digitsOnly(reg.utr_number));
+    if (!txnId) continue;
+    // Guard against two registrations racing for the same still-unused
+    // transaction within this loop (the UNIQUE index is the final backstop).
+    byRef.delete(digitsOnly(reg.utr_number));
+    try {
+      await dbRun('UPDATE registrations SET bank_txn_id = ? WHERE id = ? AND bank_txn_id IS NULL', [txnId, reg.id]);
+      linked++;
+    } catch (err) {
+      if (err.code !== 'SQLITE_CONSTRAINT') throw err;
+    }
+  }
+  return linked;
+}
+
 // Upload a statement file. Rows already imported (by an overlapping earlier
 // upload) are silently skipped via the UNIQUE dedupe_hash; this is how
 // re-uploading updated statements "compiles" into one running master.
@@ -2036,7 +2168,8 @@ app.post('/api/admin/bank-statement/upload', requireRole('SUPER_ADMIN', 'FINANCE
         );
         if (result.changes > 0) imported++;
       }
-      res.json({ success: true, total: rows.length, imported, duplicates: rows.length - imported });
+      const linked = await autoLinkTransactions();
+      res.json({ success: true, total: rows.length, imported, duplicates: rows.length - imported, linked });
     } catch (err) {
       next(err);
     }
@@ -2335,12 +2468,15 @@ app.use((err, req, res, next) => {
   res.status(500).json({ success: false, error: 'Internal server error.' });
 });
 
-// Run the Title Case backfill to completion before opening the port, so it
-// can never race with a real signup (see retitleNamesOnBoot above). A DB
-// hiccup here shouldn't block startup forever, so it's bounded and logged
-// rather than awaited unconditionally.
+// Run one-time-safe boot tasks to completion before opening the port: the
+// Title Case backfill (see retitleNamesOnBoot -- must not race a real
+// signup) and a pass of bank-transaction auto-linking (picks up any
+// statement rows imported before this boot that match already-submitted
+// registrations). Bounded and logged rather than awaited unconditionally,
+// so a DB hiccup doesn't block startup forever.
 retitleNamesOnBoot()
   .catch((err) => console.error('Title-case backfill failed (continuing to start):', err.message))
+  .then(() => autoLinkTransactions().catch((err) => console.error('Bank-transaction auto-link failed (continuing to start):', err.message)))
   .then(startServer);
 
 function startServer() {

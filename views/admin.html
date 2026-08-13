@@ -450,11 +450,24 @@
             <img id="review-idcard" src="" alt="Student ID card" class="w-full rounded-lg border border-slate-200">
           </div>
           <div id="review-flagged-note" class="hidden bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-lg p-2.5">⚠️ Flagged for manual scrutiny — one or more automated checks did not pass.</div>
+
+          <div class="border-t border-slate-100 pt-3">
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Bank Statement Link <span class="normal-case font-normal">(required to verify)</span></p>
+            <div id="review-txn-linked" class="hidden bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 space-y-1">
+              <p class="text-emerald-800 font-semibold text-xs">✓ Linked to a statement transaction</p>
+              <p id="review-txn-details" class="text-[11px] text-emerald-700"></p>
+              <button type="button" onclick="reviewUnlinkTransaction()" class="text-[11px] text-rose-600 hover:underline font-semibold">Unlink</button>
+            </div>
+            <div id="review-txn-unlinked">
+              <p id="review-txn-empty" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">⚠️ No matching statement transaction found automatically. Pick one below, or upload/refresh the bank statement first.</p>
+              <div id="review-txn-candidates" class="mt-2 divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-48 overflow-y-auto"></div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="p-4 border-t border-slate-100 flex justify-end gap-2 shrink-0">
         <button type="button" onclick="reviewReject()" class="px-4 py-2 bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-xl text-sm font-semibold">Reject…</button>
-        <button type="button" onclick="reviewAccept()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold shadow-md">Accept &amp; Verify</button>
+        <button type="button" id="review-accept-btn" onclick="reviewAccept()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold shadow-md disabled:opacity-40 disabled:cursor-not-allowed">Accept &amp; Verify</button>
       </div>
     </div>
   </div>
