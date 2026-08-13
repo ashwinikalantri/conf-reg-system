@@ -1052,6 +1052,11 @@ function openReviewModal(id) {
   const flaggedNote = document.getElementById('review-flagged-note');
   if (flaggedNote) flaggedNote.classList.toggle('hidden', !p.is_flagged);
 
+  // Rejecting an already-rejected registration doesn't mean anything --
+  // that action is only offered while a decision is still pending.
+  const rejectBtn = document.getElementById('review-reject-btn');
+  if (rejectBtn) rejectBtn.classList.toggle('hidden', p.bank_status === 'REJECTED');
+
   renderReviewIdVerification(p);
   renderReviewTxnLink(p);
   openModal('modal-review');
