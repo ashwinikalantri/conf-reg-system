@@ -796,6 +796,18 @@ function setupAdminDelegation() {
     });
   }
 
+  const rosterSearch = document.getElementById('roster-search');
+  if (rosterSearch) {
+    rosterSearch.addEventListener('input', (e) => handleRosterSearch(e.target.value));
+  }
+  const rosterResults = document.getElementById('roster-search-results');
+  if (rosterResults) {
+    rosterResults.addEventListener('click', (e) => {
+      const pick = e.target.closest('.roster-search-pick');
+      if (pick) return handleRosterEnroll(pick.dataset.phone);
+    });
+  }
+
   const feeBody = document.getElementById('fee-table-body');
   if (feeBody) {
     feeBody.addEventListener('click', (e) => {
@@ -1274,11 +1286,13 @@ async function deleteProgram(id) {
 
 // --- WORKSHOP / QI ROSTER (manual admin add/remove) ---
 let rosterOptionId = null;
+let rosterEnrolledPhones = new Set();
 
 async function openRosterModal(id, type, name) {
   rosterOptionId = id;
   setText('roster-title', `Roster — ${name}`);
-  document.getElementById('roster-add-phone').value = '';
+  document.getElementById('roster-search').value = '';
+  hideRosterSearchResults();
   await loadRoster();
   openModal('modal-roster');
 }
@@ -1291,6 +1305,7 @@ async function loadRoster() {
   if (!res.ok) { list.innerHTML = '<p class="text-xs text-rose-600 py-3">Could not load roster.</p>'; return; }
   const data = await res.json();
   const enrolled = data.enrolled || [];
+  rosterEnrolledPhones = new Set(enrolled.map((r) => r.phone_number));
   list.innerHTML = enrolled.length
     ? enrolled.map(r => `
       <div class="flex items-center justify-between py-2">
@@ -1303,15 +1318,42 @@ async function loadRoster() {
     : '<p class="text-xs text-slate-400 py-3">Nobody enrolled yet.</p>';
 }
 
-async function handleRosterAdd(e) {
-  e.preventDefault();
-  const phone = document.getElementById('roster-add-phone').value.trim();
-  if (!/^\d{10}$/.test(phone)) return showToast('Enter a valid 10-digit mobile number.');
+function hideRosterSearchResults() {
+  const box = document.getElementById('roster-search-results');
+  if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+}
+
+// Live-filters already-registered delegates (the only ones eligible for
+// enrollment) by name, phone, or registration number -- reuses the payments
+// list already fetched for this admin session rather than a new endpoint.
+function handleRosterSearch(query) {
+  const box = document.getElementById('roster-search-results');
+  if (!box) return;
+  const q = query.trim().toLowerCase();
+  if (!q) return hideRosterSearchResults();
+
+  const matches = (cachedPaymentRegs || [])
+    .filter((r) => !rosterEnrolledPhones.has(r.phone_number))
+    .filter((r) => `${r.delegate_name || ''} ${r.phone_number || ''} ${r.registration_number || ''}`.toLowerCase().includes(q))
+    .slice(0, 8);
+
+  box.innerHTML = matches.length
+    ? matches.map(r => `
+      <button type="button" class="roster-search-pick w-full text-left px-3 py-2 hover:bg-indigo-50" data-phone="${esc(r.phone_number)}">
+        <p class="font-semibold text-slate-800 text-sm">${esc(r.delegate_name)}</p>
+        <p class="text-[11px] text-slate-500">+91 ${esc(r.phone_number)} · ${esc(r.registration_number || '—')}${r.category_label ? ' · ' + esc(r.category_label) : ''}</p>
+      </button>`).join('')
+    : '<p class="text-xs text-slate-400 p-3">No matching registered delegates.</p>';
+  box.classList.remove('hidden');
+}
+
+async function handleRosterEnroll(phone) {
   const data = await (await fetch(`/api/admin/program-options/${encodeURIComponent(rosterOptionId)}/enroll`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }),
   })).json();
   if (!data.success) return showToast(data.error || 'Could not enroll this delegate.');
-  document.getElementById('roster-add-phone').value = '';
+  document.getElementById('roster-search').value = '';
+  hideRosterSearchResults();
   await loadRoster();
   renderBackendPrograms();
 }
