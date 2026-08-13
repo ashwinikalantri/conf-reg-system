@@ -634,6 +634,11 @@ db.serialize(() => {
     if (!names.includes('late_until')) db.run('ALTER TABLE fee_config ADD COLUMN late_until TEXT');
   });
 
+  // Tiny key/value table for one-off migration flags -- lets a boot-time
+  // backfill (see retitleNamesOnBoot) run exactly once ever, rather than on
+  // every restart.
+  db.run('CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT)');
+
   // Bank statement transactions, imported from admin-uploaded statement
   // files. dedupe_hash is a stable fingerprint of the row so re-uploading an
   // overlapping statement silently skips rows already imported -- this is
@@ -746,23 +751,35 @@ db.serialize(() => {
   db.run("UPDATE fee_config SET late_until = '2026-10-31' WHERE id = 1 AND (late_until IS NULL OR late_until = '')");
 });
 
-// One-time-per-startup backfill: normalise stored person names to Title
-// Case. Idempotent (titleCase() is stable on already-cased input), so this
-// is safe to run on every boot rather than tracking a migration flag.
-db.serialize(() => {
-  const retitle = (table, col, keyCol) => {
-    db.all(`SELECT ${keyCol} AS k, ${col} AS v FROM ${table} WHERE ${col} IS NOT NULL AND ${col} != ''`, (err, rows) => {
-      if (err) return console.error(`Title-case backfill (${table}) failed:`, err.message);
-      rows.forEach((row) => {
-        const fixed = titleCase(row.v);
-        if (fixed !== row.v) db.run(`UPDATE ${table} SET ${col} = ? WHERE ${keyCol} = ?`, [fixed, row.k]);
-      });
-    });
+// One-time-ever backfill: normalise stored person names to Title Case. Guarded
+// by a persisted flag in schema_meta so it runs exactly once across the
+// application's lifetime -- not once per boot (an app restarted often, e.g.
+// under a file-watcher during development, must not keep re-running this).
+//
+// It also fully finishes BEFORE the server starts accepting requests: it is
+// only meant to clean up rows that existed before this code first shipped.
+// If it were left to run fire-and-forget (racing with app.listen), a
+// delegate who signs up in the first moments after that one-time boot could
+// have the name they just typed silently rewritten mid-request -- exactly
+// what we don't want, since new submissions are deliberately left untouched
+// to preserve exact certificate-name input (see the signup form's hint).
+async function retitleNamesOnBoot() {
+  const already = await dbGet("SELECT value FROM schema_meta WHERE key = 'titlecase_backfill_done'");
+  if (already) return;
+
+  const retitle = async (table, col, keyCol) => {
+    const rows = await dbAll(`SELECT ${keyCol} AS k, ${col} AS v FROM ${table} WHERE ${col} IS NOT NULL AND ${col} != ''`);
+    for (const row of rows) {
+      const fixed = titleCase(row.v);
+      if (fixed !== row.v) await dbRun(`UPDATE ${table} SET ${col} = ? WHERE ${keyCol} = ?`, [fixed, row.k]);
+    }
   };
-  retitle('users', 'full_name', 'phone_number');
-  retitle('registrations', 'delegate_name', 'id');
-  retitle('abstracts', 'author_name', 'id');
-});
+  await retitle('users', 'full_name', 'phone_number');
+  await retitle('registrations', 'delegate_name', 'id');
+  await retitle('abstracts', 'author_name', 'id');
+
+  await dbRun("INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('titlecase_backfill_done', ?)", [String(Date.now())]);
+}
 
 // One-time migration: move any base64 screenshots still stored in the DB out
 // to files, leaving only the filename behind. Idempotent -- once migrated,
@@ -2318,9 +2335,19 @@ app.use((err, req, res, next) => {
   res.status(500).json({ success: false, error: 'Internal server error.' });
 });
 
+// Run the Title Case backfill to completion before opening the port, so it
+// can never race with a real signup (see retitleNamesOnBoot above). A DB
+// hiccup here shouldn't block startup forever, so it's bounded and logged
+// rather than awaited unconditionally.
+retitleNamesOnBoot()
+  .catch((err) => console.error('Title-case backfill failed (continuing to start):', err.message))
+  .then(startServer);
+
+function startServer() {
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`SMS OTP: ${SMS_ENABLED ? 'ENABLED (Vynttra)' : 'disabled (no SMS_API_KEY)'}`);
   console.log(`Email: ${EMAIL_ENABLED ? `ENABLED (SES, from ${EMAIL_FROM})` : 'disabled (no AWS/SES config)'}`);
   if (OTP_ECHO && !SMS_ENABLED) console.log('[dev] OTP echo is ON — codes are returned to the client and logged here.');
 });
+}

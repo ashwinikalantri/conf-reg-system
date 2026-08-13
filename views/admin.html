@@ -34,30 +34,25 @@
   <main class="max-w-7xl mx-auto">
     <div class="flex border-b border-slate-300 mb-6 space-x-2 sm:space-x-4 overflow-x-auto">
       <button id="nav-tab-payments" onclick="switchBackendTab('payments')" class="py-3 px-5 font-bold text-indigo-600 border-b-2 border-indigo-600 text-sm flex items-center gap-2 shrink-0">
-        <span>💳 Payment Bank Reconciliation</span>
+        <span>✅ Registration Approval</span>
         <span id="badge-pending-payments" class="bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
+      </button>
+      <button id="nav-tab-statement" onclick="switchBackendTab('statement')" class="py-3 px-5 font-bold text-slate-500 hover:text-slate-700 text-sm flex items-center gap-2 shrink-0">
+        <span>🏦 Bank Statement</span>
       </button>
       <button id="nav-tab-abstracts" onclick="switchBackendTab('abstracts')" class="py-3 px-5 font-bold text-slate-500 hover:text-slate-700 text-sm flex items-center gap-2 shrink-0">
         <span>📄 Abstract Review Desk</span>
         <span id="badge-pending-abstracts" class="bg-indigo-100 text-indigo-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
       </button>
-      <button id="nav-tab-programs" onclick="switchBackendTab('programs')" class="py-3 px-5 font-bold text-slate-500 hover:text-slate-700 text-sm flex items-center gap-2 shrink-0">
-        <span>🗓️ Workshops & QI Practices</span>
-        <span id="badge-program-count" class="bg-slate-200 text-slate-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
-      </button>
-      <button id="nav-tab-fees" onclick="switchBackendTab('fees')" class="py-3 px-5 font-bold text-slate-500 hover:text-slate-700 text-sm flex items-center gap-2 shrink-0">
-        <span>💰 Fees</span>
-      </button>
       <button id="nav-tab-reports" onclick="switchBackendTab('reports')" class="py-3 px-5 font-bold text-slate-500 hover:text-slate-700 text-sm flex items-center gap-2 shrink-0">
         <span>📊 Reports</span>
       </button>
-      <button id="nav-tab-users" onclick="switchBackendTab('users')" class="py-3 px-5 font-bold text-slate-500 hover:text-slate-700 text-sm flex items-center gap-2 shrink-0">
-        <span>👥 User Roles & Access Control</span>
-        <span id="badge-user-count" class="bg-slate-200 text-slate-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
+      <button id="nav-tab-masters" onclick="switchBackendTab(lastMastersTab)" class="py-3 px-5 font-bold text-slate-500 hover:text-slate-700 text-sm flex items-center gap-2 shrink-0">
+        <span>🗂️ Masters</span>
       </button>
     </div>
 
-    <!-- TAB 1: BANK RECONCILIATION -->
+    <!-- TAB 1: REGISTRATION APPROVAL -->
     <section id="section-payments" class="space-y-6">
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
@@ -77,17 +72,18 @@
           <p id="metric-flagged-count" class="text-2xl font-black text-rose-700 mt-1">0</p>
         </div>
       </div>
+      <p class="text-xs text-slate-500">Showing registrations awaiting a decision. Once verified, a delegate drops off this list — see <button type="button" onclick="switchBackendTab('reports')" class="text-indigo-600 underline font-semibold">Reports</button> for the full verified list.</p>
 
       <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
         <table class="w-full text-left border-collapse min-w-[900px]">
           <thead>
             <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
               <th class="py-3.5 px-4">Delegate & Category</th>
-              <th class="py-3.5 px-4">Transaction UTR</th>
+              <th class="py-3.5 px-4">Transaction / Mode / Date</th>
               <th class="py-3.5 px-4">Fee &amp; Auto-Checks</th>
               <th class="py-3.5 px-4">Documents</th>
-              <th class="py-3.5 px-4">Bank Verification Status</th>
-              <th class="py-3.5 px-4 text-right">Reconciliation Actions</th>
+              <th class="py-3.5 px-4">Status</th>
+              <th class="py-3.5 px-4 text-right">Action</th>
             </tr>
           </thead>
           <tbody id="payment-table-body" class="divide-y divide-slate-100 text-sm">
@@ -98,9 +94,131 @@
 
     <!-- TAB 2: ABSTRACT REVIEW -->
     <section id="section-abstracts" class="hidden space-y-6">
-      <div id="abstracts-container" class="space-y-4">
+      <div>
+        <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 1 · Approval</h3>
+        <p class="text-xs text-slate-500 mb-3">Accept or reject each submission. This can be done independently of, and before, assignment below.</p>
+        <div id="abstracts-approval-container" class="space-y-4"></div>
+      </div>
+      <div class="pt-4 border-t border-slate-200">
+        <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 2 · Assignment (approved abstracts only)</h3>
+        <p class="text-xs text-slate-500 mb-3">Assign oral or poster presentation. The delegate's decision email is sent from here.</p>
+        <div id="abstracts-assignment-container" class="space-y-4"></div>
       </div>
     </section>
+
+    <!-- TAB: BANK STATEMENT RECONCILIATION -->
+    <section id="section-statement" class="hidden space-y-6">
+      <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-800 mb-1">Upload Bank Statement</h3>
+        <p class="text-xs text-slate-500 mb-3">Upload the account statement (.xls/.xlsx) any time you have an updated export. Rows already imported from an earlier upload are skipped automatically, so overlapping statements simply compile into one running record.</p>
+        <form onsubmit="handleStatementUpload(event)" class="flex flex-wrap items-end gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Statement file</label>
+            <input type="file" id="statement-file" accept=".xls,.xlsx" required class="p-2 border rounded-lg text-sm bg-white outline-none">
+          </div>
+          <button type="submit" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md">Upload &amp; Import</button>
+          <span id="statement-upload-result" class="text-xs font-semibold"></span>
+        </form>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+          <p class="text-xs font-bold text-slate-500 uppercase">Registrations with a Payment Ref</p>
+          <p id="rec-metric-total" class="text-2xl font-black text-slate-800 mt-1">0</p>
+        </div>
+        <div class="bg-white rounded-2xl p-5 border border-emerald-200 bg-emerald-50/30 shadow-sm">
+          <p class="text-xs font-bold text-emerald-600 uppercase">Matched in Statement</p>
+          <p id="rec-metric-matched" class="text-2xl font-black text-emerald-700 mt-1">0</p>
+        </div>
+        <div class="bg-white rounded-2xl p-5 border border-rose-200 bg-rose-50/30 shadow-sm">
+          <p class="text-xs font-bold text-rose-600 uppercase">Not Found in Statement</p>
+          <p id="rec-metric-unmatched" class="text-2xl font-black text-rose-700 mt-1">0</p>
+        </div>
+        <div class="bg-white rounded-2xl p-5 border border-amber-200 bg-amber-50/30 shadow-sm">
+          <p class="text-xs font-bold text-amber-600 uppercase">Unmatched Credits in Bank</p>
+          <p id="rec-metric-credits" class="text-2xl font-black text-amber-700 mt-1">0</p>
+        </div>
+      </div>
+
+      <div>
+        <h3 class="text-sm font-bold text-rose-700 uppercase tracking-wide mb-2">Registrations Not Found in Statement</h3>
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[700px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Reg No</th><th class="py-3 px-4">Delegate</th><th class="py-3 px-4">Mode</th><th class="py-3 px-4">UTR / Txn No.</th><th class="py-3 px-4">Amount</th>
+            </tr></thead>
+            <tbody id="rec-unmatched-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <h3 class="text-sm font-bold text-amber-700 uppercase tracking-wide mb-2">Bank Credits Not Matched to a Registration</h3>
+        <p class="text-xs text-slate-500 mb-2">Includes non-UPI credits (NEFT/RTGS/IMPS) which don't carry a machine-readable reference — match these manually by amount, date, and description.</p>
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[700px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Date</th><th class="py-3 px-4">Description</th><th class="py-3 px-4">Credit ₹</th>
+            </tr></thead>
+            <tbody id="rec-credits-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <h3 class="text-sm font-bold text-emerald-700 uppercase tracking-wide mb-2">Matched</h3>
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[800px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Reg No</th><th class="py-3 px-4">Delegate</th><th class="py-3 px-4">UTR / Txn No.</th><th class="py-3 px-4">Statement Date</th><th class="py-3 px-4">Amount</th>
+            </tr></thead>
+            <tbody id="rec-matched-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: REPORTS -->
+    <section id="section-reports" class="hidden space-y-6">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div id="report-verified" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+          <h3 class="font-bold text-slate-800">Verified Registrations</h3>
+          <p class="text-xs text-slate-500 mt-1 mb-4">Registered users with successful payment verification.</p>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="viewReport('verified')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg">👁 View</button>
+            <button onclick="downloadReport('verified','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">⬇ Excel</button>
+            <button onclick="downloadReport('verified')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">🖨 PDF</button>
+          </div>
+        </div>
+        <div id="report-workshops" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+          <h3 class="font-bold text-slate-800">Registrations per Workshop / QI Practice</h3>
+          <p class="text-xs text-slate-500 mt-1 mb-4">A separate table per workshop and per QI practice.</p>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="viewReport('workshops')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg">👁 View</button>
+            <button onclick="downloadReport('workshops','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">⬇ Excel</button>
+            <button onclick="downloadReport('workshops')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">🖨 PDF</button>
+          </div>
+        </div>
+        <div id="report-abstracts" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+          <h3 class="font-bold text-slate-800">Accepted Abstracts</h3>
+          <p class="text-xs text-slate-500 mt-1 mb-4">All abstracts marked accepted.</p>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="viewReport('abstracts')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg">👁 View</button>
+            <button onclick="downloadReport('abstracts','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">⬇ Excel</button>
+            <button onclick="downloadReport('abstracts')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">🖨 PDF</button>
+          </div>
+        </div>
+      </div>
+      <div id="report-view-container" class="hidden bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-6"></div>
+    </section>
+
+    <!-- MASTERS: wraps Workshops & QI / Fees / Users, each a sub-tab -->
+    <div id="section-masters-wrapper" class="hidden">
+      <div class="flex gap-2 mb-4">
+        <button id="subnav-programs" onclick="switchBackendTab('programs')" class="px-4 py-2 rounded-lg text-xs font-bold bg-indigo-600 text-white">🗓️ Workshops &amp; QI Practices</button>
+        <button id="subnav-fees" onclick="switchBackendTab('fees')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600">💰 Fees</button>
+        <button id="subnav-users" onclick="switchBackendTab('users')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600">👥 Users &amp; Roles</button>
+      </div>
 
     <!-- TAB: WORKSHOPS & QI PRACTICES -->
     <section id="section-programs" class="hidden space-y-6">
@@ -128,49 +246,23 @@
       <div id="programs-container" class="space-y-6"></div>
     </section>
 
-    <!-- TAB: REPORTS -->
-    <section id="section-reports" class="hidden">
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div id="report-verified" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <h3 class="font-bold text-slate-800">Verified Registrations</h3>
-          <p class="text-xs text-slate-500 mt-1 mb-4">Registered users with successful payment verification.</p>
-          <div class="flex gap-2">
-            <button onclick="downloadReport('verified','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">⬇ Excel</button>
-            <button onclick="downloadReport('verified')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">🖨 PDF</button>
-          </div>
-        </div>
-        <div id="report-workshops" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <h3 class="font-bold text-slate-800">Registrations per Workshop</h3>
-          <p class="text-xs text-slate-500 mt-1 mb-4">Delegates grouped by chosen workshop.</p>
-          <div class="flex gap-2">
-            <button onclick="downloadReport('workshops','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">⬇ Excel</button>
-            <button onclick="downloadReport('workshops')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">🖨 PDF</button>
-          </div>
-        </div>
-        <div id="report-abstracts" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <h3 class="font-bold text-slate-800">Accepted Abstracts</h3>
-          <p class="text-xs text-slate-500 mt-1 mb-4">All abstracts marked accepted.</p>
-          <div class="flex gap-2">
-            <button onclick="downloadReport('abstracts','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">⬇ Excel</button>
-            <button onclick="downloadReport('abstracts')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">🖨 PDF</button>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <!-- TAB: FEES -->
     <section id="section-fees" class="hidden space-y-6">
       <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
         <h3 class="text-lg font-bold text-slate-800 mb-1">Pricing Phase Dates</h3>
-        <p class="text-xs text-slate-500 mb-3">Current phase: <span id="fee-current-phase" class="font-bold">—</span>. On/before "Early until" = early; on/before "Regular until" = regular; after = late.</p>
+        <p class="text-xs text-slate-500 mb-3">Current phase: <span id="fee-current-phase" class="font-bold">—</span>. On/before "Early until" = Early Bird; on/before "Regular until" = Regular; on/before "Late until" = Late; after = Spot Registration.</p>
         <div class="flex flex-wrap gap-3 items-end">
           <div>
-            <label class="block text-xs font-semibold text-slate-600 mb-1">Early until</label>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Early Bird until</label>
             <input type="date" id="fee-early-until" class="p-2.5 border rounded-lg text-sm outline-none">
           </div>
           <div>
             <label class="block text-xs font-semibold text-slate-600 mb-1">Regular until</label>
             <input type="date" id="fee-regular-until" class="p-2.5 border rounded-lg text-sm outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Late until</label>
+            <input type="date" id="fee-late-until" class="p-2.5 border rounded-lg text-sm outline-none">
           </div>
           <button onclick="saveFeeConfig()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md">Save Dates</button>
         </div>
@@ -184,18 +276,20 @@
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Early ₹</label><input id="new-fee-early" type="number" min="0" value="0" class="w-20 p-2 border rounded-lg text-sm outline-none"></div>
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Regular ₹</label><input id="new-fee-regular" type="number" min="0" value="0" class="w-20 p-2 border rounded-lg text-sm outline-none"></div>
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Late ₹</label><input id="new-fee-late" type="number" min="0" value="0" class="w-20 p-2 border rounded-lg text-sm outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Spot ₹</label><input id="new-fee-spot" type="number" min="0" value="0" class="w-20 p-2 border rounded-lg text-sm outline-none"></div>
           <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md">+ Add</button>
         </form>
       </div>
 
       <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-        <table class="w-full text-left border-collapse min-w-[720px]">
+        <table class="w-full text-left border-collapse min-w-[820px]">
           <thead>
             <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
               <th class="py-3 px-4">Category</th>
               <th class="py-3 px-4">Early ₹</th>
               <th class="py-3 px-4">Regular ₹</th>
               <th class="py-3 px-4">Late ₹</th>
+              <th class="py-3 px-4">Spot ₹</th>
               <th class="py-3 px-4 text-right">Actions</th>
             </tr>
           </thead>
@@ -231,6 +325,7 @@
         </table>
       </div>
     </section>
+    </div> <!-- /section-masters-wrapper -->
   </main>
 
   <!-- MODAL: CREATE USER -->
@@ -319,6 +414,64 @@
         <button type="button" onclick="closeModal('modal-reject')" class="px-4 py-2 border rounded-xl text-xs font-semibold text-slate-600">Cancel</button>
         <button type="button" onclick="submitReject()" class="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold shadow-md">Reject</button>
       </div>
+    </div>
+  </div>
+
+  <!-- MODAL: PAYMENT REVIEW (verify / force verify entry point) -->
+  <div id="modal-review" class="hidden fixed inset-0 bg-slate-900/70 flex justify-center items-center p-2 sm:p-4 z-50">
+    <div class="bg-white w-full max-w-5xl rounded-2xl shadow-2xl relative max-h-[95vh] flex flex-col">
+      <button onclick="closeModal('modal-review')" class="absolute top-3 right-3 text-slate-400 hover:text-slate-600 text-xl font-bold z-10">✕</button>
+      <div class="p-5 border-b border-slate-100 shrink-0">
+        <h3 id="review-title" class="text-lg font-bold text-slate-800">Review Payment</h3>
+      </div>
+      <div class="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 overflow-hidden">
+        <!-- Screenshot: sized to fill available height without needing to scroll -->
+        <div class="bg-slate-900 flex items-center justify-center min-h-[260px] md:min-h-0 md:h-full">
+          <img id="review-screenshot" src="" alt="Payment screenshot" class="max-h-[40vh] md:max-h-[75vh] h-full w-full object-contain">
+        </div>
+        <div class="p-5 overflow-y-auto space-y-4 text-sm">
+          <div>
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Delegate</p>
+            <p id="review-name" class="font-bold text-slate-800"></p>
+            <p id="review-category" class="text-xs text-slate-500"></p>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mode</p><p id="review-mode" class="font-semibold"></p></div>
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Amount</p><p id="review-amount" class="font-semibold"></p></div>
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Transaction ID</p><p id="review-utr" class="font-mono font-semibold"></p></div>
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date Submitted</p><p id="review-date" class="font-semibold"></p></div>
+          </div>
+          <div>
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Automated Checks</p>
+            <div id="review-checks" class="flex flex-col gap-1"></div>
+          </div>
+          <div id="review-idcard-wrap" class="hidden">
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Student ID Card</p>
+            <img id="review-idcard" src="" alt="Student ID card" class="w-full rounded-lg border border-slate-200">
+          </div>
+          <div id="review-flagged-note" class="hidden bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-lg p-2.5">⚠️ Flagged for manual scrutiny — one or more automated checks did not pass.</div>
+        </div>
+      </div>
+      <div class="p-4 border-t border-slate-100 flex justify-end gap-2 shrink-0">
+        <button type="button" onclick="reviewReject()" class="px-4 py-2 bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-xl text-sm font-semibold">Reject…</button>
+        <button type="button" onclick="reviewAccept()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold shadow-md">Accept &amp; Verify</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: WORKSHOP / QI ROSTER (manual enroll / remove) -->
+  <div id="modal-roster" class="hidden fixed inset-0 bg-slate-900/60 flex justify-center items-center p-4 z-50">
+    <div class="bg-white max-w-lg w-full rounded-2xl p-6 shadow-2xl relative max-h-[85vh] overflow-y-auto">
+      <button onclick="closeModal('modal-roster')" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
+      <h3 id="roster-title" class="text-lg font-bold text-slate-800 mb-1">Roster</h3>
+      <p class="text-xs text-slate-500 mb-4">Manually add or remove a delegate from this option's enrolled list.</p>
+
+      <form onsubmit="handleRosterAdd(event)" class="flex gap-2 mb-4">
+        <input type="tel" id="roster-add-phone" maxlength="10" placeholder="10-digit mobile of an already-registered delegate" class="flex-1 p-2.5 border rounded-lg text-sm font-mono outline-none">
+        <button type="submit" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md shrink-0">+ Add</button>
+      </form>
+
+      <div id="roster-list" class="divide-y divide-slate-100 text-sm"></div>
     </div>
   </div>
 
