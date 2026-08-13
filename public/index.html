@@ -280,13 +280,48 @@
             <span id="calculated-fee-display" class="text-xl font-extrabold text-indigo-600">₹0</span>
           </div>
 
+<!-- delete begin -->
+<div class="w-full max-w-lg bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-xl flex items-start gap-3 shadow-sm" role="alert">
+    <!-- Icon -->
+    <svg class="w-5 h-5 text-rose-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+    </svg>
+
+    <!-- Content -->
+    <div class="flex-1">
+      <p class="text-xs text-rose-700 mt-0.5">Payment processing is currently experiencing intermittent issues. If your transaction fails, please try again later</p>
+    </div>
+
+    <!-- Dismiss Button -->
+    <button onclick="this.parentElement.remove()" class="text-rose-500 hover:text-rose-800 transition-colors p-0.5">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+      </svg>
+    </button>
+  </div>
+
+<!--delete end-->
+  
           <p class="text-xs text-slate-600">Scan using GPay, PhonePe, Paytm, or BHIM.</p>
           <div class="flex justify-center my-2">
             <img id="upi-qr-image" src="" alt="Dynamic UPI QR Code" class="w-48 h-48 border-2 border-indigo-300 rounded-xl shadow-md p-1 bg-white">
           </div>
           <a id="upi-pay-link" href="#" class="inline-block px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg shadow-sm">Pay via UPI App</a>
           <p class="text-[10px] text-slate-500">Pays <b>NQOCN 2026</b> · reference is your registration number. On a phone, tap to open your UPI app.</p>
-        </div>
+
+<!-- delete begin -->
+<div id="neft" class="bg-slate-50 border border-indigo-200 rounded-xl p-4 text-center space-y-3">
+          <div class="flex justify-between items-center border-b pb-2">
+            <span class="text-xs text-slate-500 uppercase font-bold">NEFT / RTGS Payment Option</span>
+          </div>
+          <p class="text-[10px] text-slate-500">
+            Account Name: <b>NQoCN Conf 2026</b></br>
+            Account No: <b>5975992001</b></br>
+            IFSC Code: <b>CBIN0280697</b></br>
+            Branch: <b>Sewagram</b></p>
+            </div>       
+ </div>
+<!-- delete end -->
 
         <div id="payment-verification-fields" class="space-y-4 border-t pt-4">
           <h4 class="text-sm font-bold text-slate-800 uppercase tracking-wide">3. Payment Verification</h4>

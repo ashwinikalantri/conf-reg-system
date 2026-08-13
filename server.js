@@ -54,7 +54,15 @@ const OTP_ECHO = process.env.OTP_ECHO
 const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
 if (COOKIE_SECURE) app.set('trust proxy', 1);
 
-const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER'];
+const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC'];
+
+// Some roles imply others for permission checks. FINANCE_ACADEMIC is a combined
+// role that grants both finance-admin and academic-reviewer access; every other
+// role grants only itself. (SUPER_ADMIN is listed explicitly where it applies.)
+const ROLE_IMPLIES = { FINANCE_ACADEMIC: ['FINANCE_ADMIN', 'ACADEMIC_REVIEWER'] };
+function roleGrants(role) {
+  return [role, ...(ROLE_IMPLIES[role] || [])];
+}
 
 const CONFERENCE_NAME = 'International Conference on Healthcare Quality & Patient Safety 2026';
 
@@ -796,7 +804,8 @@ function requireAuth(req, res, next) {
 function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.session) return res.status(401).json({ success: false, error: 'Login required.' });
-    if (!roles.includes(req.session.role)) {
+    const granted = roleGrants(req.session.role);
+    if (!roles.some((r) => granted.includes(r))) {
       return res.status(403).json({ success: false, error: 'You do not have permission for this action.' });
     }
     next();
@@ -1263,7 +1272,7 @@ app.get('/api/registrations/:id/screenshot', requireAuth, async (req, res, next)
       return res.status(404).json({ success: false, error: 'Screenshot not found.' });
     }
 
-    const isFinance = req.session.role === 'SUPER_ADMIN' || req.session.role === 'FINANCE_ADMIN';
+    const isFinance = req.session.role === 'SUPER_ADMIN' || roleGrants(req.session.role).includes('FINANCE_ADMIN');
     if (!isFinance && req.session.phone !== row.phone_number) {
       return res.status(403).json({ success: false, error: 'You do not have permission to view this screenshot.' });
     }
@@ -1296,7 +1305,7 @@ app.get('/api/registrations/:id/id-card', requireAuth, async (req, res, next) =>
     if (!row || !row.id_card) {
       return res.status(404).json({ success: false, error: 'ID card not found.' });
     }
-    const isFinance = req.session.role === 'SUPER_ADMIN' || req.session.role === 'FINANCE_ADMIN';
+    const isFinance = req.session.role === 'SUPER_ADMIN' || roleGrants(req.session.role).includes('FINANCE_ADMIN');
     if (!isFinance && req.session.phone !== row.phone_number) {
       return res.status(403).json({ success: false, error: 'You do not have permission to view this ID card.' });
     }
@@ -1376,7 +1385,7 @@ app.get('/api/abstracts/:id/file', requireAuth, async (req, res, next) => {
     if (!row || !row.abstract_file) {
       return res.status(404).json({ success: false, error: 'Abstract file not found.' });
     }
-    const isReviewer = req.session.role === 'SUPER_ADMIN' || req.session.role === 'ACADEMIC_REVIEWER';
+    const isReviewer = req.session.role === 'SUPER_ADMIN' || roleGrants(req.session.role).includes('ACADEMIC_REVIEWER');
     if (!isReviewer && req.session.phone !== row.phone_number) {
       return res.status(403).json({ success: false, error: 'You do not have permission to view this abstract.' });
     }
@@ -1800,7 +1809,7 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
     const type = req.params.type;
     const roles = REPORT_ROLES[type];
     if (!roles) return res.status(404).json({ success: false, error: 'Unknown report.' });
-    if (!roles.includes(req.session.role)) {
+    if (!roleGrants(req.session.role).some((r) => roles.includes(r))) {
       return res.status(403).json({ success: false, error: 'You do not have permission for this report.' });
     }
     const rep = await buildReport(type);

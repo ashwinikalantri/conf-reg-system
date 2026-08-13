@@ -1,4 +1,5 @@
 const OFFICIAL_UPI_ID = "abhishekraut@cbin";
+<!-- const OFFICIAL_UPI_ID = "nqocn2026@cbin"-->
 
 // Categories that must upload a student ID card (kept in sync with the server).
 const STUDENT_CATEGORIES = ['nursing_ug', 'nursing_pg', 'med_student', 'pg_doctor'];
@@ -22,9 +23,22 @@ function readFileAsDataURL(file) {
   });
 }
 
-const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER'];
+const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC'];
 function isAdminUser() {
   return !!currentDelegate && ADMIN_ROLES.includes(currentDelegate.role);
+}
+
+// Human-readable role names for display (raw values keep their underscores).
+const ROLE_LABELS = {
+  DELEGATE: 'Delegate',
+  FINANCE_ADMIN: 'Finance Admin',
+  ACADEMIC_REVIEWER: 'Academic Reviewer',
+  FINANCE_ACADEMIC: 'Finance & Academic Reviewer',
+  SUPER_ADMIN: 'Super Admin',
+};
+function roleLabel(role) {
+  return ROLE_LABELS[role] || String(role || '')
+    .toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 // Show the admin backend link only to a logged-in admin on the dashboard.
@@ -719,8 +733,8 @@ function fmtAuditTime(ms) {
 // is allowed to use.
 function applyRoleVisibility(role) {
   const isSuper = role === 'SUPER_ADMIN';
-  const isFinance = isSuper || role === 'FINANCE_ADMIN';
-  const isReviewer = isSuper || role === 'ACADEMIC_REVIEWER';
+  const isFinance = isSuper || role === 'FINANCE_ADMIN' || role === 'FINANCE_ACADEMIC';
+  const isReviewer = isSuper || role === 'ACADEMIC_REVIEWER' || role === 'FINANCE_ACADEMIC';
 
   const tabPayments = document.getElementById('nav-tab-payments');
   const tabAbstracts = document.getElementById('nav-tab-abstracts');
@@ -757,7 +771,7 @@ async function initBackendPortal() {
     return;
   }
   activeAdminUser = (await meRes.json()).user;
-  setText('active-admin-role-badge', `${activeAdminUser.full_name} · ${activeAdminUser.role}`);
+  setText('active-admin-role-badge', `${activeAdminUser.full_name} · ${roleLabel(activeAdminUser.role)}`);
 
   const { isSuper, isFinance, isReviewer } = applyRoleVisibility(activeAdminUser.role);
 
@@ -882,12 +896,13 @@ async function renderBackendUsers() {
     <tr>
       <td class="p-4 font-bold">${esc(u.full_name)}<br><span class="text-xs text-slate-400">+91 ${esc(u.phone_number)}</span></td>
       <td class="p-4">${esc(u.designation)} (${esc(u.institution)})</td>
-      <td class="p-4"><span class="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-full">${esc(u.role)}</span></td>
+      <td class="p-4"><span class="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-full">${esc(roleLabel(u.role))}</span></td>
       <td class="p-4 text-right">
         <select class="role-select text-xs p-1 border rounded" data-phone="${esc(u.phone_number)}">
           <option value="DELEGATE" ${u.role === 'DELEGATE' ? 'selected' : ''}>Delegate</option>
           <option value="FINANCE_ADMIN" ${u.role === 'FINANCE_ADMIN' ? 'selected' : ''}>Finance Admin</option>
           <option value="ACADEMIC_REVIEWER" ${u.role === 'ACADEMIC_REVIEWER' ? 'selected' : ''}>Academic Reviewer</option>
+          <option value="FINANCE_ACADEMIC" ${u.role === 'FINANCE_ACADEMIC' ? 'selected' : ''}>Finance &amp; Academic Reviewer</option>
           <option value="SUPER_ADMIN" ${u.role === 'SUPER_ADMIN' ? 'selected' : ''}>Super Admin</option>
         </select>
       </td>

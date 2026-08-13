@@ -12,7 +12,7 @@
   <header class="max-w-7xl mx-auto bg-slate-900 text-white rounded-2xl p-6 mb-8 shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
     <div>
       <div class="flex items-center gap-3">
-        <span class="bg-indigo-500 text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full text-white">RBAC Admin Panel</span>
+        <span class="bg-indigo-500 text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full text-white">Admin Panel</span>
         <span id="active-admin-role-badge" class="text-xs bg-emerald-500/20 text-emerald-300 font-mono px-2.5 py-0.5 rounded-full border border-emerald-500/30">
           Role: Super Admin
         </span>
@@ -209,7 +209,7 @@
       <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h3 class="text-lg font-bold text-slate-800">User Role Management</h3>
-          <p class="text-xs text-slate-500">Assign role-based access levels (`SUPER_ADMIN`, `FINANCE_ADMIN`, `ACADEMIC_REVIEWER`, `DELEGATE`).</p>
+          <p class="text-xs text-slate-500">Assign role-based access levels: Super Admin, Finance Admin, Academic Reviewer, Finance &amp; Academic Reviewer, and Delegate.</p>
         </div>
         <button onclick="openCreateUserModal()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md">
           + Create New Staff Account
@@ -266,6 +266,7 @@
           <select id="new-user-role" required class="w-full p-2.5 border rounded-lg text-sm bg-white outline-none">
             <option value="FINANCE_ADMIN">Finance Admin (Payment Reconciliation Only)</option>
             <option value="ACADEMIC_REVIEWER">Academic Reviewer (Abstract Desk Only)</option>
+            <option value="FINANCE_ACADEMIC">Finance &amp; Academic Reviewer (Payments + Abstracts)</option>
             <option value="SUPER_ADMIN">Super Admin (Full Backend Access & User Management)</option>
             <option value="DELEGATE">Delegate (Standard Attendee Access)</option>
           </select>
