@@ -34,22 +34,6 @@ function persistDelegate(user) {
 }
 let activeAdminUser = null;
 
-// Delegate portal only (admin.html has no #dashboard-page). Shows the
-// dashboard immediately from the cached user, before restoreSession()'s
-// network round-trip resolves -- otherwise the login page is what's in the
-// HTML by default, and it flashes on screen for every returning delegate
-// until that fetch comes back. restoreSession() still re-validates against
-// the server afterwards and reverts to the login page if the session
-// turned out to be stale.
-if (currentDelegate && document.getElementById('dashboard-page')) {
-  navigateTo('dashboard-page');
-  const displayName = currentDelegate.full_name || currentDelegate.name;
-  const nameEl = document.getElementById('user-display-name');
-  const subEl = document.getElementById('user-display-sub');
-  if (nameEl) nameEl.innerText = currentDelegate.salutation ? `${currentDelegate.salutation} ${displayName}` : displayName;
-  if (subEl) subEl.innerText = `${currentDelegate.designation} | ${currentDelegate.institution || currentDelegate.institute} (+91 ${currentDelegate.phone_number || currentDelegate.phone})`;
-}
-
 // Read a File into a base64 data URL.
 function readFileAsDataURL(file) {
   return new Promise((resolve, reject) => {
@@ -133,6 +117,26 @@ function navigateTo(pageId) {
   updateAdminNav(pageId === 'dashboard-page' && isAdminUser());
 }
 
+// Delegate portal only (admin.html has no #dashboard-page). Shows the
+// dashboard immediately from the cached user, before restoreSession()'s
+// network round-trip resolves -- otherwise the login page is what's in the
+// HTML by default, and it flashes on screen for every returning delegate
+// until that fetch comes back. restoreSession() still re-validates against
+// the server afterwards and reverts to the login page if the session
+// turned out to be stale. (Placed here, after navigateTo/isAdminUser/
+// ADMIN_ROLES are defined, not at the top of the file -- calling
+// navigateTo() before ADMIN_ROLES's `const` initializer has run throws a
+// temporal-dead-zone ReferenceError that silently aborts the rest of this
+// script's top-level execution.)
+if (currentDelegate && document.getElementById('dashboard-page')) {
+  navigateTo('dashboard-page');
+  const displayName = currentDelegate.full_name || currentDelegate.name;
+  const nameEl = document.getElementById('user-display-name');
+  const subEl = document.getElementById('user-display-sub');
+  if (nameEl) nameEl.innerText = currentDelegate.salutation ? `${currentDelegate.salutation} ${displayName}` : displayName;
+  if (subEl) subEl.innerText = `${currentDelegate.designation} | ${currentDelegate.institution || currentDelegate.institute} (+91 ${currentDelegate.phone_number || currentDelegate.phone})`;
+}
+
 function toggleAuth(view) {
   const regForm = document.getElementById('register-form');
   const loginForm = document.getElementById('login-form');
@@ -212,10 +216,23 @@ async function requestOTP(context) {
   }
 }
 
+// Same pattern the server enforces (server.js) -- pragmatic "good enough"
+// email shape, not full RFC 5322. Checked here too so a malformed address
+// is caught immediately with the app's own toast, instead of only via the
+// browser's native type="email" validation (which is inconsistently loose
+// across browsers) or a round-trip to the server.
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
 async function handleRegistration(e) {
   e.preventDefault();
   const phone = document.getElementById('reg-phone').value.trim();
   const otp = document.getElementById('reg-otp').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+
+  if (email && !EMAIL_RE.test(email)) {
+    showToast('Please enter a valid email address.');
+    return;
+  }
 
   const payload = {
     phone,
@@ -226,7 +243,7 @@ async function handleRegistration(e) {
     gender: document.getElementById('reg-gender').value,
     designation: document.getElementById('reg-designation').value,
     institute: document.getElementById('reg-institute').value,
-    email: document.getElementById('reg-email').value,
+    email,
     pincode: document.getElementById('reg-pincode').value,
     state: document.getElementById('reg-state').value,
     district: document.getElementById('reg-district').value
@@ -743,6 +760,31 @@ async function restoreSession() {
   }
 }
 
+// Populates the signup form's Designation/Institute <datalist> options from
+// what's already on file, so a new delegate can pick an existing spelling
+// instead of typing a near-duplicate -- the fields stay plain text inputs,
+// so typing anything not in the list is still accepted. No-op on admin.html
+// (no signup form there) since the datalist elements simply won't exist.
+async function loadDirectorySuggestions() {
+  const designationList = document.getElementById('designation-options');
+  const instituteList = document.getElementById('institute-options');
+  if (!designationList && !instituteList) return;
+  try {
+    const res = await fetch('/api/directory/suggestions');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (designationList) {
+      designationList.innerHTML = (data.designations || []).map((d) => `<option value="${esc(d)}">`).join('');
+    }
+    if (instituteList) {
+      instituteList.innerHTML = (data.institutions || []).map((i) => `<option value="${esc(i)}">`).join('');
+    }
+  } catch (e) {
+    /* offline — the fields still work as plain free-text inputs */
+  }
+}
+document.addEventListener('DOMContentLoaded', loadDirectorySuggestions);
+
 // --- ADMIN & BACKEND LOGIC ---
 
 // Escape untrusted values before putting them in HTML. Delegate-supplied
@@ -951,6 +993,9 @@ let cachedPaymentRegs = [];
 
 // Shared row markup for both the main worklist and the collapsed rejected
 // list below it.
+// Kept deliberately spare: everything else (UTR, mode, submitted date, OCR
+// checks, screenshot/ID card, transaction link) is already one click away
+// in the review modal -- repeating it here just made the list noisy.
 function paymentRowHtml(p) {
   return `
     <tr class="border-b border-slate-100 ${p.is_flagged ? 'bg-red-50/50' : ''}">
@@ -959,35 +1004,8 @@ function paymentRowHtml(p) {
         <br><span class="text-[11px] font-normal text-slate-500">${esc(p.category_label)}</span>
         ${p.is_flagged ? `<br><span class="inline-block mt-1 text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">⚠️ Flagged</span>` : ''}
       </td>
-      <td class="p-4 text-xs">
-        <span class="font-mono">${esc(p.utr_number)}</span>
-        <br><span class="text-slate-500">${esc(PAYMENT_MODE_LABELS[p.payment_mode] || p.payment_mode || 'UPI')}</span>
-        <br><span class="text-slate-400">${esc(fmtAuditTime(p.submitted_at))}</span>
-      </td>
       <td class="p-4 text-sm">
         <span class="font-semibold text-slate-700">₹${Number(p.paid_amount)}</span>
-        ${p.expected_amount == null
-          ? ''
-          : Number(p.paid_amount) !== Number(p.expected_amount)
-            ? `<br><span class="text-[10px] text-rose-600 font-bold">≠ expected ₹${Number(p.expected_amount)}</span>`
-            : `<br><span class="text-[10px] text-emerald-600">✓ matches fee</span>`
-        }
-        <div class="mt-1.5 flex flex-wrap gap-1">
-          ${ocrCheckLine('Amount', p.ocr_amount_match)}
-          ${p.payment_mode === 'NEFT_RTGS' ? '' : ocrCheckLine('UPI ID', p.ocr_vpa_match)}
-          ${ocrCheckLine('UTR', p.ocr_utr_match)}
-          ${p.ocr_id_match == null ? '' : ocrCheckLine('ID', p.ocr_id_match)}
-        </div>
-      </td>
-      <td class="p-4 text-center whitespace-nowrap">
-        ${p.has_screenshot
-          ? `<button type="button" class="view-image-btn text-indigo-600 hover:text-indigo-800 font-semibold underline text-xs" data-id="${esc(p.id)}">Payment</button>`
-          : `<span class="text-xs text-slate-400">N/A</span>`
-        }
-        ${p.has_id_card
-          ? `<br><button type="button" class="view-id-btn text-indigo-600 hover:text-indigo-800 font-semibold underline text-xs mt-1" data-id="${esc(p.id)}">ID Card</button>`
-          : ''
-        }
       </td>
       <td class="p-4">
         <span class="${p.bank_status === 'REJECTED' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'} text-xs px-2.5 py-1 rounded-full font-bold">
@@ -997,8 +1015,9 @@ function paymentRowHtml(p) {
           ? `<br><span class="text-[10px] text-rose-600 font-semibold">${esc(REJECTION_LABELS[p.rejection_reason] || p.rejection_reason)}${p.rejection_note ? ': ' + esc(p.rejection_note) : ''}</span>`
           : ''
         }
-        ${p.last_action_by
-          ? `<br><span class="text-[10px] text-slate-400">by ${esc(p.last_action_by)} · ${esc(fmtAuditTime(p.last_action_at))}</span>`
+        <br><span class="text-[10px] ${p.bank_txn_id ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${p.bank_txn_id ? '🔗 Linked' : '⚠ Not linked'}</span>
+        ${STUDENT_CATEGORIES.includes(p.category_key)
+          ? `<br><span class="text-[10px] ${p.id_verified ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${p.id_verified ? '🎓 ID Verified' : '⚠ ID Not Verified'}</span>`
           : ''
         }
       </td>
@@ -1006,11 +1025,6 @@ function paymentRowHtml(p) {
         <button class="review-btn px-3 py-1.5 ${p.is_flagged ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white font-semibold rounded-lg text-xs shadow-sm" data-id="${esc(p.id)}">
           ${p.is_flagged ? 'Review (Force Verify)' : 'Review'}
         </button>
-        <p class="text-[10px] mt-1 ${p.bank_txn_id ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${p.bank_txn_id ? '🔗 Linked' : '⚠ Not linked'}</p>
-        ${STUDENT_CATEGORIES.includes(p.category_key)
-          ? `<p class="text-[10px] mt-0.5 ${p.id_verified ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${p.id_verified ? '🎓 ID Verified' : '⚠ ID Not Verified'}</p>`
-          : ''
-        }
       </td>
     </tr>
   `;
@@ -1043,7 +1057,7 @@ async function renderBackendPayments() {
 
   tbody.innerHTML = pendingOnly.map(paymentRowHtml).join('');
   if (!pendingOnly.length) {
-    tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-sm text-slate-400">Nothing awaiting a decision.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" class="p-8 text-center text-sm text-slate-400">Nothing awaiting a decision.</td></tr>`;
   }
 
   const rejectedSection = document.getElementById('rejected-section');
@@ -1672,25 +1686,85 @@ async function viewReport(type, extraQuery) {
   if (!data.success) { box.innerHTML = `<p class="text-sm text-rose-600">${esc(data.error || 'Could not load report.')}</p>`; return; }
 
   const rep = data.report;
-  const table = (sec) => `
-    ${sec.name ? `<h3 class="text-sm font-bold text-indigo-800 mt-4 mb-2">${esc(sec.name)} <span class="text-slate-400 font-normal">(${sec.rows.length})</span></h3>` : ''}
-    <div class="overflow-x-auto border border-slate-200 rounded-xl">
-      <table class="w-full text-left border-collapse text-xs">
-        <thead><tr class="bg-slate-50 border-b border-slate-200 font-bold text-slate-500 uppercase">
-          ${sec.columns.map(c => `<th class="py-2 px-3">${esc(c)}</th>`).join('')}
-        </tr></thead>
-        <tbody class="divide-y divide-slate-100">
-          ${sec.rows.length ? sec.rows.map(r => `<tr>${r.map(c => `<td class="py-2 px-3">${esc(c)}</td>`).join('')}</tr>`).join('')
-            : `<tr><td colspan="${sec.columns.length}" class="py-4 px-3 text-center text-slate-400">No records</td></tr>`}
-        </tbody>
-      </table>
+  const totalRows = rep.sections.reduce((n, s) => n + s.rows.length, 0);
+
+  const table = (sec, idx) => `
+    <div class="report-section" data-section-idx="${idx}">
+      ${sec.name ? `<h3 class="text-sm font-bold text-indigo-800 mt-4 mb-2">${esc(sec.name)} <span class="report-section-count text-slate-400 font-normal">(${sec.rows.length})</span></h3>` : ''}
+      <div class="overflow-x-auto border border-slate-200 rounded-xl">
+        <table class="w-full text-left border-collapse text-xs">
+          <thead><tr class="bg-slate-50 border-b border-slate-200 font-bold text-slate-500 uppercase">
+            ${sec.columns.map(c => `<th class="py-2 px-3">${esc(c)}</th>`).join('')}
+          </tr></thead>
+          <tbody class="divide-y divide-slate-100 report-tbody">
+            ${sec.rows.length ? sec.rows.map(r => `<tr class="report-row">${r.map(c => `<td class="py-2 px-3">${esc(c)}</td>`).join('')}</tr>`).join('')
+              : `<tr class="report-empty-row"><td colspan="${sec.columns.length}" class="py-4 px-3 text-center text-slate-400">No records</td></tr>`}
+          </tbody>
+        </table>
+      </div>
     </div>`;
 
-  box.innerHTML = `<div class="flex justify-between items-center">
-      <h3 class="font-bold text-slate-800">${esc(rep.title)}</h3>
-      <button onclick="document.getElementById('report-view-container').classList.add('hidden')" class="text-xs text-slate-400 hover:text-slate-600 font-semibold">✕ Close</button>
+  box.innerHTML = `
+    <div class="flex justify-between items-center flex-wrap gap-3">
+      <div>
+        <h3 class="font-bold text-slate-800">${esc(rep.title)}</h3>
+        <p class="text-xs text-slate-500 mt-0.5">Total: <span id="report-total-count" class="font-bold text-slate-700">${totalRows}</span> record${totalRows === 1 ? '' : 's'}<span id="report-filtered-note" class="hidden text-slate-400"> (filtered from ${totalRows})</span></p>
+      </div>
+      <div class="flex items-center gap-2">
+        <input id="report-search-input" type="text" placeholder="🔍 Search rows…" oninput="filterReportRows()" class="p-2 border rounded-lg text-xs w-52 outline-none focus:ring-2 focus:ring-indigo-200">
+        <button onclick="document.getElementById('report-view-container').classList.add('hidden')" class="text-xs text-slate-400 hover:text-slate-600 font-semibold">✕ Close</button>
+      </div>
     </div>
     ${rep.sections.map(table).join('')}`;
+}
+
+// Filters every row across the currently-viewed report's sections by a
+// case-insensitive substring match against the row's full text, updating
+// the per-section and overall counts live as the admin types.
+function filterReportRows() {
+  const box = document.getElementById('report-view-container');
+  if (!box) return;
+  const input = document.getElementById('report-search-input');
+  const q = (input.value || '').trim().toLowerCase();
+
+  let totalVisible = 0;
+  let totalAll = 0;
+  box.querySelectorAll('.report-section').forEach((sectionEl) => {
+    const rows = sectionEl.querySelectorAll('.report-row');
+    let visibleInSection = 0;
+    rows.forEach((row) => {
+      const match = !q || row.textContent.toLowerCase().includes(q);
+      row.classList.toggle('hidden', !match);
+      if (match) visibleInSection++;
+    });
+    totalAll += rows.length;
+    totalVisible += visibleInSection;
+
+    const countEl = sectionEl.querySelector('.report-section-count');
+    if (countEl) countEl.textContent = `(${visibleInSection})`;
+
+    // A search hiding every row needs its own "no matches" message --
+    // distinct from the server-side "No records" row, which stays as-is.
+    let noMatchRow = sectionEl.querySelector('.report-nomatch-row');
+    if (rows.length && visibleInSection === 0) {
+      if (!noMatchRow) {
+        const tbody = sectionEl.querySelector('.report-tbody');
+        const cols = sectionEl.querySelectorAll('thead th').length;
+        noMatchRow = document.createElement('tr');
+        noMatchRow.className = 'report-nomatch-row';
+        noMatchRow.innerHTML = `<td colspan="${cols}" class="py-4 px-3 text-center text-slate-400">No matching records</td>`;
+        tbody.appendChild(noMatchRow);
+      }
+      noMatchRow.classList.remove('hidden');
+    } else if (noMatchRow) {
+      noMatchRow.classList.add('hidden');
+    }
+  });
+
+  const totalCountEl = document.getElementById('report-total-count');
+  const filteredNote = document.getElementById('report-filtered-note');
+  if (totalCountEl) totalCountEl.textContent = q ? totalVisible : totalAll;
+  if (filteredNote) filteredNote.classList.toggle('hidden', !q);
 }
 
 const ABSTRACT_STATUS_STYLES = {

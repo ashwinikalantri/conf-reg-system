@@ -66,7 +66,7 @@
       <div class="flex gap-3">
         <div class="w-28 shrink-0">
           <label class="block text-sm font-medium text-slate-700">Salutation</label>
-          <select id="reg-salutation" class="w-full mt-1 p-3 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none">
+          <select id="reg-salutation" class="w-full mt-1 p-3 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none appearance-none bg-no-repeat bg-[right_0.75rem_center] bg-[length:1rem] bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22%2364748b%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M5.23%207.21a.75.75%200%20011.06.02L10%2011.168l3.71-3.938a.75.75%200%20111.08%201.04l-4.25%204.5a.75.75%200%2001-1.08%200l-4.25-4.5a.75.75%200%2001.02-1.06z%22%20clip-rule%3D%22evenodd%22%2F%3E%3C%2Fsvg%3E')]">
             <option value="">—</option>
             <option value="Mr">Mr</option>
             <option value="Mrs">Mrs</option>
@@ -110,7 +110,7 @@
         </div>
         <div>
           <label class="block text-sm font-medium text-slate-700">Gender</label>
-          <select id="reg-gender" required class="w-full mt-1 p-3 border rounded-lg bg-white outline-none">
+          <select id="reg-gender" required class="w-full mt-1 p-3 border rounded-lg bg-white outline-none appearance-none bg-no-repeat bg-[right_0.75rem_center] bg-[length:1rem] bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22%2364748b%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M5.23%207.21a.75.75%200%20011.06.02L10%2011.168l3.71-3.938a.75.75%200%20111.08%201.04l-4.25%204.5a.75.75%200%2001-1.08%200l-4.25-4.5a.75.75%200%2001.02-1.06z%22%20clip-rule%3D%22evenodd%22%2F%3E%3C%2Fsvg%3E')]">
             <option value="">Select</option>
             <option value="Male">Male</option>
             <option value="Female">Female</option>
@@ -122,11 +122,13 @@
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-slate-700">Designation</label>
-          <input type="text" id="reg-designation" placeholder="e.g., Resident, Professor" required class="w-full mt-1 p-3 border rounded-lg outline-none">
+          <input type="text" id="reg-designation" list="designation-options" autocomplete="off" placeholder="e.g., Resident, Professor" required class="w-full mt-1 p-3 border rounded-lg outline-none">
+          <datalist id="designation-options"></datalist>
         </div>
         <div>
           <label class="block text-sm font-medium text-slate-700">Institute / Organization</label>
-          <input type="text" id="reg-institute" required class="w-full mt-1 p-3 border rounded-lg outline-none">
+          <input type="text" id="reg-institute" list="institute-options" autocomplete="off" required class="w-full mt-1 p-3 border rounded-lg outline-none">
+          <datalist id="institute-options"></datalist>
         </div>
       </div>
 

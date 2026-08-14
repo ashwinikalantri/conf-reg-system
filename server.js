@@ -1006,6 +1006,34 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'admin.html'));
 });
 
+// Autocomplete source for the signup form's Designation/Institute fields --
+// distinct values already on file, so new delegates can pick an existing
+// spelling instead of introducing a near-duplicate. Public (pre-auth, since
+// this is needed while filling the signup form itself) and low-sensitivity
+// (job titles and institution names only, no names/phone numbers).
+app.get('/api/directory/suggestions', async (req, res, next) => {
+  try {
+    // GROUP BY LOWER(...) rather than SELECT DISTINCT so values that only
+    // differ by case (e.g. a future row saved as "professor" alongside an
+    // existing "Professor") still collapse to one suggestion; MIN() favors
+    // the title-cased spelling whenever both exist, since SQLite's default
+    // BINARY collation sorts uppercase letters before lowercase ones.
+    const designations = await dbAll(
+      `SELECT MIN(designation) AS designation FROM users WHERE designation IS NOT NULL AND TRIM(designation) != ''
+       GROUP BY LOWER(designation) ORDER BY designation`);
+    const institutions = await dbAll(
+      `SELECT MIN(institution) AS institution FROM users WHERE institution IS NOT NULL AND TRIM(institution) != ''
+       GROUP BY LOWER(institution) ORDER BY institution`);
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json({
+      designations: designations.map((r) => r.designation),
+      institutions: institutions.map((r) => r.institution),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- AUTH ENDPOINTS -----------------------------------------------------
 
 // Request an OTP. Generates a random code, stores only its hash, and
