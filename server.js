@@ -2412,6 +2412,19 @@ app.get('/api/admin/activity-log', requireRole('SUPER_ADMIN'), async (req, res, 
       LEFT JOIN registrations r ON CAST(r.id AS TEXT) = a.entity_id
       WHERE a.entity_type = 'registration'
       ORDER BY a.id DESC`);
+
+    // ADMIN_ENROLL/ADMIN_UNENROLL store a program_options.id in old/new_value
+    // -- resolve those to "Workshop: X" / "QI: Y" names for display.
+    const optionRows = await dbAll('SELECT id, name, type FROM program_options');
+    const optionName = new Map(optionRows.map((o) => [String(o.id), `${o.type === 'QI' ? 'QI: ' : 'Workshop: '}${o.name}`]));
+    const resolveOption = (v) => (v != null && optionName.has(String(v))) ? optionName.get(String(v)) : v;
+    regAudit.forEach((r) => {
+      if (r.action === 'ADMIN_ENROLL' || r.action === 'ADMIN_UNENROLL') {
+        r.old_value = resolveOption(r.old_value);
+        r.new_value = resolveOption(r.new_value);
+      }
+    });
+
     const mapping = regAudit.filter((r) => r.action === 'BANK_TXN_LINK' || r.action === 'BANK_TXN_UNLINK');
     const approval = regAudit.filter((r) => !['BANK_TXN_LINK', 'BANK_TXN_UNLINK'].includes(r.action));
 

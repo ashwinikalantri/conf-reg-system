@@ -34,6 +34,22 @@ function persistDelegate(user) {
 }
 let activeAdminUser = null;
 
+// Delegate portal only (admin.html has no #dashboard-page). Shows the
+// dashboard immediately from the cached user, before restoreSession()'s
+// network round-trip resolves -- otherwise the login page is what's in the
+// HTML by default, and it flashes on screen for every returning delegate
+// until that fetch comes back. restoreSession() still re-validates against
+// the server afterwards and reverts to the login page if the session
+// turned out to be stale.
+if (currentDelegate && document.getElementById('dashboard-page')) {
+  navigateTo('dashboard-page');
+  const displayName = currentDelegate.full_name || currentDelegate.name;
+  const nameEl = document.getElementById('user-display-name');
+  const subEl = document.getElementById('user-display-sub');
+  if (nameEl) nameEl.innerText = currentDelegate.salutation ? `${currentDelegate.salutation} ${displayName}` : displayName;
+  if (subEl) subEl.innerText = `${currentDelegate.designation} | ${currentDelegate.institution || currentDelegate.institute} (+91 ${currentDelegate.phone_number || currentDelegate.phone})`;
+}
+
 // Read a File into a base64 data URL.
 function readFileAsDataURL(file) {
   return new Promise((resolve, reject) => {
@@ -704,7 +720,12 @@ async function restoreSession() {
   try {
     const res = await fetch('/api/auth/me');
     if (!res.ok) {
-      localStorage.removeItem('nqocn_current_user');
+      // The optimistic cached-dashboard shell above may already be showing
+      // -- a stale/expired session must revert it back to the login page,
+      // not just clear storage and leave the dashboard on screen.
+      currentDelegate = null;
+      persistDelegate(null);
+      if (document.getElementById('dashboard-page')) navigateTo('auth-page');
       return;
     }
     const data = await res.json();
@@ -712,9 +733,13 @@ async function restoreSession() {
       currentDelegate = data.user;
       persistDelegate(currentDelegate);
       loadDashboard();
+    } else {
+      currentDelegate = null;
+      persistDelegate(null);
+      if (document.getElementById('dashboard-page')) navigateTo('auth-page');
     }
   } catch (e) {
-    /* offline — stay on the login page */
+    /* offline — keep showing whatever's already on screen (cached dashboard or login) */
   }
 }
 
@@ -899,6 +924,16 @@ async function initBackendPortal() {
 
   const { isSuper, isFinance, isReviewer } = applyRoleVisibility(activeAdminUser.role);
 
+  // Land on the first section the role can actually use, and do it now --
+  // before the awaited renders below, not after. Switching tabs here first
+  // means an admin who clicks a different tab while data is still loading
+  // stays where they clicked; switching again afterwards would silently
+  // snap them back to this default tab once loading finished.
+  const defaultTab = isFinance ? 'payments' : isReviewer ? 'abstracts' : 'programs';
+  const loading = document.getElementById('admin-initial-loading');
+  if (loading) loading.classList.add('hidden');
+  switchBackendTab(defaultTab);
+
   // Render every section this role may see (this also fills the tab badges).
   if (isFinance) await renderBackendPayments();
   if (isReviewer) await renderBackendAbstracts();
@@ -907,10 +942,6 @@ async function initBackendPortal() {
   if (isSuper) await renderBackendFees();
   if (isSuper) await renderBackendActivity();
   if (isFinance) await loadReportWorkshopOptions();
-
-  // Land on the first section the role can actually use.
-  const defaultTab = isFinance ? 'payments' : isReviewer ? 'abstracts' : 'programs';
-  switchBackendTab(defaultTab);
 }
 
 const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT / RTGS' };
@@ -1514,7 +1545,9 @@ async function renderBackendActivity() {
       <td class="py-3 px-4">${esc(r.actor_name)}</td>
     </tr>`).join('') || `<tr><td colspan="4" class="py-6 text-center text-slate-400">No master-data edits logged yet</td></tr>`;
 
-  switchActivityLog('imports');
+  // Only set the initial sub-tab -- if the admin already picked one while
+  // this fetch was in flight, leave their choice alone.
+  if (!document.querySelector('[id^="activity-panel-"]:not(.hidden)')) switchActivityLog('imports');
 }
 
 async function saveFeeConfig() {
