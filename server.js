@@ -1310,15 +1310,37 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
   }
 });
 
+// Looks up the delegate's current salutation (from users, by phone) so it
+// can be attached to a name for display. Kept as a separate column rather
+// than concatenated in SQL because registrations.delegate_name is a
+// point-in-time snapshot from signup that may *already* carry an embedded
+// title (e.g. "Dr Abhishek Raut") -- blindly prepending here would double
+// it up. withDelegateSalutation() below reconciles the two.
+const DELEGATE_SALUTATION_COLUMN =
+  `(SELECT salutation FROM users WHERE users.phone_number = registrations.phone_number) AS delegate_salutation`;
+
 // Columns to expose for a registration -- everything except the raw
 // screenshot filename, plus a boolean the client can use to build the link.
 const REGISTRATION_PUBLIC_COLUMNS =
-  `registrations.id, registration_number, phone_number, delegate_name, category_key, category_label, workshop,
+  `registrations.id, registration_number, phone_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, category_key, category_label, workshop,
    qi_exposure, expected_amount, paid_amount, utr_number, is_flagged, bank_status,
    ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, rejection_reason, rejection_note,
    payment_mode, submitted_at, id_verified, id_verified_by, id_verified_at,
    (screenshot IS NOT NULL AND screenshot != '') AS has_screenshot,
    (id_card IS NOT NULL AND id_card != '') AS has_id_card`;
+
+// Reconciles a row's delegate_name + delegate_salutation into a single
+// display name with exactly one salutation: the delegate's current
+// users.salutation if set, else whatever title was embedded in the
+// signup-time name snapshot -- never both.
+function withDelegateSalutation(row) {
+  if (!row || !('delegate_name' in row)) return row;
+  const { salutation: embedded, name: clean } = splitSalutation(row.delegate_name);
+  const sal = row.delegate_salutation || embedded;
+  row.delegate_name = sal ? `${sal} ${clean}` : clean;
+  delete row.delegate_salutation;
+  return row;
+}
 
 // Fetch the caller's own registration (replaces the old IDOR-prone
 // /api/registrations/user/:phone route).
@@ -1328,7 +1350,7 @@ app.get('/api/registrations/me', requireAuth, async (req, res, next) => {
       `SELECT ${REGISTRATION_PUBLIC_COLUMNS} FROM registrations WHERE phone_number = ?`,
       [req.session.phone]
     );
-    res.json({ registration: row || null });
+    res.json({ registration: row ? withDelegateSalutation(row) : null });
   } catch (err) {
     next(err);
   }
@@ -1440,7 +1462,11 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
       </div>
       <table>
         ${row('Status', 'Confirmed — Payment Verified')}
-        ${row('Delegate', reg.delegate_name)}
+        ${row('Delegate', (() => {
+          const { salutation: embedded, name: clean } = splitSalutation(reg.delegate_name);
+          const sal = (user && user.salutation) || embedded;
+          return sal ? `${sal} ${clean}` : clean;
+        })())}
         ${row('Designation', user ? user.designation : '')}
         ${row('Institution', user ? user.institution : '')}
         ${row('Mobile', '+91 ' + reg.phone_number)}
@@ -1616,7 +1642,7 @@ app.get('/api/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async
       FROM registrations
       LEFT JOIN bank_statement_transactions t ON t.id = registrations.bank_txn_id
       ORDER BY registrations.id DESC`);
-    res.json({ registrations: rows || [] });
+    res.json({ registrations: (rows || []).map(withDelegateSalutation) });
   } catch (err) {
     next(err);
   }
@@ -1898,6 +1924,10 @@ app.post('/api/admin/program-options', requireRole('SUPER_ADMIN'), async (req, r
       'INSERT INTO program_options (type, name, capacity, active, created_at) VALUES (?, ?, ?, 1, ?)',
       [type, String(name).trim(), capacity, Date.now()]
     );
+    await recordAudit({
+      req, entityType: 'program_option', entityId: result.lastID,
+      action: 'PROGRAM_OPTION_CREATE', oldValue: null, newValue: `${type}: ${String(name).trim()} (capacity ${capacity})`,
+    });
     res.json({ success: true, id: result.lastID });
   } catch (err) {
     next(err);
@@ -1913,15 +1943,21 @@ app.put('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (req
     const existing = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
     if (!existing) return res.status(404).json({ success: false, error: 'Option not found.' });
 
+    const updated = {
+      name: name !== undefined ? String(name).trim() : existing.name,
+      capacity: capacity !== undefined ? capacity : existing.capacity,
+      active: active !== undefined ? (active ? 1 : 0) : existing.active,
+    };
     await dbRun(
       'UPDATE program_options SET name = ?, capacity = ?, active = ? WHERE id = ?',
-      [
-        name !== undefined ? String(name).trim() : existing.name,
-        capacity !== undefined ? capacity : existing.capacity,
-        active !== undefined ? (active ? 1 : 0) : existing.active,
-        req.params.id,
-      ]
+      [updated.name, updated.capacity, updated.active, req.params.id]
     );
+    await recordAudit({
+      req, entityType: 'program_option', entityId: req.params.id,
+      action: 'PROGRAM_OPTION_UPDATE',
+      oldValue: `${existing.name} (capacity ${existing.capacity}, ${existing.active ? 'active' : 'inactive'})`,
+      newValue: `${updated.name} (capacity ${updated.capacity}, ${updated.active ? 'active' : 'inactive'})`,
+    });
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -1943,6 +1979,10 @@ app.delete('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (
       return res.status(409).json({ success: false, error: `Cannot delete: ${used.n} delegate(s) enrolled. Deactivate it instead.` });
     }
     await dbRun('DELETE FROM program_options WHERE id = ?', [req.params.id]);
+    await recordAudit({
+      req, entityType: 'program_option', entityId: req.params.id,
+      action: 'PROGRAM_OPTION_DELETE', oldValue: `${opt.type}: ${opt.name}`, newValue: null,
+    });
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -1957,11 +1997,11 @@ app.get('/api/admin/program-options/:id/enrolled', requireRole('SUPER_ADMIN'), a
     if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
     const col = opt.type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
     const rows = await dbAll(
-      `SELECT id, phone_number, delegate_name, registration_number, bank_status
+      `SELECT id, phone_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registration_number, bank_status
          FROM registrations WHERE ${col} = ? AND bank_status != 'REJECTED' ORDER BY delegate_name`,
       [opt.id]
     );
-    res.json({ option: opt, enrolled: rows });
+    res.json({ option: opt, enrolled: rows.map(withDelegateSalutation) });
   } catch (err) {
     next(err);
   }
@@ -2045,8 +2085,15 @@ app.put('/api/admin/fees/config', requireRole('SUPER_ADMIN'), async (req, res, n
     if (regularUntil && lateUntil && regularUntil > lateUntil) {
       return res.status(400).json({ success: false, error: 'Regular cutoff must be on or before the late cutoff.' });
     }
+    const existing = await getFeeConfig();
     await dbRun('UPDATE fee_config SET early_until = ?, regular_until = ?, late_until = ? WHERE id = 1',
       [earlyUntil || null, regularUntil || null, lateUntil || null]);
+    await recordAudit({
+      req, entityType: 'fee_config', entityId: 1,
+      action: 'FEE_CONFIG_UPDATE',
+      oldValue: existing ? `early≤${existing.early_until || '—'}, regular≤${existing.regular_until || '—'}, late≤${existing.late_until || '—'}` : null,
+      newValue: `early≤${earlyUntil || '—'}, regular≤${regularUntil || '—'}, late≤${lateUntil || '—'}`,
+    });
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -2065,10 +2112,15 @@ app.post('/api/admin/fees/categories', requireRole('SUPER_ADMIN'), async (req, r
       return res.status(400).json({ success: false, error: 'Fees must be non-negative numbers.' });
     }
     const max = await dbGet('SELECT COALESCE(MAX(sort_order), -1) AS m FROM fee_categories');
-    await dbRun(
+    const result = await dbRun(
       'INSERT INTO fee_categories (category_key, label, early_fee, regular_fee, late_fee, spot_fee, active, sort_order) VALUES (?, ?, ?, ?, ?, ?, 1, ?)',
       [categoryKey, String(label).trim(), f.early, f.regular, f.late, f.spot, max.m + 1]
     );
+    await recordAudit({
+      req, entityType: 'fee_category', entityId: result.lastID,
+      action: 'FEE_CATEGORY_CREATE', oldValue: null,
+      newValue: `${categoryKey} "${String(label).trim()}" — early ₹${f.early}, regular ₹${f.regular}, late ₹${f.late}, spot ₹${f.spot}`,
+    });
     res.json({ success: true });
   } catch (err) {
     if (err.code === 'SQLITE_CONSTRAINT') {
@@ -2087,11 +2139,20 @@ app.put('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (req
     if ([f.early, f.regular, f.late, f.spot].some((x) => !Number.isFinite(x) || x < 0)) {
       return res.status(400).json({ success: false, error: 'Fees must be non-negative numbers.' });
     }
+    const updated = {
+      label: label !== undefined ? String(label).trim() : existing.label,
+      active: active !== undefined ? (active ? 1 : 0) : existing.active,
+    };
     await dbRun(
       'UPDATE fee_categories SET label = ?, early_fee = ?, regular_fee = ?, late_fee = ?, spot_fee = ?, active = ? WHERE id = ?',
-      [label !== undefined ? String(label).trim() : existing.label, f.early, f.regular, f.late, f.spot,
-        active !== undefined ? (active ? 1 : 0) : existing.active, req.params.id]
+      [updated.label, f.early, f.regular, f.late, f.spot, updated.active, req.params.id]
     );
+    await recordAudit({
+      req, entityType: 'fee_category', entityId: req.params.id,
+      action: 'FEE_CATEGORY_UPDATE',
+      oldValue: `${existing.label} — early ₹${existing.early_fee}, regular ₹${existing.regular_fee}, late ₹${existing.late_fee}, spot ₹${existing.spot_fee}, ${existing.active ? 'active' : 'inactive'}`,
+      newValue: `${updated.label} — early ₹${f.early}, regular ₹${f.regular}, late ₹${f.late}, spot ₹${f.spot}, ${updated.active ? 'active' : 'inactive'}`,
+    });
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -2107,6 +2168,10 @@ app.delete('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (
       return res.status(409).json({ success: false, error: `Cannot delete: ${used.n} registration(s) use this category. Deactivate it instead.` });
     }
     await dbRun('DELETE FROM fee_categories WHERE id = ?', [req.params.id]);
+    await recordAudit({
+      req, entityType: 'fee_category', entityId: req.params.id,
+      action: 'FEE_CATEGORY_DELETE', oldValue: `${cat.category_key} "${cat.label}"`, newValue: null,
+    });
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -2281,9 +2346,9 @@ app.get('/api/admin/bank-statement', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
 // formatting differences don't break the match).
 app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
-    const regs = await dbAll(
-      `SELECT id, registration_number, delegate_name, phone_number, utr_number, paid_amount, expected_amount, payment_mode, bank_status, bank_txn_id
-         FROM registrations WHERE utr_number IS NOT NULL AND utr_number != '' AND bank_status != 'REJECTED'`);
+    const regs = (await dbAll(
+      `SELECT id, registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, phone_number, utr_number, paid_amount, expected_amount, payment_mode, bank_status, bank_txn_id
+         FROM registrations WHERE utr_number IS NOT NULL AND utr_number != '' AND bank_status != 'REJECTED'`)).map(withDelegateSalutation);
     const txns = await dbAll(`SELECT * FROM bank_statement_transactions WHERE credit IS NOT NULL AND credit > 0`);
 
     const digits = (v) => String(v || '').replace(/\D/g, '');
@@ -2331,31 +2396,94 @@ app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINAN
   }
 });
 
+// Consolidated "who did what, when" view across the admin surface --
+// statement imports, transaction linking, registration approval decisions,
+// abstract approval/allotment, and master-data (workshop/QI/fee) edits.
+app.get('/api/admin/activity-log', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const imports = await dbAll(`
+      SELECT source_file, imported_by, MIN(imported_at) AS imported_at, COUNT(*) AS rows_imported, SUM(credit) AS total_credit
+      FROM bank_statement_transactions GROUP BY source_file, imported_by ORDER BY imported_at DESC`);
+
+    const regAudit = await dbAll(`
+      SELECT a.id, a.entity_id, a.action, a.old_value, a.new_value, a.actor_name, a.actor_role, a.created_at,
+        r.registration_number, r.delegate_name
+      FROM audit_log a
+      LEFT JOIN registrations r ON CAST(r.id AS TEXT) = a.entity_id
+      WHERE a.entity_type = 'registration'
+      ORDER BY a.id DESC`);
+    const mapping = regAudit.filter((r) => r.action === 'BANK_TXN_LINK' || r.action === 'BANK_TXN_UNLINK');
+    const approval = regAudit.filter((r) => !['BANK_TXN_LINK', 'BANK_TXN_UNLINK'].includes(r.action));
+
+    const abstractAudit = await dbAll(`
+      SELECT a.id, a.action, a.old_value, a.new_value, a.actor_name, a.actor_role, a.created_at,
+        ab.title, ab.author_name
+      FROM audit_log a
+      LEFT JOIN abstracts ab ON CAST(ab.id AS TEXT) = a.entity_id
+      WHERE a.entity_type = 'abstract'
+      ORDER BY a.id DESC`);
+    const abstractApproval = abstractAudit.filter((r) => r.action === 'ABSTRACT_STATUS_CHANGE');
+    const abstractAllotment = abstractAudit.filter((r) => r.action === 'ABSTRACT_ALLOCATION');
+
+    const master = await dbAll(`
+      SELECT id, action, entity_type, old_value, new_value, actor_name, actor_role, created_at
+      FROM audit_log WHERE entity_type IN ('program_option', 'fee_config', 'fee_category')
+      ORDER BY id DESC`);
+
+    res.json({ imports, mapping, approval, abstractApproval, abstractAllotment, master });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- REPORTS (Excel/CSV + printable PDF) --------------------------------
 
 // Every report is { title, sections: [{ name, columns, rows }, ...] }. Most
 // reports have a single unnamed section; the workshops report has one
 // section per workshop/QI practice option so each can be viewed or exported
 // on its own.
-async function buildReport(type) {
-  if (type === 'verified') {
-    const rows = await dbAll(
-      `SELECT registration_number, delegate_name, phone_number, category_label, workshop, qi_exposure, paid_amount
-         FROM registrations WHERE bank_status = 'BANK_VERIFIED'
-         ORDER BY registration_number`);
+const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT / RTGS' };
+
+async function buildReport(type, opts = {}) {
+  if (type === 'delegates') {
+    const rows = (await dbAll(
+      `SELECT registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number AS phone_number,
+         u.age, u.gender, u.designation, u.institution, u.district, u.state, u.pincode, u.email
+         FROM registrations
+         LEFT JOIN users u ON u.phone_number = registrations.phone_number
+         WHERE registrations.bank_status = 'BANK_VERIFIED'
+         ORDER BY registrations.registration_number`)).map(withDelegateSalutation);
     return {
-      title: 'Registered Users with Verified Payment',
+      title: 'Registered Delegates — Demography & Institute Details',
       sections: [{
-        columns: ['Reg No', 'Name', 'Mobile', 'Category', 'Workshop', 'QI Practice', 'Amount'],
-        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label, r.workshop, r.qi_exposure, r.paid_amount]),
+        columns: ['Reg No', 'Name', 'Age', 'Gender', 'Mobile', 'Email', 'Designation', 'Institution', 'District', 'State', 'Pincode'],
+        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.age, r.gender, r.phone_number, r.email, r.designation, r.institution, r.district, r.state, r.pincode]),
+      }],
+    };
+  }
+  if (type === 'payments') {
+    const rows = (await dbAll(
+      `SELECT registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, phone_number, category_label,
+         payment_mode, utr_number, paid_amount, expected_amount, bank_status, submitted_at
+         FROM registrations ORDER BY registration_number`)).map(withDelegateSalutation);
+    const fmtDate = (ms) => ms ? new Date(Number(ms)).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '';
+    const statusLabel = { PENDING: 'Pending', BANK_VERIFIED: 'Verified', REJECTED: 'Rejected' };
+    return {
+      title: 'Delegate Payment Details & Status',
+      sections: [{
+        columns: ['Reg No', 'Delegate', 'Mobile', 'Category', 'Mode', 'UTR / Txn No.', 'Amount Paid', 'Expected Amount', 'Status', 'Submitted'],
+        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label,
+          PAYMENT_MODE_LABELS[r.payment_mode] || r.payment_mode, r.utr_number, r.paid_amount, r.expected_amount,
+          statusLabel[r.bank_status] || r.bank_status, fmtDate(r.submitted_at)]),
       }],
     };
   }
   if (type === 'workshops') {
-    const options = await fetchProgramOptions({ activeOnly: false });
-    const regs = await dbAll(
-      `SELECT workshop_option_id, qi_option_id, registration_number, delegate_name, phone_number, category_label, bank_status
-         FROM registrations WHERE bank_status != 'REJECTED'`);
+    const options = (await fetchProgramOptions({ activeOnly: false }))
+      .filter((o) => !opts.optionId || String(o.id) === String(opts.optionId));
+    const regs = (await dbAll(
+      `SELECT workshop_option_id, qi_option_id, registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, phone_number, category_label, bank_status
+         FROM registrations WHERE bank_status != 'REJECTED'`)).map(withDelegateSalutation);
     const columns = ['Reg No', 'Delegate', 'Mobile', 'Category', 'Status'];
     const rowsFor = (col, id) => regs.filter((r) => r[col] === id)
       .map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label, r.bank_status]);
@@ -2363,7 +2491,7 @@ async function buildReport(type) {
       ...options.filter((o) => o.type === 'WORKSHOP').map((o) => ({ name: `Workshop: ${o.name}`, columns, rows: rowsFor('workshop_option_id', o.id) })),
       ...options.filter((o) => o.type === 'QI').map((o) => ({ name: `QI Practice: ${o.name}`, columns, rows: rowsFor('qi_option_id', o.id) })),
     ];
-    return { title: 'Registrations per Workshop / QI Practice', sections };
+    return { title: opts.optionId && options[0] ? `Registrations — ${options[0].name}` : 'Registrations per Workshop / QI Practice', sections };
   }
   if (type === 'abstracts') {
     const rows = await dbAll(
@@ -2380,7 +2508,8 @@ async function buildReport(type) {
 }
 
 const REPORT_ROLES = {
-  verified: ['SUPER_ADMIN', 'FINANCE_ADMIN'],
+  delegates: ['SUPER_ADMIN', 'FINANCE_ADMIN'],
+  payments: ['SUPER_ADMIN', 'FINANCE_ADMIN'],
   workshops: ['SUPER_ADMIN', 'FINANCE_ADMIN'],
   abstracts: ['SUPER_ADMIN', 'ACADEMIC_REVIEWER'],
 };
@@ -2430,6 +2559,21 @@ function reportHtml(rep) {
 </body></html>`;
 }
 
+// Lets the workshops report's "one at a time" picker populate without
+// requiring the SUPER_ADMIN-only masters endpoint (FINANCE_ADMIN can run
+// this report too, but can't see the masters tab).
+app.get('/api/admin/reports/workshops/options', requireAuth, async (req, res, next) => {
+  try {
+    if (!roleGrants(req.session.role).some((r) => REPORT_ROLES.workshops.includes(r))) {
+      return res.status(403).json({ success: false, error: 'You do not have permission for this report.' });
+    }
+    const options = await fetchProgramOptions({ activeOnly: false });
+    res.json({ options: options.map((o) => ({ id: o.id, type: o.type, name: o.name })) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
   try {
     const type = req.params.type;
@@ -2438,7 +2582,10 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
     if (!roleGrants(req.session.role).some((r) => roles.includes(r))) {
       return res.status(403).json({ success: false, error: 'You do not have permission for this report.' });
     }
-    const rep = await buildReport(type);
+    if (type === 'workshops' && !req.query.optionId) {
+      return res.status(400).json({ success: false, error: 'Select a workshop or QI practice first.' });
+    }
+    const rep = await buildReport(type, { optionId: req.query.optionId });
     res.set('Cache-Control', 'private, no-store');
     if (req.query.format === 'csv') {
       res.set('Content-Type', 'text/csv; charset=utf-8');

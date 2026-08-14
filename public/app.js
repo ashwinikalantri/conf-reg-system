@@ -863,17 +863,21 @@ function applyRoleVisibility(role) {
   const tabAbstracts = document.getElementById('nav-tab-abstracts');
   const tabMasters = document.getElementById('nav-tab-masters');
   const tabReports = document.getElementById('nav-tab-reports');
+  const tabActivity = document.getElementById('nav-tab-activity');
   if (tabPayments) tabPayments.classList.toggle('hidden', !isFinance);
   if (tabStatement) tabStatement.classList.toggle('hidden', !isFinance);
   if (tabAbstracts) tabAbstracts.classList.toggle('hidden', !isReviewer);
   if (tabMasters) tabMasters.classList.toggle('hidden', !isSuper);
   if (tabReports) tabReports.classList.toggle('hidden', !(isFinance || isReviewer));
+  if (tabActivity) tabActivity.classList.toggle('hidden', !isSuper);
 
   // Show only the report cards this role can access.
-  const rv = document.getElementById('report-verified');
+  const rd = document.getElementById('report-delegates');
+  const rp = document.getElementById('report-payments');
   const rw = document.getElementById('report-workshops');
   const ra = document.getElementById('report-abstracts');
-  if (rv) rv.classList.toggle('hidden', !isFinance);
+  if (rd) rd.classList.toggle('hidden', !isFinance);
+  if (rp) rp.classList.toggle('hidden', !isFinance);
   if (rw) rw.classList.toggle('hidden', !isFinance);
   if (ra) ra.classList.toggle('hidden', !isReviewer);
 
@@ -901,6 +905,8 @@ async function initBackendPortal() {
   if (isSuper) await renderBackendUsers();
   if (isSuper) await renderBackendPrograms();
   if (isSuper) await renderBackendFees();
+  if (isSuper) await renderBackendActivity();
+  if (isFinance) await loadReportWorkshopOptions();
 
   // Land on the first section the role can actually use.
   const defaultTab = isFinance ? 'payments' : isReviewer ? 'abstracts' : 'programs';
@@ -1409,6 +1415,108 @@ async function renderBackendFees() {
     </tr>`).join('');
 }
 
+// Small pill used throughout the activity log to show an action/outcome at a glance.
+function activityPill(text, tone) {
+  const tones = {
+    ok: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    bad: 'bg-rose-50 text-rose-700 border-rose-200',
+    warn: 'bg-amber-50 text-amber-700 border-amber-200',
+    info: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+    muted: 'bg-slate-100 text-slate-600 border-slate-200',
+  };
+  return `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${tones[tone] || tones.muted}">${esc(text)}</span>`;
+}
+
+function activityTransition(oldVal, newVal) {
+  return `<span class="text-slate-400 line-through">${esc(oldVal ?? '—')}</span> <span class="text-slate-300">→</span> <span class="font-semibold text-slate-800">${esc(newVal ?? '—')}</span>`;
+}
+
+const ACTIVITY_ACTION_LABELS = {
+  BANK_STATUS_CHANGE: 'Status', STUDENT_ID_VERIFICATION: 'ID Verified', UTR_CORRECTION: 'UTR Fix',
+  PAYMENT_MODE_CORRECTION: 'Mode Fix', ADMIN_ENROLL: 'Roster +', ADMIN_UNENROLL: 'Roster −',
+  BANK_TXN_LINK: 'Linked', BANK_TXN_UNLINK: 'Unlinked', ABSTRACT_STATUS_CHANGE: 'Status', ABSTRACT_ALLOCATION: 'Allotted',
+  PROGRAM_OPTION_CREATE: 'Created', PROGRAM_OPTION_UPDATE: 'Updated', PROGRAM_OPTION_DELETE: 'Deleted',
+  FEE_CONFIG_UPDATE: 'Dates Updated', FEE_CATEGORY_CREATE: 'Created', FEE_CATEGORY_UPDATE: 'Updated', FEE_CATEGORY_DELETE: 'Deleted',
+};
+function activityActionPill(action) {
+  const label = ACTIVITY_ACTION_LABELS[action] || action;
+  let tone = 'muted';
+  if (action === 'BANK_STATUS_CHANGE') tone = 'info';
+  else if (action === 'STUDENT_ID_VERIFICATION' || action === 'BANK_TXN_LINK' || action === 'PROGRAM_OPTION_CREATE' || action === 'FEE_CATEGORY_CREATE') tone = 'ok';
+  else if (action === 'ADMIN_UNENROLL' || action === 'BANK_TXN_UNLINK' || action.endsWith('_DELETE')) tone = 'bad';
+  else if (action.includes('CORRECTION') || action.endsWith('_UPDATE')) tone = 'warn';
+  return activityPill(label, tone);
+}
+
+async function renderBackendActivity() {
+  const res = await fetch('/api/admin/activity-log');
+  if (!res.ok) return;
+  const data = await res.json();
+
+  setText('activity-count-imports', String((data.imports || []).length));
+  document.getElementById('activity-imports-body').innerHTML = (data.imports || []).map((r) => `
+    <tr>
+      <td class="py-3 px-4 whitespace-nowrap text-slate-500">${fmtAuditTime(r.imported_at)}</td>
+      <td class="py-3 px-4 font-mono text-xs text-slate-600">${esc(r.source_file)}</td>
+      <td class="py-3 px-4">${esc(r.rows_imported)}</td>
+      <td class="py-3 px-4 font-semibold">₹${esc(r.total_credit ?? 0)}</td>
+      <td class="py-3 px-4">${esc(r.imported_by)}</td>
+    </tr>`).join('') || `<tr><td colspan="5" class="py-6 text-center text-slate-400">No statement imports yet</td></tr>`;
+
+  setText('activity-count-mapping', String((data.mapping || []).length));
+  document.getElementById('activity-mapping-body').innerHTML = (data.mapping || []).map((r) => `
+    <tr>
+      <td class="py-3 px-4 whitespace-nowrap text-slate-500">${fmtAuditTime(r.created_at)}</td>
+      <td class="py-3 px-4 font-mono text-xs">${esc(r.registration_number || ('id:' + r.entity_id))}</td>
+      <td class="py-3 px-4">${esc(r.delegate_name || '—')}</td>
+      <td class="py-3 px-4">${activityTransition(r.action === 'BANK_TXN_UNLINK' ? ('txn #' + r.old_value) : 'unlinked', r.action === 'BANK_TXN_UNLINK' ? 'unlinked' : ('txn #' + r.new_value))}</td>
+      <td class="py-3 px-4">${esc(r.actor_name)}</td>
+    </tr>`).join('') || `<tr><td colspan="5" class="py-6 text-center text-slate-400">No transaction links yet</td></tr>`;
+
+  setText('activity-count-approval', String((data.approval || []).length));
+  document.getElementById('activity-approval-body').innerHTML = (data.approval || []).map((r) => `
+    <tr>
+      <td class="py-3 px-4 whitespace-nowrap text-slate-500">${fmtAuditTime(r.created_at)}</td>
+      <td class="py-3 px-4 font-mono text-xs">${esc(r.registration_number || ('id:' + r.entity_id))}</td>
+      <td class="py-3 px-4">${esc(r.delegate_name || '—')}</td>
+      <td class="py-3 px-4">${activityActionPill(r.action)}</td>
+      <td class="py-3 px-4">${activityTransition(r.old_value, r.new_value)}</td>
+      <td class="py-3 px-4">${esc(r.actor_name)} <span class="text-[10px] text-slate-400">${esc((r.actor_role || '').replace('_', ' '))}</span></td>
+    </tr>`).join('') || `<tr><td colspan="6" class="py-6 text-center text-slate-400">No registration approval activity yet</td></tr>`;
+
+  setText('activity-count-abstract-approval', String((data.abstractApproval || []).length));
+  document.getElementById('activity-abstract-approval-body').innerHTML = (data.abstractApproval || []).map((r) => `
+    <tr>
+      <td class="py-3 px-4 whitespace-nowrap text-slate-500">${fmtAuditTime(r.created_at)}</td>
+      <td class="py-3 px-4">${esc(r.title || '—')}</td>
+      <td class="py-3 px-4">${esc(r.author_name || '—')}</td>
+      <td class="py-3 px-4">${activityTransition(r.old_value, r.new_value)}</td>
+      <td class="py-3 px-4">${esc(r.actor_name)}</td>
+    </tr>`).join('') || `<tr><td colspan="5" class="py-6 text-center text-slate-400">No abstract decisions logged yet</td></tr>`;
+
+  setText('activity-count-abstract-allotment', String((data.abstractAllotment || []).length));
+  document.getElementById('activity-abstract-allotment-body').innerHTML = (data.abstractAllotment || []).map((r) => `
+    <tr>
+      <td class="py-3 px-4 whitespace-nowrap text-slate-500">${fmtAuditTime(r.created_at)}</td>
+      <td class="py-3 px-4">${esc(r.title || '—')}</td>
+      <td class="py-3 px-4">${esc(r.author_name || '—')}</td>
+      <td class="py-3 px-4">${activityTransition(r.old_value, r.new_value)}</td>
+      <td class="py-3 px-4">${esc(r.actor_name)}</td>
+    </tr>`).join('') || `<tr><td colspan="5" class="py-6 text-center text-slate-400">No allotments logged yet</td></tr>`;
+
+  const areaLabels = { program_option: 'Workshop / QI', fee_config: 'Fee Dates', fee_category: 'Fee Category' };
+  setText('activity-count-master', String((data.master || []).length));
+  document.getElementById('activity-master-body').innerHTML = (data.master || []).map((r) => `
+    <tr>
+      <td class="py-3 px-4 whitespace-nowrap text-slate-500">${fmtAuditTime(r.created_at)}</td>
+      <td class="py-3 px-4">${activityPill(areaLabels[r.entity_type] || r.entity_type, 'info')} ${activityActionPill(r.action)}</td>
+      <td class="py-3 px-4">${activityTransition(r.old_value, r.new_value)}</td>
+      <td class="py-3 px-4">${esc(r.actor_name)}</td>
+    </tr>`).join('') || `<tr><td colspan="4" class="py-6 text-center text-slate-400">No master-data edits logged yet</td></tr>`;
+
+  switchActivityLog('imports');
+}
+
 async function saveFeeConfig() {
   const data = await (await fetch('/api/admin/fees/config', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -1479,22 +1587,54 @@ async function deleteFeeCategory(id) {
 }
 
 // --- REPORTS (admin) ---
+
+// Populates the workshops report's picker so only one option's roster is
+// viewed/downloaded at a time, instead of dumping every workshop and QI
+// practice into one report.
+async function loadReportWorkshopOptions() {
+  const select = document.getElementById('report-workshop-select');
+  if (!select) return;
+  const res = await fetch('/api/admin/reports/workshops/options');
+  if (!res.ok) { select.innerHTML = '<option value="">Could not load options</option>'; return; }
+  const data = await res.json();
+  const options = data.options || [];
+  select.innerHTML = options.length
+    ? `<option value="">Select a workshop or QI practice…</option>` +
+      options.map((o) => `<option value="${esc(o.id)}">${o.type === 'QI' ? 'QI: ' : 'Workshop: '}${esc(o.name)}</option>`).join('')
+    : '<option value="">No workshops or QI practices set up yet</option>';
+  select.onchange = () => {
+    const enabled = !!select.value;
+    ['report-workshop-view-btn', 'report-workshop-csv-btn', 'report-workshop-pdf-btn'].forEach((id) => {
+      const btn = document.getElementById(id);
+      if (btn) btn.disabled = !enabled;
+    });
+  };
+}
+
+function reportWorkshopQuery() {
+  const select = document.getElementById('report-workshop-select');
+  return select && select.value ? `&optionId=${encodeURIComponent(select.value)}` : '';
+}
+
 // CSV downloads; HTML opens a printable report (Print / Save as PDF).
-function downloadReport(type, format) {
-  const url = `/api/admin/reports/${encodeURIComponent(type)}` + (format === 'csv' ? '?format=csv' : '');
+// `extraQuery` is an already-encoded query fragment like "&optionId=5"
+// (used by the workshops report's one-at-a-time picker).
+function downloadReport(type, format, extraQuery) {
+  const params = (format === 'csv' ? 'format=csv' : '') + (extraQuery || '');
+  const url = `/api/admin/reports/${encodeURIComponent(type)}` + (params ? '?' + params.replace(/^&/, '') : '');
   window.open(url, '_blank');
 }
 
 // Render a report directly in the page (one table per section) instead of
 // opening the printable/export view.
-async function viewReport(type) {
+async function viewReport(type, extraQuery) {
   const box = document.getElementById('report-view-container');
   if (!box) return;
   box.classList.remove('hidden');
   box.innerHTML = '<p class="text-sm text-slate-500">Loading…</p>';
   box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-  const res = await fetch(`/api/admin/reports/${encodeURIComponent(type)}?format=json`);
+  const res = await fetch(`/api/admin/reports/${encodeURIComponent(type)}?format=json${extraQuery || ''}`);
   const data = await res.json();
   if (!data.success) { box.innerHTML = `<p class="text-sm text-rose-600">${esc(data.error || 'Could not load report.')}</p>`; return; }
 
@@ -1648,11 +1788,34 @@ async function handleCreateUserSubmit(e) {
 // inner sub-nav; the wrapper is shown whenever one of those sub-tabs is
 // active, and remembers the last one visited so the top-level Masters button
 // can jump back into it.
+// Activity Log shows one category at a time, picked from its own submenu
+// (separate from the main Masters sub-tabs above).
+const ACTIVITY_SUBTABS = ['imports', 'mapping', 'approval', 'abstract-approval', 'abstract-allotment', 'master'];
+function switchActivityLog(tab) {
+  ACTIVITY_SUBTABS.forEach((t) => {
+    const panel = document.getElementById(`activity-panel-${t}`);
+    if (panel) panel.classList.toggle('hidden', t !== tab);
+    const btn = document.getElementById(`activity-subnav-${t}`);
+    if (btn) {
+      const active = t === tab;
+      btn.classList.toggle('bg-indigo-600', active);
+      btn.classList.toggle('text-white', active);
+      btn.classList.toggle('bg-slate-100', !active);
+      btn.classList.toggle('text-slate-600', !active);
+      const badge = document.getElementById(`activity-count-${t}`);
+      if (badge) {
+        badge.classList.toggle('bg-white/20', active);
+        badge.classList.toggle('bg-slate-200', !active);
+      }
+    }
+  });
+}
+
 const MASTERS_SUBTABS = ['programs', 'fees', 'users'];
 let lastMastersTab = 'programs';
 
 function switchBackendTab(tab) {
-  ['payments', 'statement', 'abstracts', 'programs', 'fees', 'reports', 'users'].forEach(t => {
+  ['payments', 'statement', 'abstracts', 'programs', 'fees', 'reports', 'activity', 'users'].forEach(t => {
     const section = document.getElementById(`section-${t}`);
     if (section) section.classList.toggle('hidden', t !== tab);
 
