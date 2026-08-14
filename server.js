@@ -76,6 +76,7 @@ function roleGrants(role) {
 }
 
 const CONFERENCE_NAME = 'International Conference on Healthcare Quality & Patient Safety 2026';
+const PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
 
 // --- SMS (Vynttra) ------------------------------------------------------
 // Only the API key is a secret; the DLT sender/entity/template/header IDs are
@@ -135,6 +136,10 @@ async function sendOtpSms(phone, otp) {
 // AWS_SECRET_ACCESS_KEY, AWS_REGION). SES_FROM must be a verified sender.
 // Dormant until credentials, region, and a From address are all present.
 const EMAIL_FROM = (process.env.SES_FROM || '').trim();
+const EMAIL_FROM_NAME = process.env.SES_FROM_NAME || 'NQOCN 2026';
+// RFC 5322 "Display Name <address>" form -- without it SES sends with no
+// name, so inboxes show only the bare address instead of "NQOCN 2026".
+const EMAIL_FROM_FORMATTED = EMAIL_FROM ? `"${EMAIL_FROM_NAME.replace(/"/g, '')}" <${EMAIL_FROM}>` : EMAIL_FROM;
 const EMAIL_ENABLED = !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_REGION && EMAIL_FROM);
 const sesClient = EMAIL_ENABLED ? new SESv2Client({ region: process.env.AWS_REGION }) : null;
 
@@ -143,7 +148,7 @@ async function sendEmail(to, subject, html) {
   if (!EMAIL_ENABLED || !to) return;
   try {
     await sesClient.send(new SendEmailCommand({
-      FromEmailAddress: EMAIL_FROM,
+      FromEmailAddress: EMAIL_FROM_FORMATTED,
       Destination: { ToAddresses: [to] },
       Content: { Simple: { Subject: { Data: subject, Charset: 'UTF-8' }, Body: { Html: { Data: html, Charset: 'UTF-8' } } } },
     }));
@@ -1914,6 +1919,97 @@ app.put('/api/users/:phone/role', requireRole('SUPER_ADMIN'), async (req, res, n
     }
     await dbRun('UPDATE users SET role = ? WHERE phone_number = ?', [role, req.params.phone]);
     res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- REGISTRATION REMINDERS ----------------------------------------------
+// "Signed up" (has a users row, created their account / OTP-verified) but
+// never "registered" (no row in registrations at all -- they never
+// submitted payment details, as distinct from a submitted-but-unverified
+// PENDING registration).
+const PENDING_SIGNUP_QUERY =
+  `SELECT u.phone_number, u.salutation, u.full_name, u.email
+     FROM users u
+     WHERE NOT EXISTS (SELECT 1 FROM registrations r WHERE r.phone_number = u.phone_number)
+     ORDER BY u.full_name`;
+
+app.get('/api/admin/reminders/pending-signups', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const rows = await dbAll(PENDING_SIGNUP_QUERY);
+    res.json({ users: rows || [] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Sends the reminder to the caller's own email only, so wording/formatting
+// can be checked before the irreversible bulk send below. {{name}} is
+// substituted with the admin's own name, same as a real recipient would see.
+app.post('/api/admin/reminders/test-send', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const { subject, bodyHtml } = req.body;
+    if (!subject || !String(subject).trim()) {
+      return res.status(400).json({ success: false, error: 'Subject is required.' });
+    }
+    if (!bodyHtml || !String(bodyHtml).trim()) {
+      return res.status(400).json({ success: false, error: 'Email body is required.' });
+    }
+    if (!EMAIL_ENABLED) {
+      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
+    }
+
+    const me = await dbGet('SELECT salutation, full_name, email FROM users WHERE phone_number = ?', [req.session.phone]);
+    if (!me || !me.email) {
+      return res.status(400).json({ success: false, error: 'No email on file for your own account.' });
+    }
+
+    const name = [me.salutation, me.full_name].filter(Boolean).join(' ') || 'Delegate';
+    const personalizedBody = String(bodyHtml).split('{{name}}').join(escapeHtml(name));
+    await sendEmail(me.email, `[TEST] ${subject}`, emailWrap(subject, personalizedBody));
+
+    res.json({ success: true, sentTo: me.email });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Sends a reminder email to everyone who's signed up but never registered.
+// {{name}} in the body is replaced per-recipient with "Salutation Full Name".
+// Deliberately SUPER_ADMIN only (unlike the read above) since this is a
+// one-way bulk email blast to real delegates -- nothing to undo if wrong.
+app.post('/api/admin/reminders/send', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const { subject, bodyHtml } = req.body;
+    if (!subject || !String(subject).trim()) {
+      return res.status(400).json({ success: false, error: 'Subject is required.' });
+    }
+    if (!bodyHtml || !String(bodyHtml).trim()) {
+      return res.status(400).json({ success: false, error: 'Email body is required.' });
+    }
+    if (!EMAIL_ENABLED) {
+      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
+    }
+
+    const recipients = await dbAll(PENDING_SIGNUP_QUERY);
+    let sent = 0;
+    let skippedNoEmail = 0;
+    for (const u of recipients) {
+      if (!u.email) { skippedNoEmail++; continue; }
+      const name = [u.salutation, u.full_name].filter(Boolean).join(' ') || 'Delegate';
+      const personalizedBody = String(bodyHtml).split('{{name}}').join(escapeHtml(name));
+      await sendEmail(u.email, subject, emailWrap(subject, personalizedBody));
+      sent++;
+    }
+
+    await recordAudit({
+      req, entityType: 'reminder_email', entityId: 0,
+      action: 'REGISTRATION_REMINDER_SENT', oldValue: null,
+      newValue: `sent=${sent}, skipped(no email)=${skippedNoEmail}, subject="${subject}"`,
+    });
+
+    res.json({ success: true, sent, skippedNoEmail, total: recipients.length });
   } catch (err) {
     next(err);
   }

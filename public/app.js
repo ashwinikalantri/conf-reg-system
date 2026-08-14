@@ -928,15 +928,22 @@ function applyRoleVisibility(role) {
   const tabPayments = document.getElementById('nav-tab-payments');
   const tabStatement = document.getElementById('nav-tab-statement');
   const tabAbstracts = document.getElementById('nav-tab-abstracts');
-  const tabMasters = document.getElementById('nav-tab-masters');
   const tabReports = document.getElementById('nav-tab-reports');
-  const tabActivity = document.getElementById('nav-tab-activity');
   if (tabPayments) tabPayments.classList.toggle('hidden', !isFinance);
   if (tabStatement) tabStatement.classList.toggle('hidden', !isFinance);
   if (tabAbstracts) tabAbstracts.classList.toggle('hidden', !isReviewer);
-  if (tabMasters) tabMasters.classList.toggle('hidden', !isSuper);
   if (tabReports) tabReports.classList.toggle('hidden', !(isFinance || isReviewer));
-  if (tabActivity) tabActivity.classList.toggle('hidden', !isSuper);
+
+  // Masters/Reminders/Logs live in the header's Settings menu, not the main
+  // tab bar. The menu button itself only shows if at least one item would.
+  const settingsMenuBtn = document.getElementById('settings-menu-btn');
+  const settingsMasters = document.getElementById('settings-item-masters');
+  const settingsReminders = document.getElementById('settings-item-reminders');
+  const settingsActivity = document.getElementById('settings-item-activity');
+  if (settingsMasters) settingsMasters.classList.toggle('hidden', !isSuper);
+  if (settingsReminders) settingsReminders.classList.toggle('hidden', !isFinance);
+  if (settingsActivity) settingsActivity.classList.toggle('hidden', !isSuper);
+  if (settingsMenuBtn) settingsMenuBtn.classList.toggle('hidden', !(isSuper || isFinance));
 
   // Show only the report cards this role can access.
   const rd = document.getElementById('report-delegates');
@@ -984,6 +991,7 @@ async function initBackendPortal() {
   if (isSuper) await renderBackendFees();
   if (isSuper) await renderBackendActivity();
   if (isFinance) await loadReportWorkshopOptions();
+  if (isFinance) await renderBackendReminders(isSuper);
 }
 
 const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT / RTGS' };
@@ -1663,6 +1671,116 @@ function reportWorkshopQuery() {
   return select && select.value ? `&optionId=${encodeURIComponent(select.value)}` : '';
 }
 
+// --- REGISTRATION REMINDERS (admin) ---
+
+const REMINDER_DEFAULT_BODY = `<p>Dear {{name}},</p>
+<p>Thanks for signing up for the International Conference on Healthcare Quality &amp; Patient Safety 2026 (21&ndash;22 November 2026, MGIMS, Sevagram, Wardha). We noticed your registration isn't complete yet &mdash; your account is set up, but we haven't received your payment details.</p>
+<p>Completing your registration only takes a couple of minutes.</p>
+<p style="text-align:center;margin:1.5rem 0">
+  <a href="https://registration.mgims.ac.in" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Complete My Registration</a>
+</p>
+<p>If you've already registered, please disregard this email.</p>`;
+
+let cachedReminderRecipients = [];
+
+async function renderBackendReminders(isSuper) {
+  const res = await fetch('/api/admin/reminders/pending-signups');
+  if (!res.ok) return;
+  const data = await res.json();
+  cachedReminderRecipients = data.users || [];
+  const withEmail = cachedReminderRecipients.filter((u) => u.email);
+
+  setText('badge-pending-signups', String(cachedReminderRecipients.length));
+  setText('reminders-count', String(cachedReminderRecipients.length));
+  setText('reminder-send-count', String(withEmail.length));
+
+  const bodyBox = document.getElementById('reminder-body');
+  if (bodyBox && !bodyBox.value.trim()) bodyBox.value = REMINDER_DEFAULT_BODY;
+
+  const list = document.getElementById('reminders-list');
+  if (list) {
+    list.innerHTML = cachedReminderRecipients.length
+      ? cachedReminderRecipients.map((u) => `
+        <div class="px-3 py-2 flex items-center justify-between gap-2">
+          <div class="min-w-0">
+            <p class="font-semibold text-slate-700 truncate">${esc([u.salutation, u.full_name].filter(Boolean).join(' '))}</p>
+            <p class="text-xs text-slate-400 truncate">${esc(u.email || '')}</p>
+          </div>
+          ${u.email ? '' : '<span class="text-[10px] bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-bold shrink-0">No email</span>'}
+        </div>`).join('')
+      : `<div class="px-3 py-6 text-center text-slate-400 text-sm">Everyone who's signed up has also registered.</div>`;
+  }
+
+  const sendBtn = document.getElementById('reminder-send-btn');
+  if (sendBtn) {
+    sendBtn.disabled = withEmail.length === 0 || !isSuper;
+    sendBtn.title = isSuper ? '' : 'Only a Super Admin can send bulk reminder emails.';
+  }
+  const testBtn = document.getElementById('reminder-test-btn');
+  if (testBtn) {
+    testBtn.disabled = !isSuper;
+    testBtn.title = isSuper ? '' : 'Only a Super Admin can send reminder emails.';
+  }
+}
+
+// Sends the reminder to the logged-in admin's own email only, so wording
+// and formatting can be checked before the irreversible bulk send.
+async function sendReminderTest() {
+  const subject = document.getElementById('reminder-subject').value.trim();
+  const bodyHtml = document.getElementById('reminder-body').value.trim();
+  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
+
+  const btn = document.getElementById('reminder-test-btn');
+  const resultEl = document.getElementById('reminder-send-result');
+  if (btn) btn.disabled = true;
+  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending test…'; }
+
+  const data = await (await fetch('/api/admin/reminders/test-send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject, bodyHtml }),
+  })).json();
+
+  if (!data.success) {
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Test send failed.'; }
+    showToast(data.error || 'Could not send test email.');
+  } else {
+    const msg = `Test sent to ${data.sentTo}.`;
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
+    showToast(msg, 'success');
+  }
+  if (btn) btn.disabled = false;
+}
+
+async function sendRegistrationReminders() {
+  const subject = document.getElementById('reminder-subject').value.trim();
+  const bodyHtml = document.getElementById('reminder-body').value.trim();
+  const withEmail = cachedReminderRecipients.filter((u) => u.email);
+  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
+  if (!withEmail.length) return showToast('No recipients with an email on file.');
+
+  if (!confirm(`Send this reminder to ${withEmail.length} people who haven't registered? This can't be undone.`)) return;
+
+  const btn = document.getElementById('reminder-send-btn');
+  const resultEl = document.getElementById('reminder-send-result');
+  if (btn) btn.disabled = true;
+  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending…'; }
+
+  const data = await (await fetch('/api/admin/reminders/send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject, bodyHtml }),
+  })).json();
+
+  if (!data.success) {
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Send failed.'; }
+    showToast(data.error || 'Could not send reminders.');
+  } else {
+    const msg = `Sent to ${data.sent} of ${data.total}${data.skippedNoEmail ? ` (${data.skippedNoEmail} skipped — no email on file)` : ''}.`;
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
+    showToast(msg, 'success');
+  }
+  if (btn) btn.disabled = withEmail.length === 0;
+}
+
 // CSV downloads; HTML opens a printable report (Print / Save as PDF).
 // `extraQuery` is an already-encoded query fragment like "&optionId=5"
 // (used by the workshops report's one-at-a-time picker).
@@ -1918,11 +2036,29 @@ function switchActivityLog(tab) {
   });
 }
 
+// Header "Settings" dropdown: Masters, Reminders, and Logs (Activity Log)
+// live here instead of the main tab bar.
+function toggleSettingsMenu(forceHide) {
+  const menu = document.getElementById('settings-menu');
+  if (menu) menu.classList.toggle('hidden', forceHide === true ? true : undefined);
+}
+function selectSettingsTab(tab) {
+  switchBackendTab(tab);
+  toggleSettingsMenu(true);
+}
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('settings-menu');
+  const btn = document.getElementById('settings-menu-btn');
+  if (!menu || menu.classList.contains('hidden')) return;
+  if (menu.contains(e.target) || (btn && btn.contains(e.target))) return;
+  menu.classList.add('hidden');
+});
+
 const MASTERS_SUBTABS = ['programs', 'fees', 'users'];
 let lastMastersTab = 'programs';
 
 function switchBackendTab(tab) {
-  ['payments', 'statement', 'abstracts', 'programs', 'fees', 'reports', 'activity', 'users'].forEach(t => {
+  ['payments', 'statement', 'abstracts', 'programs', 'fees', 'reports', 'reminders', 'activity', 'users'].forEach(t => {
     const section = document.getElementById(`section-${t}`);
     if (section) section.classList.toggle('hidden', t !== tab);
 
@@ -1936,16 +2072,19 @@ function switchBackendTab(tab) {
     }
   });
 
+  // Highlight whichever Settings-menu item (Masters/Reminders/Logs) is
+  // currently selected, since those tabs no longer live in the main bar.
+  ['masters', 'reminders', 'activity'].forEach((key) => {
+    const item = document.getElementById(`settings-item-${key}`);
+    if (!item) return;
+    const active = key === 'masters' ? MASTERS_SUBTABS.includes(tab) : key === tab;
+    item.classList.toggle('bg-indigo-50', active);
+    item.classList.toggle('text-indigo-700', active);
+  });
+
   const inMasters = MASTERS_SUBTABS.includes(tab);
   const mastersWrap = document.getElementById('section-masters-wrapper');
   if (mastersWrap) mastersWrap.classList.toggle('hidden', !inMasters);
-  const mastersBtn = document.getElementById('nav-tab-masters');
-  if (mastersBtn) {
-    mastersBtn.classList.toggle('text-indigo-600', inMasters);
-    mastersBtn.classList.toggle('border-b-2', inMasters);
-    mastersBtn.classList.toggle('border-indigo-600', inMasters);
-    mastersBtn.classList.toggle('text-slate-500', !inMasters);
-  }
   if (inMasters) {
     lastMastersTab = tab;
     MASTERS_SUBTABS.forEach((t) => {
