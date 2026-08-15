@@ -317,10 +317,54 @@ async function runOcrChecks(buffer, { expectedAmount, utr }) {
   const digitsOnly = text.replace(/[^0-9]/g, '');
   const enteredUtrDigits = String(utr || '').replace(/[^0-9]/g, '');
 
-  // Amount: the expected fee appears in the text as a standalone number, with
-  // or without a thousands separator (e.g. 3000, 3,000, or 3 000).
-  const amtWithSep = String(expectedAmount).replace(/\B(?=(\d{3})+(?!\d))/g, '[,\\s]?');
-  const amount = new RegExp(`(?<!\\d)${amtWithSep}(?!\\d)`).test(text);
+  // Amount detection. Two prongs, because the amount is the single hardest
+  // thing to OCR on a payment receipt -- it's shown in a big, bold,
+  // stylized font that Tesseract mangles far more than the plain body text.
+  const expectedAmountStr = String(expectedAmount);
+  // OCR routinely reads the "0" digit as the letter "O" and "1" as "l"/"I"
+  // in that bold amount font; fix those look-alikes inside any digit-ish run
+  // so the zeroes count as digits.
+  const normDigits = (s) => s.replace(/[0-9OolI]+/g, (run) => run.replace(/[OoIl]/g, (c) => (c === 'I' || c === 'l' ? '1' : '0')));
+
+  let amount = false;
+
+  // Prong 1 (currency-anchored, high confidence): when a rupee marker is
+  // read intact -- the ₹ glyph, "Rs", or "INR" -- the number right after it
+  // is the amount. Take its integer part (before any decimal), drop commas,
+  // and compare. This is the case the "look next to the ₹ symbol" ask is
+  // about, and it's unambiguous when the symbol survives OCR.
+  const anchorRe = /(?:₹|rs\.?|inr)\s*([0-9OolI][0-9OolI.,\s]*)/gi;
+  let m;
+  while (!amount && (m = anchorRe.exec(text)) !== null) {
+    const intPart = normDigits(m[1]).split('.')[0].replace(/[^0-9]/g, '');
+    if (intPart === expectedAmountStr) amount = true;
+  }
+
+  // Prong 2 (digit-run matching, tolerant): the ₹ glyph is frequently NOT
+  // read cleanly -- it gets dropped, or fused onto the number as a stray
+  // leading digit (e.g. "₹3,000.00" -> "33,000.00"), or a comma is read as
+  // a digit (e.g. "₹2,000" -> "2 9 0 0 0"). Concatenate adjacent digit runs
+  // into candidate numbers and match the expected amount either exactly, or
+  // allowing exactly ONE spurious character to be deleted (the misread
+  // symbol/comma). The length guard (candidate is exactly one digit longer
+  // than expected) is what keeps this from matching a 12-digit UTR or an
+  // account number -- only a number one digit off from the fee can match.
+  const deletable = (cand, target) => {
+    if (cand.length !== target.length + 1) return false;
+    for (let i = 0; i < cand.length; i++) {
+      if (cand.slice(0, i) + cand.slice(i + 1) === target) return true;
+    }
+    return false;
+  };
+  const amountTokens = normDigits(text).split(/[^0-9]+/).filter(Boolean);
+  for (let i = 0; !amount && i < amountTokens.length; i++) {
+    let acc = '';
+    for (let j = i; j < amountTokens.length; j++) {
+      acc += amountTokens[j];
+      if (acc.length > expectedAmountStr.length + 1) break;
+      if (acc === expectedAmountStr || deletable(acc, expectedAmountStr)) { amount = true; break; }
+    }
+  }
 
   // VPA: the conference UPI id appears (compare ignoring whitespace/case).
   const vpa = compact.includes(OFFICIAL_UPI_ID.replace(/\s+/g, '').toLowerCase());
@@ -1091,6 +1135,11 @@ app.post('/api/auth/register', async (req, res, next) => {
     if (!name) {
       return res.status(400).json({ success: false, error: 'Full name is required.' });
     }
+    // Always normalise the name to Title Case, so "pratiksha vasantrao
+    // meshram", "JOHN SMITH", or "pratiksha Vasantrao meshram" all become
+    // "Pratiksha Vasantrao Meshram". titleCase is idempotent, so a name
+    // already in Title Case is returned unchanged.
+    const nameVal = titleCase(name);
     const salutationVal = SALUTATIONS.includes(salutation) ? salutation : null;
     const ageNum = age === '' || age == null ? null : parseInt(age, 10);
     if (ageNum != null && (!Number.isInteger(ageNum) || ageNum < 1 || ageNum > 120)) {
@@ -1121,7 +1170,7 @@ app.post('/api/auth/register', async (req, res, next) => {
          age = excluded.age,
          gender = excluded.gender,
          email = excluded.email`,
-      [phone, salutationVal, name, designation, institute, pincode, state, district, ageNum, genderVal, emailVal]
+      [phone, salutationVal, nameVal, designation, institute, pincode, state, district, ageNum, genderVal, emailVal]
     );
 
     await assignUserRegNumber(phone); // ensure a registration number exists
@@ -1659,6 +1708,25 @@ app.get('/api/abstracts/:id/file', requireAuth, async (req, res, next) => {
 
 // Finance reconciliation: view all registrations, each annotated with the
 // most recent audit entry (who last changed its status, and when).
+// Delegate geographic distribution for the approval page's overview map:
+// per-district counts split into registered (has a registrations row) vs
+// signed-up-only. Keyed on district; the client maps districts to coords.
+app.get('/api/admin/delegate-locations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const rows = await dbAll(`
+      SELECT LOWER(TRIM(u.district)) AS district, TRIM(u.state) AS state,
+        SUM(CASE WHEN r.phone_number IS NOT NULL THEN 1 ELSE 0 END) AS registered,
+        SUM(CASE WHEN r.phone_number IS NULL THEN 1 ELSE 0 END) AS signedup
+      FROM users u
+      LEFT JOIN registrations r ON r.phone_number = u.phone_number
+      WHERE u.pincode IS NOT NULL AND u.pincode != '' AND u.district IS NOT NULL AND TRIM(u.district) != ''
+      GROUP BY LOWER(TRIM(u.district))`);
+    res.json({ locations: rows || [] });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get('/api/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
     const rows = await dbAll(`
@@ -1676,6 +1744,75 @@ app.get('/api/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async
       LEFT JOIN bank_statement_transactions t ON t.id = registrations.bank_txn_id
       ORDER BY registrations.id DESC`);
     res.json({ registrations: (rows || []).map(withDelegateSalutation) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Reads a stored screenshot/ID-card value (usually a filename in
+// uploads/, occasionally a legacy base64 data URI that predates the
+// move to on-disk storage) into a Buffer for re-running OCR against it.
+async function readStoredUpload(value) {
+  if (!value) return null;
+  if (/^data:image\//i.test(value)) {
+    const m = /^data:image\/[a-z]+;base64,(.*)$/i.exec(value);
+    return m ? Buffer.from(m[1], 'base64') : null;
+  }
+  try {
+    return await fs.promises.readFile(path.join(UPLOAD_DIR, path.basename(value)));
+  } catch {
+    return null;
+  }
+}
+
+// Re-runs the automated screenshot/ID-card checks against every registration
+// that's ever been flagged -- pending, already approved, or rejected -- against
+// its *already-uploaded* files. For when the OCR matching logic itself changes
+// (e.g. a bug fix) and past submissions should be re-judged against the
+// corrected logic instead of staying flagged on a stale, since-fixed false
+// negative. Only touches the ocr_*_match/is_flagged columns, never
+// bank_status -- an approval or rejection already made stays made; this just
+// cleans up the flag/check data behind it.
+app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const rows = await dbAll(
+      `SELECT id, registration_number, category_key, expected_amount, paid_amount, utr_number,
+              screenshot, id_card, payment_mode
+         FROM registrations WHERE is_flagged = 1`);
+
+    let rescanned = 0;
+    let unflagged = 0;
+    let stillFlagged = 0;
+    let skippedNoFile = 0;
+
+    for (const reg of rows) {
+      const buffer = await readStoredUpload(reg.screenshot);
+      if (!buffer) { skippedNoFile++; continue; }
+
+      const checks = await runOcrChecks(buffer, { expectedAmount: reg.expected_amount, utr: reg.utr_number });
+      if (reg.payment_mode === 'NEFT_RTGS') checks.vpa = true;
+
+      const needsId = !!STUDENT_CATEGORIES[reg.category_key];
+      let idMatch = null;
+      if (needsId) {
+        const idBuffer = await readStoredUpload(reg.id_card);
+        idMatch = idBuffer ? await runIdCardCheck(idBuffer, reg.category_key) : false;
+      }
+
+      const allChecksPass = checks.amount && checks.vpa && checks.utr && (!needsId || idMatch);
+      const amountTampered = reg.paid_amount == null || Math.round(reg.paid_amount) !== reg.expected_amount;
+      const flagged = !allChecksPass || amountTampered ? 1 : 0;
+
+      await dbRun(
+        `UPDATE registrations SET ocr_amount_match = ?, ocr_vpa_match = ?, ocr_utr_match = ?, ocr_id_match = ?, is_flagged = ? WHERE id = ?`,
+        [checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, needsId ? (idMatch ? 1 : 0) : null, flagged, reg.id]
+      );
+
+      rescanned++;
+      if (flagged) stillFlagged++; else unflagged++;
+    }
+
+    res.json({ success: true, totalFlagged: rows.length, rescanned, unflagged, stillFlagged, skippedNoFile });
   } catch (err) {
     next(err);
   }
@@ -1882,7 +2019,11 @@ app.get('/api/registrations/:id/audit', requireRole('SUPER_ADMIN', 'FINANCE_ADMI
 // User administration (super admin only).
 app.get('/api/users', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
-    const rows = await dbAll('SELECT * FROM users');
+    const rows = await dbAll(
+      `SELECT users.*, r.bank_status AS registration_status,
+         r.workshop_option_id, r.workshop, r.qi_option_id, r.qi_exposure
+         FROM users
+         LEFT JOIN registrations r ON r.phone_number = users.phone_number`);
     res.json({ users: rows || [] });
   } catch (err) {
     next(err);
@@ -1930,7 +2071,10 @@ app.put('/api/users/:phone/role', requireRole('SUPER_ADMIN'), async (req, res, n
 // submitted payment details, as distinct from a submitted-but-unverified
 // PENDING registration).
 const PENDING_SIGNUP_QUERY =
-  `SELECT u.phone_number, u.salutation, u.full_name, u.email
+  `SELECT u.phone_number, u.salutation, u.full_name, u.email,
+     (SELECT MAX(created_at) FROM audit_log a
+        WHERE a.entity_type = 'reminder_email' AND a.action = 'REGISTRATION_REMINDER_SENT' AND a.entity_id = u.phone_number
+     ) AS last_reminder_sent_at
      FROM users u
      WHERE NOT EXISTS (SELECT 1 FROM registrations r WHERE r.phone_number = u.phone_number)
      ORDER BY u.full_name`;
@@ -1981,7 +2125,7 @@ app.post('/api/admin/reminders/test-send', requireRole('SUPER_ADMIN'), async (re
 // one-way bulk email blast to real delegates -- nothing to undo if wrong.
 app.post('/api/admin/reminders/send', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
-    const { subject, bodyHtml } = req.body;
+    const { subject, bodyHtml, phones } = req.body;
     if (!subject || !String(subject).trim()) {
       return res.status(400).json({ success: false, error: 'Subject is required.' });
     }
@@ -1991,25 +2135,45 @@ app.post('/api/admin/reminders/send', requireRole('SUPER_ADMIN'), async (req, re
     if (!EMAIL_ENABLED) {
       return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
     }
+    // phones: an explicit list of who to send to (the admin's selection in
+    // the UI). Required -- there's no implicit "everyone" fallback, so a
+    // stale/empty selection can't silently turn into a full blast.
+    if (!Array.isArray(phones) || !phones.length) {
+      return res.status(400).json({ success: false, error: 'Select at least one delegate to send to.' });
+    }
+    const phoneSet = new Set(phones.map(String));
 
-    const recipients = await dbAll(PENDING_SIGNUP_QUERY);
+    // A reminder already sent to this phone number in the last 24 hours
+    // (any admin, any wording) blocks sending another -- rolling window,
+    // not calendar-day, so 11pm and 1am the next day still count as inside
+    // the same 24h. One audit row per successful send (entity_id =
+    // phone_number) is what makes this queryable.
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    const sentRecentlyRows = await dbAll(
+      `SELECT DISTINCT entity_id FROM audit_log
+        WHERE entity_type = 'reminder_email' AND action = 'REGISTRATION_REMINDER_SENT' AND created_at >= ?`,
+      [since]
+    );
+    const sentRecentlySet = new Set(sentRecentlyRows.map((r) => r.entity_id));
+
+    const recipients = (await dbAll(PENDING_SIGNUP_QUERY)).filter((u) => phoneSet.has(u.phone_number));
     let sent = 0;
     let skippedNoEmail = 0;
+    let skippedSentRecently = 0;
     for (const u of recipients) {
+      if (sentRecentlySet.has(u.phone_number)) { skippedSentRecently++; continue; }
       if (!u.email) { skippedNoEmail++; continue; }
       const name = [u.salutation, u.full_name].filter(Boolean).join(' ') || 'Delegate';
       const personalizedBody = String(bodyHtml).split('{{name}}').join(escapeHtml(name));
       await sendEmail(u.email, subject, emailWrap(subject, personalizedBody));
+      await recordAudit({
+        req, entityType: 'reminder_email', entityId: u.phone_number,
+        action: 'REGISTRATION_REMINDER_SENT', oldValue: null, newValue: subject,
+      });
       sent++;
     }
 
-    await recordAudit({
-      req, entityType: 'reminder_email', entityId: 0,
-      action: 'REGISTRATION_REMINDER_SENT', oldValue: null,
-      newValue: `sent=${sent}, skipped(no email)=${skippedNoEmail}, subject="${subject}"`,
-    });
-
-    res.json({ success: true, sent, skippedNoEmail, total: recipients.length });
+    res.json({ success: true, sent, skippedNoEmail, skippedSentRecently, total: recipients.length });
   } catch (err) {
     next(err);
   }

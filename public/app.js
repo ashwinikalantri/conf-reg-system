@@ -96,16 +96,11 @@ function roleLabel(role) {
     .toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// Show the admin backend link only to a logged-in admin on the dashboard.
-// When it is hidden (login/signup/landing) the NQOCN pill is centred.
+// Show the admin backend link (icon-only, next to Logout) only to a
+// logged-in admin on the dashboard.
 function updateAdminNav(show) {
   const btn = document.getElementById('admin-nav-btn');
   if (btn) btn.classList.toggle('hidden', !show);
-  const header = document.getElementById('top-header');
-  if (header) {
-    header.classList.toggle('justify-between', show);
-    header.classList.toggle('justify-center', !show);
-  }
 }
 
 // --- NAVIGATION & UI TOGGLES ---
@@ -260,7 +255,11 @@ async function handleRegistration(e) {
     currentDelegate = data.user;
     persistDelegate(currentDelegate);
     showToast("Mobile OTP Verified! Account registered.", 'success');
-    loadDashboard();
+    await loadDashboard();
+    // Straight into payment (step 1) so a freshly-created account doesn't
+    // sit "signed up but never paid" -- that's the drop-off we're trying
+    // to close, not just get them to the dashboard.
+    openPaymentModal();
   } else {
     showToast(data.error || "Registration failed.");
   }
@@ -454,6 +453,14 @@ function calculateFee() {
   const payLink = document.getElementById('upi-pay-link');
   if (payLink) payLink.href = upiUri;
   document.getElementById('qr-container').classList.remove('hidden');
+  togglePaymentMode();
+}
+
+// Called by the "Pay by Bank Transfer instead" / "Pay by UPI instead" links
+// -- sets the underlying (hidden) payment-mode radio and re-renders.
+function setPaymentMode(mode) {
+  const input = document.querySelector(`input[name="payment-mode"][value="${mode}"]`);
+  if (input) input.checked = true;
   togglePaymentMode();
 }
 
@@ -824,7 +831,7 @@ function setupAdminDelegation() {
   if (userBody) {
     userBody.addEventListener('change', (e) => {
       const sel = e.target.closest('.role-select');
-      if (sel) updateRole(sel.dataset.phone, sel.value);
+      if (sel) return updateRole(sel.dataset.phone, sel.value);
     });
   }
 
@@ -934,13 +941,16 @@ function applyRoleVisibility(role) {
   if (tabAbstracts) tabAbstracts.classList.toggle('hidden', !isReviewer);
   if (tabReports) tabReports.classList.toggle('hidden', !(isFinance || isReviewer));
 
-  // Masters/Reminders/Logs live in the header's Settings menu, not the main
-  // tab bar. The menu button itself only shows if at least one item would.
+  // Masters/Users/Reminders/Logs live in the header's Settings menu, not
+  // the main tab bar. The menu button itself only shows if at least one
+  // item would.
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
   const settingsMasters = document.getElementById('settings-item-masters');
+  const settingsUsers = document.getElementById('settings-item-users');
   const settingsReminders = document.getElementById('settings-item-reminders');
   const settingsActivity = document.getElementById('settings-item-activity');
   if (settingsMasters) settingsMasters.classList.toggle('hidden', !isSuper);
+  if (settingsUsers) settingsUsers.classList.toggle('hidden', !isSuper);
   if (settingsReminders) settingsReminders.classList.toggle('hidden', !isFinance);
   if (settingsActivity) settingsActivity.classList.toggle('hidden', !isSuper);
   if (settingsMenuBtn) settingsMenuBtn.classList.toggle('hidden', !(isSuper || isFinance));
@@ -969,7 +979,7 @@ async function initBackendPortal() {
     return;
   }
   activeAdminUser = (await meRes.json()).user;
-  setText('active-admin-role-badge', `${activeAdminUser.full_name} · ${roleLabel(activeAdminUser.role)}`);
+  setText('active-admin-role-badge', activeAdminUser.full_name);
 
   const { isSuper, isFinance, isReviewer } = applyRoleVisibility(activeAdminUser.role);
 
@@ -985,8 +995,9 @@ async function initBackendPortal() {
 
   // Render every section this role may see (this also fills the tab badges).
   if (isFinance) await renderBackendPayments();
+  if (isFinance) renderDelegateMap();
   if (isReviewer) await renderBackendAbstracts();
-  if (isSuper) await renderBackendUsers();
+  if (isSuper) await loadBackendUsers();
   if (isSuper) await renderBackendPrograms();
   if (isSuper) await renderBackendFees();
   if (isSuper) await renderBackendActivity();
@@ -1038,6 +1049,30 @@ function paymentRowHtml(p) {
   `;
 }
 
+// Re-runs the automated screenshot/ID checks against every currently
+// flagged, still-pending registration's already-uploaded files -- useful
+// after fixing a bug in the OCR matching logic itself, so past
+// submissions get re-judged instead of sitting flagged on stale results.
+async function rescanFlaggedPayments() {
+  const btn = document.getElementById('rescan-flagged-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '🔄 Rescanning…'; }
+
+  const data = await (await fetch('/api/admin/registrations/rescan-flagged', { method: 'POST' })).json();
+
+  if (btn) { btn.disabled = false; btn.textContent = '🔄 Rescan Flagged'; }
+
+  if (!data.success) {
+    showToast(data.error || 'Rescan failed.');
+    return;
+  }
+  showToast(
+    `Rescanned ${data.rescanned} of ${data.totalFlagged} flagged. ${data.unflagged} cleared, ${data.stillFlagged} still flagged.`
+      + (data.skippedNoFile ? ` (${data.skippedNoFile} skipped -- file missing.)` : ''),
+    data.unflagged ? 'success' : 'info'
+  );
+  await renderBackendPayments();
+}
+
 async function renderBackendPayments() {
   const res = await fetch('/api/registrations');
   const data = await res.json();
@@ -1073,6 +1108,124 @@ async function renderBackendPayments() {
   setText('badge-rejected-count', rejected.length);
   if (rejectedSection) rejectedSection.classList.toggle('hidden', rejected.length === 0);
   if (rejectedBody) rejectedBody.innerHTML = rejected.map(paymentRowHtml).join('');
+}
+
+// --- DELEGATE LOCATION MAP (approval page overview) ---
+
+// Approximate lat/lng for the districts delegates have signed up from, plus
+// state centroids as a fallback so a delegate from a district we don't have
+// pinned still lands in roughly the right place. Districts are matched
+// case-insensitively against users.district.
+const DISTRICT_COORDS = {
+  'wardha': [20.75, 78.60], 'yavatmal': [20.39, 78.13], 'nagpur': [21.15, 79.09],
+  'mumbai': [19.08, 72.88], 'aurangabad': [19.88, 75.34], 'south west delhi': [28.60, 77.10],
+  'central': [28.65, 77.23], 'raipur': [21.25, 81.63], 'hyderabad': [17.39, 78.49],
+  'warangal': [17.97, 79.59], 'tiruvannamalai': [12.23, 79.07], 'tiruvallur': [13.14, 79.91],
+  'raichur': [16.21, 77.36], 'pune': [18.52, 73.86], 'patna': [25.59, 85.14],
+  'lucknow': [26.85, 80.95], 'kota': [25.18, 75.83], 'kolkata': [22.57, 88.36],
+  'kolar': [13.14, 78.13], 'kanchipuram': [12.84, 79.70], 'jodhpur': [26.24, 73.02],
+  'east godavari': [17.00, 81.78], 'bhandara': [21.17, 79.65], 'bangalore': [12.97, 77.59],
+  'amravati': [20.93, 77.76], 'akola': [20.71, 77.00], 'ajmer': [26.45, 74.64],
+  'ahmed nagar': [19.09, 74.75], 'nashik': [20.00, 73.79], 'thane': [19.22, 72.97],
+  'nanded': [19.15, 77.32], 'chennai': [13.08, 80.27], 'jaipur': [26.91, 75.79],
+  'bhopal': [23.26, 77.41], 'indore': [22.72, 75.86], 'chandrapur': [19.95, 79.30],
+  'gadchiroli': [20.18, 80.00], 'gondia': [21.46, 80.20], 'buldhana': [20.53, 76.18],
+  'jalna': [19.84, 75.88], 'parbhani': [19.27, 76.78], 'coimbatore': [11.02, 76.96],
+};
+const STATE_COORDS = {
+  'maharashtra': [19.75, 75.71], 'delhi': [28.61, 77.21], 'chattisgarh': [21.28, 81.87],
+  'chhattisgarh': [21.28, 81.87], 'telangana': [17.90, 79.60], 'tamil nadu': [11.10, 78.66],
+  'karnataka': [15.32, 75.71], 'rajasthan': [26.60, 73.80], 'uttar pradesh': [26.85, 80.95],
+  'bihar': [25.60, 85.10], 'west bengal': [22.99, 87.85], 'andhra pradesh': [15.90, 79.74],
+  'gujarat': [22.70, 71.60], 'madhya pradesh': [23.50, 78.50], 'kerala': [10.50, 76.30],
+  'punjab': [31.10, 75.30], 'haryana': [29.20, 76.30], 'odisha': [20.50, 84.90],
+  'jharkhand': [23.60, 85.30], 'assam': [26.20, 92.90], 'uttarakhand': [30.00, 79.30],
+  'himachal pradesh': [31.90, 77.20], 'jammu and kashmir': [33.80, 76.50], 'goa': [15.40, 74.00],
+};
+
+let delegateMapRendered = false;
+async function renderDelegateMap() {
+  if (delegateMapRendered) return; // static enough; render once per page load
+  const host = document.getElementById('delegate-map');
+  if (!host || typeof d3 === 'undefined' || typeof topojson === 'undefined') return;
+  delegateMapRendered = true;
+
+  const res = await fetch('/api/admin/delegate-locations');
+  if (!res.ok) { delegateMapRendered = false; return; }
+  const locations = (await res.json()).locations || [];
+
+  // Resolve each district to coordinates (district first, then state).
+  let unmapped = 0, totalReg = 0, totalSign = 0;
+  const pts = [];
+  locations.forEach((loc) => {
+    const d = String(loc.district || '').toLowerCase().trim();
+    const st = String(loc.state || '').toLowerCase().trim();
+    const coord = DISTRICT_COORDS[d] || STATE_COORDS[st];
+    totalReg += loc.registered; totalSign += loc.signedup;
+    if (!coord) { unmapped += loc.registered + loc.signedup; return; }
+    pts.push({ name: d.replace(/\b\w/g, (c) => c.toUpperCase()), lat: coord[0], lng: coord[1],
+      reg: loc.registered, sign: loc.signedup, total: loc.registered + loc.signedup,
+      host: d === 'wardha' });
+  });
+
+  setText('delegate-map-summary',
+    `${totalReg} registered · ${totalSign} signed up only across ${locations.length} districts`
+    + (unmapped ? ` (${unmapped} not shown — unmapped location)` : ''));
+
+  const C_REG = '#008300', C_SIGN = '#eda100';
+  const W = 680, H = 720;
+  host.innerHTML = '';
+  // width/height ATTRIBUTES (not just viewBox) give the SVG an intrinsic
+  // aspect ratio -- without them, height:auto can't resolve and the browser
+  // falls back to a ~150px default, rendering the whole map tiny.
+  const svg = d3.select(host).append('svg')
+    .attr('viewBox', `0 0 ${W} ${H}`).attr('width', W).attr('height', H)
+    .attr('preserveAspectRatio', 'xMidYMid meet')
+    .style('width', '100%').style('height', 'auto').style('display', 'block').style('overflow', 'hidden');
+  const tip = d3.select(host).append('div')
+    .style('position', 'absolute').style('pointer-events', 'none').style('opacity', 0)
+    .style('background', '#fff').style('border', '0.5px solid #cbd5e1').style('border-radius', '8px')
+    .style('padding', '6px 10px').style('font-size', '12px').style('color', '#0f172a')
+    .style('box-shadow', '0 2px 8px rgba(0,0,0,.15)').style('white-space', 'nowrap');
+  const maxTotal = Math.max(1, ...pts.map((p) => p.total));
+  const rScale = d3.scaleSqrt().domain([1, maxTotal]).range([5, 27]);
+  const pie = d3.pie().sort(null).value((d) => d.v);
+
+  // Self-hosted (public/data/india-states.topo.json) rather than an
+  // external CDN -- dissolved from the official Survey of India district
+  // shapefile (github.com/abhatia08/india_shp_2020), so it depicts India's
+  // full claimed territory (all of Jammu & Kashmir and Ladakh as separate
+  // states), and doesn't depend on a third party staying up.
+  d3.json('/data/india-states.topo.json').then((topo) => {
+    const feat = topojson.feature(topo, topo.objects.in_district);
+    const proj = d3.geoMercator().fitExtent([[10, 10], [W - 10, H - 10]], feat);
+    svg.append('g').selectAll('path').data(feat.features).join('path')
+      .attr('d', d3.geoPath(proj)).attr('fill', '#f1efe8').attr('stroke', '#d3d1c7').attr('stroke-width', 0.5);
+
+    const placed = pts.map((c) => ({ ...c, p: proj([c.lng, c.lat]) })).filter((c) => c.p).sort((a, b) => b.total - a.total);
+    const g = svg.append('g').selectAll('g.city').data(placed).join('g')
+      .attr('transform', (d) => `translate(${d.p[0]},${d.p[1]})`).style('cursor', 'pointer')
+      .on('mousemove', (ev, d) => {
+        const b = host.getBoundingClientRect();
+        tip.style('opacity', 1).html(`<b>${esc(d.name)}</b><br>${d.reg} registered · ${d.sign} signed up`)
+          .style('left', (ev.clientX - b.left + 12) + 'px').style('top', (ev.clientY - b.top - 6) + 'px');
+      })
+      .on('mouseleave', () => tip.style('opacity', 0));
+    g.each(function (d) {
+      const rad = rScale(d.total);
+      const arc = d3.arc().innerRadius(0).outerRadius(rad);
+      const slices = pie([{ k: 'reg', v: d.reg }, { k: 'sign', v: d.sign }].filter((s) => s.v > 0));
+      d3.select(this).selectAll('path').data(slices).join('path')
+        .attr('d', arc).attr('fill', (s) => s.data.k === 'reg' ? C_REG : C_SIGN).attr('fill-opacity', 0.85)
+        .attr('stroke', '#fff').attr('stroke-width', slices.length > 1 ? 1 : 0);
+      d3.select(this).append('circle').attr('r', rad).attr('fill', 'none')
+        .attr('stroke', d.host ? '#ea580c' : '#fff').attr('stroke-width', d.host ? 2.5 : 0.8);
+    });
+    svg.append('g').selectAll('text').data(placed.filter((d) => d.total >= 3)).join('text')
+      .attr('x', (d) => d.p[0]).attr('y', (d) => d.p[1] - rScale(d.total) - 3).attr('text-anchor', 'middle')
+      .attr('font-size', '11px').attr('font-weight', '600').attr('fill', '#475569')
+      .text((d) => `${d.name} (${d.total})`);
+  }).catch(() => { setText('delegate-map-summary', 'Could not load the map.'); });
 }
 
 // --- PAYMENT REVIEW MODAL (verify / force-verify / reject entry point) ---
@@ -1243,20 +1396,94 @@ function reviewReject() {
   openRejectModal(reviewTargetId);
 }
 
-async function renderBackendUsers() {
-  const res = await fetch('/api/users');
-  const data = await res.json();
+const REG_STATUS_STYLES = {
+  BANK_VERIFIED: 'bg-emerald-100 text-emerald-800',
+  PENDING: 'bg-amber-100 text-amber-800',
+  REJECTED: 'bg-rose-100 text-rose-800',
+};
+const REG_STATUS_LABELS = { BANK_VERIFIED: 'Verified', PENDING: 'Pending', REJECTED: 'Rejected' };
+
+// Cached so filtering/search re-renders instantly without a round-trip, and
+// so the workshop/QI <select>s below have the full option list to draw from.
+let cachedUsers = [];
+let cachedAdminProgramOptions = [];
+
+async function loadBackendUsers() {
+  const [usersRes, optsRes] = await Promise.all([
+    fetch('/api/users'),
+    fetch('/api/admin/program-options'),
+  ]);
+  cachedUsers = ((await usersRes.json()).users) || [];
+  cachedAdminProgramOptions = ((await optsRes.json()).options) || [];
+  renderBackendUsers();
+}
+
+// Plain-text display of a delegate's current workshop/QI choice, plus a
+// "Change" button (verified registrations only -- nothing to enroll into
+// before payment is verified) that opens a confirm-before-save modal
+// instead of an inline <select>. An inline select sitting in a dense table
+// is an easy misclick/scroll-wheel-while-hovering away from silently
+// changing someone's enrollment; routing every change through an explicit
+// "Change" -> modal -> "Save" flow removes that.
+const ROLE_ICONS = {
+  SUPER_ADMIN: '👑',
+  FINANCE_ADMIN: '💰',
+  ACADEMIC_REVIEWER: '🎓',
+  FINANCE_ACADEMIC: '💰🎓',
+  DELEGATE: '🎫',
+};
+
+function programDisplayCell(u, options, currentId, type) {
+  const current = options.find((o) => String(o.id) === String(currentId));
+  const label = type === 'WORKSHOP' ? 'Workshop' : 'QI Exposure';
+  const changeBtn = u.registration_status === 'BANK_VERIFIED'
+    ? `<button type="button" class="block text-[10px] text-indigo-600 hover:text-indigo-800 underline font-semibold mt-0.5" onclick="openProgramChangeModal('${esc(u.phone_number)}','${type}')">${current ? 'Change' : 'Add'} ${label}</button>`
+    : '';
+  return `<span class="text-xs ${current ? 'text-slate-700 font-semibold' : 'text-slate-400'}">${current ? esc(current.name) : '—'}</span>${changeBtn}`;
+}
+
+function renderBackendUsers() {
   const tbody = document.getElementById('user-table-body');
   if (!tbody) return;
 
-  const users = data.users || [];
-  setText('badge-user-count', users.length);
+  const search = (document.getElementById('user-filter-search')?.value || '').trim().toLowerCase();
+  const roleFilter = document.getElementById('user-filter-role')?.value || '';
+  const statusFilter = document.getElementById('user-filter-status')?.value || '';
 
-  tbody.innerHTML = users.map(u => `
+  const filtered = cachedUsers.filter((u) => {
+    if (roleFilter && u.role !== roleFilter) return false;
+    if (statusFilter) {
+      const matches = statusFilter === 'NONE' ? !u.registration_status : u.registration_status === statusFilter;
+      if (!matches) return false;
+    }
+    if (search) {
+      const hay = [u.full_name, u.phone_number, u.designation, u.institution].filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
+  });
+
+  setText('user-total-count', String(cachedUsers.length));
+  setText('user-filter-count', String(filtered.length));
+  setText('badge-user-count', String(cachedUsers.length));
+
+  const workshopOptions = cachedAdminProgramOptions.filter((o) => o.type === 'WORKSHOP');
+  const qiOptions = cachedAdminProgramOptions.filter((o) => o.type === 'QI');
+
+  tbody.innerHTML = filtered.length ? filtered.map((u) => `
     <tr>
-      <td class="p-4 font-bold">${u.salutation ? esc(u.salutation) + ' ' : ''}${esc(u.full_name)}<br><span class="text-xs text-slate-400">+91 ${esc(u.phone_number)}</span></td>
+      <td class="p-4">
+        <span class="inline-flex items-center justify-center w-6 h-6 mb-1 bg-indigo-100 rounded-full text-xs" title="${esc(roleLabel(u.role))}">${ROLE_ICONS[u.role] || '👤'}</span>
+        <p class="font-bold">${u.salutation ? esc(u.salutation) + ' ' : ''}${esc(u.full_name)}</p>
+        <span class="text-xs text-slate-400">+91 ${esc(u.phone_number)}</span>
+      </td>
       <td class="p-4">${esc(u.designation)} (${esc(u.institution)})</td>
-      <td class="p-4"><span class="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-full">${esc(roleLabel(u.role))}</span></td>
+      <td class="p-4 font-mono text-xs">${esc(u.registration_number || '—')}</td>
+      <td class="p-4">${u.registration_status
+        ? `<span class="${REG_STATUS_STYLES[u.registration_status] || 'bg-slate-100 text-slate-600'} text-xs font-bold px-2 py-1 rounded-full">${esc(REG_STATUS_LABELS[u.registration_status] || u.registration_status)}</span>`
+        : `<span class="text-xs text-slate-400">Not registered</span>`}</td>
+      <td class="p-4">${programDisplayCell(u, workshopOptions, u.workshop_option_id, 'WORKSHOP')}</td>
+      <td class="p-4">${programDisplayCell(u, qiOptions, u.qi_option_id, 'QI')}</td>
       <td class="p-4 text-right">
         <select class="role-select text-xs p-1 border rounded" data-phone="${esc(u.phone_number)}">
           <option value="DELEGATE" ${u.role === 'DELEGATE' ? 'selected' : ''}>Delegate</option>
@@ -1267,7 +1494,65 @@ async function renderBackendUsers() {
         </select>
       </td>
     </tr>
-  `).join('');
+  `).join('') : `<tr><td colspan="7" class="p-8 text-center text-sm text-slate-400">No users match these filters.</td></tr>`;
+}
+
+// State for the shared workshop/QI change modal -- one modal, reused for
+// both program types and re-populated per delegate on open.
+let programChangeState = { phone: null, type: null, currentId: null };
+
+function openProgramChangeModal(phone, type) {
+  const u = cachedUsers.find((x) => x.phone_number === phone);
+  if (!u) return;
+  const currentId = type === 'WORKSHOP' ? u.workshop_option_id : u.qi_option_id;
+  const options = cachedAdminProgramOptions.filter((o) => o.type === type);
+  programChangeState = { phone, type, currentId };
+
+  setText('program-change-title', type === 'WORKSHOP' ? 'Change Workshop' : 'Change QI Exposure');
+  setText('program-change-subtitle', [u.salutation, u.full_name].filter(Boolean).join(' '));
+
+  // An inactive option only stays selectable if it's the delegate's current
+  // choice, so it doesn't just vanish from the list out from under them.
+  const selectable = options.filter((o) => o.active || String(o.id) === String(currentId));
+  const sel = document.getElementById('program-change-select');
+  sel.innerHTML = `<option value="">— None —</option>` + selectable.map((o) => {
+    const isCurrent = String(o.id) === String(currentId);
+    const isFull = !isCurrent && o.enrolled >= o.capacity;
+    return `<option value="${esc(o.id)}" ${isCurrent ? 'selected' : ''} ${isFull ? 'disabled' : ''}>${esc(o.name)}${isFull ? ' — FULL' : ''}${!o.active ? ' (inactive)' : ''}</option>`;
+  }).join('');
+
+  openModal('modal-program-change');
+}
+
+async function saveProgramChange() {
+  const { phone, currentId } = programChangeState;
+  const sel = document.getElementById('program-change-select');
+  const newId = sel.value;
+  if (newId === String(currentId ?? '')) { closeModal('modal-program-change'); return; }
+
+  const saveBtn = document.getElementById('program-change-save-btn');
+  if (saveBtn) saveBtn.disabled = true;
+
+  let data;
+  if (newId) {
+    data = await (await fetch(`/api/admin/program-options/${encodeURIComponent(newId)}/enroll`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }),
+    })).json();
+  } else if (currentId) {
+    data = await (await fetch(`/api/admin/program-options/${encodeURIComponent(currentId)}/enroll/${encodeURIComponent(phone)}`, { method: 'DELETE' })).json();
+  } else {
+    data = { success: true };
+  }
+
+  if (saveBtn) saveBtn.disabled = false;
+
+  if (!data.success) {
+    showToast(data.error || 'Could not update enrollment.');
+    return;
+  }
+  closeModal('modal-program-change');
+  showToast('Enrollment updated.', 'success');
+  await loadBackendUsers();
 }
 
 async function updateRole(phone, role) {
@@ -1276,7 +1561,7 @@ async function updateRole(phone, role) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ role })
   });
-  renderBackendUsers();
+  await loadBackendUsers();
 }
 
 // --- WORKSHOPS & QI PRACTICES (admin) ---
@@ -1682,17 +1967,24 @@ const REMINDER_DEFAULT_BODY = `<p>Dear {{name}},</p>
 <p>If you've already registered, please disregard this email.</p>`;
 
 let cachedReminderRecipients = [];
+let reminderIsSuper = false;
+
+// A reminder sent within the last 24h to this person blocks another one
+// (server-enforced too -- this just keeps the UI honest about it upfront).
+const REMINDER_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+function reminderOnCooldown(u) {
+  return u.last_reminder_sent_at && (Date.now() - Number(u.last_reminder_sent_at)) < REMINDER_COOLDOWN_MS;
+}
 
 async function renderBackendReminders(isSuper) {
+  reminderIsSuper = isSuper;
   const res = await fetch('/api/admin/reminders/pending-signups');
   if (!res.ok) return;
   const data = await res.json();
   cachedReminderRecipients = data.users || [];
-  const withEmail = cachedReminderRecipients.filter((u) => u.email);
 
   setText('badge-pending-signups', String(cachedReminderRecipients.length));
   setText('reminders-count', String(cachedReminderRecipients.length));
-  setText('reminder-send-count', String(withEmail.length));
 
   const bodyBox = document.getElementById('reminder-body');
   if (bodyBox && !bodyBox.value.trim()) bodyBox.value = REMINDER_DEFAULT_BODY;
@@ -1700,27 +1992,60 @@ async function renderBackendReminders(isSuper) {
   const list = document.getElementById('reminders-list');
   if (list) {
     list.innerHTML = cachedReminderRecipients.length
-      ? cachedReminderRecipients.map((u) => `
-        <div class="px-3 py-2 flex items-center justify-between gap-2">
-          <div class="min-w-0">
+      ? cachedReminderRecipients.map((u) => {
+        const onCooldown = reminderOnCooldown(u);
+        const disabled = !u.email || onCooldown;
+        return `
+        <div class="px-3 py-2 flex items-center gap-2">
+          <input type="checkbox" class="reminder-recipient-checkbox shrink-0" value="${esc(u.phone_number)}" ${disabled ? 'disabled' : ''} onchange="updateReminderSelectedCount()">
+          <div class="min-w-0 flex-1">
             <p class="font-semibold text-slate-700 truncate">${esc([u.salutation, u.full_name].filter(Boolean).join(' '))}</p>
-            <p class="text-xs text-slate-400 truncate">${esc(u.email || '')}</p>
+            <p class="text-xs text-slate-400 truncate">${esc(u.email || 'No email on file')}${u.last_reminder_sent_at ? ` · last sent ${esc(fmtAuditTime(u.last_reminder_sent_at))}` : ''}</p>
           </div>
-          ${u.email ? '' : '<span class="text-[10px] bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-bold shrink-0">No email</span>'}
-        </div>`).join('')
+          ${!u.email ? '<span class="text-[10px] bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-bold shrink-0">No email</span>' : ''}
+          ${onCooldown ? '<span class="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold shrink-0">Sent within 24h</span>' : ''}
+        </div>`;
+      }).join('')
       : `<div class="px-3 py-6 text-center text-slate-400 text-sm">Everyone who's signed up has also registered.</div>`;
   }
 
-  const sendBtn = document.getElementById('reminder-send-btn');
-  if (sendBtn) {
-    sendBtn.disabled = withEmail.length === 0 || !isSuper;
-    sendBtn.title = isSuper ? '' : 'Only a Super Admin can send bulk reminder emails.';
-  }
   const testBtn = document.getElementById('reminder-test-btn');
   if (testBtn) {
     testBtn.disabled = !isSuper;
     testBtn.title = isSuper ? '' : 'Only a Super Admin can send reminder emails.';
   }
+  updateReminderSelectedCount();
+}
+
+// Keeps the "Select all" checkbox, the selected-count label, and the Send
+// button's enabled state / count in sync with whichever recipient
+// checkboxes are actually checked right now.
+function updateReminderSelectedCount() {
+  const boxes = Array.from(document.querySelectorAll('.reminder-recipient-checkbox'));
+  const selectable = boxes.filter((b) => !b.disabled);
+  const selected = boxes.filter((b) => b.checked);
+
+  setText('reminder-selected-count', String(selected.length));
+  setText('reminder-send-count', String(selected.length));
+
+  const selectAll = document.getElementById('reminders-select-all');
+  if (selectAll) {
+    selectAll.checked = selectable.length > 0 && selected.length === selectable.length;
+    selectAll.disabled = selectable.length === 0;
+  }
+
+  const sendBtn = document.getElementById('reminder-send-btn');
+  if (sendBtn) {
+    sendBtn.disabled = selected.length === 0 || !reminderIsSuper;
+    sendBtn.title = reminderIsSuper ? '' : 'Only a Super Admin can send bulk reminder emails.';
+  }
+}
+
+function toggleAllReminderRecipients(checked) {
+  document.querySelectorAll('.reminder-recipient-checkbox').forEach((b) => {
+    if (!b.disabled) b.checked = checked;
+  });
+  updateReminderSelectedCount();
 }
 
 // Sends the reminder to the logged-in admin's own email only, so wording
@@ -1754,11 +2079,11 @@ async function sendReminderTest() {
 async function sendRegistrationReminders() {
   const subject = document.getElementById('reminder-subject').value.trim();
   const bodyHtml = document.getElementById('reminder-body').value.trim();
-  const withEmail = cachedReminderRecipients.filter((u) => u.email);
+  const phones = Array.from(document.querySelectorAll('.reminder-recipient-checkbox:checked')).map((b) => b.value);
   if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
-  if (!withEmail.length) return showToast('No recipients with an email on file.');
+  if (!phones.length) return showToast('Select at least one recipient.');
 
-  if (!confirm(`Send this reminder to ${withEmail.length} people who haven't registered? This can't be undone.`)) return;
+  if (!confirm(`Send this reminder to ${phones.length} selected ${phones.length === 1 ? 'person' : 'people'}? This can't be undone.`)) return;
 
   const btn = document.getElementById('reminder-send-btn');
   const resultEl = document.getElementById('reminder-send-result');
@@ -1767,18 +2092,23 @@ async function sendRegistrationReminders() {
 
   const data = await (await fetch('/api/admin/reminders/send', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ subject, bodyHtml }),
+    body: JSON.stringify({ subject, bodyHtml, phones }),
   })).json();
 
   if (!data.success) {
     if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Send failed.'; }
     showToast(data.error || 'Could not send reminders.');
   } else {
-    const msg = `Sent to ${data.sent} of ${data.total}${data.skippedNoEmail ? ` (${data.skippedNoEmail} skipped — no email on file)` : ''}.`;
+    const skipNotes = [
+      data.skippedNoEmail ? `${data.skippedNoEmail} no email on file` : null,
+      data.skippedSentRecently ? `${data.skippedSentRecently} sent within the last 24h` : null,
+    ].filter(Boolean).join(', ');
+    const msg = `Sent to ${data.sent} of ${data.total}${skipNotes ? ` (${skipNotes})` : ''}.`;
     if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
     showToast(msg, 'success');
   }
-  if (btn) btn.disabled = withEmail.length === 0;
+  // Refresh so last-sent times and cooldown badges reflect what just happened.
+  await renderBackendReminders(reminderIsSuper);
 }
 
 // CSV downloads; HTML opens a printable report (Print / Save as PDF).
@@ -2054,7 +2384,7 @@ document.addEventListener('click', (e) => {
   menu.classList.add('hidden');
 });
 
-const MASTERS_SUBTABS = ['programs', 'fees', 'users'];
+const MASTERS_SUBTABS = ['programs', 'fees'];
 let lastMastersTab = 'programs';
 
 function switchBackendTab(tab) {
@@ -2072,9 +2402,9 @@ function switchBackendTab(tab) {
     }
   });
 
-  // Highlight whichever Settings-menu item (Masters/Reminders/Logs) is
-  // currently selected, since those tabs no longer live in the main bar.
-  ['masters', 'reminders', 'activity'].forEach((key) => {
+  // Highlight whichever Settings-menu item (Masters/Users/Reminders/Logs)
+  // is currently selected, since those tabs no longer live in the main bar.
+  ['masters', 'users', 'reminders', 'activity'].forEach((key) => {
     const item = document.getElementById(`settings-item-${key}`);
     if (!item) return;
     const active = key === 'masters' ? MASTERS_SUBTABS.includes(tab) : key === tab;
@@ -2123,9 +2453,13 @@ async function handleStatementUpload(e) {
       return;
     }
     resultEl.className = 'text-xs font-semibold text-emerald-600';
-    resultEl.textContent = `Imported ${data.imported} new row(s) of ${data.total} (${data.duplicates} already had been imported).`;
+    resultEl.textContent = `Imported ${data.imported} new row(s) of ${data.total} (${data.duplicates} already imported)`
+      + (data.linked ? `, auto-linked ${data.linked} to registrations.` : '.');
     fileInput.value = '';
-    loadReconciliation();
+    // Auto-linking can change registrations' bank_txn_id, so the Registration
+    // Approval list (its "Linked" indicators, metrics, and badge) needs
+    // refreshing too, not just this tab's own reconciliation view.
+    await Promise.all([loadReconciliation(), renderBackendPayments()]);
   } catch (err) {
     resultEl.className = 'text-xs font-semibold text-rose-600';
     resultEl.textContent = `Upload error: ${err.message}`;

@@ -8,14 +8,6 @@
 </head>
 <body class="bg-slate-100 font-sans min-h-screen flex flex-col justify-center items-center p-4">
 
-  <!-- TOP DELEGATE HEADER WITH ADMIN ACCESS -->
-  <div id="top-header" class="w-full max-w-xl flex justify-center items-center mb-4 px-2">
-    <span class="text-xs font-bold text-indigo-700 bg-indigo-100 px-3 py-1 rounded-full">NQOCN & MGIMS Sevagram</span>
-    <a id="admin-nav-btn" href="/admin" class="hidden text-xs font-bold text-slate-600 hover:text-indigo-600 bg-white border border-slate-300 px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1 transition">
-      ⚙️ Admin Backend Panel
-    </a>
-  </div>
-
   <div class="w-full max-w-xl text-center mb-4 px-2">
     <span class="text-[10px] font-bold uppercase tracking-widest text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">21–22 November 2026</span>
     <h1 class="text-xl font-extrabold text-slate-800 mt-2">International Conference on Healthcare Quality & Patient Safety 2026</h1>
@@ -172,7 +164,10 @@
         <h2 class="text-2xl font-bold text-slate-800">Welcome, <span id="user-display-name" class="text-indigo-600">Delegate</span></h2>
         <p id="user-display-sub" class="text-xs text-slate-500 mt-0.5"></p>
       </div>
-      <button onclick="logout()" class="self-start sm:self-auto px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50">Logout</button>
+      <div class="self-start sm:self-auto flex items-center gap-2">
+        <a id="admin-nav-btn" href="/admin" title="Admin Backend Panel" aria-label="Admin Backend Panel" class="hidden px-3 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 hover:text-indigo-600 transition">⚙️</a>
+        <button onclick="logout()" class="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50">Logout</button>
+      </div>
     </div>
 
     <div id="reverify-banner" class="hidden mb-6 bg-rose-50 border-l-4 border-rose-500 p-4 rounded-r-xl">
@@ -289,17 +284,8 @@
             <span id="calculated-fee-display" class="text-xl font-extrabold text-indigo-600">₹0</span>
           </div>
 
-          <div>
-            <label class="block text-xs font-semibold text-slate-700 mb-1.5">How are you paying?</label>
-            <div class="flex gap-3 text-sm">
-              <label class="flex items-center gap-1.5 cursor-pointer">
-                <input type="radio" name="payment-mode" value="UPI" checked onchange="togglePaymentMode()"> UPI
-              </label>
-              <label class="flex items-center gap-1.5 cursor-pointer">
-                <input type="radio" name="payment-mode" value="NEFT_RTGS" onchange="togglePaymentMode()"> NEFT / RTGS (if UPI doesn't work for you)
-              </label>
-            </div>
-          </div>
+          <input type="radio" name="payment-mode" value="UPI" checked class="hidden">
+          <input type="radio" name="payment-mode" value="NEFT_RTGS" class="hidden">
 
           <div id="upi-pay-block" class="text-center space-y-3">
             <p class="text-xs text-slate-600">Scan using GPay, PhonePe, Paytm, or BHIM.</p>
@@ -308,6 +294,9 @@
             </div>
             <a id="upi-pay-link" href="#" class="inline-block px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg shadow-sm">Pay via UPI App</a>
             <p class="text-[10px] text-slate-500">Pays <b>NQOCN 2026</b> · reference is your registration number. On a phone, tap to open your UPI app.</p>
+            <p>
+              <button type="button" onclick="setPaymentMode('NEFT_RTGS')" class="text-xs text-indigo-600 hover:text-indigo-800 underline font-semibold">UPI not working? Pay by Bank Transfer instead</button>
+            </p>
           </div>
 
           <div id="neft-pay-block" class="hidden text-left bg-white border border-indigo-200 rounded-xl p-4 space-y-1 text-sm">
@@ -317,6 +306,9 @@
             <p>IFSC Code: <b>CBIN0280697</b></p>
             <p>Branch: <b>Sewagram</b></p>
             <p class="text-[10px] text-slate-500 pt-1">After transferring, enter the transaction/UTR number and upload a screenshot of the confirmation below.</p>
+            <p class="text-center pt-2">
+              <button type="button" onclick="setPaymentMode('UPI')" class="text-xs text-indigo-600 hover:text-indigo-800 underline font-semibold">Pay by UPI instead</button>
+            </p>
           </div>
         </div>
 
