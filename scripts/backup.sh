@@ -10,6 +10,11 @@
 # numbers, UTRs, and payment screenshots / ID cards.
 set -euo pipefail
 
+# cron runs with a minimal PATH that doesn't include /usr/local/bin, where
+# rclone lives -- without this, `command -v rclone` below silently fails and
+# the Drive sync gets skipped every night while everything else keeps working.
+export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
+
 APP_DIR="/home/ashwinikalantri/nqocn"
 BACKUP_ROOT="/home/ashwinikalantri/nqocn-backups"
 RETENTION_DAYS=14

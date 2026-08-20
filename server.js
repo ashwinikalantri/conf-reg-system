@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 const { createWorker } = require('tesseract.js');
+const { Jimp } = require('jimp');
 const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 // Node 16 has no global fetch; node-fetch (v2, CommonJS) provides it for SMS.
 const fetch = require('node-fetch');
@@ -390,26 +391,55 @@ function detectIdAttributes(text) {
   return { discipline, level };
 }
 
-// OCR a student ID card and check it against the claimed category. Advisory:
-// an unreadable or ambiguous card yields false (flagged), never an error.
-async function runIdCardCheck(buffer, categoryKey) {
-  const expect = STUDENT_CATEGORIES[categoryKey];
-  if (!expect) return null; // category does not require an ID card
-  let text = '';
+// OCR a single ID-card buffer and return its raw text, or null on OCR failure.
+async function ocrIdCardText(buffer) {
   try {
     const worker = await getOcrWorker();
     const result = await Promise.race([
       worker.recognize(buffer),
       new Promise((_, reject) => setTimeout(() => reject(new Error('OCR timed out')), 15000)),
     ]);
-    text = (result && result.data && result.data.text) || '';
+    return (result && result.data && result.data.text) || '';
   } catch (err) {
     console.error('ID OCR failed:', err.message);
     ocrWorkerPromise = null;
-    return false;
+    return null;
   }
-  const { discipline, level } = detectIdAttributes(text);
-  return discipline === expect.discipline && level === expect.level;
+}
+
+// OCR a student ID card and check it against the claimed category. Advisory:
+// an unreadable or ambiguous card yields false (flagged), never an error.
+//
+// Phone-photographed ID cards are frequently uploaded sideways or upside
+// down, which tanks OCR accuracy far more than blur or bad lighting does.
+// Try the image as-is first (the common case, and the fast path); only if
+// that fails to identify a matching discipline/level do we pay the cost of
+// re-OCRing at 90/180/270 degrees, keeping whichever rotation is the first
+// to produce a match.
+async function runIdCardCheck(buffer, categoryKey) {
+  const expect = STUDENT_CATEGORIES[categoryKey];
+  if (!expect) return null; // category does not require an ID card
+
+  const text = await ocrIdCardText(buffer);
+  if (text === null) return false;
+  const attrs = detectIdAttributes(text);
+  if (attrs.discipline === expect.discipline && attrs.level === expect.level) return true;
+
+  for (const angle of [90, 180, 270]) {
+    let rotatedBuffer;
+    try {
+      const image = await Jimp.read(buffer);
+      rotatedBuffer = await image.rotate(angle).getBuffer('image/jpeg');
+    } catch (err) {
+      break; // not an image Jimp can decode -- rotating won't help
+    }
+    const rotatedText = await ocrIdCardText(rotatedBuffer);
+    if (rotatedText === null) continue;
+    const rotatedAttrs = detectIdAttributes(rotatedText);
+    if (rotatedAttrs.discipline === expect.discipline && rotatedAttrs.level === expect.level) return true;
+  }
+
+  return false;
 }
 
 // Best-effort removal of a stored screenshot file (ignores legacy data URIs
@@ -495,6 +525,47 @@ async function resolveFee(categoryKey) {
   const phase = currentPhase(await getFeeConfig());
   const fee = { early: cat.early_fee, regular: cat.regular_fee, late: cat.late_fee, spot: cat.spot_fee }[phase];
   return { amount: fee, label: cat.label, phase };
+}
+
+// The rupee discount a code takes off a base fee (never more than the fee).
+function computeDiscountAmount(codeRow, baseFee) {
+  if (!codeRow) return 0;
+  const raw = codeRow.discount_type === 'PERCENT'
+    ? Math.round((baseFee * codeRow.discount_value) / 100)
+    : codeRow.discount_value;
+  return Math.max(0, Math.min(Math.round(raw), Math.round(baseFee)));
+}
+
+// Validate a promo code for a specific delegate + category. Returns
+// { ok, code } or { ok:false, error }. Usage is counted from registrations
+// that currently hold the code (excluding the caller's own, so re-submitting
+// doesn't consume a second slot), so a code can't be applied more than
+// max_uses times across delegates.
+async function validateDiscountCode(rawCode, phone, categoryKey) {
+  const code = String(rawCode || '').trim().toUpperCase();
+  if (!code) return { ok: false, error: 'Enter a promo code.' };
+  const row = await dbGet('SELECT * FROM discount_codes WHERE code = ?', [code]);
+  if (!row || !row.active) return { ok: false, error: 'This promo code is not valid.' };
+  if (row.expires_at) {
+    // Compare as calendar dates in IST; a code is valid through its expiry day.
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // YYYY-MM-DD
+    if (row.expires_at < today) return { ok: false, error: 'This promo code has expired.' };
+  }
+  if (row.scope_type === 'CATEGORY' && row.scope_value !== categoryKey) {
+    return { ok: false, error: 'This promo code does not apply to your delegate category.' };
+  }
+  if (row.scope_type === 'INDIVIDUAL' && row.scope_value !== phone) {
+    return { ok: false, error: 'This promo code is not valid for your account.' };
+  }
+  if (row.max_uses && row.max_uses > 0) {
+    const used = await dbGet(
+      "SELECT COUNT(*) AS n FROM registrations WHERE UPPER(discount_code) = ? AND bank_status != 'REJECTED' AND phone_number != ?",
+      [code, phone]);
+    if (used && used.n >= row.max_uses) {
+      return { ok: false, error: 'This promo code has reached its usage limit.' };
+    }
+  }
+  return { ok: true, code: row };
 }
 
 // Assign (once) and return a delegate's registration number, drawn from a
@@ -701,6 +772,9 @@ db.serialize(() => {
         db.run('UPDATE fee_categories SET spot_fee = late_fee WHERE spot_fee = 0');
       });
     }
+    if (!names.includes('subtitle')) {
+      db.run("ALTER TABLE fee_categories ADD COLUMN subtitle TEXT NOT NULL DEFAULT ''");
+    }
   });
   db.all('PRAGMA table_info(fee_config)', (err, cols) => {
     if (err) return console.error('Schema check failed:', err.message);
@@ -712,6 +786,27 @@ db.serialize(() => {
   // backfill (see retitleNamesOnBoot) run exactly once ever, rather than on
   // every restart.
   db.run('CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT)');
+
+  // Admin-created promo / discount codes. code is stored uppercased and is
+  // unique. scope_type GLOBAL (any delegate), CATEGORY (scope_value =
+  // category_key), or INDIVIDUAL (scope_value = phone_number). discount_type
+  // PERCENT or FLAT. max_uses NULL/0 = unlimited; usage is counted from
+  // registrations that currently hold the code (see validateDiscountCode).
+  db.run(`
+    CREATE TABLE IF NOT EXISTS discount_codes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT UNIQUE NOT NULL,
+      discount_type TEXT NOT NULL,
+      discount_value REAL NOT NULL,
+      scope_type TEXT NOT NULL,
+      scope_value TEXT,
+      max_uses INTEGER,
+      expires_at TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      created_by TEXT
+    )
+  `);
 
   // Bank statement transactions, imported from admin-uploaded statement
   // files. dedupe_hash is a stable fingerprint of the row so re-uploading an
@@ -736,6 +831,47 @@ db.serialize(() => {
     )
   `);
   db.run('CREATE INDEX IF NOT EXISTS idx_stmt_ref ON bank_statement_transactions(extracted_ref)');
+
+  // Individual payment transactions against a registration. Historically a
+  // registration carried a SINGLE inline payment (paid_amount/utr_number/
+  // screenshot/bank_txn_id columns on registrations). This table breaks that
+  // 1-to-1 assumption so one registration can accrue MULTIPLE payments
+  // (initial + top-ups toward an outstanding balance), each with its own
+  // screenshot, its own OCR checks, its own admin review state, and its own
+  // 1-to-1 bank-statement link. A registration is only fully paid once the
+  // sum of its VERIFIED transactions' verified_amount reaches the fee due.
+  //
+  // The legacy inline columns on registrations are still maintained for
+  // backward compatibility during the transition; this table is the source
+  // of truth for the cumulative/partial-payment logic. Existing rows are
+  // migrated in by backfillPaymentTransactionsOnBoot().
+  db.run(`
+    CREATE TABLE IF NOT EXISTS payment_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      registration_id INTEGER NOT NULL,
+      phone_number TEXT,
+      amount REAL,                       -- amount the delegate claims this transaction paid
+      verified_amount REAL,              -- amount an admin acknowledges was actually received
+      utr_number TEXT,
+      screenshot TEXT,
+      payment_mode TEXT DEFAULT 'UPI',
+      ocr_amount_match INTEGER,
+      ocr_vpa_match INTEGER,
+      ocr_utr_match INTEGER,
+      is_flagged INTEGER DEFAULT 0,
+      txn_status TEXT DEFAULT 'PENDING', -- PENDING | VERIFIED | REJECTED
+      bank_txn_id INTEGER,               -- linked bank_statement_transactions.id (1-to-1)
+      rejection_reason TEXT,
+      rejection_note TEXT,
+      submitted_at INTEGER,
+      reviewed_by TEXT,
+      reviewed_at INTEGER
+    )
+  `);
+  db.run('CREATE INDEX IF NOT EXISTS idx_paytxn_reg ON payment_transactions(registration_id)');
+  // A given bank-statement row can back at most one payment transaction.
+  // NULLs are distinct in SQLite UNIQUE indexes, so unlinked rows never collide.
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_paytxn_bank_txn_id ON payment_transactions(bank_txn_id)');
 
   // Additive migrations: server-computed fee, OCR check results, registration
   // number, and the chosen program-option ids (for capacity accounting).
@@ -770,6 +906,13 @@ db.serialize(() => {
     if (!names.includes('id_verified')) db.run('ALTER TABLE registrations ADD COLUMN id_verified INTEGER DEFAULT 0');
     if (!names.includes('id_verified_by')) db.run('ALTER TABLE registrations ADD COLUMN id_verified_by TEXT');
     if (!names.includes('id_verified_at')) db.run('ALTER TABLE registrations ADD COLUMN id_verified_at INTEGER');
+    // Admin category lock: when set, the delegate cannot change their category
+    // on the portal and the fee is fixed to the locked category (see the
+    // lock-category endpoint).
+    if (!names.includes('category_locked')) db.run('ALTER TABLE registrations ADD COLUMN category_locked INTEGER DEFAULT 0');
+    // Applied promo/discount code and the rupee amount it took off the fee.
+    if (!names.includes('discount_code')) db.run('ALTER TABLE registrations ADD COLUMN discount_code TEXT');
+    if (!names.includes('discount_amount')) db.run('ALTER TABLE registrations ADD COLUMN discount_amount REAL DEFAULT 0');
 
     // Backfill a number for any already-verified registration that predates
     // number assignment. Idempotent -- matches nothing once filled.
@@ -889,6 +1032,86 @@ async function splitSalutationsOnBoot() {
   }
 
   await dbRun("INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('salutation_split_done', ?)", [String(Date.now())]);
+}
+
+// One-time migration: seed payment_transactions from the legacy inline payment
+// columns on registrations, so the new multi-transaction model starts with a
+// faithful ledger of every payment already submitted. Run-once (schema_meta
+// flag) AND self-guarding (only seeds a registration that has both a
+// screenshot on file and zero existing transactions), so it can never
+// double-insert even if the flag were cleared. Must complete before the port
+// opens, so no real submission races it. See the payment_transactions table
+// comment for the model.
+async function backfillPaymentTransactionsOnBoot() {
+  // Deliberately NOT gated on a run-once flag: during the transition window,
+  // while the submission path still writes only the legacy inline columns,
+  // this needs to run every boot to catch up any newly-submitted registration
+  // that has no ledger row yet. The per-registration "0 existing txns" guard
+  // below makes it idempotent, so re-running is safe. Once submission
+  // dual-writes into payment_transactions, this becomes a no-op.
+  const regs = await dbAll(
+    `SELECT id, phone_number, paid_amount, expected_amount, utr_number, screenshot, payment_mode,
+            ocr_amount_match, ocr_vpa_match, ocr_utr_match, is_flagged, bank_status,
+            bank_txn_id, rejection_reason, rejection_note, submitted_at
+       FROM registrations
+      WHERE screenshot IS NOT NULL AND screenshot != ''`);
+
+  let seeded = 0;
+  for (const r of regs) {
+    const existing = await dbGet('SELECT COUNT(*) AS n FROM payment_transactions WHERE registration_id = ?', [r.id]);
+    if (existing && existing.n > 0) continue;
+
+    // Map the registration's overall status onto this single seed transaction.
+    // A verified registration => this payment is verified for the full fee it
+    // was approved against; rejected => rejected; anything else => pending.
+    let txnStatus = 'PENDING';
+    let verifiedAmount = null;
+    if (r.bank_status === 'BANK_VERIFIED') {
+      txnStatus = 'VERIFIED';
+      verifiedAmount = r.expected_amount != null ? r.expected_amount : r.paid_amount;
+    } else if (r.bank_status === 'REJECTED') {
+      txnStatus = 'REJECTED';
+    }
+
+    await dbRun(
+      `INSERT INTO payment_transactions
+        (registration_id, phone_number, amount, verified_amount, utr_number, screenshot, payment_mode,
+         ocr_amount_match, ocr_vpa_match, ocr_utr_match, is_flagged, txn_status, bank_txn_id,
+         rejection_reason, rejection_note, submitted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [r.id, r.phone_number, r.paid_amount, verifiedAmount, r.utr_number, r.screenshot,
+       r.payment_mode || 'UPI', r.ocr_amount_match, r.ocr_vpa_match, r.ocr_utr_match,
+       r.is_flagged ? 1 : 0, txnStatus, r.bank_txn_id, r.rejection_reason, r.rejection_note,
+       r.submitted_at]
+    );
+    seeded++;
+  }
+
+  if (seeded) console.log(`Seeded ${seeded} payment transaction(s) from legacy inline payments.`);
+}
+
+// Cumulative payment state for a registration, derived from its
+// payment_transactions ledger. verifiedTotal sums the admin-acknowledged
+// amount of every VERIFIED transaction (falling back to the claimed amount if
+// an older verified row has no explicit verified_amount). fullyPaid is the gate
+// for approval / receipt generation.
+async function getPaymentSummary(registrationId, expectedAmount) {
+  const txns = await dbAll(
+    'SELECT * FROM payment_transactions WHERE registration_id = ? ORDER BY submitted_at ASC, id ASC',
+    [registrationId]);
+  const verifiedTotal = txns
+    .filter((t) => t.txn_status === 'VERIFIED')
+    .reduce((sum, t) => sum + (t.verified_amount != null ? t.verified_amount : (t.amount || 0)), 0);
+  const fee = expectedAmount || 0;
+  const remaining = Math.max(0, fee - verifiedTotal);
+  return {
+    txns,
+    verifiedTotal,
+    remaining,
+    fee,
+    fullyPaid: fee > 0 && verifiedTotal >= fee,
+    hasPartial: verifiedTotal > 0 && verifiedTotal < fee,
+  };
 }
 
 // One-time migration: move any base64 screenshots still stored in the DB out
@@ -1233,28 +1456,44 @@ app.post('/api/auth/logout', async (req, res, next) => {
 // Submit / update the caller's own payment registration.
 app.post('/api/registrations', requireAuth, async (req, res, next) => {
   try {
-    const { categoryKey, workshopOptionId, qiOptionId, amount, utr, screenshot, idCard, acknowledged, paymentMode } = req.body;
+    const { categoryKey, workshopOptionId, qiOptionId, amount, utr, screenshot, idCard, acknowledged, paymentMode, discountCode } = req.body;
     if (!utr || !screenshot) {
       return res.status(400).json({ success: false, error: 'Missing required registration details.' });
     }
     const mode = paymentMode === 'NEFT_RTGS' ? 'NEFT_RTGS' : 'UPI';
-
-    // Fee and label are derived server-side from the fee master at today's
-    // pricing phase; the client's amount and label are not trusted.
-    const feeInfo = await resolveFee(categoryKey);
-    if (!feeInfo) {
-      return res.status(400).json({ success: false, error: 'Invalid delegate category.' });
-    }
-    const expectedAmount = feeInfo.amount;
-    const categoryLabel = feeInfo.label;
 
     const phone = req.session.phone; // never from the client
     const name = req.session.name;
 
     // Existing registration: reuse the id to free the delegate's own slot on
     // re-submission, and the old filenames for cleanup.
-    const prev = await dbGet('SELECT id, screenshot, id_card, bank_status FROM registrations WHERE phone_number = ?', [phone]);
+    const prev = await dbGet('SELECT id, screenshot, id_card, bank_status, category_key, category_locked FROM registrations WHERE phone_number = ?', [phone]);
     const ownRegId = prev ? prev.id : null;
+
+    // If an admin has locked this delegate's category, the client's choice is
+    // ignored -- the fee is fixed to the locked category.
+    const effectiveCategoryKey = (prev && prev.category_locked) ? prev.category_key : categoryKey;
+
+    // Fee and label are derived server-side from the fee master at today's
+    // pricing phase; the client's amount and label are not trusted.
+    const feeInfo = await resolveFee(effectiveCategoryKey);
+    if (!feeInfo) {
+      return res.status(400).json({ success: false, error: 'Invalid delegate category.' });
+    }
+    const categoryLabel = feeInfo.label;
+
+    // Optional promo code: re-validated server-side (never trust the client's
+    // computed fee) and applied to the fee. An invalid code fails the whole
+    // submission so the delegate can correct it.
+    let discountCodeApplied = null;
+    let discountAmount = 0;
+    if (discountCode && String(discountCode).trim()) {
+      const dv = await validateDiscountCode(discountCode, phone, effectiveCategoryKey);
+      if (!dv.ok) return res.status(400).json({ success: false, error: dv.error });
+      discountAmount = computeDiscountAmount(dv.code, feeInfo.amount);
+      discountCodeApplied = dv.code.code;
+    }
+    const expectedAmount = feeInfo.amount - discountAmount;
 
     // Once submitted, payment details are locked: no further edits while
     // under review or after verification. Only a rejection re-opens editing
@@ -1290,7 +1529,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     }
 
     // Student categories must upload an ID card, checked against the category.
-    const needsId = !!STUDENT_CATEGORIES[categoryKey];
+    const needsId = !!STUDENT_CATEGORIES[effectiveCategoryKey];
     let idDecoded = null;
     if (needsId) {
       if (!idCard) {
@@ -1307,7 +1546,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     // no UPI ID to find, so that check is not applicable (treated as passed).
     const checks = await runOcrChecks(decoded.buffer, { expectedAmount, utr });
     if (mode === 'NEFT_RTGS') checks.vpa = true;
-    if (needsId) checks.id = await runIdCardCheck(idDecoded.buffer, categoryKey);
+    if (needsId) checks.id = await runIdCardCheck(idDecoded.buffer, effectiveCategoryKey);
     const allChecksPass = checks.amount && checks.vpa && checks.utr && (!needsId || checks.id);
 
     // If any check failed and the delegate hasn't acknowledged the warning,
@@ -1331,8 +1570,8 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 
     const result = await dbRun(
       `INSERT INTO registrations
-        (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, workshop_option_id, qi_option_id, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL, ?, ?)
+        (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, workshop_option_id, qi_option_id, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL, ?, ?, ?, ?)
         ON CONFLICT(phone_number) DO UPDATE SET
           delegate_name = excluded.delegate_name,
           category_key = excluded.category_key,
@@ -1355,10 +1594,12 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
           rejection_reason = NULL,
           rejection_note = NULL,
           payment_mode = excluded.payment_mode,
-          submitted_at = excluded.submitted_at`,
-      [phone, name, categoryKey, categoryLabel, ws.opt ? ws.opt.name : null, qi.opt ? qi.opt.name : null, ws.opt ? ws.opt.id : null, qi.opt ? qi.opt.id : null,
+          submitted_at = excluded.submitted_at,
+          discount_code = excluded.discount_code,
+          discount_amount = excluded.discount_amount`,
+      [phone, name, effectiveCategoryKey, categoryLabel, ws.opt ? ws.opt.name : null, qi.opt ? qi.opt.name : null, ws.opt ? ws.opt.id : null, qi.opt ? qi.opt.id : null,
         expectedAmount, paidAmount, utr, filename, idFilename,
-        checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, idMatch, flagged, mode, Date.now()]
+        checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, idMatch, flagged, mode, Date.now(), discountCodeApplied, discountAmount]
     );
 
     if (prev && prev.screenshot && prev.screenshot !== filename) {
@@ -1367,6 +1608,26 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     if (prev && prev.id_card && prev.id_card !== idFilename) {
       await deleteScreenshotFile(prev.id_card);
     }
+
+    // The upsert may have been an UPDATE (resubmission after rejection), so
+    // result.lastID isn't reliable -- look the id up by phone.
+    const regRow = await dbGet('SELECT id FROM registrations WHERE phone_number = ?', [phone]);
+    const registrationId = regRow ? regRow.id : result.lastID;
+
+    // Record this submission in the payment_transactions ledger as a new
+    // PENDING transaction. A resubmission only happens after a rejection (the
+    // guard above blocks it otherwise), and rejection marks the prior
+    // transaction REJECTED, so a fresh PENDING row is always the right thing
+    // here -- the ledger keeps every attempt rather than overwriting it the
+    // way the inline registrations columns do.
+    await dbRun(
+      `INSERT INTO payment_transactions
+        (registration_id, phone_number, amount, utr_number, screenshot, payment_mode,
+         ocr_amount_match, ocr_vpa_match, ocr_utr_match, is_flagged, txn_status, submitted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
+      [registrationId, phone, paidAmount, utr, filename, mode,
+       checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, flagged, Date.now()]
+    );
 
     // Stamp the registration with the delegate's signup-assigned number.
     const regNo = await assignUserRegNumber(phone);
@@ -1392,6 +1653,157 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
   }
 });
 
+// Submit a top-up payment toward an outstanding balance. Unlike the main
+// submission, this doesn't touch the category/workshop/fee -- those are fixed
+// once a partial payment has been acknowledged -- it just adds a new PENDING
+// transaction to the ledger for the remaining amount. Allowed only while the
+// registration is in PARTIAL_PAYMENT with a balance still due.
+app.post('/api/registrations/topup', requireAuth, async (req, res, next) => {
+  try {
+    const { amount, utr, screenshot, paymentMode, acknowledged } = req.body;
+    if (!utr || !screenshot) {
+      return res.status(400).json({ success: false, error: 'A payment reference (UTR) and screenshot are required.' });
+    }
+    const mode = paymentMode === 'NEFT_RTGS' ? 'NEFT_RTGS' : 'UPI';
+    const phone = req.session.phone;
+    const name = req.session.name;
+
+    const reg = await dbGet('SELECT id, bank_status, expected_amount FROM registrations WHERE phone_number = ?', [phone]);
+    if (!reg) {
+      return res.status(404).json({ success: false, error: 'No registration found to top up.' });
+    }
+    const summary = await getPaymentSummary(reg.id, reg.expected_amount);
+    if (summary.remaining <= 0) {
+      return res.status(400).json({ success: false, error: 'There is no outstanding balance on your registration.' });
+    }
+
+    const decoded = decodeScreenshot(screenshot);
+    if (decoded.error) return res.status(400).json({ success: false, error: decoded.error });
+
+    // OCR the top-up screenshot against the OUTSTANDING balance (that's what
+    // this payment should be for), plus the usual VPA/UTR checks.
+    const checks = await runOcrChecks(decoded.buffer, { expectedAmount: summary.remaining, utr });
+    if (mode === 'NEFT_RTGS') checks.vpa = true;
+    const allChecksPass = checks.amount && checks.vpa && checks.utr;
+    if (!allChecksPass && !acknowledged) {
+      return res.json({ success: false, needsConfirmation: true, checks, expectedAmount: summary.remaining });
+    }
+
+    const claimedAmount = Number(amount);
+    const paidAmount = Number.isFinite(claimedAmount) ? claimedAmount : null;
+    const amountTampered = !Number.isFinite(claimedAmount) || Math.round(claimedAmount) !== Math.round(summary.remaining);
+    const flagged = !allChecksPass || amountTampered ? 1 : 0;
+
+    const filename = await writeScreenshotBuffer(decoded.buffer, decoded.ext);
+    await dbRun(
+      `INSERT INTO payment_transactions
+        (registration_id, phone_number, amount, utr_number, screenshot, payment_mode,
+         ocr_amount_match, ocr_vpa_match, ocr_utr_match, is_flagged, txn_status, submitted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
+      [reg.id, phone, paidAmount, utr, filename, mode,
+       checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, flagged, Date.now()]
+    );
+    // Move back to PENDING: there's now a new payment for the admin to link
+    // (and linking is the acknowledgement). The worklist keys on PENDING.
+    await dbRun("UPDATE registrations SET bank_status = 'PENDING' WHERE id = ?", [reg.id]);
+    await autoLinkTransactions();
+
+    notifyDelegate(phone, 'Top-up payment received — verification pending',
+      emailWrap('We’ve received your top-up payment',
+        `<p>Dear ${escapeHtml(name)},</p>
+         <p>Your top-up payment (<b>UTR ${escapeHtml(utr)}</b>) has been received and is now <b>pending verification</b>.</p>
+         <p>Your registration will be confirmed once the full fee is verified. No further action is needed for now.</p>`));
+
+    res.json({ success: true, checks, flagged: !!flagged });
+  } catch (err) {
+    console.error('Top-up Insert Error:', err);
+    res.status(500).json({ success: false, error: 'Could not save top-up payment.' });
+  }
+});
+
+// Targeted correction of a rejected submission, for the two standardized
+// rejection reasons that don't require re-selecting category or fee:
+//   - WRONG_DETAILS: fix the payment reference (UTR) without a new screenshot.
+//   - WRONG_SCREENSHOT: re-upload the correct screenshot, keeping the details.
+// Either or both fields may be supplied. This updates the rejected transaction
+// in place (re-running OCR when a new screenshot is given) and re-opens the
+// registration for review, rather than making the delegate redo everything.
+app.post('/api/registrations/me/correct', requireAuth, async (req, res, next) => {
+  try {
+    const { utr, screenshot, paymentMode, acknowledged } = req.body;
+    const phone = req.session.phone;
+
+    const reg = await dbGet('SELECT id, bank_status, rejection_reason, expected_amount FROM registrations WHERE phone_number = ?', [phone]);
+    if (!reg) return res.status(404).json({ success: false, error: 'No registration found.' });
+    if (reg.bank_status !== 'REJECTED') {
+      return res.status(409).json({ success: false, error: 'This registration is not awaiting a correction.' });
+    }
+    const CORRECTABLE = ['WRONG_DETAILS', 'WRONG_SCREENSHOT'];
+    if (!CORRECTABLE.includes(reg.rejection_reason)) {
+      return res.status(400).json({ success: false, error: 'This rejection needs a full resubmission, not a quick correction.' });
+    }
+
+    // The transaction to fix is the most recent rejected one on this registration.
+    const txn = await dbGet(
+      "SELECT * FROM payment_transactions WHERE registration_id = ? AND txn_status = 'REJECTED' ORDER BY submitted_at DESC, id DESC LIMIT 1",
+      [reg.id]);
+    if (!txn) return res.status(404).json({ success: false, error: 'No rejected payment found to correct.' });
+
+    const newUtr = utr != null && String(utr).trim() ? String(utr).trim() : txn.utr_number;
+    const mode = paymentMode === 'NEFT_RTGS' ? 'NEFT_RTGS' : (txn.payment_mode || 'UPI');
+
+    // OCR the amount this transaction was originally for (a correction doesn't
+    // change the amount), plus VPA/UTR.
+    const ocrExpected = txn.amount != null ? txn.amount : reg.expected_amount;
+    let newScreenshotName = txn.screenshot;
+    let checks = { amount: txn.ocr_amount_match === 1, vpa: txn.ocr_vpa_match === 1, utr: txn.ocr_utr_match === 1 };
+
+    if (screenshot) {
+      const decoded = decodeScreenshot(screenshot);
+      if (decoded.error) return res.status(400).json({ success: false, error: decoded.error });
+      checks = await runOcrChecks(decoded.buffer, { expectedAmount: ocrExpected, utr: newUtr });
+      if (mode === 'NEFT_RTGS') checks.vpa = true;
+      const allPass = checks.amount && checks.vpa && checks.utr;
+      if (!allPass && !acknowledged) {
+        return res.json({ success: false, needsConfirmation: true, checks, expectedAmount: ocrExpected });
+      }
+      newScreenshotName = await writeScreenshotBuffer(decoded.buffer, decoded.ext);
+    } else if (reg.rejection_reason === 'WRONG_SCREENSHOT') {
+      return res.status(400).json({ success: false, error: 'Please upload the corrected screenshot.' });
+    }
+    if (reg.rejection_reason === 'WRONG_DETAILS' && !utr) {
+      return res.status(400).json({ success: false, error: 'Please enter the corrected transaction reference.' });
+    }
+
+    const flagged = !(checks.amount && checks.vpa && checks.utr) ? 1 : 0;
+    await dbRun(
+      `UPDATE payment_transactions
+          SET utr_number = ?, screenshot = ?, payment_mode = ?, txn_status = 'PENDING',
+              ocr_amount_match = ?, ocr_vpa_match = ?, ocr_utr_match = ?, is_flagged = ?,
+              rejection_reason = NULL, rejection_note = NULL, reviewed_by = NULL, reviewed_at = NULL,
+              submitted_at = ?
+        WHERE id = ?`,
+      [newUtr, newScreenshotName, mode, checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, flagged, Date.now(), txn.id]);
+
+    // If we replaced the screenshot file, remove the old one.
+    if (screenshot && txn.screenshot && txn.screenshot !== newScreenshotName) {
+      await deleteScreenshotFile(txn.screenshot);
+    }
+
+    // Mirror the corrected details onto the registration's inline columns and
+    // re-open it for review.
+    await dbRun(
+      "UPDATE registrations SET utr_number = ?, screenshot = ?, payment_mode = ?, bank_status = 'PENDING', is_flagged = ?, rejection_reason = NULL, rejection_note = NULL WHERE id = ?",
+      [newUtr, newScreenshotName, mode, flagged, reg.id]);
+
+    await autoLinkTransactions();
+    res.json({ success: true, checks, flagged: !!flagged });
+  } catch (err) {
+    console.error('Correction Error:', err);
+    res.status(500).json({ success: false, error: 'Could not save your correction.' });
+  }
+});
+
 // Looks up the delegate's current salutation (from users, by phone) so it
 // can be attached to a name for display. Kept as a separate column rather
 // than concatenated in SQL because registrations.delegate_name is a
@@ -1403,11 +1815,14 @@ const DELEGATE_SALUTATION_COLUMN =
 
 // Columns to expose for a registration -- everything except the raw
 // screenshot filename, plus a boolean the client can use to build the link.
+// Columns are qualified with the registrations table where the name also
+// exists on users (registration_number, phone_number) -- the admin list query
+// LEFT JOINs users, which would otherwise make those ambiguous.
 const REGISTRATION_PUBLIC_COLUMNS =
-  `registrations.id, registration_number, phone_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, category_key, category_label, workshop,
+  `registrations.id, registrations.registration_number, registrations.phone_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, category_key, category_label, workshop,
    qi_exposure, expected_amount, paid_amount, utr_number, is_flagged, bank_status,
    ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, rejection_reason, rejection_note,
-   payment_mode, submitted_at, id_verified, id_verified_by, id_verified_at,
+   payment_mode, submitted_at, id_verified, id_verified_by, id_verified_at, category_locked,
    (screenshot IS NOT NULL AND screenshot != '') AS has_screenshot,
    (id_card IS NOT NULL AND id_card != '') AS has_id_card`;
 
@@ -1432,7 +1847,16 @@ app.get('/api/registrations/me', requireAuth, async (req, res, next) => {
       `SELECT ${REGISTRATION_PUBLIC_COLUMNS} FROM registrations WHERE phone_number = ?`,
       [req.session.phone]
     );
-    res.json({ registration: row ? withDelegateSalutation(row) : null });
+    if (!row) return res.json({ registration: null });
+
+    // Cumulative payment state so the dashboard can show the outstanding
+    // balance and decide whether to offer a top-up.
+    const summary = await getPaymentSummary(row.id, row.expected_amount);
+    const reg = withDelegateSalutation(row);
+    reg.verified_total = summary.verifiedTotal;
+    reg.remaining = summary.remaining;
+    reg.pending_txn_count = summary.txns.filter((t) => t.txn_status === 'PENDING').length;
+    res.json({ registration: reg });
   } catch (err) {
     next(err);
   }
@@ -1460,7 +1884,7 @@ app.get('/api/fees', requireAuth, async (req, res, next) => {
   try {
     const config = await getFeeConfig();
     const phase = currentPhase(config);
-    const cats = await dbAll('SELECT category_key, label, early_fee, regular_fee, late_fee, spot_fee FROM fee_categories WHERE active = 1 ORDER BY sort_order, id');
+    const cats = await dbAll('SELECT category_key, label, subtitle, early_fee, regular_fee, late_fee, spot_fee FROM fee_categories WHERE active = 1 ORDER BY sort_order, id');
     res.json({
       phase,
       earlyUntil: config ? config.early_until : null,
@@ -1469,8 +1893,33 @@ app.get('/api/fees', requireAuth, async (req, res, next) => {
       categories: cats.map((c) => ({
         key: c.category_key,
         label: c.label,
+        subtitle: c.subtitle || '',
         fee: { early: c.early_fee, regular: c.regular_fee, late: c.late_fee, spot: c.spot_fee }[phase],
       })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Validate a promo code for the caller against a chosen category, and return
+// the resulting discounted fee so the payment form can preview it.
+app.post('/api/discounts/validate', requireAuth, async (req, res, next) => {
+  try {
+    const { code, categoryKey } = req.body;
+    const feeInfo = await resolveFee(categoryKey);
+    if (!feeInfo) return res.status(400).json({ success: false, error: 'Select a valid category first.' });
+    const result = await validateDiscountCode(code, req.session.phone, categoryKey);
+    if (!result.ok) return res.json({ success: false, error: result.error });
+    const discountAmount = computeDiscountAmount(result.code, feeInfo.amount);
+    res.json({
+      success: true,
+      code: result.code.code,
+      discountType: result.code.discount_type,
+      discountValue: result.code.discount_value,
+      baseFee: feeInfo.amount,
+      discountAmount,
+      finalFee: feeInfo.amount - discountAmount,
     });
   } catch (err) {
     next(err);
@@ -1732,6 +2181,8 @@ app.get('/api/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async
     const rows = await dbAll(`
       SELECT ${REGISTRATION_PUBLIC_COLUMNS},
         registrations.bank_txn_id,
+        u.designation AS delegate_designation, u.institution AS delegate_institution,
+        u.age AS delegate_age, u.gender AS delegate_gender,
         t.post_date AS bank_txn_date, t.description AS bank_txn_description,
         t.credit AS bank_txn_credit, t.extracted_ref AS bank_txn_ref,
         (SELECT actor_name FROM audit_log a
@@ -1741,9 +2192,39 @@ app.get('/api/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async
            WHERE a.entity_type = 'registration' AND a.entity_id = CAST(registrations.id AS TEXT)
            ORDER BY a.id DESC LIMIT 1) AS last_action_at
       FROM registrations
+      LEFT JOIN users u ON u.phone_number = registrations.phone_number
       LEFT JOIN bank_statement_transactions t ON t.id = registrations.bank_txn_id
       ORDER BY registrations.id DESC`);
-    res.json({ registrations: (rows || []).map(withDelegateSalutation) });
+
+    // Attach the payment_transactions ledger + cumulative summary to each
+    // registration. Fetched in one query and grouped in JS to avoid a
+    // per-row round trip.
+    const allTxns = await dbAll(
+      `SELECT pt.id, pt.registration_id, pt.amount, pt.verified_amount, pt.utr_number, pt.payment_mode,
+              pt.txn_status, pt.is_flagged, pt.bank_txn_id, pt.rejection_reason, pt.rejection_note, pt.submitted_at,
+              pt.reviewed_by, pt.reviewed_at,
+              (pt.screenshot IS NOT NULL AND pt.screenshot != '') AS has_screenshot,
+              b.post_date AS bank_txn_date, b.credit AS bank_txn_credit, b.description AS bank_txn_description
+         FROM payment_transactions pt
+         LEFT JOIN bank_statement_transactions b ON b.id = pt.bank_txn_id
+        ORDER BY pt.submitted_at ASC, pt.id ASC`);
+    const txnsByReg = {};
+    for (const t of allTxns) (txnsByReg[t.registration_id] ||= []).push(t);
+
+    const enriched = (rows || []).map((r) => {
+      const txns = txnsByReg[r.id] || [];
+      const verifiedTotal = txns
+        .filter((t) => t.txn_status === 'VERIFIED')
+        .reduce((s, t) => s + (t.verified_amount != null ? t.verified_amount : (t.amount || 0)), 0);
+      const fee = r.expected_amount || 0;
+      const row = withDelegateSalutation(r);
+      row.transactions = txns;
+      row.verified_total = verifiedTotal;
+      row.remaining = Math.max(0, fee - verifiedTotal);
+      row.pending_txn_count = txns.filter((t) => t.txn_status === 'PENDING').length;
+      return row;
+    });
+    res.json({ registrations: enriched });
   } catch (err) {
     next(err);
   }
@@ -1822,18 +2303,22 @@ app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', '
 app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
     const { bankStatus, rejectionReason, rejectionNote } = req.body;
-    const allowed = ['PENDING', 'BANK_VERIFIED', 'REJECTED'];
+    const allowed = ['PENDING', 'BANK_VERIFIED', 'REJECTED', 'PARTIAL_PAYMENT'];
     if (!allowed.includes(bankStatus)) {
       return res.status(400).json({ success: false, error: 'Invalid bank status.' });
     }
 
-    // A rejection must state why, so the delegate gets the right next step.
-    const REJECTION_REASONS = ['PAYMENT', 'ID', 'OTHER'];
+    // A rejection must state why, so the delegate gets the right resolution
+    // path on their dashboard. These are the standardized reasons (see
+    // REJECTION_RESOLUTIONS on the client). A balance due is handled by the
+    // category-lock flow (fee raised -> top up), not by rejection. Legacy
+    // codes (PAYMENT/ID) remain understood elsewhere for already-rejected rows.
+    const REJECTION_REASONS = ['WRONG_DETAILS', 'WRONG_SCREENSHOT', 'WRONG_CATEGORY', 'ID_DISCREPANCY', 'OTHER'];
     let reason = null;
     let note = null;
     if (bankStatus === 'REJECTED') {
       if (!REJECTION_REASONS.includes(rejectionReason)) {
-        return res.status(400).json({ success: false, error: 'A rejection reason is required (payment, ID, or other).' });
+        return res.status(400).json({ success: false, error: 'A valid rejection reason is required.' });
       }
       reason = rejectionReason;
       note = rejectionNote ? String(rejectionNote).slice(0, 500) : null;
@@ -1842,7 +2327,7 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
       }
     }
 
-    const existing = await dbGet('SELECT bank_status, bank_txn_id, category_key, id_verified FROM registrations WHERE id = ?', [req.params.id]);
+    const existing = await dbGet('SELECT bank_status, bank_txn_id, category_key, id_verified, paid_amount, expected_amount FROM registrations WHERE id = ?', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ success: false, error: 'Registration not found.' });
     }
@@ -1851,12 +2336,19 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
     // bank statement transaction first -- either auto-matched by UTR on
     // upload/submission, or picked manually. This is what actually confirms
     // money landed in the account, rather than trusting the delegate's
-    // self-reported UTR alone. Rejection never needs a link.
-    if (bankStatus === 'BANK_VERIFIED' && !existing.bank_txn_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'This registration is not linked to a bank statement transaction yet. Link it (automatically or by picking one manually) before verifying.',
-      });
+    // self-reported UTR alone. Now enforced per transaction: every pending
+    // payment being verified must be individually linked to its own statement
+    // credit (1-to-1). Rejection never needs a link.
+    if (bankStatus === 'BANK_VERIFIED') {
+      const unlinked = await dbGet(
+        "SELECT COUNT(*) AS n FROM payment_transactions WHERE registration_id = ? AND txn_status = 'PENDING' AND bank_txn_id IS NULL",
+        [req.params.id]);
+      if (unlinked && unlinked.n > 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Every payment must be linked to its own bank statement transaction before verifying. Link the outstanding payment(s) in the transaction ledger first.',
+        });
+      }
     }
 
     // Student categories additionally require an approver to have confirmed
@@ -1869,10 +2361,64 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
       });
     }
 
+    // Cumulative-coverage gate: every linked payment is already acknowledged
+    // (linking verifies it), so the covered total is the verified total. Only
+    // allow BANK_VERIFIED once that reaches the fee. A shortfall means a
+    // balance is still due -- the delegate must top it up (e.g. after a
+    // category correction raised the fee) before the registration can be
+    // confirmed.
+    if (bankStatus === 'BANK_VERIFIED') {
+      const summary = await getPaymentSummary(req.params.id, existing.expected_amount);
+      if (existing.expected_amount > 0 && summary.verifiedTotal + 0.5 < existing.expected_amount) {
+        return res.status(400).json({
+          success: false,
+          error: `Only ₹${summary.verifiedTotal} of the ₹${existing.expected_amount} fee has been received. The delegate must pay the ₹${existing.expected_amount - summary.verifiedTotal} balance before this can be confirmed.`,
+        });
+      }
+    }
+
     await dbRun(
       'UPDATE registrations SET bank_status = ?, rejection_reason = ?, rejection_note = ? WHERE id = ?',
       [bankStatus, reason, note, req.params.id]
     );
+
+    // Keep the payment_transactions ledger in step with the registration's
+    // decision. In today's single-payment reality there's exactly one pending
+    // transaction, so this verifies/rejects that one; the sync is written to
+    // handle >1 pending transaction too (all pending rows move together),
+    // which is what the upcoming top-up flow will produce.
+    if (bankStatus === 'BANK_VERIFIED') {
+      // Acknowledge the full claimed amount for the pending transaction(s).
+      // The registration's bank_txn_id stays the authoritative 1-to-1 link in
+      // today's model; per-transaction bank linking (and populating the
+      // ledger's own bank_txn_id, which has a UNIQUE index) arrives with the
+      // reconciliation step, so it's deliberately left untouched here.
+      await dbRun(
+        `UPDATE payment_transactions
+            SET txn_status = 'VERIFIED',
+                verified_amount = COALESCE(verified_amount, amount, ?),
+                reviewed_by = ?, reviewed_at = ?
+          WHERE registration_id = ? AND txn_status = 'PENDING'`,
+        [existing.expected_amount, req.session.name || req.session.phone, Date.now(), req.params.id]
+      );
+    } else if (bankStatus === 'REJECTED') {
+      await dbRun(
+        `UPDATE payment_transactions
+            SET txn_status = 'REJECTED', rejection_reason = ?, rejection_note = ?,
+                reviewed_by = ?, reviewed_at = ?
+          WHERE registration_id = ? AND txn_status = 'PENDING'`,
+        [reason, note, req.session.name || req.session.phone, Date.now(), req.params.id]
+      );
+    } else if (bankStatus === 'PENDING') {
+      // Re-opening a decided registration: reset its decided transactions back
+      // to pending review so the ledger matches.
+      await dbRun(
+        `UPDATE payment_transactions
+            SET txn_status = 'PENDING', verified_amount = NULL, reviewed_by = NULL, reviewed_at = NULL
+          WHERE registration_id = ? AND txn_status IN ('VERIFIED', 'REJECTED')`,
+        [req.params.id]
+      );
+    }
 
     await recordAudit({
       req,
@@ -1894,14 +2440,135 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
              <p>Registration number: <b>${escapeHtml(reg.registration_number)}</b></p>
              <p>You can download your receipt from the delegate portal.</p>`));
       } else if (reg && bankStatus === 'REJECTED') {
-        const reasonText = { PAYMENT: 'a payment discrepancy', ID: 'an ID verification issue', OTHER: 'the reason noted below' }[reason] || 'a discrepancy';
+        const reasonText = {
+          WRONG_DETAILS: 'the payment reference details did not match',
+          WRONG_SCREENSHOT: 'the payment screenshot was unclear or incorrect',
+          WRONG_CATEGORY: 'the delegate category selected was incorrect',
+          ID_DISCREPANCY: 'your student ID could not be verified',
+          OTHER: 'the reason noted below',
+          // legacy
+          PAYMENT: 'a payment discrepancy', ID: 'an ID verification issue',
+        }[reason] || 'a discrepancy';
+        const action = {
+          WRONG_DETAILS: 'Please log in to the delegate portal and correct your payment reference details.',
+          WRONG_SCREENSHOT: 'Please log in to the delegate portal and re-upload the correct payment screenshot.',
+          WRONG_CATEGORY: 'Please log in to the delegate portal to select the correct category and pay any balance due.',
+          ID_DISCREPANCY: 'Please log in to the delegate portal to upload a valid student ID, or switch to an appropriate category.',
+        }[reason] || 'Please log in to the delegate portal to review and resubmit.';
         notifyDelegate(reg.phone_number, 'Action needed on your registration',
           emailWrap('Your registration needs attention',
             `<p>Dear ${escapeHtml(reg.delegate_name)},</p>
-             <p>Your registration could not be verified due to ${escapeHtml(reasonText)}${note ? `: <i>${escapeHtml(note)}</i>` : ''}.</p>
-             <p>Please log in to the delegate portal to review and resubmit.</p>`));
+             <p>Your registration could not be verified because ${escapeHtml(reasonText)}${note ? `: <i>${escapeHtml(note)}</i>` : ''}.</p>
+             <p>${escapeHtml(action)}</p>`));
       }
     }
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Un-approve (revert) a verified registration back to PENDING. Restricted to
+// SUPER_ADMIN -- reversing a confirmed registration is a heavier action than
+// the normal verify/reject decision (which finance admins can do), so it's
+// deliberately locked to the top role. Reverts the payment_transactions ledger
+// in step (verified rows -> pending, verified_amount cleared) so the ledger
+// stays consistent with the registration's status. Keeps the assigned
+// registration_number so any receipt/reference already shared stays stable if
+// it's later re-approved.
+app.put('/api/registrations/:id/unapprove', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const existing = await dbGet('SELECT id, bank_status, delegate_name, phone_number FROM registrations WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ success: false, error: 'Registration not found.' });
+    if (existing.bank_status !== 'BANK_VERIFIED') {
+      return res.status(400).json({ success: false, error: 'Only a verified registration can be un-approved.' });
+    }
+
+    await dbRun("UPDATE registrations SET bank_status = 'PENDING' WHERE id = ?", [req.params.id]);
+    // Keep the ledger in step: an approval's verified transactions revert to
+    // pending review so the cumulative verified total drops back accordingly.
+    await dbRun(
+      "UPDATE payment_transactions SET txn_status = 'PENDING', verified_amount = NULL, reviewed_by = NULL, reviewed_at = NULL WHERE registration_id = ? AND txn_status = 'VERIFIED'",
+      [req.params.id]
+    );
+
+    await recordAudit({
+      req,
+      entityType: 'registration',
+      entityId: req.params.id,
+      action: 'BANK_STATUS_CHANGE',
+      oldValue: 'BANK_VERIFIED',
+      newValue: 'PENDING (un-approved)',
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Lock a delegate into the correct category (Finance/Super Admin). Used when a
+// delegate picked the wrong category: the admin sets the right one, the fee is
+// recalculated from the fee master, and the delegate can no longer change it on
+// the portal. Any payments already verified are preserved; the registration's
+// status is re-derived from the new fee (PARTIAL_PAYMENT if a balance is now
+// due, PENDING otherwise) so the delegate is prompted for the difference.
+app.put('/api/registrations/:id/lock-category', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const { categoryKey } = req.body;
+    const feeInfo = await resolveFee(categoryKey);
+    if (!feeInfo) return res.status(400).json({ success: false, error: 'Invalid category.' });
+
+    const reg = await dbGet('SELECT id, phone_number, delegate_name, category_key, category_label, expected_amount, bank_status FROM registrations WHERE id = ?', [req.params.id]);
+    if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
+
+    const newFee = feeInfo.amount;
+    // Re-derive status against the new fee from the cumulative verified total.
+    const summary = await getPaymentSummary(reg.id, newFee);
+    let newStatus = reg.bank_status;
+    if (reg.bank_status !== 'REJECTED') {
+      if (summary.verifiedTotal >= newFee && newFee > 0) newStatus = reg.bank_status; // already covered; leave as-is (verified stays verified)
+      else if (summary.verifiedTotal > 0) newStatus = 'PARTIAL_PAYMENT';
+      else newStatus = 'PENDING';
+    } else {
+      // A rejected registration being category-corrected re-opens for payment.
+      newStatus = 'PENDING';
+    }
+
+    await dbRun(
+      'UPDATE registrations SET category_key = ?, category_label = ?, expected_amount = ?, category_locked = 1, bank_status = ?, rejection_reason = NULL, rejection_note = NULL WHERE id = ?',
+      [categoryKey, feeInfo.label, newFee, newStatus, reg.id]);
+
+    await recordAudit({
+      req, entityType: 'registration', entityId: req.params.id,
+      action: 'CATEGORY_LOCK',
+      oldValue: `${reg.category_label} (₹${reg.expected_amount})`,
+      newValue: `${feeInfo.label} (₹${newFee}) — locked`,
+    });
+
+    const remaining = Math.max(0, newFee - summary.verifiedTotal);
+    notifyDelegate(reg.phone_number, 'Your delegate category was updated',
+      emailWrap('Your registration category has been updated',
+        `<p>Dear ${escapeHtml(reg.delegate_name)},</p>
+         <p>Your delegate category has been set to <b>${escapeHtml(feeInfo.label)}</b>, with a fee of <b>₹${escapeHtml(newFee)}</b>.</p>
+         ${remaining > 0 ? `<p>An outstanding balance of <b>₹${escapeHtml(remaining)}</b> is due. Please log in to the delegate portal to pay it.</p>` : '<p>No further payment is needed. Your registration will be confirmed once verified.</p>'}`));
+
+    res.json({ success: true, expectedAmount: newFee, remaining });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Unlock a category (Super Admin only) -- lets the delegate choose again.
+app.delete('/api/registrations/:id/lock-category', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const reg = await dbGet('SELECT id, category_label FROM registrations WHERE id = ?', [req.params.id]);
+    if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
+    await dbRun('UPDATE registrations SET category_locked = 0 WHERE id = ?', [reg.id]);
+    await recordAudit({
+      req, entityType: 'registration', entityId: req.params.id,
+      action: 'CATEGORY_UNLOCK', oldValue: `${reg.category_label} — locked`, newValue: 'unlocked',
+    });
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -1993,6 +2660,97 @@ app.delete('/api/registrations/:id/link-transaction', requireRole('SUPER_ADMIN',
     await recordAudit({
       req, entityType: 'registration', entityId: req.params.id,
       action: 'BANK_TXN_UNLINK', oldValue: reg.bank_txn_id, newValue: null,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A bank statement credit is "used" if it's linked from either the legacy
+// registration-level column OR a payment transaction. Per-transaction linking
+// is the current mechanism; the registration column persists for older rows.
+const USED_BANK_TXN_SUBQUERY =
+  `(SELECT bank_txn_id FROM registrations WHERE bank_txn_id IS NOT NULL
+    UNION SELECT bank_txn_id FROM payment_transactions WHERE bank_txn_id IS NOT NULL)`;
+
+// Candidate statement credits for a specific payment transaction, nearest to
+// its amount first, excluding any already linked (to a registration or another
+// transaction).
+app.get('/api/payment-transactions/:txnId/candidates', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const txn = await dbGet('SELECT id, amount FROM payment_transactions WHERE id = ?', [req.params.txnId]);
+    if (!txn) return res.status(404).json({ success: false, error: 'Payment transaction not found.' });
+    const rows = await dbAll(
+      `SELECT * FROM bank_statement_transactions
+        WHERE credit IS NOT NULL AND credit > 0
+          AND id NOT IN ${USED_BANK_TXN_SUBQUERY}
+        ORDER BY ABS(COALESCE(credit, 0) - ?) ASC, post_date DESC
+        LIMIT 50`,
+      [txn.amount || 0]);
+    res.json({ transactions: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Link one payment transaction to one bank statement credit (1-to-1), which
+// ALSO acknowledges (verifies) that payment: linking is the acknowledgement,
+// so there's no separate "enter the amount received" step -- the amount is the
+// transaction's own amount, confirmed against the linked credit. The UNIQUE
+// index on payment_transactions.bank_txn_id is the final backstop; the explicit
+// checks give a clearer error.
+app.put('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const { bankTxnId } = req.body;
+    const txn = await dbGet('SELECT id, registration_id, bank_txn_id, amount, txn_status FROM payment_transactions WHERE id = ?', [req.params.txnId]);
+    if (!txn) return res.status(404).json({ success: false, error: 'Payment transaction not found.' });
+    if (txn.txn_status === 'REJECTED') {
+      return res.status(400).json({ success: false, error: 'This payment was rejected and cannot be linked.' });
+    }
+    const bank = await dbGet('SELECT id FROM bank_statement_transactions WHERE id = ?', [bankTxnId]);
+    if (!bank) return res.status(404).json({ success: false, error: 'Statement transaction not found.' });
+
+    const usedByTxn = await dbGet('SELECT id FROM payment_transactions WHERE bank_txn_id = ? AND id != ?', [bankTxnId, txn.id]);
+    const usedByReg = await dbGet('SELECT registration_number FROM registrations WHERE bank_txn_id = ? AND id != ?', [bankTxnId, txn.registration_id]);
+    if (usedByTxn || usedByReg) {
+      return res.status(409).json({ success: false, error: 'That bank transaction is already linked to another payment.' });
+    }
+
+    // Linking acknowledges the payment at its own amount.
+    await dbRun(
+      `UPDATE payment_transactions
+          SET bank_txn_id = ?, txn_status = 'VERIFIED', verified_amount = amount,
+              reviewed_by = ?, reviewed_at = ?
+        WHERE id = ?`,
+      [bankTxnId, req.session.name || req.session.phone, Date.now(), txn.id]);
+    await recordAudit({
+      req, entityType: 'registration', entityId: String(txn.registration_id),
+      action: 'BANK_TXN_LINK', oldValue: txn.bank_txn_id, newValue: `txn#${txn.id} → bank#${bankTxnId} (₹${txn.amount} acknowledged)`,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    if (err.code === 'SQLITE_CONSTRAINT') {
+      return res.status(409).json({ success: false, error: 'That bank transaction is already linked to another payment.' });
+    }
+    next(err);
+  }
+});
+
+// Unlink a payment transaction, which also un-acknowledges it (back to pending).
+app.delete('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const txn = await dbGet('SELECT id, registration_id, bank_txn_id FROM payment_transactions WHERE id = ?', [req.params.txnId]);
+    if (!txn) return res.status(404).json({ success: false, error: 'Payment transaction not found.' });
+    await dbRun(
+      `UPDATE payment_transactions
+          SET bank_txn_id = NULL, txn_status = 'PENDING', verified_amount = NULL,
+              reviewed_by = NULL, reviewed_at = NULL
+        WHERE id = ? AND txn_status != 'REJECTED'`,
+      [txn.id]);
+    await recordAudit({
+      req, entityType: 'registration', entityId: String(txn.registration_id),
+      action: 'BANK_TXN_UNLINK', oldValue: `txn#${txn.id} → bank#${txn.bank_txn_id}`, newValue: null,
     });
     res.json({ success: true });
   } catch (err) {
@@ -2361,6 +3119,107 @@ app.get('/api/admin/fees', requireRole('SUPER_ADMIN'), async (req, res, next) =>
   }
 });
 
+// --- DISCOUNT CODES (admin) ---------------------------------------------
+// Each code is annotated with how many registrations currently hold it
+// (applied) and how many of those are verified, so the admin sees real usage.
+app.get('/api/admin/discount-codes', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const codes = await dbAll(`
+      SELECT d.*,
+        (SELECT COUNT(*) FROM registrations r WHERE UPPER(r.discount_code) = d.code AND r.bank_status != 'REJECTED') AS applied_count,
+        (SELECT COUNT(*) FROM registrations r WHERE UPPER(r.discount_code) = d.code AND r.bank_status = 'BANK_VERIFIED') AS verified_count
+      FROM discount_codes d ORDER BY d.created_at DESC`);
+    res.json({ codes });
+  } catch (err) {
+    next(err);
+  }
+});
+
+function parseDiscountBody(body) {
+  const code = String(body.code || '').trim().toUpperCase();
+  const discountType = body.discountType === 'FLAT' ? 'FLAT' : 'PERCENT';
+  const discountValue = Number(body.discountValue);
+  const scopeType = ['GLOBAL', 'CATEGORY', 'INDIVIDUAL'].includes(body.scopeType) ? body.scopeType : 'GLOBAL';
+  let scopeValue = scopeType === 'GLOBAL' ? null : String(body.scopeValue || '').trim();
+  if (scopeType === 'INDIVIDUAL') scopeValue = scopeValue.replace(/\D/g, ''); // phone digits
+  // An individual code is single-delegate by nature, so a usage cap is
+  // irrelevant -- always store it as unlimited (the scope check limits use).
+  const maxUses = scopeType === 'INDIVIDUAL' ? null
+    : (body.maxUses === '' || body.maxUses == null ? null : Math.max(0, parseInt(body.maxUses, 10) || 0));
+  const expiresAt = body.expiresAt ? String(body.expiresAt).trim() : null; // YYYY-MM-DD
+  return { code, discountType, discountValue, scopeType, scopeValue, maxUses, expiresAt };
+}
+
+function validateDiscountFields(f) {
+  if (!f.code || !/^[A-Z0-9_-]{2,40}$/.test(f.code)) return 'Code must be 2–40 letters, digits, hyphens or underscores.';
+  if (!Number.isFinite(f.discountValue) || f.discountValue <= 0) return 'Discount value must be greater than zero.';
+  if (f.discountType === 'PERCENT' && f.discountValue > 100) return 'A percentage discount cannot exceed 100.';
+  if (f.scopeType === 'CATEGORY' && !f.scopeValue) return 'Choose a category for a category-scoped code.';
+  if (f.scopeType === 'INDIVIDUAL' && !/^\d{10}$/.test(f.scopeValue || '')) return 'Enter a valid 10-digit mobile number for an individual code.';
+  return null;
+}
+
+app.post('/api/admin/discount-codes', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const f = parseDiscountBody(req.body);
+    const err = validateDiscountFields(f);
+    if (err) return res.status(400).json({ success: false, error: err });
+    const result = await dbRun(
+      `INSERT INTO discount_codes (code, discount_type, discount_value, scope_type, scope_value, max_uses, expires_at, active, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      [f.code, f.discountType, f.discountValue, f.scopeType, f.scopeValue, f.maxUses, f.expiresAt, Date.now(), req.session.name || req.session.phone]);
+    await recordAudit({
+      req, entityType: 'discount_code', entityId: result.lastID, action: 'DISCOUNT_CODE_CREATE',
+      oldValue: null, newValue: `${f.code} — ${f.discountType === 'PERCENT' ? f.discountValue + '%' : '₹' + f.discountValue} (${f.scopeType}${f.scopeValue ? ':' + f.scopeValue : ''})`,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    if (err.code === 'SQLITE_CONSTRAINT') return res.status(409).json({ success: false, error: 'A code with that name already exists.' });
+    next(err);
+  }
+});
+
+app.put('/api/admin/discount-codes/:id', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const existing = await dbGet('SELECT * FROM discount_codes WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ success: false, error: 'Code not found.' });
+    // Only active toggle and max_uses/expiry are editable after creation (the
+    // code string and discount are fixed once delegates may have redeemed it).
+    const active = req.body.active !== undefined ? (req.body.active ? 1 : 0) : existing.active;
+    const maxUses = req.body.maxUses === undefined ? existing.max_uses
+      : (req.body.maxUses === '' || req.body.maxUses == null ? null : Math.max(0, parseInt(req.body.maxUses, 10) || 0));
+    const expiresAt = req.body.expiresAt === undefined ? existing.expires_at : (req.body.expiresAt ? String(req.body.expiresAt).trim() : null);
+    await dbRun('UPDATE discount_codes SET active = ?, max_uses = ?, expires_at = ? WHERE id = ?', [active, maxUses, expiresAt, req.params.id]);
+    await recordAudit({
+      req, entityType: 'discount_code', entityId: req.params.id, action: 'DISCOUNT_CODE_UPDATE',
+      oldValue: `${existing.active ? 'active' : 'inactive'}, max ${existing.max_uses || '∞'}`,
+      newValue: `${active ? 'active' : 'inactive'}, max ${maxUses || '∞'}`,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/admin/discount-codes/:id', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const existing = await dbGet('SELECT * FROM discount_codes WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ success: false, error: 'Code not found.' });
+    const used = await dbGet("SELECT COUNT(*) AS n FROM registrations WHERE UPPER(discount_code) = ? AND bank_status != 'REJECTED'", [existing.code]);
+    if (used && used.n > 0) {
+      return res.status(409).json({ success: false, error: `This code is in use by ${used.n} registration(s). Deactivate it instead of deleting.` });
+    }
+    await dbRun('DELETE FROM discount_codes WHERE id = ?', [req.params.id]);
+    await recordAudit({
+      req, entityType: 'discount_code', entityId: req.params.id, action: 'DISCOUNT_CODE_DELETE',
+      oldValue: existing.code, newValue: null,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.put('/api/admin/fees/config', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
     const { earlyUntil, regularUntil, lateUntil } = req.body;
@@ -2390,7 +3249,7 @@ app.put('/api/admin/fees/config', requireRole('SUPER_ADMIN'), async (req, res, n
 
 app.post('/api/admin/fees/categories', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
-    const { categoryKey, label } = req.body;
+    const { categoryKey, label, subtitle } = req.body;
     const f = feeFields(req.body);
     if (!categoryKey || !/^[a-z0-9_]+$/.test(categoryKey)) {
       return res.status(400).json({ success: false, error: 'Category key must be lowercase letters, digits, or underscores.' });
@@ -2401,8 +3260,8 @@ app.post('/api/admin/fees/categories', requireRole('SUPER_ADMIN'), async (req, r
     }
     const max = await dbGet('SELECT COALESCE(MAX(sort_order), -1) AS m FROM fee_categories');
     const result = await dbRun(
-      'INSERT INTO fee_categories (category_key, label, early_fee, regular_fee, late_fee, spot_fee, active, sort_order) VALUES (?, ?, ?, ?, ?, ?, 1, ?)',
-      [categoryKey, String(label).trim(), f.early, f.regular, f.late, f.spot, max.m + 1]
+      'INSERT INTO fee_categories (category_key, label, subtitle, early_fee, regular_fee, late_fee, spot_fee, active, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)',
+      [categoryKey, String(label).trim(), subtitle ? String(subtitle).trim() : '', f.early, f.regular, f.late, f.spot, max.m + 1]
     );
     await recordAudit({
       req, entityType: 'fee_category', entityId: result.lastID,
@@ -2422,24 +3281,25 @@ app.put('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (req
   try {
     const existing = await dbGet('SELECT * FROM fee_categories WHERE id = ?', [req.params.id]);
     if (!existing) return res.status(404).json({ success: false, error: 'Category not found.' });
-    const { label, active } = req.body;
+    const { active } = req.body;
     const f = feeFields(req.body);
     if ([f.early, f.regular, f.late, f.spot].some((x) => !Number.isFinite(x) || x < 0)) {
       return res.status(400).json({ success: false, error: 'Fees must be non-negative numbers.' });
     }
+    // Label and subtitle are set once at category creation and are not
+    // editable afterwards -- only fees and active status can be updated here.
     const updated = {
-      label: label !== undefined ? String(label).trim() : existing.label,
       active: active !== undefined ? (active ? 1 : 0) : existing.active,
     };
     await dbRun(
-      'UPDATE fee_categories SET label = ?, early_fee = ?, regular_fee = ?, late_fee = ?, spot_fee = ?, active = ? WHERE id = ?',
-      [updated.label, f.early, f.regular, f.late, f.spot, updated.active, req.params.id]
+      'UPDATE fee_categories SET early_fee = ?, regular_fee = ?, late_fee = ?, spot_fee = ?, active = ? WHERE id = ?',
+      [f.early, f.regular, f.late, f.spot, updated.active, req.params.id]
     );
     await recordAudit({
       req, entityType: 'fee_category', entityId: req.params.id,
       action: 'FEE_CATEGORY_UPDATE',
       oldValue: `${existing.label} — early ₹${existing.early_fee}, regular ₹${existing.regular_fee}, late ₹${existing.late_fee}, spot ₹${existing.spot_fee}, ${existing.active ? 'active' : 'inactive'}`,
-      newValue: `${updated.label} — early ₹${f.early}, regular ₹${f.regular}, late ₹${f.late}, spot ₹${f.spot}, ${updated.active ? 'active' : 'inactive'}`,
+      newValue: `${existing.label} — early ₹${f.early}, regular ₹${f.regular}, late ₹${f.late}, spot ₹${f.spot}, ${updated.active ? 'active' : 'inactive'}`,
     });
     res.json({ success: true });
   } catch (err) {
@@ -2546,27 +3406,31 @@ const digitsOnly = (v) => String(v || '').replace(/\D/g, '');
 // after every payment submission -- to catch a match whichever arrives
 // second. Returns the number of new links made.
 async function autoLinkTransactions() {
-  const regs = await dbAll(
-    `SELECT id, utr_number FROM registrations
-      WHERE bank_txn_id IS NULL AND utr_number IS NOT NULL AND utr_number != '' AND bank_status != 'REJECTED'`);
-  if (!regs.length) return 0;
+  // Per-transaction auto-linking: match each unlinked, non-rejected payment
+  // transaction to an unused statement credit by reference number. This is the
+  // current mechanism -- linking lives on payment_transactions, not the
+  // registration.
+  const pend = await dbAll(
+    `SELECT id, utr_number FROM payment_transactions
+      WHERE bank_txn_id IS NULL AND utr_number IS NOT NULL AND utr_number != '' AND txn_status != 'REJECTED'`);
+  if (!pend.length) return 0;
 
-  const txns = await dbAll(
+  const credits = await dbAll(
     `SELECT id, extracted_ref FROM bank_statement_transactions
       WHERE credit IS NOT NULL AND credit > 0 AND extracted_ref IS NOT NULL
-        AND id NOT IN (SELECT bank_txn_id FROM registrations WHERE bank_txn_id IS NOT NULL)`);
+        AND id NOT IN ${USED_BANK_TXN_SUBQUERY}`);
   const byRef = new Map();
-  txns.forEach((t) => byRef.set(digitsOnly(t.extracted_ref), t.id));
+  credits.forEach((t) => byRef.set(digitsOnly(t.extracted_ref), t.id));
 
   let linked = 0;
-  for (const reg of regs) {
-    const txnId = byRef.get(digitsOnly(reg.utr_number));
-    if (!txnId) continue;
-    // Guard against two registrations racing for the same still-unused
-    // transaction within this loop (the UNIQUE index is the final backstop).
-    byRef.delete(digitsOnly(reg.utr_number));
+  for (const txn of pend) {
+    const bankId = byRef.get(digitsOnly(txn.utr_number));
+    if (!bankId) continue;
+    // Guard against two transactions racing for the same still-unused credit
+    // within this loop (the UNIQUE index is the final backstop).
+    byRef.delete(digitsOnly(txn.utr_number));
     try {
-      await dbRun('UPDATE registrations SET bank_txn_id = ? WHERE id = ? AND bank_txn_id IS NULL', [txnId, reg.id]);
+      await dbRun('UPDATE payment_transactions SET bank_txn_id = ? WHERE id = ? AND bank_txn_id IS NULL', [bankId, txn.id]);
       linked++;
     } catch (err) {
       if (err.code !== 'SQLITE_CONSTRAINT') throw err;
@@ -3024,6 +3888,7 @@ app.use((err, req, res, next) => {
 retitleNamesOnBoot()
   .catch((err) => console.error('Title-case backfill failed (continuing to start):', err.message))
   .then(() => splitSalutationsOnBoot().catch((err) => console.error('Salutation split failed (continuing to start):', err.message)))
+  .then(() => backfillPaymentTransactionsOnBoot().catch((err) => console.error('Payment-transaction backfill failed (continuing to start):', err.message)))
   .then(() => autoLinkTransactions().catch((err) => console.error('Bank-transaction auto-link failed (continuing to start):', err.message)))
   .then(startServer);
 
