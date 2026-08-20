@@ -475,6 +475,16 @@ function clearAppliedPromo() {
   if (msg) msg.classList.add('hidden');
 }
 
+function togglePromoField() {
+  const field = document.getElementById('promo-field');
+  const toggle = document.getElementById('promo-toggle');
+  if (!field) return;
+  const show = field.classList.contains('hidden');
+  field.classList.toggle('hidden', !show);
+  if (toggle) toggle.classList.toggle('hidden', show); // hide the link once open
+  if (show) { const i = document.getElementById('promo-code'); if (i) i.focus(); }
+}
+
 async function applyPromoCode() {
   const codeInput = document.getElementById('promo-code');
   const msg = document.getElementById('promo-msg');
@@ -695,6 +705,11 @@ async function openPaymentModal() {
   clearAppliedPromo();
   const promoInput = document.getElementById('promo-code');
   if (promoInput) promoInput.value = '';
+  // Collapse the promo field back to its link each time the modal opens.
+  const promoField = document.getElementById('promo-field');
+  const promoToggle = document.getElementById('promo-toggle');
+  if (promoField) promoField.classList.add('hidden');
+  if (promoToggle) promoToggle.classList.remove('hidden');
   applyCategoryLock();
   openModal('modal-conference');
 }
