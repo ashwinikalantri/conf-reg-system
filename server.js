@@ -93,10 +93,22 @@ const SMS = {
 };
 const SMS_ENABLED = !!SMS.apiKey;
 
+// Runtime on/off switches a super admin can flip (persisted in schema_meta,
+// loaded at boot by loadNotificationToggles). These gate sending ON TOP of the
+// env-based capability (SMS_ENABLED / EMAIL_ENABLED) -- turning a channel off
+// stops all outgoing messages on it without touching credentials.
+const notifyToggle = { sms: true, email: true };
+async function loadNotificationToggles() {
+  const s = await dbGet("SELECT value FROM schema_meta WHERE key = 'notify_sms_enabled'").catch(() => null);
+  const e = await dbGet("SELECT value FROM schema_meta WHERE key = 'notify_email_enabled'").catch(() => null);
+  if (s) notifyToggle.sms = s.value !== '0';
+  if (e) notifyToggle.email = e.value !== '0';
+}
+
 // Send the registration OTP over SMS using the registered DLT template.
 // Fire-and-forget: failures are logged, never block OTP issuance.
 async function sendOtpSms(phone, otp) {
-  if (!SMS_ENABLED) return;
+  if (!SMS_ENABLED || !notifyToggle.sms) return;
   const text = `Dear Delegate, Thank you for registering for the NQOCN Conference. Your OTP for registration verification is ${otp} NQOCN Conference MGIMS`;
   // Without a bound, a stalled connection to the gateway (network blip,
   // upstream not closing) hangs this fire-and-forget call forever -- no
@@ -145,8 +157,9 @@ const EMAIL_ENABLED = !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_REGION
 const sesClient = EMAIL_ENABLED ? new SESv2Client({ region: process.env.AWS_REGION }) : null;
 
 // Send an email if configured; never throws (notifications are best-effort).
+// The runtime notifyToggle.email switch lets a super admin silence all email.
 async function sendEmail(to, subject, html) {
-  if (!EMAIL_ENABLED || !to) return;
+  if (!EMAIL_ENABLED || !notifyToggle.email || !to) return;
   try {
     await sesClient.send(new SendEmailCommand({
       FromEmailAddress: EMAIL_FROM_FORMATTED,
@@ -568,6 +581,29 @@ async function validateDiscountCode(rawCode, phone, categoryKey) {
   return { ok: true, code: row };
 }
 
+// A delegate's group and whether it currently qualifies for its category's
+// group discount (member count >= the rule's min_size). Returns null if the
+// delegate isn't in a group.
+async function getDelegateGroup(phone) {
+  const m = await dbGet('SELECT group_id FROM group_members WHERE phone_number = ?', [phone]);
+  if (!m) return null;
+  const group = await dbGet('SELECT * FROM delegate_groups WHERE id = ?', [m.group_id]);
+  if (!group) return null;
+  const members = await dbAll('SELECT phone_number, joined_at FROM group_members WHERE group_id = ? ORDER BY joined_at ASC', [group.id]);
+  const rule = await dbGet('SELECT * FROM group_discount_rules WHERE category_key = ? AND active = 1', [group.category_key]);
+  const size = members.length;
+  const qualifies = !!rule && size >= rule.min_size;
+  return { group, members, rule, size, qualifies };
+}
+
+// The group-discount rupee amount for a delegate against a base fee (0 if not
+// in a qualifying group). Reuses the discount-code compute (same shape).
+async function getGroupDiscountAmount(phone, baseFee) {
+  const g = await getDelegateGroup(phone);
+  if (!g || !g.qualifies) return 0;
+  return computeDiscountAmount(g.rule, baseFee);
+}
+
 // Assign (once) and return a delegate's registration number, drawn from a
 // monotonic sequence at signup so it exists before any payment.
 async function assignUserRegNumber(phone) {
@@ -807,6 +843,42 @@ db.serialize(() => {
       created_by TEXT
     )
   `);
+
+  // Group-discount rules (admin Masters): per category, the minimum group size
+  // that unlocks a discount and the discount itself. One rule per category.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS group_discount_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      category_key TEXT UNIQUE NOT NULL,
+      min_size INTEGER NOT NULL DEFAULT 5,
+      discount_type TEXT NOT NULL,
+      discount_value REAL NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL
+    )
+  `);
+
+  // Delegate groups formed to claim a group discount. All members share one
+  // category (the group's). leader_phone is the delegate who started it.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS delegate_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT,
+      category_key TEXT NOT NULL,
+      leader_phone TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  // One membership row per delegate (a delegate can be in at most one group).
+  db.run(`
+    CREATE TABLE IF NOT EXISTS group_members (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id INTEGER NOT NULL,
+      phone_number TEXT UNIQUE NOT NULL,
+      joined_at INTEGER NOT NULL
+    )
+  `);
+  db.run('CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id)');
 
   // Bank statement transactions, imported from admin-uploaded statement
   // files. dedupe_hash is a stable fingerprint of the row so re-uploading an
@@ -1337,11 +1409,14 @@ app.post('/api/otp/request', async (req, res, next) => {
     );
 
     console.log(`[OTP] ${phone} -> ${otp} (valid ${OTP_TTL_MS / 60000} min)`);
-    if (SMS_ENABLED) sendOtpSms(phone, otp); // fire-and-forget; logs on failure
+    // Reflect the runtime SMS toggle: if a super admin has turned SMS off, the
+    // OTP isn't sent, and (in dev) it's echoed so login still works.
+    const smsWillSend = SMS_ENABLED && notifyToggle.sms;
+    if (smsWillSend) sendOtpSms(phone, otp); // fire-and-forget; logs on failure
 
-    const payload = { success: true, smsSent: SMS_ENABLED };
-    // Never echo the OTP once SMS delivery is configured.
-    if (OTP_ECHO && !SMS_ENABLED) payload.devOtp = otp;
+    const payload = { success: true, smsSent: smsWillSend };
+    // Never echo the OTP once SMS delivery is actually happening.
+    if (OTP_ECHO && !smsWillSend) payload.devOtp = otp;
     res.json(payload);
   } catch (err) {
     next(err);
@@ -1482,16 +1557,31 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     }
     const categoryLabel = feeInfo.label;
 
-    // Optional promo code: re-validated server-side (never trust the client's
-    // computed fee) and applied to the fee. An invalid code fails the whole
-    // submission so the delegate can correct it.
-    let discountCodeApplied = null;
-    let discountAmount = 0;
-    if (discountCode && String(discountCode).trim()) {
+    // Discounts. Two possible sources, and the delegate gets the better one
+    // (they don't stack): a promo code they entered, or a group discount if
+    // they're in a qualifying group for this category. Both are re-validated
+    // server-side; the client's computed fee is never trusted.
+    let promoDiscount = 0;
+    let promoCode = null;
+    if (discountCode && String(discountCode).trim() && String(discountCode).trim().toUpperCase() !== 'GROUP') {
       const dv = await validateDiscountCode(discountCode, phone, effectiveCategoryKey);
       if (!dv.ok) return res.status(400).json({ success: false, error: dv.error });
-      discountAmount = computeDiscountAmount(dv.code, feeInfo.amount);
-      discountCodeApplied = dv.code.code;
+      promoDiscount = computeDiscountAmount(dv.code, feeInfo.amount);
+      promoCode = dv.code.code;
+    }
+    let groupDiscount = 0;
+    const dgroup = await getDelegateGroup(phone);
+    if (dgroup && dgroup.qualifies && dgroup.group.category_key === effectiveCategoryKey) {
+      groupDiscount = computeDiscountAmount(dgroup.rule, feeInfo.amount);
+    }
+    // 'GROUP' is the sentinel stored in discount_code for a group discount, so
+    // reports and the revoke logic can tell it apart from a promo code.
+    let discountAmount = 0;
+    let discountCodeApplied = null;
+    if (groupDiscount >= promoDiscount && groupDiscount > 0) {
+      discountAmount = groupDiscount; discountCodeApplied = 'GROUP';
+    } else if (promoDiscount > 0) {
+      discountAmount = promoDiscount; discountCodeApplied = promoCode;
     }
     const expectedAmount = feeInfo.amount - discountAmount;
 
@@ -1925,6 +2015,181 @@ app.post('/api/discounts/validate', requireAuth, async (req, res, next) => {
     next(err);
   }
 });
+
+// --- GROUP DISCOUNTS (delegate) -----------------------------------------
+
+// Build a rich view of a group: members with names + registration status, the
+// rule, whether it qualifies, and the per-member discount.
+async function groupView(group) {
+  const members = await dbAll(
+    `SELECT gm.phone_number, gm.joined_at, u.full_name,
+            (SELECT bank_status FROM registrations r WHERE r.phone_number = gm.phone_number) AS bank_status
+       FROM group_members gm LEFT JOIN users u ON u.phone_number = gm.phone_number
+      WHERE gm.group_id = ? ORDER BY gm.joined_at ASC`, [group.id]);
+  const rule = await dbGet('SELECT * FROM group_discount_rules WHERE category_key = ? AND active = 1', [group.category_key]);
+  const size = members.length;
+  const qualifies = !!rule && size >= rule.min_size;
+  const cat = await dbGet('SELECT label FROM fee_categories WHERE category_key = ?', [group.category_key]);
+  const allVerified = size > 0 && members.every((m) => m.bank_status === 'BANK_VERIFIED');
+  return {
+    id: group.id, name: group.name, categoryKey: group.category_key, categoryLabel: cat ? cat.label : group.category_key,
+    leaderPhone: group.leader_phone, size,
+    minSize: rule ? rule.min_size : null,
+    discountType: rule ? rule.discount_type : null,
+    discountValue: rule ? rule.discount_value : null,
+    qualifies, allVerified,
+    members: members.map((m) => ({ phone: m.phone_number, name: m.full_name || '—', status: m.bank_status || 'NOT_REGISTERED' })),
+  };
+}
+
+// The caller's group (or null), from their own perspective.
+app.get('/api/groups/me', requireAuth, async (req, res, next) => {
+  try {
+    const m = await dbGet('SELECT group_id FROM group_members WHERE phone_number = ?', [req.session.phone]);
+    if (!m) return res.json({ group: null });
+    const group = await dbGet('SELECT * FROM delegate_groups WHERE id = ?', [m.group_id]);
+    if (!group) return res.json({ group: null });
+    const view = await groupView(group);
+    view.isLeader = group.leader_phone === req.session.phone;
+    res.json({ group: view });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Categories that currently have an active group-discount rule, for the
+// "start a group" picker.
+app.get('/api/groups/eligible-categories', requireAuth, async (req, res, next) => {
+  try {
+    const rows = await dbAll(`
+      SELECT r.category_key, r.min_size, r.discount_type, r.discount_value, c.label
+        FROM group_discount_rules r JOIN fee_categories c ON c.category_key = r.category_key
+       WHERE r.active = 1 ORDER BY c.sort_order, c.id`);
+    res.json({ categories: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Start a group for a category that has a group-discount rule. The caller
+// becomes leader and first member.
+app.post('/api/groups', requireAuth, async (req, res, next) => {
+  try {
+    const categoryKey = String(req.body.categoryKey || '').trim();
+    const name = req.body.name ? String(req.body.name).trim().slice(0, 80) : null;
+    const rule = await dbGet('SELECT * FROM group_discount_rules WHERE category_key = ? AND active = 1', [categoryKey]);
+    if (!rule) return res.status(400).json({ success: false, error: 'This category has no group discount.' });
+    const already = await dbGet('SELECT group_id FROM group_members WHERE phone_number = ?', [req.session.phone]);
+    if (already) return res.status(409).json({ success: false, error: 'You are already in a group. Leave it first.' });
+    // A verified/locked registration in a different category can't join a group
+    // for this one.
+    const reg = await dbGet('SELECT category_key, bank_status FROM registrations WHERE phone_number = ?', [req.session.phone]);
+    if (reg && reg.bank_status === 'BANK_VERIFIED' && reg.category_key !== categoryKey) {
+      return res.status(400).json({ success: false, error: 'Your registration is already confirmed under a different category.' });
+    }
+    const result = await dbRun(
+      'INSERT INTO delegate_groups (name, category_key, leader_phone, created_at) VALUES (?, ?, ?, ?)',
+      [name, categoryKey, req.session.phone, Date.now()]);
+    await dbRun('INSERT INTO group_members (group_id, phone_number, joined_at) VALUES (?, ?, ?)',
+      [result.lastID, req.session.phone, Date.now()]);
+    res.json({ success: true, groupId: result.lastID });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Add a registered delegate to the caller's group (leader only).
+app.post('/api/groups/:id/members', requireAuth, async (req, res, next) => {
+  try {
+    const group = await dbGet('SELECT * FROM delegate_groups WHERE id = ?', [req.params.id]);
+    if (!group) return res.status(404).json({ success: false, error: 'Group not found.' });
+    if (group.leader_phone !== req.session.phone) return res.status(403).json({ success: false, error: 'Only the group leader can add members.' });
+    const phone = String(req.body.phone || '').replace(/\D/g, '');
+    if (!/^\d{10}$/.test(phone)) return res.status(400).json({ success: false, error: 'Enter a valid 10-digit mobile number.' });
+    const user = await dbGet('SELECT full_name FROM users WHERE phone_number = ?', [phone]);
+    if (!user) return res.status(404).json({ success: false, error: 'No registered delegate with that mobile number.' });
+    const inGroup = await dbGet('SELECT group_id FROM group_members WHERE phone_number = ?', [phone]);
+    if (inGroup) return res.status(409).json({ success: false, error: 'That delegate is already in a group.' });
+    const reg = await dbGet('SELECT category_key, bank_status FROM registrations WHERE phone_number = ?', [phone]);
+    if (reg && reg.bank_status === 'BANK_VERIFIED' && reg.category_key !== group.category_key) {
+      return res.status(400).json({ success: false, error: 'That delegate is already confirmed under a different category.' });
+    }
+    await dbRun('INSERT INTO group_members (group_id, phone_number, joined_at) VALUES (?, ?, ?)', [group.id, phone, Date.now()]);
+    notifyDelegate(phone, 'You’ve been added to a group registration',
+      emailWrap('Added to a group registration',
+        `<p>Dear ${escapeHtml(user.full_name || 'Delegate')},</p>
+         <p>You have been added to a group for the ${escapeHtml(CONFERENCE_NAME)} under the <b>${escapeHtml(group.category_key)}</b> category. Once the group reaches the required size, a group discount applies to your registration fee.</p>
+         <p>Log in to the delegate portal to see your group and pay your (discounted) fee.</p>`));
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Remove a member (leader removing someone, or a member leaving). Handles
+// leader departure (promote the next member, or disband if empty) and revokes
+// the discount for anyone left if the group drops below the threshold.
+app.delete('/api/groups/:id/members/:phone', requireAuth, async (req, res, next) => {
+  try {
+    const group = await dbGet('SELECT * FROM delegate_groups WHERE id = ?', [req.params.id]);
+    if (!group) return res.status(404).json({ success: false, error: 'Group not found.' });
+    const target = String(req.params.phone || '').replace(/\D/g, '');
+    const isLeader = group.leader_phone === req.session.phone;
+    const isSelf = target === req.session.phone;
+    if (!isLeader && !isSelf) return res.status(403).json({ success: false, error: 'You can only remove yourself, unless you are the leader.' });
+    const member = await dbGet('SELECT id FROM group_members WHERE group_id = ? AND phone_number = ?', [group.id, target]);
+    if (!member) return res.status(404).json({ success: false, error: 'That delegate is not in this group.' });
+
+    await dbRun('DELETE FROM group_members WHERE group_id = ? AND phone_number = ?', [group.id, target]);
+
+    const remaining = await dbAll('SELECT phone_number FROM group_members WHERE group_id = ? ORDER BY joined_at ASC', [group.id]);
+    if (remaining.length === 0) {
+      await dbRun('DELETE FROM delegate_groups WHERE id = ?', [group.id]);
+    } else {
+      if (group.leader_phone === target) {
+        await dbRun('UPDATE delegate_groups SET leader_phone = ? WHERE id = ?', [remaining[0].phone_number, group.id]);
+      }
+      await revokeGroupDiscountIfBelowThreshold(group.id);
+    }
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// If a group has dropped below its rule's minimum, the discount no longer
+// applies. Any member who already paid the discounted fee and was verified now
+// owes the difference: revert their fee to the full amount, which puts them in
+// PARTIAL_PAYMENT (balance due) via the existing top-up flow, and notify them.
+async function revokeGroupDiscountIfBelowThreshold(groupId) {
+  const group = await dbGet('SELECT * FROM delegate_groups WHERE id = ?', [groupId]);
+  if (!group) return;
+  const members = await dbAll('SELECT phone_number FROM group_members WHERE group_id = ?', [groupId]);
+  const rule = await dbGet('SELECT * FROM group_discount_rules WHERE category_key = ? AND active = 1', [group.category_key]);
+  if (rule && members.length >= rule.min_size) return; // still qualifies
+
+  for (const m of members) {
+    const reg = await dbGet('SELECT id, category_key, expected_amount, discount_amount, discount_code, bank_status, delegate_name, phone_number FROM registrations WHERE phone_number = ?', [m.phone_number]);
+    // Only registrations that actually took THIS group discount (the 'GROUP'
+    // sentinel) on the group's category need reverting -- promo discounts are
+    // left alone.
+    if (!reg || reg.discount_code !== 'GROUP' || !(reg.discount_amount > 0) || reg.category_key !== group.category_key) continue;
+    const feeInfo = await resolveFee(reg.category_key);
+    if (!feeInfo) continue;
+    const fullFee = feeInfo.amount;
+    if (Math.round(reg.expected_amount) >= Math.round(fullFee)) continue; // no discount in effect
+    const summary = await getPaymentSummary(reg.id, fullFee);
+    const newStatus = reg.bank_status === 'REJECTED' ? 'REJECTED'
+      : (summary.verifiedTotal >= fullFee ? reg.bank_status : (summary.verifiedTotal > 0 ? 'PARTIAL_PAYMENT' : 'PENDING'));
+    await dbRun('UPDATE registrations SET expected_amount = ?, discount_amount = 0, discount_code = NULL, bank_status = ? WHERE id = ?',
+      [fullFee, newStatus, reg.id]);
+    notifyDelegate(reg.phone_number, 'Group discount no longer applies — balance due',
+      emailWrap('Your group discount has been withdrawn',
+        `<p>Dear ${escapeHtml(reg.delegate_name || 'Delegate')},</p>
+         <p>Your group has dropped below the minimum size required for the group discount, so the full registration fee of <b>₹${escapeHtml(fullFee)}</b> now applies.</p>
+         <p>An outstanding balance of <b>₹${escapeHtml(Math.max(0, fullFee - summary.verifiedTotal))}</b> is due. Please log in to the delegate portal to pay it.</p>`));
+  }
+}
 
 // Printable payment receipt for the caller's own registration. Only available
 // once the payment has been verified.
@@ -2523,18 +2788,11 @@ app.put('/api/registrations/:id/lock-category', requireRole('SUPER_ADMIN', 'FINA
     if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
 
     const newFee = feeInfo.amount;
-    // Re-derive status against the new fee from the cumulative verified total.
-    const summary = await getPaymentSummary(reg.id, newFee);
-    let newStatus = reg.bank_status;
-    if (reg.bank_status !== 'REJECTED') {
-      if (summary.verifiedTotal >= newFee && newFee > 0) newStatus = reg.bank_status; // already covered; leave as-is (verified stays verified)
-      else if (summary.verifiedTotal > 0) newStatus = 'PARTIAL_PAYMENT';
-      else newStatus = 'PENDING';
-    } else {
-      // A rejected registration being category-corrected re-opens for payment.
-      newStatus = 'PENDING';
-    }
-
+    // Locking only changes the category and fee. It does NOT itself ask the
+    // delegate for more money or move the registration to "balance due" -- the
+    // admin does that explicitly via Revise Payment, once the existing payment
+    // is linked. A rejected registration re-opens for review.
+    const newStatus = reg.bank_status === 'REJECTED' ? 'PENDING' : reg.bank_status;
     await dbRun(
       'UPDATE registrations SET category_key = ?, category_label = ?, expected_amount = ?, category_locked = 1, bank_status = ?, rejection_reason = NULL, rejection_note = NULL WHERE id = ?',
       [categoryKey, feeInfo.label, newFee, newStatus, reg.id]);
@@ -2546,14 +2804,49 @@ app.put('/api/registrations/:id/lock-category', requireRole('SUPER_ADMIN', 'FINA
       newValue: `${feeInfo.label} (₹${newFee}) — locked`,
     });
 
-    const remaining = Math.max(0, newFee - summary.verifiedTotal);
-    notifyDelegate(reg.phone_number, 'Your delegate category was updated',
-      emailWrap('Your registration category has been updated',
-        `<p>Dear ${escapeHtml(reg.delegate_name)},</p>
-         <p>Your delegate category has been set to <b>${escapeHtml(feeInfo.label)}</b>, with a fee of <b>₹${escapeHtml(newFee)}</b>.</p>
-         ${remaining > 0 ? `<p>An outstanding balance of <b>₹${escapeHtml(remaining)}</b> is due. Please log in to the delegate portal to pay it.</p>` : '<p>No further payment is needed. Your registration will be confirmed once verified.</p>'}`));
+    const summary = await getPaymentSummary(reg.id, newFee);
+    res.json({ success: true, expectedAmount: newFee, remaining: Math.max(0, newFee - summary.verifiedTotal) });
+  } catch (err) {
+    next(err);
+  }
+});
 
-    res.json({ success: true, expectedAmount: newFee, remaining });
+// Ask the delegate to pay the outstanding balance after a fee change (e.g. a
+// category correction). Gated: the delegate's existing payment(s) must be
+// linked/acknowledged first, so the balance is computed against what they've
+// actually paid -- not the full new fee. Moves the registration to
+// PARTIAL_PAYMENT (the balance-due section) and emails the delegate.
+app.post('/api/registrations/:id/revise-payment', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const reg = await dbGet('SELECT id, phone_number, delegate_name, category_label, expected_amount, bank_status FROM registrations WHERE id = ?', [req.params.id]);
+    if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
+    if (reg.bank_status === 'BANK_VERIFIED' || reg.bank_status === 'REJECTED') {
+      return res.status(400).json({ success: false, error: 'This registration is not awaiting a revised payment.' });
+    }
+    const summary = await getPaymentSummary(reg.id, reg.expected_amount);
+    const pendingUnlinked = summary.txns.filter((t) => t.txn_status === 'PENDING');
+    if (pendingUnlinked.length > 0) {
+      return res.status(400).json({ success: false, error: 'Link the delegate’s existing payment to its bank transaction before revising — that acknowledges what they’ve already paid.' });
+    }
+    if (summary.verifiedTotal <= 0) {
+      return res.status(400).json({ success: false, error: 'No payment has been acknowledged yet. Link the existing payment first.' });
+    }
+    const remaining = reg.expected_amount - summary.verifiedTotal;
+    if (remaining <= 0) {
+      return res.status(400).json({ success: false, error: 'The acknowledged payment already covers the fee — use Accept & Verify instead.' });
+    }
+
+    await dbRun("UPDATE registrations SET bank_status = 'PARTIAL_PAYMENT' WHERE id = ?", [reg.id]);
+    await recordAudit({
+      req, entityType: 'registration', entityId: req.params.id, action: 'PAYMENT_REVISED',
+      oldValue: reg.bank_status, newValue: `PARTIAL_PAYMENT (paid ₹${summary.verifiedTotal}, ₹${remaining} balance)`,
+    });
+    notifyDelegate(reg.phone_number, 'Revised payment required — balance due',
+      emailWrap('A balance is due on your registration',
+        `<p>Dear ${escapeHtml(reg.delegate_name)},</p>
+         <p>Your registration category is now <b>${escapeHtml(reg.category_label)}</b> with a fee of <b>₹${escapeHtml(reg.expected_amount)}</b>. We have received <b>₹${escapeHtml(summary.verifiedTotal)}</b>.</p>
+         <p>An outstanding balance of <b>₹${escapeHtml(remaining)}</b> is due. Please log in to the delegate portal to pay it.</p>`));
+    res.json({ success: true, remaining });
   } catch (err) {
     next(err);
   }
@@ -3220,6 +3513,118 @@ app.delete('/api/admin/discount-codes/:id', requireRole('SUPER_ADMIN', 'FINANCE_
   }
 });
 
+// --- GROUP DISCOUNT RULES (admin) ---------------------------------------
+app.get('/api/admin/group-rules', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const rules = await dbAll('SELECT * FROM group_discount_rules ORDER BY created_at DESC');
+    res.json({ rules });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- NOTIFICATION TOGGLES (super admin) ---------------------------------
+app.get('/api/admin/notification-settings', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    res.json({
+      sms: { enabled: notifyToggle.sms, available: SMS_ENABLED },
+      email: { enabled: notifyToggle.email, available: EMAIL_ENABLED },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/admin/notification-settings', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const changes = [];
+    if (req.body.sms !== undefined) {
+      notifyToggle.sms = !!req.body.sms;
+      await dbRun("INSERT INTO schema_meta (key, value) VALUES ('notify_sms_enabled', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [notifyToggle.sms ? '1' : '0']);
+      changes.push(`SMS ${notifyToggle.sms ? 'on' : 'off'}`);
+    }
+    if (req.body.email !== undefined) {
+      notifyToggle.email = !!req.body.email;
+      await dbRun("INSERT INTO schema_meta (key, value) VALUES ('notify_email_enabled', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [notifyToggle.email ? '1' : '0']);
+      changes.push(`Email ${notifyToggle.email ? 'on' : 'off'}`);
+    }
+    if (changes.length) {
+      await recordAudit({ req, entityType: 'settings', entityId: 'notifications', action: 'NOTIFICATION_TOGGLE', oldValue: null, newValue: changes.join(', ') });
+    }
+    res.json({ success: true, sms: notifyToggle.sms, email: notifyToggle.email });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Admin monitoring: every group with its members and their verification states.
+app.get('/api/admin/groups', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const groups = await dbAll('SELECT * FROM delegate_groups ORDER BY created_at DESC');
+    const views = [];
+    for (const g of groups) views.push(await groupView(g));
+    res.json({ groups: views });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/admin/group-rules', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const categoryKey = String(req.body.categoryKey || '').trim();
+    const minSize = Math.max(2, parseInt(req.body.minSize, 10) || 5);
+    const discountType = req.body.discountType === 'FLAT' ? 'FLAT' : 'PERCENT';
+    const discountValue = Number(req.body.discountValue);
+    const cat = await dbGet('SELECT category_key FROM fee_categories WHERE category_key = ?', [categoryKey]);
+    if (!cat) return res.status(400).json({ success: false, error: 'Choose a valid category.' });
+    if (!Number.isFinite(discountValue) || discountValue <= 0) return res.status(400).json({ success: false, error: 'Discount value must be greater than zero.' });
+    if (discountType === 'PERCENT' && discountValue > 100) return res.status(400).json({ success: false, error: 'A percentage discount cannot exceed 100.' });
+    await dbRun(
+      `INSERT INTO group_discount_rules (category_key, min_size, discount_type, discount_value, active, created_at)
+       VALUES (?, ?, ?, ?, 1, ?)
+       ON CONFLICT(category_key) DO UPDATE SET min_size = excluded.min_size, discount_type = excluded.discount_type, discount_value = excluded.discount_value, active = 1`,
+      [categoryKey, minSize, discountType, discountValue, Date.now()]);
+    await recordAudit({
+      req, entityType: 'group_rule', entityId: categoryKey, action: 'GROUP_RULE_SET',
+      oldValue: null, newValue: `${categoryKey}: ≥${minSize} → ${discountType === 'PERCENT' ? discountValue + '%' : '₹' + discountValue}`,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/admin/group-rules/:id', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const rule = await dbGet('SELECT * FROM group_discount_rules WHERE id = ?', [req.params.id]);
+    if (!rule) return res.status(404).json({ success: false, error: 'Rule not found.' });
+    const active = req.body.active !== undefined ? (req.body.active ? 1 : 0) : rule.active;
+    await dbRun('UPDATE group_discount_rules SET active = ? WHERE id = ?', [active, req.params.id]);
+    await recordAudit({
+      req, entityType: 'group_rule', entityId: rule.category_key, action: 'GROUP_RULE_UPDATE',
+      oldValue: rule.active ? 'active' : 'inactive', newValue: active ? 'active' : 'inactive',
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/admin/group-rules/:id', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const rule = await dbGet('SELECT * FROM group_discount_rules WHERE id = ?', [req.params.id]);
+    if (!rule) return res.status(404).json({ success: false, error: 'Rule not found.' });
+    await dbRun('DELETE FROM group_discount_rules WHERE id = ?', [req.params.id]);
+    await recordAudit({
+      req, entityType: 'group_rule', entityId: rule.category_key, action: 'GROUP_RULE_DELETE',
+      oldValue: rule.category_key, newValue: null,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.put('/api/admin/fees/config', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
     const { earlyUntil, regularUntil, lateUntil } = req.body;
@@ -3411,7 +3816,7 @@ async function autoLinkTransactions() {
   // current mechanism -- linking lives on payment_transactions, not the
   // registration.
   const pend = await dbAll(
-    `SELECT id, utr_number FROM payment_transactions
+    `SELECT id, amount, utr_number FROM payment_transactions
       WHERE bank_txn_id IS NULL AND utr_number IS NOT NULL AND utr_number != '' AND txn_status != 'REJECTED'`);
   if (!pend.length) return 0;
 
@@ -3430,7 +3835,15 @@ async function autoLinkTransactions() {
     // within this loop (the UNIQUE index is the final backstop).
     byRef.delete(digitsOnly(txn.utr_number));
     try {
-      await dbRun('UPDATE payment_transactions SET bank_txn_id = ? WHERE id = ? AND bank_txn_id IS NULL', [bankId, txn.id]);
+      // A UTR match against a real bank credit IS the acknowledgement (same as
+      // a manual link), so the transaction is verified at its amount -- the
+      // registration still needs the admin's Accept & Verify to be confirmed.
+      await dbRun(
+        `UPDATE payment_transactions
+            SET bank_txn_id = ?, txn_status = 'VERIFIED', verified_amount = amount,
+                reviewed_by = 'auto (bank match)', reviewed_at = ?
+          WHERE id = ? AND bank_txn_id IS NULL`,
+        [bankId, Date.now(), txn.id]);
       linked++;
     } catch (err) {
       if (err.code !== 'SQLITE_CONSTRAINT') throw err;
@@ -3890,6 +4303,7 @@ retitleNamesOnBoot()
   .then(() => splitSalutationsOnBoot().catch((err) => console.error('Salutation split failed (continuing to start):', err.message)))
   .then(() => backfillPaymentTransactionsOnBoot().catch((err) => console.error('Payment-transaction backfill failed (continuing to start):', err.message)))
   .then(() => autoLinkTransactions().catch((err) => console.error('Bank-transaction auto-link failed (continuing to start):', err.message)))
+  .then(() => loadNotificationToggles().catch((err) => console.error('Notification-toggle load failed (continuing to start):', err.message)))
   .then(startServer);
 
 function startServer() {

@@ -419,7 +419,116 @@ async function loadDashboard() {
   }
 
   await loadAbstractStatus();
+  await renderGroupSection();
   navigateTo('dashboard-page');
+}
+
+// --- GROUP REGISTRATION (delegate) ---
+const GROUP_STATUS_LABEL = { BANK_VERIFIED: 'Paid ✓', PARTIAL_PAYMENT: 'Balance due', PENDING: 'Pending', REJECTED: 'Rejected', NOT_REGISTERED: 'Not paid' };
+async function renderGroupSection() {
+  const box = document.getElementById('group-section');
+  if (!box) return;
+  const data = await (await fetch('/api/groups/me')).json().catch(() => ({}));
+  const g = data.group;
+
+  if (g) {
+    const rows = g.members.map((m) => {
+      const label = GROUP_STATUS_LABEL[m.status] || m.status;
+      const tone = m.status === 'BANK_VERIFIED' ? 'text-emerald-700' : m.status === 'PARTIAL_PAYMENT' ? 'text-orange-700' : m.status === 'REJECTED' ? 'text-rose-600' : 'text-slate-500';
+      const canRemove = g.isLeader && m.phone !== g.leaderPhone;
+      return `<div class="flex items-center justify-between py-1.5 text-sm border-b border-indigo-50 last:border-0">
+        <span class="min-w-0 truncate">${esc(m.name)}${m.phone === g.leaderPhone ? ' <span class="text-[10px] text-indigo-500 font-semibold">(leader)</span>' : ''}</span>
+        <span class="flex items-center gap-2 shrink-0">
+          <span class="text-xs font-semibold ${tone}">${esc(label)}</span>
+          ${canRemove ? `<button onclick="removeGroupMember('${esc(m.phone)}')" class="text-[11px] text-rose-500 hover:underline">remove</button>` : ''}
+        </span>
+      </div>`;
+    }).join('');
+    const need = Math.max(0, (g.minSize || 0) - g.size);
+    const statusLine = g.qualifies
+      ? `<span class="text-emerald-700 font-semibold">✓ Group discount active${g.allVerified ? ' · all members paid' : ''}</span>`
+      : `<span class="text-amber-700 font-semibold">${need} more member${need === 1 ? '' : 's'} needed to unlock the discount (min ${g.minSize})</span>`;
+    box.innerHTML = `
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-lg font-bold text-slate-800">👥 Group Registration</h3>
+        <span class="text-xs text-slate-500">${esc(g.categoryLabel)} · ${g.size} member${g.size === 1 ? '' : 's'}</span>
+      </div>
+      <p class="text-xs mb-3">${statusLine}</p>
+      <div class="bg-white rounded-lg border border-indigo-100 px-3 py-1 mb-3">${rows}</div>
+      <div class="flex flex-wrap gap-2">
+        ${g.isLeader ? `<button onclick="openAddGroupMember()" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">+ Add member</button>` : ''}
+        <button onclick="leaveGroup()" class="px-3 py-2 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-lg">Leave group</button>
+      </div>
+      <p class="text-[11px] text-slate-500 mt-3">Each member pays their own (discounted) fee. The discount is confirmed once every member's payment is verified.</p>`;
+    box.classList.remove('hidden');
+    return;
+  }
+
+  // Not in a group: offer to start one for any category that has a rule.
+  const eligible = (await (await fetch('/api/groups/eligible-categories')).json().catch(() => ({}))).categories || [];
+  if (!eligible.length) { box.classList.add('hidden'); return; }
+  box.innerHTML = `
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="text-lg font-bold text-slate-800">👥 Group Registration</h3>
+      <span class="text-xs text-slate-500">Save with 5+ delegates</span>
+    </div>
+    <p class="text-xs text-slate-600 mb-3">Registering as a group? Start a group and add fellow delegates in the same category to unlock a group discount for everyone.</p>
+    <div class="flex flex-wrap gap-2 items-end">
+      <select id="group-start-cat" class="h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+        ${eligible.map((c) => `<option value="${esc(c.category_key)}">${esc(c.label)} — ${c.discount_type === 'PERCENT' ? esc(c.discount_value) + '%' : '₹' + esc(c.discount_value)} off for ${esc(c.min_size)}+</option>`).join('')}
+      </select>
+      <button onclick="startGroup()" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Start a group</button>
+    </div>`;
+  box.classList.remove('hidden');
+}
+
+async function startGroup() {
+  const categoryKey = document.getElementById('group-start-cat').value;
+  const data = await (await fetch('/api/groups', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ categoryKey }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not start the group.');
+  showToast('Group started. Add fellow delegates to unlock the discount.', 'success');
+  renderGroupSection();
+}
+
+let groupAddId = null;
+function openAddGroupMember() {
+  document.getElementById('group-add-phone').value = '';
+  openModal('modal-group-add');
+}
+async function submitAddGroupMember() {
+  const phone = document.getElementById('group-add-phone').value.replace(/\D/g, '');
+  if (!/^\d{10}$/.test(phone)) return showToast('Enter a valid 10-digit mobile number.');
+  const gid = (await (await fetch('/api/groups/me')).json()).group?.id;
+  if (!gid) return showToast('Group not found.');
+  const data = await (await fetch(`/api/groups/${gid}/members`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not add member.');
+  showToast('Member added.', 'success');
+  closeModal('modal-group-add');
+  renderGroupSection();
+}
+
+async function removeGroupMember(phone) {
+  if (!(await showConfirm('Remove this member from the group?'))) return;
+  const gid = (await (await fetch('/api/groups/me')).json()).group?.id;
+  if (!gid) return;
+  const data = await (await fetch(`/api/groups/${gid}/members/${encodeURIComponent(phone)}`, { method: 'DELETE' })).json();
+  if (!data.success) return showToast(data.error || 'Could not remove member.');
+  renderGroupSection();
+}
+
+async function leaveGroup() {
+  if (!(await showConfirm('Leave this group? You will lose the group discount.'))) return;
+  const me = (await (await fetch('/api/groups/me')).json()).group;
+  if (!me) return;
+  const myPhone = (currentDelegate && (currentDelegate.phone_number || currentDelegate.phone)) || '';
+  const data = await (await fetch(`/api/groups/${me.id}/members/${encodeURIComponent(myPhone)}`, { method: 'DELETE' })).json();
+  if (!data.success) return showToast(data.error || 'Could not leave the group.');
+  showToast('You left the group.', 'info');
+  renderGroupSection();
 }
 
 // Reflect the delegate's abstract status on the dashboard. The abstract is
@@ -1211,7 +1320,7 @@ function setupAdminDelegation() {
     const viewId = e.target.closest('.view-id-btn');
     if (viewId) return openIdCard(viewId.dataset.id);
   };
-  ['payment-table-body', 'rejected-table-body', 'verified-table-body'].forEach((id) => {
+  ['payment-table-body', 'rejected-table-body', 'verified-table-body', 'balance-table-body'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('click', paymentClickHandler);
   });
@@ -1350,9 +1459,11 @@ function applyRoleVisibility(role) {
   const settingsUsers = document.getElementById('settings-item-users');
   const settingsReminders = document.getElementById('settings-item-reminders');
   const settingsActivity = document.getElementById('settings-item-activity');
+  const settingsGroups = document.getElementById('settings-item-groups');
   if (settingsMasters) settingsMasters.classList.toggle('hidden', !isSuper);
   if (settingsUsers) settingsUsers.classList.toggle('hidden', !isSuper);
   if (settingsReminders) settingsReminders.classList.toggle('hidden', !isFinance);
+  if (settingsGroups) settingsGroups.classList.toggle('hidden', !isFinance);
   if (settingsActivity) settingsActivity.classList.toggle('hidden', !isSuper);
   if (settingsMenuBtn) settingsMenuBtn.classList.toggle('hidden', !(isSuper || isFinance));
 
@@ -1402,6 +1513,8 @@ async function initBackendPortal() {
   if (isSuper) await renderBackendPrograms();
   if (isSuper) await renderBackendFees();
   if (isSuper) await renderDiscountCodes();
+  if (isSuper) await renderGroupRules();
+  if (isSuper) await renderNotificationSettings();
   if (isSuper) await renderBackendActivity();
   if (isFinance) await loadReportWorkshopOptions();
   if (isFinance) await renderBackendReminders(isSuper);
@@ -1411,6 +1524,16 @@ const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT / RTGS' };
 
 // Cached so the review modal can look a row up by id without a second fetch.
 let cachedPaymentRegs = [];
+
+// "Balance due" = the admin has revised the payment (after a fee change), so
+// the delegate has been formally asked to pay the difference. These sit in the
+// "Awaiting Balance Payment" section, not the main decision worklist. A
+// category change alone doesn't land a registration here -- the admin must
+// link the existing payment and click Revise Payment first (which sets
+// PARTIAL_PAYMENT).
+function isBalanceDue(r) {
+  return r.bank_status === 'PARTIAL_PAYMENT';
+}
 
 // Shared row markup for both the main worklist and the collapsed rejected
 // list below it.
@@ -1422,11 +1545,23 @@ function paymentRowHtml(p) {
     : p.bank_status === 'BANK_VERIFIED' ? 'bg-emerald-100 text-emerald-800'
     : p.bank_status === 'PARTIAL_PAYMENT' ? 'bg-orange-100 text-orange-800'
     : 'bg-amber-100 text-amber-800';
-  const statusLabel = p.bank_status === 'PARTIAL_PAYMENT' ? 'PARTIAL' : p.bank_status;
-  const statusPill = `<span class="${statusTone} text-[10px] sm:text-xs px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full font-bold">${esc(statusLabel)}</span>`;
-  // For a partial payment, surface how much is still owed at a glance.
-  const balancePill = (p.remaining > 0 && p.verified_total > 0)
-    ? `<span class="text-[10px] text-orange-700 font-semibold">₹${Number(p.verified_total)} of ₹${Number(p.expected_amount)} · ₹${Number(p.remaining)} due</span>`
+  const balanceDue = isBalanceDue(p);
+  const statusLabel = p.bank_status === 'PARTIAL_PAYMENT' ? 'PARTIAL'
+    : (balanceDue ? 'BALANCE DUE' : p.bank_status);
+  const statusTone2 = balanceDue ? 'bg-orange-100 text-orange-800' : statusTone;
+  const statusPill = `<span class="${statusTone2} text-[10px] sm:text-xs px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full font-bold">${esc(statusLabel)}</span>`;
+  // Surface how much is still owed at a glance: use the verified total when
+  // there is one, else the claimed amount (category-changed, not yet verified).
+  const paidSoFar = Number(p.verified_total) > 0 ? Number(p.verified_total) : (Number(p.paid_amount) || 0);
+  const owed = Number(p.expected_amount) - paidSoFar;
+  // Category was changed to a higher fee and the delegate still owes -- flag it
+  // in the worklist so the admin knows to link the payment and Revise.
+  const categoryChangedShortfall = !!p.category_locked && p.bank_status === 'PENDING' && owed > 0;
+  const balancePill = ((balanceDue || categoryChangedShortfall) && owed > 0)
+    ? `<span class="text-[10px] text-orange-700 font-semibold">₹${paidSoFar} of ₹${Number(p.expected_amount)} · ₹${owed} due</span>`
+    : '';
+  const reviseHint = categoryChangedShortfall
+    ? `<span class="text-[10px] text-orange-700 font-semibold bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5">⚠ Category changed — revise</span>`
     : '';
   // Link status is now per transaction: show "linked" only when every pending
   // payment has its own bank credit linked. Verified/rejected rows (no pending
@@ -1457,7 +1592,7 @@ function paymentRowHtml(p) {
         </div>
         <div class="flex flex-wrap items-center gap-1.5 mt-2">
           ${p.is_flagged ? `<span class="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">⚠️ Flagged</span>` : ''}
-          ${statusPill}${balancePill}${rejectionNote}${linkedPill}${idPill}
+          ${statusPill}${reviseHint}${balancePill}${rejectionNote}${linkedPill}${idPill}
         </div>
         <div class="mt-3">${reviewBtn}</div>
       </td>
@@ -1472,6 +1607,7 @@ function paymentRowHtml(p) {
       </td>
       <td class="p-4 hidden sm:table-cell">
         ${statusPill}
+        ${reviseHint ? `<br>${reviseHint}` : ''}
         ${balancePill ? `<br>${balancePill}` : ''}
         ${rejectionNote ? `<br>${rejectionNote}` : ''}
         <br>${linkedPill}
@@ -1528,11 +1664,11 @@ async function renderBackendPayments() {
   // PENDING; a top-up flips a PARTIAL_PAYMENT registration back to PENDING so
   // it resurfaces here. PARTIAL_PAYMENT (balance due) is the delegate's turn,
   // so it stays off the worklist.
-  const needsDecision = allRegs.filter(r => r.bank_status === 'PENDING');
   const rejected = allRegs.filter(r => r.bank_status === 'REJECTED');
-  // Partial payments awaiting the delegate's top-up: shown as a metric so
-  // finance can see money still outstanding.
-  const partialAwaiting = allRegs.filter(r => r.bank_status === 'PARTIAL_PAYMENT');
+  // Balance-due delegates (acknowledged partial, or category changed to a
+  // higher fee than paid) live in their own section, not the worklist.
+  const partialAwaiting = allRegs.filter(isBalanceDue);
+  const needsDecision = allRegs.filter(r => r.bank_status === 'PENDING' && !isBalanceDue(r));
   const flagged = allRegs.filter(r => r.is_flagged);
   const totalCleared = verified.reduce((sum, r) => sum + (Number(r.verified_total) || 0), 0);
   setText('metric-total-amount', `₹${totalCleared}`);
@@ -1551,6 +1687,16 @@ async function renderBackendPayments() {
   setText('badge-rejected-count', rejected.length);
   if (rejectedSection) rejectedSection.classList.toggle('hidden', rejected.length === 0);
   if (rejectedBody) rejectedBody.innerHTML = rejected.map(paymentRowHtml).join('');
+
+  // Balance-due section: PARTIAL_PAYMENT delegates (e.g. after a category
+  // change) who've been emailed to pay the difference. It's their turn, so
+  // they live here instead of the main worklist -- finance can still track
+  // and open them.
+  const balanceSection = document.getElementById('balance-section');
+  const balanceBody = document.getElementById('balance-table-body');
+  setText('badge-balance-count', partialAwaiting.length);
+  if (balanceSection) balanceSection.classList.toggle('hidden', partialAwaiting.length === 0);
+  if (balanceBody) balanceBody.innerHTML = partialAwaiting.map(paymentRowHtml).join('');
 
   // Verified section is a super-admin-only entry point into already-verified
   // registrations, purely so they can be opened and un-approved. Hidden for
@@ -1743,6 +1889,24 @@ function openReviewModal(id) {
     if (rejectBtn) rejectBtn.classList.add('hidden');
   } else if (acceptBtn) {
     acceptBtn.classList.remove('hidden');
+  }
+
+  // Revise Payment: for a category-changed registration that still owes money.
+  // Enabled only once the existing payment is linked (acknowledged), so the
+  // balance is against what they've actually paid -- not the full new fee.
+  const reviseBtn = document.getElementById('review-revise-btn');
+  if (reviseBtn) {
+    const txns = p.transactions || [];
+    const verified = Number(p.verified_total) || 0;
+    const owed = (Number(p.expected_amount) || 0) - verified;
+    const hasUnlinkedPending = txns.some((t) => t.txn_status === 'PENDING');
+    const showRevise = !!p.category_locked && p.bank_status === 'PENDING' && txns.length > 0 && owed > 0;
+    reviseBtn.classList.toggle('hidden', !showRevise);
+    if (showRevise) {
+      const canRevise = !hasUnlinkedPending && verified > 0;
+      reviseBtn.disabled = !canRevise;
+      reviseBtn.title = canRevise ? '' : 'Link the delegate’s existing payment first';
+    }
   }
 
   renderReviewIdVerification(p);
@@ -2030,6 +2194,19 @@ async function reviewUnapprove() {
   })).json();
   if (!data.success) return showToast(data.error || 'Could not un-approve.');
   showToast('Registration un-approved and moved back to pending.', 'info');
+  closeModal('modal-review');
+  renderBackendPayments();
+}
+
+// Ask the delegate to pay the balance after a category/fee change. The server
+// enforces that the existing payment is linked first.
+async function reviewRevisePayment() {
+  if (!(await showConfirm('Ask this delegate to pay the outstanding balance? They will be emailed and moved to Awaiting Balance Payment.'))) return;
+  const data = await (await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/revise-payment`, {
+    method: 'POST',
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not revise the payment.');
+  showToast(`Revised — ₹${data.remaining} balance requested from the delegate.`, 'info');
   closeModal('modal-review');
   renderBackendPayments();
 }
@@ -2724,6 +2901,123 @@ async function deleteDiscountCode(id) {
   renderDiscountCodes();
 }
 
+// --- GROUP DISCOUNT RULES (admin) ---
+async function renderGroupRules() {
+  const tbody = document.getElementById('group-rule-table-body');
+  if (!tbody) return;
+  const cats = await ensureReviewCategories();
+  const catSel = document.getElementById('new-grp-cat');
+  if (catSel && !catSel.dataset.filled) {
+    catSel.innerHTML = cats.map((c) => `<option value="${esc(c.key)}">${esc(c.label)}</option>`).join('');
+    catSel.dataset.filled = '1';
+  }
+  const res = await fetch('/api/admin/group-rules');
+  if (!res.ok) return;
+  const rules = (await res.json()).rules || [];
+  const catLabel = (key) => (cats.find((c) => c.key === key) || {}).label || key;
+  tbody.innerHTML = rules.length ? rules.map((r) => `
+    <tr class="${r.active ? '' : 'opacity-50'}">
+      <td class="p-4 font-semibold text-slate-800">${esc(catLabel(r.category_key))}${r.active ? '' : ' <span class="text-[10px] text-slate-400">· inactive</span>'}</td>
+      <td class="p-4">${esc(r.min_size)}+</td>
+      <td class="p-4 font-semibold">${r.discount_type === 'PERCENT' ? esc(r.discount_value) + '%' : '₹' + esc(r.discount_value)}</td>
+      <td class="p-4 text-right whitespace-nowrap">
+        <button onclick="toggleGroupRule(${esc(r.id)}, ${r.active ? 0 : 1})" class="px-3 py-1.5 ${r.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg">${r.active ? 'Deactivate' : 'Activate'}</button>
+        <button onclick="deleteGroupRule(${esc(r.id)})" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg">Delete</button>
+      </td>
+    </tr>`).join('') : `<tr><td colspan="4" class="p-6 text-center text-slate-400">No group discount rules yet.</td></tr>`;
+}
+
+async function handleAddGroupRule(e) {
+  e.preventDefault();
+  const body = {
+    categoryKey: document.getElementById('new-grp-cat').value,
+    minSize: document.getElementById('new-grp-min').value,
+    discountType: document.getElementById('new-grp-type').value,
+    discountValue: document.getElementById('new-grp-value').value,
+  };
+  const data = await (await fetch('/api/admin/group-rules', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not save rule.');
+  showToast('Group discount rule saved.', 'success');
+  document.getElementById('new-grp-value').value = '';
+  renderGroupRules();
+}
+
+async function toggleGroupRule(id, active) {
+  const data = await (await fetch(`/api/admin/group-rules/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }),
+  })).json();
+  if (!data.success) showToast(data.error || 'Update failed.');
+  renderGroupRules();
+}
+
+async function deleteGroupRule(id) {
+  if (!(await showConfirm('Delete this group discount rule?'))) return;
+  const data = await (await fetch(`/api/admin/group-rules/${encodeURIComponent(id)}`, { method: 'DELETE' })).json();
+  if (!data.success) showToast(data.error || 'Delete failed.');
+  renderGroupRules();
+}
+
+// --- NOTIFICATION TOGGLES (super admin) ---
+async function renderNotificationSettings() {
+  const res = await fetch('/api/admin/notification-settings');
+  if (!res.ok) return;
+  const data = await res.json();
+  const sms = document.getElementById('notify-sms-toggle');
+  const email = document.getElementById('notify-email-toggle');
+  if (sms) { sms.checked = !!data.sms.enabled; sms.disabled = !data.sms.available; }
+  if (email) { email.checked = !!data.email.enabled; email.disabled = !data.email.available; }
+  setText('notify-sms-state', data.sms.available ? (data.sms.enabled ? '· on' : '· off') : '· not configured');
+  setText('notify-email-state', data.email.available ? (data.email.enabled ? '· on' : '· off') : '· not configured');
+}
+
+async function setNotificationToggle(channel, enabled) {
+  const data = await (await fetch('/api/admin/notification-settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [channel]: enabled }),
+  })).json();
+  if (!data.success) { showToast(data.error || 'Could not update.'); renderNotificationSettings(); return; }
+  showToast(`${channel === 'sms' ? 'SMS' : 'Email'} turned ${enabled ? 'on' : 'off'}.`, 'info');
+  renderNotificationSettings();
+}
+
+// --- GROUP MONITORING (admin) ---
+async function renderGroupsMonitor() {
+  const box = document.getElementById('groups-monitor-container');
+  if (!box) return;
+  box.innerHTML = '<p class="text-sm text-slate-500">Loading…</p>';
+  const res = await fetch('/api/admin/groups');
+  if (!res.ok) { box.innerHTML = '<p class="text-sm text-rose-600">Could not load groups.</p>'; return; }
+  const groups = (await res.json()).groups || [];
+  if (!groups.length) { box.innerHTML = '<p class="text-sm text-slate-400 p-4">No group registrations yet.</p>'; return; }
+
+  const TONE = { BANK_VERIFIED: 'text-emerald-700', PARTIAL_PAYMENT: 'text-orange-700', REJECTED: 'text-rose-600', PENDING: 'text-amber-700', NOT_REGISTERED: 'text-slate-400' };
+  const LABEL = { BANK_VERIFIED: 'Verified', PARTIAL_PAYMENT: 'Balance due', REJECTED: 'Rejected', PENDING: 'Pending', NOT_REGISTERED: 'Not paid' };
+  box.innerHTML = groups.map((g) => {
+    const statusBadge = g.allVerified
+      ? '<span class="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✓ Fully approved</span>'
+      : g.qualifies
+        ? '<span class="text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">Discount active</span>'
+        : `<span class="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Below min (${g.size}/${g.minSize || '—'})</span>`;
+    const rows = g.members.map((m) => `
+      <div class="flex items-center justify-between py-1.5 text-sm border-b border-slate-50 last:border-0">
+        <span class="min-w-0 truncate">${esc(m.name)}${m.phone === g.leaderPhone ? ' <span class="text-[10px] text-indigo-500 font-semibold">(leader)</span>' : ''} <span class="text-[11px] text-slate-400 font-mono">${esc(m.phone)}</span></span>
+        <span class="text-xs font-semibold shrink-0 ${TONE[m.status] || 'text-slate-500'}">${esc(LABEL[m.status] || m.status)}</span>
+      </div>`).join('');
+    const disc = g.discountType ? (g.discountType === 'PERCENT' ? g.discountValue + '%' : '₹' + g.discountValue) : '—';
+    return `<div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+      <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
+        <div>
+          <h3 class="font-bold text-slate-800">${esc(g.name || g.categoryLabel + ' group')}</h3>
+          <p class="text-xs text-slate-500">${esc(g.categoryLabel)} · ${g.size} members · ${esc(disc)} off</p>
+        </div>
+        ${statusBadge}
+      </div>
+      <div class="border-t border-slate-100 pt-1">${rows}</div>
+    </div>`;
+  }).join('');
+}
+
 // --- REPORTS (admin) ---
 
 // Populates the workshops report's picker so only one option's roster is
@@ -3313,7 +3607,8 @@ const MASTERS_SUBTABS = ['programs', 'fees'];
 let lastMastersTab = 'programs';
 
 function switchBackendTab(tab) {
-  ['payments', 'statement', 'abstracts', 'programs', 'fees', 'reports', 'reminders', 'activity', 'users'].forEach(t => {
+  if (tab === 'groups') renderGroupsMonitor();
+  ['payments', 'statement', 'abstracts', 'programs', 'fees', 'reports', 'reminders', 'activity', 'users', 'groups'].forEach(t => {
     const section = document.getElementById(`section-${t}`);
     if (section) section.classList.toggle('hidden', t !== tab);
 
@@ -3329,7 +3624,7 @@ function switchBackendTab(tab) {
 
   // Highlight whichever Settings-menu item (Masters/Users/Reminders/Logs)
   // is currently selected, since those tabs no longer live in the main bar.
-  ['masters', 'users', 'reminders', 'activity'].forEach((key) => {
+  ['masters', 'users', 'reminders', 'groups', 'activity'].forEach((key) => {
     const item = document.getElementById(`settings-item-${key}`);
     if (!item) return;
     const active = key === 'masters' ? MASTERS_SUBTABS.includes(tab) : key === tab;
