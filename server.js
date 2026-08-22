@@ -1691,7 +1691,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 
     // Existing registration: reuse the id to free the delegate's own slot on
     // re-submission, and the old filenames for cleanup.
-    const prev = await dbGet('SELECT id, screenshot, id_card, bank_status, category_key, category_locked FROM registrations WHERE phone_number = ?', [phone]);
+    const prev = await dbGet('SELECT id, screenshot, id_card, bank_status, category_key, category_locked, discount_code FROM registrations WHERE phone_number = ?', [phone]);
     const ownRegId = prev ? prev.id : null;
 
     // If an admin has locked this delegate's category, the client's choice is
@@ -1738,6 +1738,12 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     }
     const expectedAmount = feeInfo.amount - discountAmount;
     const isFree = expectedAmount <= 0;
+
+    // Log a promo code as "used" only the first time this delegate applies it
+    // -- a resubmission after rejection reuses the same code (and doesn't
+    // consume a second max_uses slot), so re-logging it would inflate the
+    // usage trail with duplicate entries for one delegate's one real use.
+    const isFirstUseOfPromo = !!promoCodeId && (!prev || prev.discount_code !== promoCode);
 
     if (!isFree && (!utr || !screenshot)) {
       return res.status(400).json({ success: false, error: 'Missing required registration details.' });
@@ -1834,7 +1840,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
       const regNo = await assignUserRegNumber(phone);
       await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
 
-      if (promoCodeId) {
+      if (isFirstUseOfPromo) {
         writeAuditRow('discount_code', promoCodeId, 'DISCOUNT_CODE_USED', null, `${promoCode} used by ${name} (${phone}), reg ${regNo}`, phone, name, 'DELEGATE').catch(() => {});
       }
 
@@ -1945,7 +1951,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     const regNo = await assignUserRegNumber(phone);
     await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
 
-    if (promoCodeId) {
+    if (isFirstUseOfPromo) {
       writeAuditRow('discount_code', promoCodeId, 'DISCOUNT_CODE_USED', null, `${promoCode} used by ${name} (${phone}), reg ${regNo}`, phone, name, 'DELEGATE').catch(() => {});
     }
 
@@ -3970,6 +3976,26 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
     ]) {
       if (raw !== undefined && raw !== null && /[\r\n]/.test(String(raw))) {
         return res.status(400).json({ success: false, error: `${label} must not contain line breaks.` });
+      }
+    }
+
+    // Reject blanking a currently-set operational field, up front. The old
+    // code silently skipped an empty value (treating "cleared" the same as
+    // "untouched") yet still returned success -- so an admin who blanked a
+    // field saw "saved" while the old value was quietly kept. These fields are
+    // all required for their channel to work, so a clear is a mistake worth
+    // surfacing rather than silently ignoring.
+    for (const [group, target, labels] of [
+      [sms, SMS, { sender: 'Sender ID', url: 'Gateway URL', entityId: 'DLT Entity ID', templateId: 'DLT Template ID', headerId: 'DLT Header ID', type: 'Message Type' }],
+      [email, EMAIL, { from: 'From address', fromName: 'From name', region: 'AWS Region' }],
+      [upi, UPI, { id: 'UPI ID', payeeName: 'Payee Name' }],
+    ]) {
+      if (!group) continue;
+      for (const field of Object.keys(labels)) {
+        if (group[field] === undefined) continue;
+        if (!String(group[field]).trim() && (target[field] || '')) {
+          return res.status(400).json({ success: false, error: `${labels[field]} cannot be blank.` });
+        }
       }
     }
 
