@@ -1,5 +1,8 @@
-const OFFICIAL_UPI_ID = "abhishekraut@cbin";
-<!-- const OFFICIAL_UPI_ID = "nqocn2026@cbin"-->
+// The conference's UPI ID and payee name, admin-editable from Settings →
+// General. Populated by loadFees() from /api/fees so the QR code and the
+// server's OCR check (which reads the same UPI object) can never drift apart.
+let OFFICIAL_UPI_ID = "abhishekraut@cbin";
+let OFFICIAL_UPI_PAYEE_NAME = "NQOCN 2026";
 
 // Categories that must upload a student ID card (kept in sync with the server).
 const STUDENT_CATEGORIES = ['nursing_ug', 'nursing_pg', 'med_student', 'pg_doctor'];
@@ -717,7 +720,7 @@ function calculateFee() {
   const ref = (currentDelegate && (currentDelegate.registration_number || currentDelegate.phone_number || currentDelegate.phone)) || '';
   const name = (currentDelegate && (currentDelegate.full_name || currentDelegate.name)) || '';
   const note = name ? `${ref}_${name}` : ref;
-  const upiUri = `upi://pay?pa=${OFFICIAL_UPI_ID}&pn=${encodeURIComponent('NQOCN 2026')}&am=${currentFee}.00&cu=INR&tn=${encodeURIComponent(note)}`;
+  const upiUri = `upi://pay?pa=${OFFICIAL_UPI_ID}&pn=${encodeURIComponent(OFFICIAL_UPI_PAYEE_NAME)}&am=${currentFee}.00&cu=INR&tn=${encodeURIComponent(note)}`;
   document.getElementById('upi-qr-image').src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiUri)}`;
   const payLink = document.getElementById('upi-pay-link');
   if (payLink) payLink.href = upiUri;
@@ -779,6 +782,8 @@ async function loadFees() {
     const data = await (await fetch('/api/fees')).json();
     feeCategories = {};
     (data.categories || []).forEach((c) => { feeCategories[c.key] = c; });
+    if (data.upi && data.upi.id) OFFICIAL_UPI_ID = data.upi.id;
+    if (data.upi && data.upi.payeeName) OFFICIAL_UPI_PAYEE_NAME = data.upi.payeeName;
     const sel = document.getElementById('payment-category');
     if (sel) {
       const current = sel.value;
@@ -1004,7 +1009,7 @@ function openTopupModal() {
   const ref = reg.registration_number || reg.phone_number || '';
   const name = (currentDelegate && (currentDelegate.full_name || currentDelegate.name)) || '';
   const note = name ? `${ref}_${name}` : ref;
-  const upiUri = `upi://pay?pa=${OFFICIAL_UPI_ID}&pn=${encodeURIComponent('NQOCN 2026')}&am=${balance}.00&cu=INR&tn=${encodeURIComponent(note)}`;
+  const upiUri = `upi://pay?pa=${OFFICIAL_UPI_ID}&pn=${encodeURIComponent(OFFICIAL_UPI_PAYEE_NAME)}&am=${balance}.00&cu=INR&tn=${encodeURIComponent(note)}`;
   document.getElementById('topup-qr-image').src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiUri)}`;
   const payLink = document.getElementById('topup-pay-link');
   if (payLink) payLink.href = upiUri;
@@ -1525,7 +1530,7 @@ function applyRoleVisibility(role) {
   // item would.
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
   // Super-admin-only masters; Reminders + Group Discount also open to finance.
-  const superItems = ['workshops', 'qi', 'fees', 'notification', 'discount', 'users', 'activity'];
+  const superItems = ['workshops', 'qi', 'fees', 'general', 'discount', 'users', 'activity'];
   const financeItems = ['reminders', 'groupdiscount'];
   superItems.forEach((key) => {
     const el = document.getElementById(`settings-item-${key}`);
@@ -1584,7 +1589,7 @@ async function initBackendPortal() {
   if (isSuper) await renderBackendFees();
   if (isSuper) await renderDiscountCodes();
   if (isSuper) await renderGroupRules();
-  if (isSuper) await renderNotificationSettings();
+  if (isSuper) await renderGeneralSettings();
   if (isSuper) await renderBackendActivity();
   if (isFinance) await loadReportWorkshopOptions();
   if (isFinance) await renderBackendReminders(isSuper);
@@ -2983,12 +2988,16 @@ const ACTIVITY_ACTION_LABELS = {
   BANK_TXN_LINK: 'Linked', BANK_TXN_UNLINK: 'Unlinked', ABSTRACT_STATUS_CHANGE: 'Status', ABSTRACT_ALLOCATION: 'Allotted',
   PROGRAM_OPTION_CREATE: 'Created', PROGRAM_OPTION_UPDATE: 'Updated', PROGRAM_OPTION_DELETE: 'Deleted',
   FEE_CONFIG_UPDATE: 'Dates Updated', FEE_CATEGORY_CREATE: 'Created', FEE_CATEGORY_UPDATE: 'Updated', FEE_CATEGORY_DELETE: 'Deleted',
+  DISCOUNT_CODE_CREATE: 'Created', DISCOUNT_CODE_UPDATE: 'Updated', DISCOUNT_CODE_DELETE: 'Deleted', DISCOUNT_CODE_USED: 'Used',
+  GROUP_RULE_SET: 'Created', GROUP_RULE_UPDATE: 'Updated', GROUP_RULE_DELETE: 'Deleted',
+  GENERAL_SETTINGS_UPDATE: 'Updated',
 };
 function activityActionPill(action) {
   const label = ACTIVITY_ACTION_LABELS[action] || action;
   let tone = 'muted';
   if (action === 'BANK_STATUS_CHANGE') tone = 'info';
-  else if (action === 'STUDENT_ID_VERIFICATION' || action === 'BANK_TXN_LINK' || action === 'PROGRAM_OPTION_CREATE' || action === 'FEE_CATEGORY_CREATE') tone = 'ok';
+  else if (action === 'STUDENT_ID_VERIFICATION' || action === 'BANK_TXN_LINK' || action === 'PROGRAM_OPTION_CREATE' || action === 'FEE_CATEGORY_CREATE'
+    || action === 'DISCOUNT_CODE_CREATE' || action === 'DISCOUNT_CODE_USED' || action === 'GROUP_RULE_SET') tone = 'ok';
   else if (action === 'ADMIN_UNENROLL' || action === 'BANK_TXN_UNLINK' || action.endsWith('_DELETE')) tone = 'bad';
   else if (action.includes('CORRECTION') || action.endsWith('_UPDATE')) tone = 'warn';
   return activityPill(label, tone);
@@ -3050,7 +3059,10 @@ async function renderBackendActivity() {
       <td class="py-3 px-4">${esc(r.actor_name)}</td>
     </tr>`).join('') || `<tr><td colspan="5" class="py-6 text-center text-slate-400">No allotments logged yet</td></tr>`;
 
-  const areaLabels = { program_option: 'Workshop / QI', fee_config: 'Fee Dates', fee_category: 'Fee Category' };
+  const areaLabels = {
+    program_option: 'Workshop / QI', fee_config: 'Fee Dates', fee_category: 'Fee Category',
+    discount_code: 'Discount Code', group_rule: 'Group Discount', general_settings: 'General', settings: 'General',
+  };
   setText('activity-count-master', String((data.master || []).length));
   document.getElementById('activity-master-body').innerHTML = (data.master || []).map((r) => `
     <tr>
@@ -3058,7 +3070,34 @@ async function renderBackendActivity() {
       <td class="py-3 px-4">${activityPill(areaLabels[r.entity_type] || r.entity_type, 'info')} ${activityActionPill(r.action)}</td>
       <td class="py-3 px-4">${activityTransition(r.old_value, r.new_value)}</td>
       <td class="py-3 px-4">${esc(r.actor_name)}</td>
-    </tr>`).join('') || `<tr><td colspan="4" class="py-6 text-center text-slate-400">No master-data edits logged yet</td></tr>`;
+    </tr>`).join('') || `<tr><td colspan="4" class="py-6 text-center text-slate-400">No settings changes logged yet</td></tr>`;
+
+  setText('activity-count-login', String((data.login || []).length));
+  document.getElementById('activity-login-body').innerHTML = (data.login || []).map((r) => `
+    <tr>
+      <td class="py-3 px-4 whitespace-nowrap text-slate-500">${fmtAuditTime(r.created_at)}</td>
+      <td class="py-3 px-4">${esc(r.actor_name || '—')}</td>
+      <td class="py-3 px-4 font-mono text-xs">+91 ${esc(r.phone)}</td>
+      <td class="py-3 px-4">${esc((r.actor_role || '').replace('_', ' '))}</td>
+    </tr>`).join('') || `<tr><td colspan="4" class="py-6 text-center text-slate-400">No logins logged yet</td></tr>`;
+
+  setText('activity-count-sms', String((data.sms || []).length));
+  document.getElementById('activity-sms-body').innerHTML = (data.sms || []).map((r) => `
+    <tr>
+      <td class="py-3 px-4 whitespace-nowrap text-slate-500">${fmtAuditTime(r.created_at)}</td>
+      <td class="py-3 px-4 font-mono text-xs">+91 ${esc(r.phone)}</td>
+      <td class="py-3 px-4">${activityPill(r.action === 'SMS_SENT' ? 'Sent' : 'Failed', r.action === 'SMS_SENT' ? 'ok' : 'bad')}</td>
+      <td class="py-3 px-4 text-xs text-slate-500">${esc(r.detail || '—')}</td>
+    </tr>`).join('') || `<tr><td colspan="4" class="py-6 text-center text-slate-400">No SMS sent yet</td></tr>`;
+
+  setText('activity-count-email', String((data.email || []).length));
+  document.getElementById('activity-email-body').innerHTML = (data.email || []).map((r) => `
+    <tr>
+      <td class="py-3 px-4 whitespace-nowrap text-slate-500">${fmtAuditTime(r.created_at)}</td>
+      <td class="py-3 px-4 text-xs">${esc(r.recipient)}</td>
+      <td class="py-3 px-4 text-xs text-slate-500">${esc(r.detail || '—')}</td>
+      <td class="py-3 px-4">${activityPill(r.action === 'EMAIL_SENT' ? 'Sent' : 'Failed', r.action === 'EMAIL_SENT' ? 'ok' : 'bad')}</td>
+    </tr>`).join('') || `<tr><td colspan="4" class="py-6 text-center text-slate-400">No emails sent yet</td></tr>`;
 
   // Only set the initial sub-tab -- if the admin already picked one while
   // this fetch was in flight, leave their choice alone.
@@ -3137,6 +3176,67 @@ async function deleteFeeCategory(id) {
 }
 
 // --- DISCOUNT CODES (admin) ---
+let cachedDiscountCodes = [];
+
+// Build the copy-pasteable WhatsApp message and open the share modal (PDF
+// voucher link + WhatsApp text). Reuses the already-fetched code list rather
+// than a second round trip.
+function openShareDiscountModal(id) {
+  const c = (cachedDiscountCodes || []).find((x) => String(x.id) === String(id));
+  if (!c) return;
+
+  const discountLine = c.discount_type === 'PERCENT' ? `${Number(c.discount_value)}% off` : `₹${inr(Number(c.discount_value))} off`;
+  let scopeLine = '';
+  if (c.scope_type === 'INDIVIDUAL') {
+    const u = (cachedUsers || []).find((x) => x.phone_number === c.scope_value);
+    scopeLine = `\nThis code is reserved for ${u ? u.full_name : 'you'} only.`;
+  } else if (c.scope_type === 'CATEGORY') {
+    scopeLine = '\nApplies to a specific delegate category — check on the registration page.';
+  }
+  const expiryLine = c.expires_at ? `\nValid through ${c.expires_at}.` : '';
+  const portalUrl = window.location.origin;
+
+  // Deliberately emoji-free: emoji in this message rendered as tofu/blanks on
+  // some recipients' devices, so the structure comes from WhatsApp's own
+  // *bold* markup instead of decorative characters.
+  const message = `*NQOCN 2026 — Discount Code*\n\n` +
+    `Code: *${c.code}*\n` +
+    `Discount: ${discountLine}${scopeLine}${expiryLine}\n\n` +
+    `How to use:\n` +
+    `1. Go to ${portalUrl}\n` +
+    `2. Register / log in and select your category\n` +
+    `3. Tap "Apply promo code" and enter ${c.code}\n\n` +
+    `See you at the conference!`;
+
+  setText('share-discount-code', c.code);
+  const textarea = document.getElementById('share-whatsapp-text');
+  if (textarea) textarea.value = message;
+  // For an individual code, pre-fill the delegate's own number (India country
+  // code 91 + their 10-digit mobile) so the chat opens directly with them
+  // instead of WhatsApp's "choose a contact" screen.
+  const waNumber = c.scope_type === 'INDIVIDUAL' && /^\d{10}$/.test(c.scope_value || '') ? `91${c.scope_value}` : '';
+  const waLink = document.getElementById('share-whatsapp-link');
+  if (waLink) waLink.href = `https://wa.me/${waNumber}?text=${encodeURIComponent(message)}`;
+  const pdfLink = document.getElementById('share-pdf-link');
+  if (pdfLink) pdfLink.href = `/api/admin/discount-codes/${encodeURIComponent(c.id)}/share`;
+
+  openModal('modal-share-discount');
+}
+
+async function copyShareWhatsappText() {
+  const textarea = document.getElementById('share-whatsapp-text');
+  if (!textarea) return;
+  try {
+    await navigator.clipboard.writeText(textarea.value);
+    showToast('Message copied — paste it into WhatsApp.', 'success');
+  } catch (e) {
+    // Clipboard API can be blocked (non-HTTPS, permissions); fall back to a
+    // manual select so the admin can still Ctrl/Cmd+C it themselves.
+    textarea.select();
+    showToast('Could not auto-copy — text is selected, press Ctrl/Cmd+C.');
+  }
+}
+
 // Generate a random, human-readable code (no ambiguous 0/O/1/I) so the admin
 // doesn't have to invent one. Uniqueness is enforced by the server's UNIQUE
 // index; on the rare collision the create call surfaces an error and a fresh
@@ -3222,6 +3322,7 @@ async function renderDiscountCodes() {
   const res = await fetch('/api/admin/discount-codes');
   if (!res.ok) return;
   const codes = (await res.json()).codes || [];
+  cachedDiscountCodes = codes; // reused by openShareDiscountModal() below
   const catLabel = (key) => (cats.find((c) => c.key === key) || {}).label || key;
   tbody.innerHTML = codes.length ? codes.map((c) => {
     const disc = c.discount_type === 'PERCENT' ? `${Number(c.discount_value)}%` : `₹${inr(Number(c.discount_value))}`;
@@ -3238,11 +3339,14 @@ async function renderDiscountCodes() {
       <td class="p-4">${usedTxt}</td>
       <td class="p-4 text-slate-600">${c.expires_at ? esc(c.expires_at) : '—'}</td>
       <td class="p-4 text-right whitespace-nowrap">
+        <button onclick="openShareDiscountModal(${esc(c.id)})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">📤 Share</button>
+      </td>
+      <td class="p-4 text-right whitespace-nowrap">
         <button onclick="toggleDiscountCode(${esc(c.id)}, ${c.active ? 0 : 1})" class="px-3 py-1.5 ${c.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg">${c.active ? 'Deactivate' : 'Activate'}</button>
         <button onclick="deleteDiscountCode(${esc(c.id)})" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg">Delete</button>
       </td>
     </tr>`;
-  }).join('') : `<tr><td colspan="6" class="p-6 text-center text-slate-400">No discount codes yet.</td></tr>`;
+  }).join('') : `<tr><td colspan="7" class="p-6 text-center text-slate-400">No discount codes yet.</td></tr>`;
 }
 
 async function handleAddDiscountCode(e) {
@@ -3351,26 +3455,109 @@ async function deleteGroupRule(id) {
   renderGroupRules();
 }
 
-// --- NOTIFICATION TOGGLES (super admin) ---
-async function renderNotificationSettings() {
-  const res = await fetch('/api/admin/notification-settings');
+// --- GENERAL SETTINGS: SMS / Email / UPI (super admin) ---
+let cachedGeneralSettings = null;
+
+async function renderGeneralSettings() {
+  const res = await fetch('/api/admin/general-settings');
   if (!res.ok) return;
   const data = await res.json();
-  const sms = document.getElementById('notify-sms-toggle');
-  const email = document.getElementById('notify-email-toggle');
-  if (sms) { sms.checked = !!data.sms.enabled; sms.disabled = !data.sms.available; }
-  if (email) { email.checked = !!data.email.enabled; email.disabled = !data.email.available; }
+  cachedGeneralSettings = data;
+
+  const smsToggle = document.getElementById('notify-sms-toggle');
+  const emailToggle = document.getElementById('notify-email-toggle');
+  if (smsToggle) { smsToggle.checked = !!data.sms.enabled; smsToggle.disabled = !data.sms.available; }
+  if (emailToggle) { emailToggle.checked = !!data.email.enabled; emailToggle.disabled = !data.email.available; }
   setText('notify-sms-state', data.sms.available ? (data.sms.enabled ? '· on' : '· off') : '· not configured');
   setText('notify-email-state', data.email.available ? (data.email.enabled ? '· on' : '· off') : '· not configured');
+  const smsKeyNote = document.getElementById('sms-key-note');
+  if (smsKeyNote) smsKeyNote.classList.toggle('hidden', data.sms.hasApiKey);
+  const emailKeyNote = document.getElementById('email-key-note');
+  if (emailKeyNote) emailKeyNote.classList.toggle('hidden', data.email.hasCredentials);
+
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el && document.activeElement !== el) el.value = v || ''; };
+  setVal('gs-sms-sender', data.sms.sender);
+  setVal('gs-sms-url', data.sms.url);
+  setVal('gs-sms-entityid', data.sms.entityId);
+  setVal('gs-sms-templateid', data.sms.templateId);
+  setVal('gs-sms-headerid', data.sms.headerId);
+  setVal('gs-sms-type', data.sms.type);
+  setVal('gs-email-from', data.email.from);
+  setVal('gs-email-fromname', data.email.fromName);
+  setVal('gs-email-region', data.email.region);
+  setVal('gs-upi-id', data.upi.id);
+  setVal('gs-upi-payeename', data.upi.payeeName);
+
+  // Credential fields are never prefilled -- only a masked hint of the
+  // currently-active key, so the admin knows one is set without it ever
+  // appearing in the DOM.
+  setText('gs-sms-apikey-hint', data.sms.apiKeyMasked ? `(current: ${data.sms.apiKeyMasked})` : '(not set)');
+  setText('gs-email-accesskey-hint', data.email.accessKeyMasked ? `(current: ${data.email.accessKeyMasked})` : '(not set)');
+  setText('gs-email-secretkey-hint', data.email.secretKeyMasked ? `(current: ${data.email.secretKeyMasked})` : '(not set)');
+
+  const envBody = document.getElementById('gs-other-env-body');
+  if (envBody) {
+    envBody.innerHTML = (data.otherEnvVars || []).map((v) => `
+      <tr>
+        <td class="py-2 px-3 font-mono text-xs text-slate-700">${esc(v.key)}</td>
+        <td class="py-2 px-3 text-xs ${v.set ? 'text-slate-600' : 'text-slate-400 italic'}">${v.set ? esc(v.value) : 'not set'}</td>
+      </tr>`).join('') || `<tr><td colspan="2" class="py-3 text-center text-slate-400">None</td></tr>`;
+  }
 }
 
-async function setNotificationToggle(channel, enabled) {
-  const data = await (await fetch('/api/admin/notification-settings', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [channel]: enabled }),
+async function setGeneralToggle(channel, enabled) {
+  const data = await (await fetch('/api/admin/general-settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notify: { [channel]: enabled } }),
   })).json();
-  if (!data.success) { showToast(data.error || 'Could not update.'); renderNotificationSettings(); return; }
+  if (!data.success) { showToast(data.error || 'Could not update.'); renderGeneralSettings(); return; }
   showToast(`${channel === 'sms' ? 'SMS' : 'Email'} turned ${enabled ? 'on' : 'off'}.`, 'info');
-  renderNotificationSettings();
+  renderGeneralSettings();
+}
+
+async function saveGeneralSettings(e, group) {
+  e.preventDefault();
+  let body;
+  let credentialInputs = [];
+  if (group === 'sms') {
+    const apiKey = document.getElementById('gs-sms-apikey').value;
+    body = { sms: {
+      sender: document.getElementById('gs-sms-sender').value,
+      url: document.getElementById('gs-sms-url').value,
+      entityId: document.getElementById('gs-sms-entityid').value,
+      templateId: document.getElementById('gs-sms-templateid').value,
+      headerId: document.getElementById('gs-sms-headerid').value,
+      type: document.getElementById('gs-sms-type').value,
+    } };
+    if (apiKey.trim()) body.sms.apiKey = apiKey.trim();
+    credentialInputs = ['gs-sms-apikey'];
+  } else if (group === 'email') {
+    const accessKey = document.getElementById('gs-email-accesskey').value;
+    const secretKey = document.getElementById('gs-email-secretkey').value;
+    body = { email: {
+      from: document.getElementById('gs-email-from').value,
+      fromName: document.getElementById('gs-email-fromname').value,
+      region: document.getElementById('gs-email-region').value,
+    } };
+    if (accessKey.trim()) body.email.awsAccessKeyId = accessKey.trim();
+    if (secretKey.trim()) body.email.awsSecretAccessKey = secretKey.trim();
+    credentialInputs = ['gs-email-accesskey', 'gs-email-secretkey'];
+  } else if (group === 'upi') {
+    body = { upi: {
+      id: document.getElementById('gs-upi-id').value,
+      payeeName: document.getElementById('gs-upi-payeename').value,
+    } };
+  } else {
+    return;
+  }
+  const data = await (await fetch('/api/admin/general-settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not save.');
+  showToast(`${group.toUpperCase()} settings saved.`, 'success');
+  // Clear any credential inputs immediately after a successful save -- they
+  // should never sit filled-in on screen once submitted.
+  credentialInputs.forEach((id) => { const el = document.getElementById(id); if (el) el.value = ''; });
+  renderGeneralSettings();
 }
 
 // --- GROUP MONITORING (admin) ---
@@ -3956,7 +4143,7 @@ async function handleCreateUserSubmit(e) {
 // can jump back into it.
 // Activity Log shows one category at a time, picked from its own submenu
 // (separate from the main Masters sub-tabs above).
-const ACTIVITY_SUBTABS = ['imports', 'mapping', 'approval', 'abstract-approval', 'abstract-allotment', 'master'];
+const ACTIVITY_SUBTABS = ['imports', 'mapping', 'approval', 'abstract-approval', 'abstract-allotment', 'master', 'login', 'sms', 'email'];
 function switchActivityLog(tab) {
   ACTIVITY_SUBTABS.forEach((t) => {
     const panel = document.getElementById(`activity-panel-${t}`);
@@ -3998,7 +4185,7 @@ document.addEventListener('click', (e) => {
 // Settings sub-menu tabs (each is now its own top-level <section>) vs. the
 // main nav-bar tabs. The Settings items highlight in the dropdown; the main
 // tabs highlight in the tab bar.
-const SETTINGS_TABS = ['workshops', 'qi', 'fees', 'notification', 'reminders', 'groupdiscount', 'discount', 'users', 'activity'];
+const SETTINGS_TABS = ['workshops', 'qi', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'activity'];
 const MAIN_TABS = ['payments', 'statement', 'abstracts', 'reports'];
 
 function switchBackendTab(tab) {

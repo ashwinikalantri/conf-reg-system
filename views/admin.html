@@ -36,8 +36,8 @@
           <button id="settings-item-fees" onclick="selectSettingsTab('fees')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
             <span>💰 Fee Master</span>
           </button>
-          <button id="settings-item-notification" onclick="selectSettingsTab('notification')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span>🔔 Notification</span>
+          <button id="settings-item-general" onclick="selectSettingsTab('general')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
+            <span>⚙️ General</span>
           </button>
           <button id="settings-item-reminders" onclick="selectSettingsTab('reminders')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
             <span>✉️ Reminders</span>
@@ -402,7 +402,10 @@
         <button id="activity-subnav-approval" onclick="switchActivityLog('approval')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">✅ Registration Approval <span id="activity-count-approval" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
         <button id="activity-subnav-abstract-approval" onclick="switchActivityLog('abstract-approval')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">📄 Abstract Approval <span id="activity-count-abstract-approval" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
         <button id="activity-subnav-abstract-allotment" onclick="switchActivityLog('abstract-allotment')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">🎤 Abstract Allotment <span id="activity-count-abstract-allotment" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
-        <button id="activity-subnav-master" onclick="switchActivityLog('master')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">🗂️ Master Changes <span id="activity-count-master" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+        <button id="activity-subnav-master" onclick="switchActivityLog('master')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">🗂️ General Logs <span id="activity-count-master" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+        <button id="activity-subnav-login" onclick="switchActivityLog('login')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">🔑 Login <span id="activity-count-login" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+        <button id="activity-subnav-sms" onclick="switchActivityLog('sms')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">📱 SMS <span id="activity-count-sms" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+        <button id="activity-subnav-email" onclick="switchActivityLog('email')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">✉️ Email <span id="activity-count-email" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
       </div>
 
       <div id="activity-panel-imports" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -477,7 +480,8 @@
 
       <div id="activity-panel-master" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div class="px-4 py-3 border-b border-slate-100">
-          <h3 class="font-bold text-slate-800 text-sm">🗂️ Master Changes</h3>
+          <h3 class="font-bold text-slate-800 text-sm">🗂️ General Logs</h3>
+          <p class="text-[11px] text-slate-500">Every change made on a Settings page: Workshop/QI Master, Fee Master, Discount Codes, Group Discount Rules, and General (SMS/Email/UPI).</p>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-left border-collapse min-w-[800px] text-sm">
@@ -488,25 +492,133 @@
           </table>
         </div>
       </div>
+
+      <div id="activity-panel-login" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <h3 class="font-bold text-slate-800 text-sm">🔑 Login</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[600px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Name</th><th class="py-3 px-4">Mobile</th><th class="py-3 px-4">Role</th>
+            </tr></thead>
+            <tbody id="activity-login-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="activity-panel-sms" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <h3 class="font-bold text-slate-800 text-sm">📱 SMS</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[650px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Mobile</th><th class="py-3 px-4">Status</th><th class="py-3 px-4">Detail</th>
+            </tr></thead>
+            <tbody id="activity-sms-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="activity-panel-email" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <h3 class="font-bold text-slate-800 text-sm">✉️ Email</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[700px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Time</th><th class="py-3 px-4">To</th><th class="py-3 px-4">Subject</th><th class="py-3 px-4">Status</th>
+            </tr></thead>
+            <tbody id="activity-email-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
     </section>
 
-    <!-- MASTERS: wraps Workshops & QI / Fees, each a sub-tab -->
-    <!-- SETTINGS: NOTIFICATIONS -->
-    <section id="section-notification" class="hidden space-y-6">
-      <!-- Notification master switches (super admin). Turning a channel off
-           silences ALL outgoing SMS / email, including OTPs. -->
+    <!-- SETTINGS: GENERAL (SMS / Email / UPI) -->
+    <section id="section-general" class="hidden space-y-6">
+      <!-- SMS -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-        <h3 class="text-lg font-bold text-slate-800 mb-1">Notifications</h3>
-        <p class="text-xs text-slate-500 mb-3">Master switches for outgoing messages. Turning SMS off also stops login OTPs.</p>
-        <div class="flex flex-wrap gap-6">
-          <label class="flex items-center gap-3 cursor-pointer">
-            <input type="checkbox" id="notify-sms-toggle" onchange="setNotificationToggle('sms', this.checked)" class="w-5 h-5">
-            <span class="text-sm font-semibold text-slate-700">📱 SMS <span id="notify-sms-state" class="text-xs font-normal text-slate-400"></span></span>
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div>
+            <h3 class="text-lg font-bold text-slate-800">📱 SMS</h3>
+            <p class="text-xs text-slate-500">DLT gateway configuration. Turning this off also stops login OTPs.</p>
+          </div>
+          <label class="flex items-center gap-2 cursor-pointer shrink-0">
+            <input type="checkbox" id="notify-sms-toggle" onchange="setGeneralToggle('sms', this.checked)" class="w-5 h-5">
+            <span class="text-sm font-semibold text-slate-700">Enabled <span id="notify-sms-state" class="text-xs font-normal text-slate-400"></span></span>
           </label>
-          <label class="flex items-center gap-3 cursor-pointer">
-            <input type="checkbox" id="notify-email-toggle" onchange="setNotificationToggle('email', this.checked)" class="w-5 h-5">
-            <span class="text-sm font-semibold text-slate-700">✉️ Email <span id="notify-email-state" class="text-xs font-normal text-slate-400"></span></span>
+        </div>
+        <p id="sms-key-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3">⚠️ No SMS_API_KEY set in the server environment — SMS cannot send regardless of this configuration.</p>
+        <form onsubmit="saveGeneralSettings(event, 'sms')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Sender ID</label><input id="gs-sms-sender" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Gateway URL</label><input id="gs-sms-url" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">DLT Entity ID</label><input id="gs-sms-entityid" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">DLT Template ID</label><input id="gs-sms-templateid" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">DLT Header ID</label><input id="gs-sms-headerid" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Message Type</label><input id="gs-sms-type" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div class="sm:col-span-2 border-t pt-3">
+            <label class="block text-[10px] font-semibold text-slate-600 mb-1">API Key <span id="gs-sms-apikey-hint" class="font-normal text-slate-400"></span></label>
+            <input id="gs-sms-apikey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
+            <p class="text-[10px] text-slate-400 mt-1">Stored in the server's .env file, never in the database. Only entered when changing it.</p>
+          </div>
+          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save SMS Settings</button></div>
+        </form>
+      </div>
+
+      <!-- Email -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div>
+            <h3 class="text-lg font-bold text-slate-800">✉️ Email</h3>
+            <p class="text-xs text-slate-500">Amazon SES sender configuration.</p>
+          </div>
+          <label class="flex items-center gap-2 cursor-pointer shrink-0">
+            <input type="checkbox" id="notify-email-toggle" onchange="setGeneralToggle('email', this.checked)" class="w-5 h-5">
+            <span class="text-sm font-semibold text-slate-700">Enabled <span id="notify-email-state" class="text-xs font-normal text-slate-400"></span></span>
           </label>
+        </div>
+        <p id="email-key-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3">⚠️ AWS credentials are not set in the server environment — Email cannot send regardless of this configuration.</p>
+        <form onsubmit="saveGeneralSettings(event, 'email')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">From address</label><input id="gs-email-from" type="email" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">From name</label><input id="gs-email-fromname" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">AWS Region</label><input id="gs-email-region" placeholder="ap-south-1" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div class="border-t pt-3">
+            <label class="block text-[10px] font-semibold text-slate-600 mb-1">AWS Access Key ID <span id="gs-email-accesskey-hint" class="font-normal text-slate-400"></span></label>
+            <input id="gs-email-accesskey" type="password" autocomplete="new-password" placeholder="Leave blank to keep current" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
+          </div>
+          <div class="border-t pt-3">
+            <label class="block text-[10px] font-semibold text-slate-600 mb-1">AWS Secret Access Key <span id="gs-email-secretkey-hint" class="font-normal text-slate-400"></span></label>
+            <input id="gs-email-secretkey" type="password" autocomplete="new-password" placeholder="Leave blank to keep current" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
+          </div>
+          <p class="text-[10px] text-slate-400 sm:col-span-2">Credentials are stored in the server's .env file, never in the database. Only entered when changing them.</p>
+          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Email Settings</button></div>
+        </form>
+      </div>
+
+      <!-- UPI -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-800 mb-1">💳 UPI</h3>
+        <p class="text-xs text-slate-500 mb-3">The conference's own UPI ID. Used to generate the payment QR code and to check payment screenshots.</p>
+        <form onsubmit="saveGeneralSettings(event, 'upi')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">UPI ID (VPA)</label><input id="gs-upi-id" placeholder="name@bank" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Payee Name</label><input id="gs-upi-payeename" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save UPI Settings</button></div>
+        </form>
+      </div>
+
+      <!-- Other .env variables (read-only, not editable here) -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-800 mb-1">🗄️ Other Environment Variables</h3>
+        <p class="text-xs text-slate-500 mb-3">Server-level settings read from .env at startup. Not editable here — change them on the server and restart.</p>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-2 px-3">Variable</th><th class="py-2 px-3">Value</th>
+            </tr></thead>
+            <tbody id="gs-other-env-body" class="divide-y divide-slate-100"></tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -654,6 +766,7 @@
               <th class="py-3 px-4">Scope</th>
               <th class="py-3 px-4">Used</th>
               <th class="py-3 px-4">Expires</th>
+              <th class="py-3 px-4 text-right">Share</th>
               <th class="py-3 px-4 text-right">Actions</th>
             </tr>
           </thead>
@@ -775,6 +888,26 @@
         <p class="text-slate-400">Loading…</p>
       </div>
     </aside>
+  </div>
+
+  <!-- MODAL: SHARE DISCOUNT CODE -->
+  <div id="modal-share-discount" class="hidden fixed inset-0 bg-slate-900/60 flex justify-center items-center p-4 z-50">
+    <div class="bg-white max-w-md w-full rounded-2xl p-6 shadow-2xl relative">
+      <button onclick="closeModal('modal-share-discount')" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
+      <h3 class="text-lg font-bold text-slate-800 mb-1">Share Discount Code</h3>
+      <p id="share-discount-code" class="text-xs text-slate-500 mb-4 font-mono font-bold"></p>
+
+      <label class="block text-xs font-semibold text-slate-700 mb-1">WhatsApp message</label>
+      <textarea id="share-whatsapp-text" readonly rows="8" class="w-full p-2.5 border rounded-lg text-sm outline-none font-mono bg-slate-50"></textarea>
+      <div class="flex gap-2 mt-2">
+        <button type="button" onclick="copyShareWhatsappText()" class="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-lg shadow-md">📋 Copy Message</button>
+        <a id="share-whatsapp-link" href="#" target="_blank" rel="noopener" class="flex-1 text-center px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-sm rounded-lg shadow-md">Open in WhatsApp</a>
+      </div>
+
+      <div class="border-t mt-4 pt-4">
+        <a id="share-pdf-link" href="#" target="_blank" rel="noopener" class="block text-center w-full px-4 py-2 border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold text-sm rounded-lg">📄 Open Printable Voucher (Save as PDF)</a>
+      </div>
+    </div>
   </div>
 
   <!-- MODAL: CREATE USER -->

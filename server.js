@@ -79,9 +79,33 @@ function roleGrants(role) {
 const CONFERENCE_NAME = 'International Conference on Healthcare Quality & Patient Safety 2026';
 const PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
 
+// --- .ENV FILE HELPERS ---------------------------------------------------
+// Lets Settings → General persist a credential change to the actual .env
+// file (not the database) so it survives a restart and stays wherever every
+// other secret in this app already lives -- one source of truth, and
+// nothing sensitive ever lands in conference.db or a backup of it. Updates
+// process.env immediately too, so the change takes effect without a restart.
+const ENV_PATH = path.join(__dirname, '.env');
+function writeEnvVar(key, value) {
+  process.env[key] = value;
+  let content = '';
+  try { content = fs.readFileSync(ENV_PATH, 'utf8'); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  const line = `${key}=${value}`;
+  const re = new RegExp(`^${key}=.*$`, 'm');
+  content = re.test(content) ? content.replace(re, line) : (content.replace(/\n*$/, '\n') + line + '\n');
+  fs.writeFileSync(ENV_PATH, content);
+}
+// Last 4 characters only, for the admin to confirm which key is active
+// without the full secret ever reaching the browser.
+const maskSecret = (v) => v ? `••••${String(v).slice(-4)}` : null;
+
 // --- SMS (Vynttra) ------------------------------------------------------
 // Only the API key is a secret; the DLT sender/entity/template/header IDs are
 // registration identifiers and default to the NQOCN values, overridable by env.
+// Operational fields, and now the API key itself too, are admin-editable from
+// Settings → General -- operational fields persist to schema_meta, while the
+// key (like every credential here) persists to .env via writeEnvVar(), never
+// to the database, and the browser is only ever shown a masked preview.
 const SMS = {
   apiKey: process.env.SMS_API_KEY || '',
   url: process.env.SMS_URL || 'https://api.vynttra.in/index.php/sms/json',
@@ -91,11 +115,13 @@ const SMS = {
   headerId: process.env.SMS_HEADER_ID || '1005654540639709445',
   type: process.env.SMS_TYPE || 'UNI',
 };
-const SMS_ENABLED = !!SMS.apiKey;
+// Capability depends on runtime-editable fields now, so these are functions
+// rather than booleans frozen at boot.
+const smsEnabled = () => !!SMS.apiKey && !!SMS.url && !!SMS.sender;
 
 // Runtime on/off switches a super admin can flip (persisted in schema_meta,
 // loaded at boot by loadNotificationToggles). These gate sending ON TOP of the
-// env-based capability (SMS_ENABLED / EMAIL_ENABLED) -- turning a channel off
+// env-based capability (smsEnabled() / emailEnabled()) -- turning a channel off
 // stops all outgoing messages on it without touching credentials.
 const notifyToggle = { sms: true, email: true };
 async function loadNotificationToggles() {
@@ -105,10 +131,31 @@ async function loadNotificationToggles() {
   if (e) notifyToggle.email = e.value !== '0';
 }
 
+// Non-secret operational fields for SMS/Email/UPI, admin-editable from
+// Settings → General, persisted in schema_meta and applied over the env
+// defaults set on SMS/EMAIL/UPI above. Credentials (SMS_API_KEY, AWS keys)
+// are intentionally not among these keys -- they only ever come from .env.
+const GENERAL_SETTINGS_KEYS = {
+  sms_sender: ['SMS', 'sender'], sms_url: ['SMS', 'url'], sms_entity_id: ['SMS', 'entityId'],
+  sms_template_id: ['SMS', 'templateId'], sms_header_id: ['SMS', 'headerId'], sms_type: ['SMS', 'type'],
+  email_from: ['EMAIL', 'from'], email_from_name: ['EMAIL', 'fromName'], email_region: ['EMAIL', 'region'],
+  upi_id: ['UPI', 'id'], upi_payee_name: ['UPI', 'payeeName'],
+};
+async function loadGeneralSettings() {
+  const keys = Object.keys(GENERAL_SETTINGS_KEYS);
+  const rows = await dbAll(`SELECT key, value FROM schema_meta WHERE key IN (${keys.map(() => '?').join(',')})`, keys);
+  const targets = { SMS, EMAIL, UPI };
+  for (const row of rows) {
+    const dest = GENERAL_SETTINGS_KEYS[row.key];
+    if (dest && row.value) targets[dest[0]][dest[1]] = row.value;
+  }
+  rebuildSesClient();
+}
+
 // Send the registration OTP over SMS using the registered DLT template.
 // Fire-and-forget: failures are logged, never block OTP issuance.
 async function sendOtpSms(phone, otp) {
-  if (!SMS_ENABLED || !notifyToggle.sms) return;
+  if (!smsEnabled() || !notifyToggle.sms) return;
   const text = `Dear Delegate, Thank you for registering for the NQOCN Conference. Your OTP for registration verification is ${otp} NQOCN Conference MGIMS`;
   // Without a bound, a stalled connection to the gateway (network blip,
   // upstream not closing) hangs this fire-and-forget call forever -- no
@@ -133,12 +180,16 @@ async function sendOtpSms(phone, otp) {
     const data = await res.json().catch(() => ({}));
     if (data.code !== 200) {
       console.error(`SMS to ${phone} not accepted (HTTP ${res.status}):`, JSON.stringify(data));
+      writeAuditRow('sms', phone, 'SMS_FAILED', null, `HTTP ${res.status}: ${JSON.stringify(data).slice(0, 200)}`, null, null, null).catch(() => {});
     } else {
       const id = data.data && data.data[0] && data.data[0].uniqueid;
       console.log(`SMS to ${phone} accepted by gateway${id ? ` (uniqueid ${id})` : ''}`);
+      writeAuditRow('sms', phone, 'SMS_SENT', null, id ? `uniqueid ${id}` : 'accepted', null, null, null).catch(() => {});
     }
   } catch (err) {
-    console.error(`SMS to ${phone} failed:`, err.name === 'AbortError' ? 'timed out after 10s' : err.message);
+    const detail = err.name === 'AbortError' ? 'timed out after 10s' : err.message;
+    console.error(`SMS to ${phone} failed:`, detail);
+    writeAuditRow('sms', phone, 'SMS_FAILED', null, detail, null, null, null).catch(() => {});
   } finally {
     clearTimeout(timeoutId);
   }
@@ -148,26 +199,43 @@ async function sendOtpSms(phone, otp) {
 // Uses IAM credentials + region from the environment (AWS_ACCESS_KEY_ID,
 // AWS_SECRET_ACCESS_KEY, AWS_REGION). SES_FROM must be a verified sender.
 // Dormant until credentials, region, and a From address are all present.
-const EMAIL_FROM = (process.env.SES_FROM || '').trim();
-const EMAIL_FROM_NAME = process.env.SES_FROM_NAME || 'NQOCN 2026';
+// From address / display name / region, and now the IAM credentials too, are
+// admin-editable from Settings → General. The credentials are read straight
+// from process.env (not cached in a const) since writeEnvVar() can now change
+// them after boot -- the AWS SDK's default credential provider also reads
+// process.env per-call, so updating it here is enough without touching the
+// SDK client's construction.
+const EMAIL = {
+  from: (process.env.SES_FROM || '').trim(),
+  fromName: process.env.SES_FROM_NAME || 'NQOCN 2026',
+  region: (process.env.AWS_REGION || '').trim(),
+};
+const awsCredsPresent = () => !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
+const emailEnabled = () => awsCredsPresent() && !!EMAIL.region && !!EMAIL.from;
 // RFC 5322 "Display Name <address>" form -- without it SES sends with no
 // name, so inboxes show only the bare address instead of "NQOCN 2026".
-const EMAIL_FROM_FORMATTED = EMAIL_FROM ? `"${EMAIL_FROM_NAME.replace(/"/g, '')}" <${EMAIL_FROM}>` : EMAIL_FROM;
-const EMAIL_ENABLED = !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_REGION && EMAIL_FROM);
-const sesClient = EMAIL_ENABLED ? new SESv2Client({ region: process.env.AWS_REGION }) : null;
+const emailFromFormatted = () => EMAIL.from ? `"${EMAIL.fromName.replace(/"/g, '')}" <${EMAIL.from}>` : EMAIL.from;
+// Rebuilt whenever the region changes, since the client is region-bound.
+let sesClient = null;
+function rebuildSesClient() {
+  sesClient = emailEnabled() ? new SESv2Client({ region: EMAIL.region }) : null;
+}
+rebuildSesClient();
 
 // Send an email if configured; never throws (notifications are best-effort).
 // The runtime notifyToggle.email switch lets a super admin silence all email.
 async function sendEmail(to, subject, html) {
-  if (!EMAIL_ENABLED || !notifyToggle.email || !to) return;
+  if (!emailEnabled() || !notifyToggle.email || !to || !sesClient) return;
   try {
     await sesClient.send(new SendEmailCommand({
-      FromEmailAddress: EMAIL_FROM_FORMATTED,
+      FromEmailAddress: emailFromFormatted(),
       Destination: { ToAddresses: [to] },
       Content: { Simple: { Subject: { Data: subject, Charset: 'UTF-8' }, Body: { Html: { Data: html, Charset: 'UTF-8' } } } },
     }));
+    writeAuditRow('email', to, 'EMAIL_SENT', null, subject, null, null, null).catch(() => {});
   } catch (err) {
     console.error(`Email to ${to} failed:`, err.message);
+    writeAuditRow('email', to, 'EMAIL_FAILED', null, `${subject} — ${err.message}`.slice(0, 300), null, null, null).catch(() => {});
   }
 }
 
@@ -194,8 +262,13 @@ const emailWrap = (title, bodyHtml) =>
 // today's pricing phase (see resolveFee); nothing is taken from the request body.
 
 // The conference's own UPI ID (VPA). A payment screenshot should show this as
-// the payee; OCR checks the uploaded image against it.
-const OFFICIAL_UPI_ID = process.env.OFFICIAL_UPI_ID || 'abhishekraut@cbin';
+// the payee; OCR checks the uploaded image against it. Admin-editable from
+// Settings → General, and served to the delegate payment form via /api/fees
+// so the QR code and the OCR check can never drift apart.
+const UPI = {
+  id: process.env.OFFICIAL_UPI_ID || 'abhishekraut@cbin',
+  payeeName: process.env.UPI_PAYEE_NAME || 'NQOCN 2026',
+};
 
 // Categories that must upload a student ID card, with the discipline and level
 // the card is expected to show. OCR does a preliminary check against these.
@@ -396,7 +469,7 @@ async function runOcrChecks(buffer, { expectedAmount, utr }) {
   }
 
   // VPA: the conference UPI id appears (compare ignoring whitespace/case).
-  const vpa = compact.includes(OFFICIAL_UPI_ID.replace(/\s+/g, '').toLowerCase());
+  const vpa = compact.includes(UPI.id.replace(/\s+/g, '').toLowerCase());
 
   // UTR: the entered UTR digits appear in the image text.
   const utrMatch = enteredUtrDigits.length >= 6 && digitsOnly.includes(enteredUtrDigits);
@@ -481,8 +554,11 @@ async function deleteScreenshotFile(value) {
   }
 }
 
-// Append an entry to the audit trail, attributed to the acting admin.
-async function recordAudit({ req, entityType, entityId, action, oldValue, newValue }) {
+// Low-level audit write, independent of req.session -- used both by
+// recordAudit() (admin actions with a logged-in actor) and by system-initiated
+// events (login itself, outgoing SMS/email) where either there's no session
+// yet or the "actor" is the system, not an admin.
+async function writeAuditRow(entityType, entityId, action, oldValue, newValue, actorPhone, actorName, actorRole) {
   await dbRun(
     `INSERT INTO audit_log
       (entity_type, entity_id, action, old_value, new_value, actor_phone, actor_name, actor_role, created_at)
@@ -493,12 +569,23 @@ async function recordAudit({ req, entityType, entityId, action, oldValue, newVal
       action,
       oldValue == null ? null : String(oldValue),
       newValue == null ? null : String(newValue),
-      req.session.phone,
-      req.session.name,
-      req.session.role,
+      actorPhone == null ? null : String(actorPhone),
+      actorName == null ? null : String(actorName),
+      actorRole == null ? null : String(actorRole),
       Date.now(),
     ]
   );
+}
+
+// Append an entry to the audit trail, attributed to the acting admin.
+async function recordAudit({ req, entityType, entityId, action, oldValue, newValue }) {
+  await writeAuditRow(entityType, entityId, action, oldValue, newValue, req.session.phone, req.session.name, req.session.role);
+}
+
+// Login event -- entityId is the phone so the login log can be searched per
+// delegate/admin like every other log.
+async function recordLogin(phone, name, role) {
+  await writeAuditRow('login', phone, 'LOGIN', null, null, phone, name, role).catch((err) => console.error('Login log failed:', err.message));
 }
 
 // Fetch program options annotated with live enrollment counts. A slot is held
@@ -1459,7 +1546,7 @@ app.post('/api/otp/request', async (req, res, next) => {
     console.log(`[OTP] ${phone} -> ${otp} (valid ${OTP_TTL_MS / 60000} min)`);
     // Reflect the runtime SMS toggle: if a super admin has turned SMS off, the
     // OTP isn't sent, and (in dev) it's echoed so login still works.
-    const smsWillSend = SMS_ENABLED && notifyToggle.sms;
+    const smsWillSend = smsEnabled() && notifyToggle.sms;
     if (smsWillSend) sendOtpSms(phone, otp); // fire-and-forget; logs on failure
 
     const payload = { success: true, smsSent: smsWillSend };
@@ -1523,6 +1610,7 @@ app.post('/api/auth/register', async (req, res, next) => {
     await assignUserRegNumber(phone); // ensure a registration number exists
     const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
     await startSession(phone, user.role, res);
+    recordLogin(phone, user.full_name, user.role); // fire-and-forget
     res.json({ success: true, user });
   } catch (err) {
     next(err);
@@ -1546,6 +1634,7 @@ app.post('/api/auth/login', async (req, res, next) => {
     if (!check.ok) return res.status(400).json({ success: false, error: check.error });
 
     await startSession(phone, user.role, res);
+    recordLogin(phone, user.full_name, user.role); // fire-and-forget
     res.json({ success: true, user });
   } catch (err) {
     next(err);
@@ -1611,11 +1700,13 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     // registration needs neither.
     let promoDiscount = 0;
     let promoCode = null;
+    let promoCodeId = null;
     if (discountCode && String(discountCode).trim() && String(discountCode).trim().toUpperCase() !== 'GROUP') {
       const dv = await validateDiscountCode(discountCode, phone, effectiveCategoryKey);
       if (!dv.ok) return res.status(400).json({ success: false, error: dv.error });
       promoDiscount = computeDiscountAmount(dv.code, feeInfo.amount);
       promoCode = dv.code.code;
+      promoCodeId = dv.code.id;
     }
     let groupDiscount = 0;
     const dgroup = await getDelegateGroup(phone);
@@ -1729,6 +1820,10 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
       const regNo = await assignUserRegNumber(phone);
       await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
 
+      if (promoCodeId) {
+        writeAuditRow('discount_code', promoCodeId, 'DISCOUNT_CODE_USED', null, `${promoCode} used by ${name} (${phone}), reg ${regNo}`, phone, name, 'DELEGATE').catch(() => {});
+      }
+
       notifyDelegate(phone, 'Registration confirmed',
         emailWrap('Your registration is confirmed',
           `<p>Dear ${escapeHtml(name)},</p>
@@ -1835,6 +1930,10 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     // Stamp the registration with the delegate's signup-assigned number.
     const regNo = await assignUserRegNumber(phone);
     await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
+
+    if (promoCodeId) {
+      writeAuditRow('discount_code', promoCodeId, 'DISCOUNT_CODE_USED', null, `${promoCode} used by ${name} (${phone}), reg ${regNo}`, phone, name, 'DELEGATE').catch(() => {});
+    }
 
     // In case a matching statement transaction was already imported before
     // this submission arrived, try to link it immediately.
@@ -2099,6 +2198,7 @@ app.get('/api/fees', requireAuth, async (req, res, next) => {
         subtitle: c.subtitle || '',
         fee: { early: c.early_fee, regular: c.regular_fee, late: c.late_fee, spot: c.spot_fee }[phase],
       })),
+      upi: { id: UPI.id, payeeName: UPI.payeeName },
     });
   } catch (err) {
     next(err);
@@ -3347,7 +3447,7 @@ app.post('/api/admin/reminders/test-send', requireRole('SUPER_ADMIN'), async (re
     if (!bodyHtml || !String(bodyHtml).trim()) {
       return res.status(400).json({ success: false, error: 'Email body is required.' });
     }
-    if (!EMAIL_ENABLED) {
+    if (!emailEnabled()) {
       return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
     }
 
@@ -3379,7 +3479,7 @@ app.post('/api/admin/reminders/send', requireRole('SUPER_ADMIN'), async (req, re
     if (!bodyHtml || !String(bodyHtml).trim()) {
       return res.status(400).json({ success: false, error: 'Email body is required.' });
     }
-    if (!EMAIL_ENABLED) {
+    if (!emailEnabled()) {
       return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
     }
     // phones: an explicit list of who to send to (the admin's selection in
@@ -3739,6 +3839,57 @@ app.delete('/api/admin/discount-codes/:id', requireRole('SUPER_ADMIN', 'FINANCE_
   }
 });
 
+// Printable one-page voucher for a discount code -- same "open in a new tab,
+// window.print() to save as PDF" pattern as reportHtml(), so no PDF library
+// is needed. Also backs the admin's "Share" action alongside a copyable
+// WhatsApp message (built client-side from the same /api/admin/discount-codes
+// list data, so this endpoint only needs to handle the PDF/print path).
+app.get('/api/admin/discount-codes/:id/share', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const code = await dbGet('SELECT * FROM discount_codes WHERE id = ?', [req.params.id]);
+    if (!code) return res.status(404).send('Discount code not found.');
+
+    let scopeLine = 'Valid for any delegate.';
+    if (code.scope_type === 'CATEGORY') {
+      const cat = await dbGet('SELECT label FROM fee_categories WHERE category_key = ?', [code.scope_value]);
+      scopeLine = `Valid for the "${escapeHtml(cat ? cat.label : code.scope_value)}" category only.`;
+    } else if (code.scope_type === 'INDIVIDUAL') {
+      const u = await dbGet('SELECT full_name FROM users WHERE phone_number = ?', [code.scope_value]);
+      scopeLine = `Reserved for ${escapeHtml(u ? u.full_name : 'this delegate')} (+91 ${escapeHtml(code.scope_value || '')}) only.`;
+    }
+    const discountLine = code.discount_type === 'PERCENT' ? `${Number(code.discount_value)}% off` : `₹${inr(Number(code.discount_value))} off`;
+    const expiryLine = code.expires_at ? `Valid through ${escapeHtml(code.expires_at)}.` : 'No expiry date set.';
+
+    res.type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discount Code ${escapeHtml(code.code)}</title>
+<style>
+  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#0f172a;margin:2rem;display:flex;justify-content:center;}
+  .card{max-width:420px;width:100%;border:2px dashed #4f46e5;border-radius:16px;padding:2rem;text-align:center;}
+  .eyebrow{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:#6366f1;font-weight:700;}
+  h1{font-size:.95rem;margin:.35rem 0 1.25rem;color:#312e81;}
+  .code{font-family:ui-monospace,Menlo,monospace;font-size:2.25rem;font-weight:800;letter-spacing:.1em;background:#eef2ff;border-radius:12px;padding:1rem;margin:0 0 1rem;color:#312e81;}
+  .discount{font-size:1.1rem;font-weight:700;color:#047857;margin-bottom:.75rem;}
+  p{font-size:.82rem;color:#475569;margin:.35rem 0;}
+  .actions{margin-top:1.5rem;}
+  button{background:#4f46e5;color:#fff;border:0;border-radius:8px;padding:.6rem 1.4rem;font-weight:700;cursor:pointer;font-size:.85rem;}
+  @media print{body{margin:0;}.actions{display:none;}.card{border-style:solid;}}
+</style></head><body>
+  <div class="card">
+    <div class="eyebrow">NQOCN 2026 · Discount Code</div>
+    <h1>${escapeHtml(CONFERENCE_NAME)}</h1>
+    <div class="code">${escapeHtml(code.code)}</div>
+    <div class="discount">${discountLine}</div>
+    <p>${scopeLine}</p>
+    <p>${expiryLine}</p>
+    <p>Register at <b>${escapeHtml(PORTAL_URL)}</b> and enter this code under "Apply promo code" on the payment step.</p>
+    <div class="actions"><button onclick="window.print()">Print / Save as PDF</button></div>
+  </div>
+</body></html>`);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- GROUP DISCOUNT RULES (admin) ---------------------------------------
 app.get('/api/admin/group-rules', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
@@ -3750,32 +3901,115 @@ app.get('/api/admin/group-rules', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), a
 });
 
 // --- NOTIFICATION TOGGLES (super admin) ---------------------------------
-app.get('/api/admin/notification-settings', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+// Settings → General: SMS/Email/UPI operational config plus the on/off
+// toggles. Credentials (apiKey, AWS keys) are never included in the response
+// -- only whether they're present, so the admin can tell why a channel is
+// unavailable without the secret itself ever reaching the browser.
+// Every env var the app knows how to read, beyond the SMS/Email/UPI fields
+// already editable above -- shown read-only in Settings → General so an
+// admin can see the full picture of what's configured via .env without
+// needing shell access. Secret-shaped names get a masked preview; the rest
+// (none of them sensitive) show their actual current value.
+const OTHER_ENV_VARS = [
+  { key: 'PORT', secret: false }, { key: 'PORTAL_URL', secret: false },
+  { key: 'NODE_ENV', secret: false }, { key: 'COOKIE_SECURE', secret: false }, { key: 'OTP_ECHO', secret: false },
+];
+function describeOtherEnvVars() {
+  return OTHER_ENV_VARS.map(({ key, secret }) => {
+    const raw = process.env[key];
+    return { key, set: raw !== undefined && raw !== '', value: secret ? undefined : (raw ?? null) };
+  });
+}
+
+app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
     res.json({
-      sms: { enabled: notifyToggle.sms, available: SMS_ENABLED },
-      email: { enabled: notifyToggle.email, available: EMAIL_ENABLED },
+      sms: {
+        enabled: notifyToggle.sms, available: smsEnabled(), hasApiKey: !!SMS.apiKey, apiKeyMasked: maskSecret(SMS.apiKey),
+        sender: SMS.sender, url: SMS.url, entityId: SMS.entityId, templateId: SMS.templateId, headerId: SMS.headerId, type: SMS.type,
+      },
+      email: {
+        enabled: notifyToggle.email, available: emailEnabled(), hasCredentials: awsCredsPresent(),
+        accessKeyMasked: maskSecret(process.env.AWS_ACCESS_KEY_ID), secretKeyMasked: maskSecret(process.env.AWS_SECRET_ACCESS_KEY),
+        from: EMAIL.from, fromName: EMAIL.fromName, region: EMAIL.region,
+      },
+      upi: { id: UPI.id, payeeName: UPI.payeeName },
+      otherEnvVars: describeOtherEnvVars(),
     });
   } catch (err) {
     next(err);
   }
 });
 
-app.put('/api/admin/notification-settings', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
+    const { sms, email, upi, notify } = req.body || {};
     const changes = [];
-    if (req.body.sms !== undefined) {
-      notifyToggle.sms = !!req.body.sms;
-      await dbRun("INSERT INTO schema_meta (key, value) VALUES ('notify_sms_enabled', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [notifyToggle.sms ? '1' : '0']);
-      changes.push(`SMS ${notifyToggle.sms ? 'on' : 'off'}`);
+    const setKV = (key, value) => dbRun(
+      "INSERT INTO schema_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value]);
+
+    async function applyFields(group, target, fieldToKey) {
+      if (!group) return;
+      for (const [field, key] of Object.entries(fieldToKey)) {
+        if (group[field] === undefined) continue;
+        const val = String(group[field]).trim();
+        if (!val || val === target[field]) continue;
+        changes.push(`${key}: "${target[field]}" → "${val}"`);
+        target[field] = val;
+        await setKV(key, val);
+      }
     }
-    if (req.body.email !== undefined) {
-      notifyToggle.email = !!req.body.email;
-      await dbRun("INSERT INTO schema_meta (key, value) VALUES ('notify_email_enabled', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [notifyToggle.email ? '1' : '0']);
-      changes.push(`Email ${notifyToggle.email ? 'on' : 'off'}`);
+
+    await applyFields(sms, SMS, { sender: 'sms_sender', url: 'sms_url', entityId: 'sms_entity_id', templateId: 'sms_template_id', headerId: 'sms_header_id', type: 'sms_type' });
+    await applyFields(email, EMAIL, { from: 'email_from', fromName: 'email_from_name', region: 'email_region' });
+    await applyFields(upi, UPI, { id: 'upi_id', payeeName: 'upi_payee_name' });
+
+    // Credentials persist to .env, never to schema_meta -- the change log
+    // records only that a key changed and its new masked tail, never the
+    // secret itself.
+    let credsChanged = false;
+    if (sms && sms.apiKey !== undefined && String(sms.apiKey).trim()) {
+      const val = String(sms.apiKey).trim();
+      if (val !== SMS.apiKey) {
+        SMS.apiKey = val;
+        writeEnvVar('SMS_API_KEY', val);
+        changes.push(`SMS API key changed (now ends ${maskSecret(val)})`);
+        credsChanged = true;
+      }
     }
+    if (email && email.awsAccessKeyId !== undefined && String(email.awsAccessKeyId).trim()) {
+      const val = String(email.awsAccessKeyId).trim();
+      if (val !== process.env.AWS_ACCESS_KEY_ID) {
+        writeEnvVar('AWS_ACCESS_KEY_ID', val);
+        changes.push(`AWS Access Key ID changed (now ends ${maskSecret(val)})`);
+        credsChanged = true;
+      }
+    }
+    if (email && email.awsSecretAccessKey !== undefined && String(email.awsSecretAccessKey).trim()) {
+      const val = String(email.awsSecretAccessKey).trim();
+      if (val !== process.env.AWS_SECRET_ACCESS_KEY) {
+        writeEnvVar('AWS_SECRET_ACCESS_KEY', val);
+        changes.push('AWS Secret Access Key changed');
+        credsChanged = true;
+      }
+    }
+    if (email || credsChanged) rebuildSesClient(); // region/from/credentials changed -- the old client is stale otherwise
+
+    if (notify) {
+      if (notify.sms !== undefined) {
+        notifyToggle.sms = !!notify.sms;
+        await setKV('notify_sms_enabled', notifyToggle.sms ? '1' : '0');
+        changes.push(`SMS ${notifyToggle.sms ? 'on' : 'off'}`);
+      }
+      if (notify.email !== undefined) {
+        notifyToggle.email = !!notify.email;
+        await setKV('notify_email_enabled', notifyToggle.email ? '1' : '0');
+        changes.push(`Email ${notifyToggle.email ? 'on' : 'off'}`);
+      }
+    }
+
     if (changes.length) {
-      await recordAudit({ req, entityType: 'settings', entityId: 'notifications', action: 'NOTIFICATION_TOGGLE', oldValue: null, newValue: changes.join(', ') });
+      await recordAudit({ req, entityType: 'general_settings', entityId: 'general', action: 'GENERAL_SETTINGS_UPDATE', oldValue: null, newValue: changes.join('; ') });
     }
     res.json({ success: true, sms: notifyToggle.sms, email: notifyToggle.email });
   } catch (err) {
@@ -4264,12 +4498,28 @@ app.get('/api/admin/activity-log', requireRole('SUPER_ADMIN'), async (req, res, 
     const abstractApproval = abstractAudit.filter((r) => r.action === 'ABSTRACT_STATUS_CHANGE');
     const abstractAllotment = abstractAudit.filter((r) => r.action === 'ABSTRACT_ALLOCATION');
 
+    // "General Logs" (renamed from Master Changes): every change made from any
+    // Settings page -- Workshop/QI Master, Fee Master, Discount Codes, Group
+    // Discount Rules, and General (SMS/Email/UPI + toggles).
     const master = await dbAll(`
       SELECT id, action, entity_type, old_value, new_value, actor_name, actor_role, created_at
-      FROM audit_log WHERE entity_type IN ('program_option', 'fee_config', 'fee_category')
+      FROM audit_log
+      WHERE entity_type IN ('program_option', 'fee_config', 'fee_category', 'discount_code', 'group_rule', 'general_settings', 'settings')
       ORDER BY id DESC`);
 
-    res.json({ imports, mapping, approval, abstractApproval, abstractAllotment, master });
+    const login = await dbAll(`
+      SELECT id, entity_id AS phone, actor_name, actor_role, created_at
+      FROM audit_log WHERE entity_type = 'login' ORDER BY id DESC LIMIT 500`);
+
+    const sms = await dbAll(`
+      SELECT id, entity_id AS phone, action, new_value AS detail, created_at
+      FROM audit_log WHERE entity_type = 'sms' ORDER BY id DESC LIMIT 500`);
+
+    const email = await dbAll(`
+      SELECT id, entity_id AS recipient, action, new_value AS detail, created_at
+      FROM audit_log WHERE entity_type = 'email' ORDER BY id DESC LIMIT 500`);
+
+    res.json({ imports, mapping, approval, abstractApproval, abstractAllotment, master, login, sms, email });
   } catch (err) {
     next(err);
   }
@@ -4571,13 +4821,14 @@ retitleNamesOnBoot()
   .then(() => backfillPaymentTransactionsOnBoot().catch((err) => console.error('Payment-transaction backfill failed (continuing to start):', err.message)))
   .then(() => autoLinkTransactions().catch((err) => console.error('Bank-transaction auto-link failed (continuing to start):', err.message)))
   .then(() => loadNotificationToggles().catch((err) => console.error('Notification-toggle load failed (continuing to start):', err.message)))
+  .then(() => loadGeneralSettings().catch((err) => console.error('General-settings load failed (continuing to start):', err.message)))
   .then(startServer);
 
 function startServer() {
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
-  console.log(`SMS OTP: ${SMS_ENABLED ? 'ENABLED (Vynttra)' : 'disabled (no SMS_API_KEY)'}`);
-  console.log(`Email: ${EMAIL_ENABLED ? `ENABLED (SES, from ${EMAIL_FROM})` : 'disabled (no AWS/SES config)'}`);
-  if (OTP_ECHO && !SMS_ENABLED) console.log('[dev] OTP echo is ON — codes are returned to the client and logged here.');
+  console.log(`SMS OTP: ${smsEnabled() ? 'ENABLED (Vynttra)' : 'disabled (no SMS_API_KEY)'}`);
+  console.log(`Email: ${emailEnabled() ? `ENABLED (SES, from ${EMAIL.from})` : 'disabled (no AWS/SES config)'}`);
+  if (OTP_ECHO && !smsEnabled()) console.log('[dev] OTP echo is ON — codes are returned to the client and logged here.');
 });
 }
