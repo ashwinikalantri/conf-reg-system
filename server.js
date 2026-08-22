@@ -568,6 +568,11 @@ async function deleteScreenshotFile(value) {
 // events (login itself, outgoing SMS/email) where either there's no session
 // yet or the "actor" is the system, not an admin.
 async function writeAuditRow(entityType, entityId, action, oldValue, newValue, actorPhone, actorName, actorRole) {
+  // actor_phone is NOT NULL. System-initiated events (outgoing SMS/email) have
+  // no admin actor, so a null here would fail the constraint and -- because
+  // these callers are fire-and-forget with a swallowed .catch -- would drop the
+  // audit row silently. Fall back to a 'system' actor so those writes succeed.
+  const isSystem = actorPhone == null;
   await dbRun(
     `INSERT INTO audit_log
       (entity_type, entity_id, action, old_value, new_value, actor_phone, actor_name, actor_role, created_at)
@@ -578,9 +583,9 @@ async function writeAuditRow(entityType, entityId, action, oldValue, newValue, a
       action,
       oldValue == null ? null : String(oldValue),
       newValue == null ? null : String(newValue),
-      actorPhone == null ? null : String(actorPhone),
-      actorName == null ? null : String(actorName),
-      actorRole == null ? null : String(actorRole),
+      isSystem ? 'system' : String(actorPhone),
+      actorName == null ? (isSystem ? 'System' : null) : String(actorName),
+      actorRole == null ? (isSystem ? 'SYSTEM' : null) : String(actorRole),
       Date.now(),
     ]
   );
