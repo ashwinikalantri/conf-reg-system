@@ -21,11 +21,33 @@ if (typeof (globalThis.crypto && globalThis.crypto.getRandomValues) !== 'functio
 const sqlite3 = require('sqlite3').verbose();
 const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 
-const CONFERENCE_NAME = 'International Conference on Healthcare Quality & Patient Safety 2026';
+// These five start from the .env-derived defaults but are overridden in
+// main() by whatever's in schema_meta -- the server's Settings > General page
+// persists conference name / email from-address / from-name / region there
+// (not to .env), and this script runs standalone via cron with no other way
+// to see a change made through that UI. Without this resync, a super admin
+// updating "From address" in the portal would see it apply immediately to
+// the live app but never to this digest, which would keep sending from the
+// stale address indefinitely.
+let CONFERENCE_NAME = 'International Conference on Healthcare Quality & Patient Safety 2026';
 const PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
-const EMAIL_FROM = (process.env.SES_FROM || '').trim();
-const EMAIL_FROM_NAME = process.env.SES_FROM_NAME || 'NQOCN 2026';
-const EMAIL_FROM_FORMATTED = EMAIL_FROM ? `"${EMAIL_FROM_NAME.replace(/"/g, '')}" <${EMAIL_FROM}>` : EMAIL_FROM;
+let EMAIL_FROM = (process.env.SES_FROM || '').trim();
+let EMAIL_FROM_NAME = process.env.SES_FROM_NAME || 'NQOCN 2026';
+let EMAIL_REGION = (process.env.AWS_REGION || '').trim();
+let EMAIL_FROM_FORMATTED = EMAIL_FROM ? `"${EMAIL_FROM_NAME.replace(/"/g, '')}" <${EMAIL_FROM}>` : EMAIL_FROM;
+
+// Pulls the same schema_meta keys server.js's loadGeneralSettings() applies,
+// and re-derives the two values computed from them.
+async function resyncFromSchemaMeta(db) {
+  const keys = ['conference_name', 'email_from', 'email_from_name', 'email_region'];
+  const rows = await dbAll(db, `SELECT key, value FROM schema_meta WHERE key IN (${keys.map(() => '?').join(',')})`, keys);
+  const byKey = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  if (byKey.conference_name) CONFERENCE_NAME = byKey.conference_name;
+  if (byKey.email_from) EMAIL_FROM = byKey.email_from;
+  if (byKey.email_from_name) EMAIL_FROM_NAME = byKey.email_from_name;
+  if (byKey.email_region) EMAIL_REGION = byKey.email_region;
+  EMAIL_FROM_FORMATTED = EMAIL_FROM ? `"${EMAIL_FROM_NAME.replace(/"/g, '')}" <${EMAIL_FROM}>` : EMAIL_FROM;
+}
 
 // Recipients are looked up by phone number (stable identifier) rather than
 // a hardcoded email list, so this keeps working if someone updates their
@@ -133,6 +155,8 @@ function buildDigestHtml(pending, pendingCount, verifiedCount, dateLabel) {
 async function main() {
   const db = new sqlite3.Database(path.join(APP_DIR, 'conference.db'), sqlite3.OPEN_READONLY);
   try {
+    await resyncFromSchemaMeta(db);
+
     const pending = await dbAll(db,
       `SELECT registration_number, delegate_name,
               (SELECT salutation FROM users WHERE users.phone_number = registrations.phone_number) AS delegate_salutation,
@@ -147,7 +171,7 @@ async function main() {
     const html = buildDigestHtml(pending, pending.length, verified.n, dateLabel);
     const subject = `Daily Registration Summary — ${dateLabel}`;
 
-    if (!EMAIL_FROM || !process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_REGION) {
+    if (!EMAIL_FROM || !process.env.AWS_ACCESS_KEY_ID || !EMAIL_REGION) {
       console.error('Email not configured (missing SES_FROM/AWS credentials); nothing sent.');
       process.exit(1);
     }
@@ -156,7 +180,7 @@ async function main() {
       process.exit(1);
     }
 
-    const sesClient = new SESv2Client({ region: process.env.AWS_REGION });
+    const sesClient = new SESv2Client({ region: EMAIL_REGION });
     for (const r of recipients) {
       try {
         await sesClient.send(new SendEmailCommand({

@@ -25,10 +25,11 @@
 OTPs are delivered by SMS via the Vynttra JSON API using the registered DLT
 template. Set `SMS_API_KEY` to enable it; the sender/entity/template/header IDs
 default to the NQOCN values and are overridable via env (`SMS_SENDER`,
-`SMS_ENTITY_ID`, `SMS_TEMPLATE_ID`, `SMS_HEADER_ID`, `SMS_TYPE`, `SMS_URL`).
-Without an API key, SMS is skipped and (outside production) the OTP is echoed
-for local testing. Sending is fire-and-forget — failures are logged, never
-blocking OTP issuance.
+`SMS_ENTITY_ID`, `SMS_TEMPLATE_ID`, `SMS_HEADER_ID`, `SMS_TYPE`, `SMS_URL`) —
+or, once the server is running, from **Settings → General → SMS** in the admin
+panel (see below). Without an API key, SMS is skipped and (outside production)
+the OTP is echoed for local testing. Sending is fire-and-forget — failures are
+logged (console and the admin SMS activity log), never blocking OTP issuance.
 
 ## Email notifications (AWS SES)
 
@@ -37,10 +38,53 @@ on payment verification, rejection, abstract acceptance, and abstract
 allocation, using the AWS SES v2 SDK. Config comes from the environment
 (loaded from a git-ignored `.env` via dotenv):
 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, and `SES_FROM`
-(a verified sender). Dormant until set; sends are best-effort and never block a
-request. **In your AWS account** you still need to verify the sender/domain,
-grant the IAM user `ses:SendEmail`, and request production access to leave the
-SES sandbox (in sandbox, only verified recipients receive mail).
+(a verified sender) — the from-address, from-name, and region are also
+editable from **Settings → General → Email** once the server is running (see
+below). Dormant until set; sends are best-effort and never block a request.
+**In your AWS account** you still need to verify the sender/domain, grant the
+IAM user `ses:SendEmail`, and request production access to leave the SES
+sandbox (in sandbox, only verified recipients receive mail).
+
+## Settings → General (admin, `SUPER_ADMIN` only)
+
+A single admin page (`/admin` → Settings → General) for everything that used
+to require editing code and redeploying:
+
+- **SMS** — sender ID, gateway URL, DLT entity/template/header IDs, message
+  type, and the API key itself, plus the on/off switch (turning SMS off also
+  stops login OTPs).
+- **Email** — From address, From name, AWS region, and the AWS Access Key ID /
+  Secret Access Key, plus the on/off switch.
+- **UPI** — the conference's UPI ID (VPA) and payee name shown on the payment
+  QR code; the delegate form and the server's OCR screenshot check both read
+  this live, so they can never drift apart.
+- **Conference Details** — full name, acronym, dates, and location, used
+  across confirmation emails, the payment receipt, and printable reports and
+  voucher pages (dates render as "21–22 Nov 2026" or, spanning months,
+  "28 Nov – 2 Dec 2026"). The public delegate landing page (`public/index.html`)
+  is static and not wired to these yet.
+- **Other Environment Variables** — a read-only reference showing every other
+  env var the server reads (`PORT`, `PORTAL_URL`, `NODE_ENV`,
+  `COOKIE_SECURE`, `OTP_ECHO`), its effective value, and whether it came from
+  `.env` or a coded-in default.
+
+**Where each kind of value lives:** non-secret operational fields (sender IDs,
+URLs, from-address, region, UPI ID, conference details) persist to the
+`schema_meta` DB table and take effect immediately. **Credentials**
+(`SMS_API_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) are never
+written to the database — saving one rewrites the line in the server's
+`.env` file on disk (preserving everything else in it) and updates the
+running process's environment immediately, so no restart is needed but the
+change also survives one. The browser is only ever told whether a credential
+is set (and, for the non-bearer-secret Access Key ID only, its last 4
+characters) — no secret bytes are ever sent to or rendered in the admin UI.
+Credential fields reject a value containing a line break, since one could
+otherwise inject an unrelated new line into `.env`.
+
+`scripts/daily-digest.js` (the cron-run daily summary email) is a standalone
+process independent of the running server, and re-reads `schema_meta` for the
+conference name and email from-address/name/region on every run, so it stays
+in sync with changes made on this page.
 
 ## Authentication & sessions
 
@@ -50,11 +94,11 @@ Only a hash of the session token and of the OTP is stored in the database.
 
 - OTP is a random 6-digit code, valid for 5 minutes, single-use, capped at
   5 wrong attempts, with a 30-second resend throttle per number.
-- There is **no SMS gateway wired up yet.** Outside production the code is
-  logged to the server console and returned in the API response
+- Without `SMS_API_KEY` configured (see SMS OTP above), outside production the
+  code is logged to the server console and returned in the API response
   (`devOtp`) so you can log in during development. Set `NODE_ENV=production`
-  (or `OTP_ECHO=false`) to stop returning it — but then you must integrate a
-  real SMS provider first, or nobody can log in.
+  (or `OTP_ECHO=false`) to stop returning it — but then a working SMS gateway
+  is required, or nobody can log in.
 
 ### Roles (enforced server-side)
 
@@ -78,10 +122,12 @@ never accepted from a login or registration request body.
 | `NODE_ENV`           | –              | `production` disables the dev OTP echo         |
 | `OTP_ECHO`           | on if not prod | Force the OTP echo on (`true`) or off (`false`)|
 | `COOKIE_SECURE`      | `false`        | Set `true` when served over HTTPS              |
-| `REGISTRATION_PHASE` | `early`        | Fee column in effect: `early`/`regular`/`late` |
 
 Serve over HTTPS in production and set `COOKIE_SECURE=true` so the session
-cookie is only sent over TLS.
+cookie is only sent over TLS. These five, plus every SMS/Email/UPI/Conference
+variable, are also listed live (with their effective value) under
+**Settings → General → Other Environment Variables** once the server is
+running — see below.
 
 ## Route protection
 
@@ -110,6 +156,14 @@ who last changed each record and when; `GET /api/registrations/:id/audit`
 returns a registration's full history. The log is append-only; nothing in the
 app deletes or edits it.
 
+The admin **Logs** tab (Settings menu) surfaces this from several angles:
+Bank Reconciliation, Transaction Mapping, Registration Approval, Abstract
+Approval, Abstract Allotment, **General Logs** (every change made from any
+Settings page — Workshop/QI Master, Fee Master, Discount Codes, Group
+Discount Rules, and Settings → General itself, including which credential
+changed without ever showing its value), **Login** (every successful login),
+**SMS**, and **Email** (every outgoing send attempt, success or failure).
+
 ## Payment screenshots
 
 Uploaded screenshots are written to `uploads/` (git-ignored) and the database
@@ -127,7 +181,8 @@ On submission the server runs OCR (tesseract.js) over the payment screenshot
 and checks three things against it:
 
 1. **Amount** — the category fee appears in the image.
-2. **UPI ID** — the conference VPA (`OFFICIAL_UPI_ID`, default `abhishekraut@cbin`) appears.
+2. **UPI ID** — the conference VPA (set in Settings → General → UPI, default
+   `abhishekraut@cbin`) appears.
 3. **UTR** — the UTR the delegate typed appears in the image.
 
 If any check fails the delegate sees a warning listing what could not be
@@ -214,9 +269,8 @@ crash.
 
 ## Known limitations
 
-Still outstanding (tracked for follow-up work):
-
-- No SMS gateway; OTP delivery is console/echo only (see above).
-- The displayed fee (`calculateFee`) always uses the `early` column; if
-  `REGISTRATION_PHASE` is changed, the client display and QR will lag the
-  server's expected fee until a pricing endpoint is added.
+- Credentials (`SMS_API_KEY`, AWS keys) are stored in plaintext in the
+  server's `.env` file, whether set at deploy time or later edited from
+  Settings → General. This matches how every other secret in this app is
+  already handled, but is worth knowing if you're evaluating this for an
+  environment that requires a managed secrets store.

@@ -76,8 +76,39 @@ function roleGrants(role) {
   return [role, ...(ROLE_IMPLIES[role] || [])];
 }
 
-const CONFERENCE_NAME = 'International Conference on Healthcare Quality & Patient Safety 2026';
+// Admin-editable from Settings → General (see GENERAL_SETTINGS_KEYS below),
+// persisted in schema_meta. name/acronym/dates/location are display-only text
+// used across confirmation emails, reports, and printable pages -- nothing
+// here gates any capability, so unlike SMS/EMAIL/UPI there's no *Enabled()
+// check for it.
+const CONFERENCE = {
+  name: 'International Conference on Healthcare Quality & Patient Safety 2026',
+  acronym: 'NQOCN 2026',
+  startDate: '2026-11-21',
+  endDate: '2026-11-22',
+  location: 'MGIMS, Sevagram, Wardha',
+};
 const PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
+
+// "21–22 Nov 2026" (same month) or "28 Nov – 2 Dec 2026" (spanning months),
+// from the YYYY-MM-DD strings Settings → General's date inputs produce.
+function formatConferenceDates() {
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const parse = (d) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || '');
+    return m ? { year: m[1], month: MONTHS[Number(m[2]) - 1], day: Number(m[3]) } : null;
+  };
+  const s = parse(CONFERENCE.startDate);
+  const e = parse(CONFERENCE.endDate);
+  if (!s && !e) return '';
+  if (s && e) {
+    return (s.month === e.month && s.year === e.year)
+      ? `${s.day}–${e.day} ${s.month} ${s.year}`
+      : `${s.day} ${s.month}${s.year !== e.year ? ' ' + s.year : ''} – ${e.day} ${e.month} ${e.year}`;
+  }
+  const one = s || e;
+  return `${one.day} ${one.month} ${one.year}`;
+}
 
 // --- .ENV FILE HELPERS ---------------------------------------------------
 // Lets Settings → General persist a credential change to the actual .env
@@ -153,11 +184,14 @@ const GENERAL_SETTINGS_KEYS = {
   sms_template_id: ['SMS', 'templateId'], sms_header_id: ['SMS', 'headerId'], sms_type: ['SMS', 'type'],
   email_from: ['EMAIL', 'from'], email_from_name: ['EMAIL', 'fromName'], email_region: ['EMAIL', 'region'],
   upi_id: ['UPI', 'id'], upi_payee_name: ['UPI', 'payeeName'],
+  conference_name: ['CONFERENCE', 'name'], conference_acronym: ['CONFERENCE', 'acronym'],
+  conference_start_date: ['CONFERENCE', 'startDate'], conference_end_date: ['CONFERENCE', 'endDate'],
+  conference_location: ['CONFERENCE', 'location'],
 };
 async function loadGeneralSettings() {
   const keys = Object.keys(GENERAL_SETTINGS_KEYS);
   const rows = await dbAll(`SELECT key, value FROM schema_meta WHERE key IN (${keys.map(() => '?').join(',')})`, keys);
-  const targets = { SMS, EMAIL, UPI };
+  const targets = { SMS, EMAIL, UPI, CONFERENCE };
   for (const row of rows) {
     const dest = GENERAL_SETTINGS_KEYS[row.key];
     if (dest && row.value) targets[dest[0]][dest[1]] = row.value;
@@ -269,7 +303,7 @@ const emailWrap = (title, bodyHtml) =>
   `<div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;color:#0f172a">
      <div style="background:#312e81;color:#fff;padding:1.25rem 1.5rem;border-radius:12px 12px 0 0">
        <div style="font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:#c7d2fe">NQOCN &amp; MGIMS Sevagram</div>
-       <h1 style="font-size:1.05rem;margin:.35rem 0 0">${escapeHtml(CONFERENCE_NAME)}</h1>
+       <h1 style="font-size:1.05rem;margin:.35rem 0 0">${escapeHtml(CONFERENCE.name)}</h1>
      </div>
      <div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:1.5rem">
        <h2 style="font-size:1rem;margin:0 0 .75rem">${escapeHtml(title)}</h2>
@@ -606,6 +640,17 @@ async function writeAuditRow(entityType, entityId, action, oldValue, newValue, a
 async function recordAudit({ req, entityType, entityId, action, oldValue, newValue }) {
   await writeAuditRow(entityType, entityId, action, oldValue, newValue, req.session.phone, req.session.name, req.session.role);
 }
+
+// Every entity_type written by a Settings-page recordAudit() call belongs
+// here -- the admin "General Logs" tab's query (see GET /api/admin/activity-log)
+// builds its filter from this single array instead of a second, separately
+// hand-maintained SQL literal list. Adding a new settings feature? Add its
+// entityType string here too, or its audit entries will write successfully
+// but never appear in General Logs.
+const GENERAL_LOG_ENTITY_TYPES = [
+  'program_option', 'fee_config', 'fee_category', 'discount_code', 'group_rule', 'general_settings',
+  'settings', // legacy: pre-rename NOTIFICATION_TOGGLE rows only
+];
 
 // Login event -- entityId is the phone so the login log can be searched per
 // delegate/admin like every other log.
@@ -1858,7 +1903,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
       notifyDelegate(phone, 'Registration confirmed',
         emailWrap('Your registration is confirmed',
           `<p>Dear ${escapeHtml(name)},</p>
-           <p>Your registration for the ${escapeHtml(CONFERENCE_NAME)} is <b>confirmed</b> — a discount code brought your fee to ₹0, so no payment was required.</p>
+           <p>Your registration for the ${escapeHtml(CONFERENCE.name)} is <b>confirmed</b> — a discount code brought your fee to ₹0, so no payment was required.</p>
            <p>Registration number: <b>${escapeHtml(regNo)}</b></p>`));
 
       return res.json({ success: true, expectedAmount: 0, checks: {}, flagged: false });
@@ -1974,7 +2019,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     notifyDelegate(phone, 'Payment received — verification pending',
       emailWrap('We’ve received your payment details',
         `<p>Dear ${escapeHtml(name)},</p>
-         <p>Thank you for submitting your payment for the ${escapeHtml(CONFERENCE_NAME)}.</p>
+         <p>Thank you for submitting your payment for the ${escapeHtml(CONFERENCE.name)}.</p>
          <p>Your payment reference (<b>UTR ${escapeHtml(utr)}</b>) has been received and is now <b>pending verification</b> by our team.</p>
          <p>Registration number: <b>${escapeHtml(regNo)}</b></p>
          <p>Your registration will be <b>confirmed once your payment is verified</b> — you’ll receive a confirmation email at that point. No further action is needed for now.</p>`));
@@ -2362,7 +2407,7 @@ app.post('/api/groups/:id/members', requireAuth, async (req, res, next) => {
     notifyDelegate(phone, 'You’ve been added to a group registration',
       emailWrap('Added to a group registration',
         `<p>Dear ${escapeHtml(user.full_name || 'Delegate')},</p>
-         <p>You have been added to a group for the ${escapeHtml(CONFERENCE_NAME)} under the <b>${escapeHtml(group.category_key)}</b> category. Once the group reaches the required size, a group discount applies to your registration fee.</p>
+         <p>You have been added to a group for the ${escapeHtml(CONFERENCE.name)} under the <b>${escapeHtml(group.category_key)}</b> category. Once the group reaches the required size, a group discount applies to your registration fee.</p>
          <p>Log in to the delegate portal to see your group and pay your (discounted) fee.</p>`));
     res.json({ success: true });
   } catch (err) {
@@ -2492,8 +2537,8 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
   <div class="receipt">
     <div class="head">
       <div class="tag">NQOCN &amp; MGIMS Sevagram · Payment Receipt</div>
-      <h1>${escapeHtml(CONFERENCE_NAME)}</h1>
-      <p>21–22 November 2026 · MGIMS, Sevagram, Wardha</p>
+      <h1>${escapeHtml(CONFERENCE.name)}</h1>
+      <p>${escapeHtml([formatConferenceDates(), CONFERENCE.location].filter(Boolean).join(' · '))}</p>
     </div>
     <div class="body">
       <div class="num">
@@ -2618,7 +2663,7 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
     notifyDelegate(req.session.phone, 'Abstract received — under review',
       emailWrap('We’ve received your abstract',
         `<p>Dear ${escapeHtml(req.session.name)},</p>
-         <p>Thank you for submitting your abstract, <b>"${escapeHtml(cleanTitle)}"</b>, for the ${escapeHtml(CONFERENCE_NAME)}.</p>
+         <p>Thank you for submitting your abstract, <b>"${escapeHtml(cleanTitle)}"</b>, for the ${escapeHtml(CONFERENCE.name)}.</p>
          <p>Your submission has been received and is now <b>under review</b> by the scientific committee.</p>
          <p>You’ll be notified by email once a decision has been made. No further action is needed for now.</p>`));
 
@@ -3907,7 +3952,7 @@ app.get('/api/admin/discount-codes/:id/share', requireRole('SUPER_ADMIN', 'FINAN
 </style></head><body>
   <div class="card">
     <div class="eyebrow">NQOCN 2026 · Discount Code</div>
-    <h1>${escapeHtml(CONFERENCE_NAME)}</h1>
+    <h1>${escapeHtml(CONFERENCE.name)}</h1>
     <div class="code">${escapeHtml(code.code)}</div>
     <div class="discount">${discountLine}</div>
     <p>${scopeLine}</p>
@@ -3974,6 +4019,7 @@ app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
         from: EMAIL.from, fromName: EMAIL.fromName, region: EMAIL.region,
       },
       upi: { id: UPI.id, payeeName: UPI.payeeName },
+      conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym, startDate: CONFERENCE.startDate, endDate: CONFERENCE.endDate, location: CONFERENCE.location },
       otherEnvVars: describeOtherEnvVars(),
     });
   } catch (err) {
@@ -3983,7 +4029,7 @@ app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
 
 app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
-    const { sms, email, upi, notify } = req.body || {};
+    const { sms, email, upi, conference, notify } = req.body || {};
 
     // Reject line breaks in the credential fields up front, before anything is
     // persisted, so a bad paste can't inject extra .env lines and a malformed
@@ -4007,6 +4053,7 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
       [sms, SMS, { sender: 'Sender ID', url: 'Gateway URL', entityId: 'DLT Entity ID', templateId: 'DLT Template ID', headerId: 'DLT Header ID', type: 'Message Type' }],
       [email, EMAIL, { from: 'From address', fromName: 'From name', region: 'AWS Region' }],
       [upi, UPI, { id: 'UPI ID', payeeName: 'Payee Name' }],
+      [conference, CONFERENCE, { name: 'Conference Name' }], // acronym/dates/location are optional and may be cleared
     ]) {
       if (!group) continue;
       for (const field of Object.keys(labels)) {
@@ -4021,13 +4068,20 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
     const setKV = (key, value) => dbRun(
       "INSERT INTO schema_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value]);
 
-    async function applyFields(group, target, fieldToKey) {
+    // optionalFields: fields allowed to be cleared to blank (written and
+    // logged as empty) rather than the default "blank means untouched, skip
+    // it" behavior -- for fields that are genuinely optional (e.g. a
+    // conference's dates/location before they're finalized), skipping a
+    // deliberate clear would silently keep stale text, the same class of bug
+    // as an unconditional blank-reject would be for a required field.
+    async function applyFields(group, target, fieldToKey, optionalFields = new Set()) {
       if (!group) return;
       for (const [field, key] of Object.entries(fieldToKey)) {
         if (group[field] === undefined) continue;
         const val = String(group[field]).trim();
-        if (!val || val === target[field]) continue;
-        changes.push(`${key}: "${target[field]}" → "${val}"`);
+        if (val === target[field]) continue;
+        if (!val && !optionalFields.has(field)) continue;
+        changes.push(`${key}: "${target[field]}" → "${val || '(blank)'}"`);
         target[field] = val;
         await setKV(key, val);
       }
@@ -4036,6 +4090,9 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
     await applyFields(sms, SMS, { sender: 'sms_sender', url: 'sms_url', entityId: 'sms_entity_id', templateId: 'sms_template_id', headerId: 'sms_header_id', type: 'sms_type' });
     await applyFields(email, EMAIL, { from: 'email_from', fromName: 'email_from_name', region: 'email_region' });
     await applyFields(upi, UPI, { id: 'upi_id', payeeName: 'upi_payee_name' });
+    await applyFields(conference, CONFERENCE,
+      { name: 'conference_name', acronym: 'conference_acronym', startDate: 'conference_start_date', endDate: 'conference_end_date', location: 'conference_location' },
+      new Set(['acronym', 'startDate', 'endDate', 'location']));
 
     // Credentials persist to .env, never to schema_meta. The change log records
     // only that a key changed, never any bytes of a bearer secret (SMS API key,
@@ -4575,11 +4632,12 @@ app.get('/api/admin/activity-log', requireRole('SUPER_ADMIN'), async (req, res, 
     // "General Logs" (renamed from Master Changes): every change made from any
     // Settings page -- Workshop/QI Master, Fee Master, Discount Codes, Group
     // Discount Rules, and General (SMS/Email/UPI + toggles).
-    const master = await dbAll(`
-      SELECT id, action, entity_type, old_value, new_value, actor_name, actor_role, created_at
-      FROM audit_log
-      WHERE entity_type IN ('program_option', 'fee_config', 'fee_category', 'discount_code', 'group_rule', 'general_settings', 'settings')
-      ORDER BY id DESC`);
+    const master = await dbAll(
+      `SELECT id, action, entity_type, old_value, new_value, actor_name, actor_role, created_at
+       FROM audit_log
+       WHERE entity_type IN (${GENERAL_LOG_ENTITY_TYPES.map(() => '?').join(',')})
+       ORDER BY id DESC`,
+      GENERAL_LOG_ENTITY_TYPES);
 
     const login = await dbAll(`
       SELECT id, entity_id AS phone, actor_name, actor_role, created_at
@@ -4830,7 +4888,7 @@ app.put('/api/abstracts/:id/status', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEW
       if (a) notifyDelegate(a.phone_number, 'Your abstract submission — decision',
         emailWrap('Abstract decision',
           `<p>Dear ${escapeHtml(a.author_name)},</p>
-           <p>Thank you for submitting your abstract, <b>"${escapeHtml(a.title)}"</b>. After review by the scientific committee, we regret that it has not been accepted for the ${escapeHtml(CONFERENCE_NAME)}.</p>`));
+           <p>Thank you for submitting your abstract, <b>"${escapeHtml(a.title)}"</b>. After review by the scientific committee, we regret that it has not been accepted for the ${escapeHtml(CONFERENCE.name)}.</p>`));
     }
     res.json({ success: true });
   } catch (err) {
@@ -4864,7 +4922,7 @@ app.put('/api/abstracts/:id/allocation', requireRole('SUPER_ADMIN', 'ACADEMIC_RE
       const kind = allocation === 'ORAL' ? 'oral' : 'poster';
       notifyDelegate(a.phone_number, 'Your abstract has been accepted',
         emailWrap('Abstract accepted', `<p>Dear ${escapeHtml(a.author_name)},</p>
-           <p>We are pleased to inform you that your abstract <b>"${escapeHtml(a.title)}"</b> has been <b>accepted</b> for the ${escapeHtml(CONFERENCE_NAME)}, for <b>${kind} presentation</b>.</p>
+           <p>We are pleased to inform you that your abstract <b>"${escapeHtml(a.title)}"</b> has been <b>accepted</b> for the ${escapeHtml(CONFERENCE.name)}, for <b>${kind} presentation</b>.</p>
            <p>Further details (time and venue) will be communicated separately.</p>`));
     }
     res.json({ success: true });

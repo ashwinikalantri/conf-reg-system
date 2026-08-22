@@ -3487,6 +3487,11 @@ async function renderGeneralSettings() {
   setVal('gs-email-region', data.email.region);
   setVal('gs-upi-id', data.upi.id);
   setVal('gs-upi-payeename', data.upi.payeeName);
+  setVal('gs-conf-name', data.conference.name);
+  setVal('gs-conf-acronym', data.conference.acronym);
+  setVal('gs-conf-location', data.conference.location);
+  setVal('gs-conf-startdate', data.conference.startDate);
+  setVal('gs-conf-enddate', data.conference.endDate);
 
   // Credential fields are never prefilled. Bearer secrets (SMS API key, AWS
   // Secret Access Key) show only a set/not-set state -- no bytes ever reach the
@@ -3548,6 +3553,14 @@ async function saveGeneralSettings(e, group) {
       id: document.getElementById('gs-upi-id').value,
       payeeName: document.getElementById('gs-upi-payeename').value,
     } };
+  } else if (group === 'conference') {
+    body = { conference: {
+      name: document.getElementById('gs-conf-name').value,
+      acronym: document.getElementById('gs-conf-acronym').value,
+      location: document.getElementById('gs-conf-location').value,
+      startDate: document.getElementById('gs-conf-startdate').value,
+      endDate: document.getElementById('gs-conf-enddate').value,
+    } };
   } else {
     return;
   }
@@ -3555,7 +3568,8 @@ async function saveGeneralSettings(e, group) {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   })).json();
   if (!data.success) return showToast(data.error || 'Could not save.');
-  showToast(`${group.toUpperCase()} settings saved.`, 'success');
+  const groupLabels = { sms: 'SMS', email: 'Email', upi: 'UPI', conference: 'Conference Details' };
+  showToast(`${groupLabels[group] || group} settings saved.`, 'success');
   // Clear any credential inputs immediately after a successful save -- they
   // should never sit filled-in on screen once submitted.
   credentialInputs.forEach((id) => { const el = document.getElementById(id); if (el) el.value = ''; });
@@ -4192,6 +4206,11 @@ const MAIN_TABS = ['payments', 'statement', 'abstracts', 'reports'];
 
 function switchBackendTab(tab) {
   if (tab === 'groupdiscount') renderGroupsMonitor();
+  // General settings was only ever fetched once at initial page load, so
+  // switching away and back showed stale data (or none, for a non-super-admin
+  // who becomes one without a reload) until a full page refresh -- refetch it
+  // fresh on every visit, same as the groupdiscount/statement tabs already do.
+  if (tab === 'general') renderGeneralSettings();
   [...MAIN_TABS, ...SETTINGS_TABS].forEach(t => {
     const section = document.getElementById(`section-${t}`);
     if (section) section.classList.toggle('hidden', t !== tab);

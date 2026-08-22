@@ -538,6 +538,20 @@
 
     <!-- SETTINGS: GENERAL (SMS / Email / UPI) -->
     <section id="section-general" class="hidden space-y-6">
+      <!-- Conference Details -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-800 mb-1">🏛️ Conference Details</h3>
+        <p class="text-xs text-slate-500 mb-3">Shown across confirmation emails, reports, and printable pages.</p>
+        <form onsubmit="saveGeneralSettings(event, 'conference')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="sm:col-span-2"><label class="block text-[10px] font-semibold text-slate-600 mb-1">Full Name</label><input id="gs-conf-name" required class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Acronym <span class="font-normal text-slate-400">(optional)</span></label><input id="gs-conf-acronym" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Location <span class="font-normal text-slate-400">(optional)</span></label><input id="gs-conf-location" placeholder="e.g. MGIMS, Sevagram" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Start Date <span class="font-normal text-slate-400">(optional)</span></label><input id="gs-conf-startdate" type="date" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">End Date <span class="font-normal text-slate-400">(optional)</span></label><input id="gs-conf-enddate" type="date" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Conference Details</button></div>
+        </form>
+      </div>
+
       <!-- SMS -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
