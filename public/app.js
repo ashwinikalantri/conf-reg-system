@@ -4,6 +4,11 @@ const OFFICIAL_UPI_ID = "abhishekraut@cbin";
 // Categories that must upload a student ID card (kept in sync with the server).
 const STUDENT_CATEGORIES = ['nursing_ug', 'nursing_pg', 'med_student', 'pg_doctor'];
 
+// Human-readable labels for a registration's bank_status, used everywhere it's
+// shown so raw DB constants (e.g. BANK_VERIFIED, PARTIAL_PAYMENT) never leak
+// into the UI as-is.
+const BANK_STATUS_LABELS = { PENDING: 'Pending', BANK_VERIFIED: 'Verified', REJECTED: 'Rejected', PARTIAL_PAYMENT: 'Partial Payment' };
+
 const REJECTION_LABELS = {
   WRONG_DETAILS: 'Wrong payment details',
   WRONG_SCREENSHOT: 'Wrong screenshot attached',
@@ -337,9 +342,9 @@ async function loadDashboard() {
   if (balanceBanner) {
     balanceBanner.classList.toggle('hidden', !partial);
     if (partial) {
-      setText('balance-fee', `₹${Number(reg.expected_amount)}`);
-      setText('balance-paid', `₹${Number(reg.verified_total || 0)}`);
-      setText('balance-due', `₹${Number(reg.remaining || 0)}`);
+      setText('balance-fee', `₹${inr(Number(reg.expected_amount))}`);
+      setText('balance-paid', `₹${inr(Number(reg.verified_total || 0))}`);
+      setText('balance-due', `₹${inr(Number(reg.remaining || 0))}`);
       // If a top-up is already submitted and pending, show the waiting note and
       // hide the pay button; otherwise offer the top-up.
       const hasPendingTopup = (reg.pending_txn_count || 0) > 0;
@@ -475,7 +480,7 @@ async function renderGroupSection() {
     <p class="text-xs text-slate-600 mb-3">Registering as a group? Start a group and add fellow delegates in the same category to unlock a group discount for everyone.</p>
     <div class="flex flex-wrap gap-2 items-end">
       <select id="group-start-cat" class="h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
-        ${eligible.map((c) => `<option value="${esc(c.category_key)}">${esc(c.label)} — ${c.discount_type === 'PERCENT' ? esc(c.discount_value) + '%' : '₹' + esc(c.discount_value)} off for ${esc(c.min_size)}+</option>`).join('')}
+        ${eligible.map((c) => `<option value="${esc(c.category_key)}">${esc(c.label)} — ${c.discount_type === 'PERCENT' ? esc(c.discount_value) + '%' : '₹' + inr(c.discount_value)} off for ${esc(c.min_size)}+</option>`).join('')}
       </select>
       <button onclick="startGroup()" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Start a group</button>
     </div>`;
@@ -617,7 +622,7 @@ async function applyPromoCode() {
     })).json();
     if (!data.success) { clearAppliedPromo(); showMsg(data.error || 'Invalid code.', false); calculateFee(); return; }
     appliedPromo = { code: data.code, discountAmount: data.discountAmount, finalFee: data.finalFee, categoryKey: catKey };
-    showMsg(`Code applied — you save ₹${data.discountAmount}. New fee: ₹${data.finalFee}.`, true);
+    showMsg(`Code applied — you save ₹${inr(data.discountAmount)}. New fee: ₹${inr(data.finalFee)}.`, true);
     calculateFee();
   } catch (e) {
     showMsg('Could not check the code. Try again.', false);
@@ -659,13 +664,13 @@ function calculateFee() {
   const baseLine = document.getElementById('fee-discount-line');
   const discLine = document.getElementById('fee-discount-amount-line');
   if (discount > 0) {
-    if (baseLine) { baseLine.classList.remove('hidden'); setText('fee-base-display', `₹${baseFee}`); }
-    if (discLine) { discLine.classList.remove('hidden'); setText('fee-discount-display', `−₹${discount}`); setText('fee-discount-label', `Discount (${esc(appliedPromo.code)})`); }
+    if (baseLine) { baseLine.classList.remove('hidden'); setText('fee-base-display', `₹${inr(baseFee)}`); }
+    if (discLine) { discLine.classList.remove('hidden'); setText('fee-discount-display', `−₹${inr(discount)}`); setText('fee-discount-label', `Discount (${esc(appliedPromo.code)})`); }
   } else {
     if (baseLine) baseLine.classList.add('hidden');
     if (discLine) discLine.classList.add('hidden');
   }
-  document.getElementById('calculated-fee-display').innerText = `₹${currentFee}`;
+  document.getElementById('calculated-fee-display').innerText = `₹${inr(currentFee)}`;
   document.getElementById('entered-amount').value = currentFee;
 
   // Reference is the delegate's registration number plus name, so the
@@ -742,7 +747,7 @@ async function loadFees() {
     if (sel) {
       const current = sel.value;
       sel.innerHTML = '<option value="">-- Select Category --</option>' +
-        (data.categories || []).map((c) => `<option value="${esc(c.key)}">${esc(c.label)}${c.subtitle ? ' — ' + esc(c.subtitle) : ''} — ₹${Number(c.fee)}</option>`).join('');
+        (data.categories || []).map((c) => `<option value="${esc(c.key)}">${esc(c.label)}${c.subtitle ? ' — ' + esc(c.subtitle) : ''} — ₹${inr(Number(c.fee))}</option>`).join('');
       if (current) sel.value = current;
     }
     renderCategoryDropdown(data.categories || []);
@@ -764,7 +769,7 @@ function renderCategoryDropdown(categories) {
         <p class="font-semibold text-slate-800 text-sm">${esc(c.label)}</p>
         ${c.subtitle ? `<p class="text-xs text-slate-500 mt-0.5">${esc(c.subtitle)}</p>` : ''}
       </div>
-      <p class="font-semibold text-slate-700 text-sm shrink-0">₹${Number(c.fee)}</p>
+      <p class="font-semibold text-slate-700 text-sm shrink-0">₹${inr(Number(c.fee))}</p>
     </button>`).join('');
 
   // Re-sync the button label if a category was already selected (e.g. re-opening the modal).
@@ -908,7 +913,7 @@ async function verifyAndSubmitPayment(e) {
     if (data.needsConfirmation) {
       const c = data.checks || {};
       const problems = [];
-      if (!c.amount) problems.push(`• The amount ₹${data.expectedAmount} could not be found in the screenshot`);
+      if (!c.amount) problems.push(`• The amount ₹${inr(data.expectedAmount)} could not be found in the screenshot`);
       if (!c.vpa) problems.push('• The conference UPI ID could not be found in the screenshot');
       if (!c.utr) problems.push('• The UTR number you entered could not be found in the screenshot');
       if (c.id === false) problems.push('• Your ID card could not be confirmed to match the selected category');
@@ -948,7 +953,7 @@ function openTopupModal() {
   const reg = currentRegistration;
   if (!reg || !(reg.remaining > 0)) return showToast('No outstanding balance to pay.');
   const balance = Number(reg.remaining);
-  setText('topup-amount-display', `₹${balance}`);
+  setText('topup-amount-display', `₹${inr(balance)}`);
   document.getElementById('topup-utr').value = '';
   const fileInput = document.getElementById('topup-screenshot');
   if (fileInput) fileInput.value = '';
@@ -989,7 +994,7 @@ async function submitTopup(e) {
     if (data.needsConfirmation) {
       const c = data.checks || {};
       const problems = [];
-      if (!c.amount) problems.push(`• The balance ₹${data.expectedAmount} could not be found in the screenshot`);
+      if (!c.amount) problems.push(`• The balance ₹${inr(data.expectedAmount)} could not be found in the screenshot`);
       if (!c.vpa) problems.push('• The conference UPI ID could not be found in the screenshot');
       if (!c.utr) problems.push('• The UTR number you entered could not be found in the screenshot');
       const proceed = await showConfirm(
@@ -1078,7 +1083,7 @@ async function submitCorrection(e) {
     if (data.needsConfirmation) {
       const c = data.checks || {};
       const problems = [];
-      if (!c.amount) problems.push(`• The amount ₹${data.expectedAmount} could not be found in the screenshot`);
+      if (!c.amount) problems.push(`• The amount ₹${inr(data.expectedAmount)} could not be found in the screenshot`);
       if (!c.vpa) problems.push('• The conference UPI ID could not be found in the screenshot');
       if (!c.utr) problems.push('• The UTR number could not be found in the screenshot');
       const proceed = await showConfirm(
@@ -1302,6 +1307,22 @@ function esc(v) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// Format a rupee amount with Indian digit grouping (e.g. 100000 -> 1,00,000):
+// last three digits grouped, then every two digits. Done manually rather than
+// via toLocaleString('en-IN') because that falls back to Western grouping on
+// runtimes without full ICU (e.g. the Node the backend runs on). Forgiving:
+// accepts numbers or numeric strings, returns the input if not a finite number.
+function inr(v) {
+  const num = typeof v === 'number' ? v : Number(String(v == null ? '' : v).replace(/[^0-9.\-]/g, ''));
+  if (!isFinite(num)) return v == null ? '' : String(v);
+  const neg = num < 0;
+  const s = String(Math.round(Math.abs(num)));
+  let out;
+  if (s.length <= 3) out = s;
+  else out = s.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + s.slice(-3);
+  return (neg ? '-' : '') + out;
 }
 
 // Inline onclick/onchange can be broken out of by a value containing a quote,
@@ -1547,7 +1568,7 @@ function paymentRowHtml(p) {
     : 'bg-amber-100 text-amber-800';
   const balanceDue = isBalanceDue(p);
   const statusLabel = p.bank_status === 'PARTIAL_PAYMENT' ? 'PARTIAL'
-    : (balanceDue ? 'BALANCE DUE' : p.bank_status);
+    : (balanceDue ? 'BALANCE DUE' : (BANK_STATUS_LABELS[p.bank_status] || p.bank_status).toUpperCase());
   const statusTone2 = balanceDue ? 'bg-orange-100 text-orange-800' : statusTone;
   const statusPill = `<span class="${statusTone2} text-[10px] sm:text-xs px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full font-bold">${esc(statusLabel)}</span>`;
   // Surface how much is still owed at a glance: use the verified total when
@@ -1558,7 +1579,7 @@ function paymentRowHtml(p) {
   // in the worklist so the admin knows to link the payment and Revise.
   const categoryChangedShortfall = !!p.category_locked && p.bank_status === 'PENDING' && owed > 0;
   const balancePill = ((balanceDue || categoryChangedShortfall) && owed > 0)
-    ? `<span class="text-[10px] text-orange-700 font-semibold">₹${paidSoFar} of ₹${Number(p.expected_amount)} · ₹${owed} due</span>`
+    ? `<span class="text-[10px] text-orange-700 font-semibold">₹${inr(paidSoFar)} of ₹${inr(Number(p.expected_amount))} · ₹${inr(owed)} due</span>`
     : '';
   const reviseHint = categoryChangedShortfall
     ? `<span class="text-[10px] text-orange-700 font-semibold bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5">⚠ Category changed — revise</span>`
@@ -1588,7 +1609,7 @@ function paymentRowHtml(p) {
             <p class="font-bold text-sm truncate">${esc(p.delegate_name)}</p>
             <p class="text-[11px] text-slate-500">${esc(p.category_label)}</p>
           </div>
-          <p class="font-semibold text-slate-700 shrink-0">₹${Number(p.paid_amount)}</p>
+          <p class="font-semibold text-slate-700 shrink-0">₹${inr(Number(p.paid_amount))}</p>
         </div>
         <div class="flex flex-wrap items-center gap-1.5 mt-2">
           ${p.is_flagged ? `<span class="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">⚠️ Flagged</span>` : ''}
@@ -1603,7 +1624,7 @@ function paymentRowHtml(p) {
         ${p.is_flagged ? `<br><span class="inline-block mt-1 text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">⚠️ Flagged</span>` : ''}
       </td>
       <td class="p-4 text-sm hidden sm:table-cell">
-        <span class="font-semibold text-slate-700">₹${Number(p.paid_amount)}</span>
+        <span class="font-semibold text-slate-700">₹${inr(Number(p.paid_amount))}</span>
       </td>
       <td class="p-4 hidden sm:table-cell">
         ${statusPill}
@@ -1671,7 +1692,7 @@ async function renderBackendPayments() {
   const needsDecision = allRegs.filter(r => r.bank_status === 'PENDING' && !isBalanceDue(r));
   const flagged = allRegs.filter(r => r.is_flagged);
   const totalCleared = verified.reduce((sum, r) => sum + (Number(r.verified_total) || 0), 0);
-  setText('metric-total-amount', `₹${totalCleared}`);
+  setText('metric-total-amount', `₹${inr(totalCleared)}`);
   setText('metric-verified-count', verified.length);
   setText('metric-pending-count', needsDecision.length);
   setText('metric-flagged-count', flagged.length);
@@ -1710,68 +1731,90 @@ async function renderBackendPayments() {
 }
 
 // --- DELEGATE LOCATION MAP (approval page overview) ---
+// A choropleth (colored district polygons), not markers -- markers on top of
+// India-scale geography inevitably collide wherever delegates cluster (e.g.
+// the districts around the host). Coloring the district's own shape has
+// nowhere to collide: every district gets exactly its own area, no matter
+// how tightly packed its neighbors are.
 
-// Approximate lat/lng for the districts delegates have signed up from, plus
-// state centroids as a fallback so a delegate from a district we don't have
-// pinned still lands in roughly the right place. Districts are matched
-// case-insensitively against users.district.
-const DISTRICT_COORDS = {
-  'wardha': [20.75, 78.60], 'yavatmal': [20.39, 78.13], 'nagpur': [21.15, 79.09],
-  'mumbai': [19.08, 72.88], 'aurangabad': [19.88, 75.34], 'south west delhi': [28.60, 77.10],
-  'central': [28.65, 77.23], 'raipur': [21.25, 81.63], 'hyderabad': [17.39, 78.49],
-  'warangal': [17.97, 79.59], 'tiruvannamalai': [12.23, 79.07], 'tiruvallur': [13.14, 79.91],
-  'raichur': [16.21, 77.36], 'pune': [18.52, 73.86], 'patna': [25.59, 85.14],
-  'lucknow': [26.85, 80.95], 'kota': [25.18, 75.83], 'kolkata': [22.57, 88.36],
-  'kolar': [13.14, 78.13], 'kanchipuram': [12.84, 79.70], 'jodhpur': [26.24, 73.02],
-  'east godavari': [17.00, 81.78], 'bhandara': [21.17, 79.65], 'bangalore': [12.97, 77.59],
-  'amravati': [20.93, 77.76], 'akola': [20.71, 77.00], 'ajmer': [26.45, 74.64],
-  'ahmed nagar': [19.09, 74.75], 'nashik': [20.00, 73.79], 'thane': [19.22, 72.97],
-  'nanded': [19.15, 77.32], 'chennai': [13.08, 80.27], 'jaipur': [26.91, 75.79],
-  'bhopal': [23.26, 77.41], 'indore': [22.72, 75.86], 'chandrapur': [19.95, 79.30],
-  'gadchiroli': [20.18, 80.00], 'gondia': [21.46, 80.20], 'buldhana': [20.53, 76.18],
-  'jalna': [19.84, 75.88], 'parbhani': [19.27, 76.78], 'coimbatore': [11.02, 76.96],
+// A few of our district names differ from the shapefile's official spelling
+// (github.com/abhatia08/india_shp_2020, dtname field) -- map ours to theirs.
+const DISTRICT_NAME_ALIASES = {
+  'ahmed nagar': 'ahmadnagar',
+  'gondia': 'gondiya',
+  'kanchipuram': 'kancheepuram',
+  'north west delhi': 'north west',
+  'south west delhi': 'south west',
+  'tiruvallur': 'thiruvallur',
+  'warangal': 'warangal urban',
 };
-const STATE_COORDS = {
-  'maharashtra': [19.75, 75.71], 'delhi': [28.61, 77.21], 'chattisgarh': [21.28, 81.87],
-  'chhattisgarh': [21.28, 81.87], 'telangana': [17.90, 79.60], 'tamil nadu': [11.10, 78.66],
-  'karnataka': [15.32, 75.71], 'rajasthan': [26.60, 73.80], 'uttar pradesh': [26.85, 80.95],
-  'bihar': [25.60, 85.10], 'west bengal': [22.99, 87.85], 'andhra pradesh': [15.90, 79.74],
-  'gujarat': [22.70, 71.60], 'madhya pradesh': [23.50, 78.50], 'kerala': [10.50, 76.30],
-  'punjab': [31.10, 75.30], 'haryana': [29.20, 76.30], 'odisha': [20.50, 84.90],
-  'jharkhand': [23.60, 85.30], 'assam': [26.20, 92.90], 'uttarakhand': [30.00, 79.30],
-  'himachal pradesh': [31.90, 77.20], 'jammu and kashmir': [33.80, 76.50], 'goa': [15.40, 74.00],
+
+// Low end starts well clear of the neutral "no data" fill (#f1efe8) and
+// already reads as clearly colored, not just off-white -- a value of 1
+// should never look like a value of 0.
+const DELEGATE_MAP_COLORS = {
+  registered: { empty: '#f1efe8', ramp: ['#a7d7b8', '#064e2f'] },
+  signedup: { empty: '#f1efe8', ramp: ['#f6c977', '#7a3d02'] },
 };
 
 let delegateMapRendered = false;
+let delegateMapMetric = 'registered';
+let delegateMapData = null; // cached {topo, byKey, totalReg, totalSign, districtCount, unmatched} -- toggling redraws without refetching
+
 async function renderDelegateMap() {
   if (delegateMapRendered) return; // static enough; render once per page load
   const host = document.getElementById('delegate-map');
   if (!host || typeof d3 === 'undefined' || typeof topojson === 'undefined') return;
   delegateMapRendered = true;
 
-  const res = await fetch('/api/admin/delegate-locations');
-  if (!res.ok) { delegateMapRendered = false; return; }
-  const locations = (await res.json()).locations || [];
+  const [locRes, topo] = await Promise.all([
+    fetch('/api/admin/delegate-locations'),
+    // Self-hosted district-level topology (public/data/india-districts.topo.json)
+    // rather than an external CDN -- built from the official Survey of India
+    // district shapefile, so it depicts India's full claimed territory (all of
+    // Jammu & Kashmir and Ladakh as separate states) and doesn't depend on a
+    // third party staying up. dtname/stname are the only properties kept.
+    d3.json('/data/india-districts.topo.json').catch(() => null),
+  ]);
+  if (!locRes.ok || !topo) { delegateMapRendered = false; setText('delegate-map-summary', 'Could not load the map.'); return; }
+  const locations = (await locRes.json()).locations || [];
 
-  // Resolve each district to coordinates (district first, then state).
-  let unmapped = 0, totalReg = 0, totalSign = 0;
-  const pts = [];
+  const byKey = new Map();
+  let totalReg = 0, totalSign = 0;
+  const resolvedKeys = new Set();
   locations.forEach((loc) => {
-    const d = String(loc.district || '').toLowerCase().trim();
-    const st = String(loc.state || '').toLowerCase().trim();
-    const coord = DISTRICT_COORDS[d] || STATE_COORDS[st];
+    let d = String(loc.district || '').toLowerCase().trim();
+    d = DISTRICT_NAME_ALIASES[d] || d;
     totalReg += loc.registered; totalSign += loc.signedup;
-    if (!coord) { unmapped += loc.registered + loc.signedup; return; }
-    pts.push({ name: d.replace(/\b\w/g, (c) => c.toUpperCase()), lat: coord[0], lng: coord[1],
-      reg: loc.registered, sign: loc.signedup, total: loc.registered + loc.signedup,
-      host: d === 'wardha' });
+    const prev = byKey.get(d) || { registered: 0, signedup: 0, rawName: loc.district };
+    byKey.set(d, { registered: prev.registered + loc.registered, signedup: prev.signedup + loc.signedup, rawName: prev.rawName });
+    resolvedKeys.add(d);
   });
 
-  setText('delegate-map-summary',
-    `${totalReg} registered · ${totalSign} signed up only across ${locations.length} districts`
-    + (unmapped ? ` (${unmapped} not shown — unmapped location)` : ''));
+  const feat = topojson.feature(topo, topo.objects.in_district);
+  const topoKeys = new Set(feat.features.map((f) => String(f.properties.dtname || '').toLowerCase().trim()));
+  const unmatched = [...resolvedKeys].filter((k) => !topoKeys.has(k));
 
-  const C_REG = '#008300', C_SIGN = '#eda100';
+  delegateMapData = { feat, byKey, totalReg, totalSign, districtCount: locations.length, unmatched };
+  drawDelegateMap();
+}
+
+// Redraw with the currently selected metric, from cached data -- no refetch.
+function drawDelegateMap() {
+  const data = delegateMapData;
+  const host = document.getElementById('delegate-map');
+  if (!data || !host) return;
+
+  const regBtn = document.getElementById('delegate-map-btn-registered');
+  const signBtn = document.getElementById('delegate-map-btn-signedup');
+  const active = delegateMapMetric === 'registered';
+  if (regBtn) { regBtn.classList.toggle('bg-white', active); regBtn.classList.toggle('shadow-sm', active); regBtn.classList.toggle('text-emerald-700', active); regBtn.classList.toggle('text-slate-500', !active); }
+  if (signBtn) { signBtn.classList.toggle('bg-white', !active); signBtn.classList.toggle('shadow-sm', !active); signBtn.classList.toggle('text-amber-700', !active); signBtn.classList.toggle('text-slate-500', active); }
+
+  setText('delegate-map-summary',
+    `${data.totalReg} registered · ${data.totalSign} signed up only across ${data.districtCount} districts`
+    + (data.unmatched.length ? ` (${data.unmatched.length} not shown — unmapped location: ${data.unmatched.slice(0, 3).join(', ')}${data.unmatched.length > 3 ? '…' : ''})` : ''));
+
   const W = 680, H = 720;
   host.innerHTML = '';
   // width/height ATTRIBUTES (not just viewBox) give the SVG an intrinsic
@@ -1786,45 +1829,66 @@ async function renderDelegateMap() {
     .style('background', '#fff').style('border', '0.5px solid #cbd5e1').style('border-radius', '8px')
     .style('padding', '6px 10px').style('font-size', '12px').style('color', '#0f172a')
     .style('box-shadow', '0 2px 8px rgba(0,0,0,.15)').style('white-space', 'nowrap');
-  const maxTotal = Math.max(1, ...pts.map((p) => p.total));
-  const rScale = d3.scaleSqrt().domain([1, maxTotal]).range([5, 27]);
-  const pie = d3.pie().sort(null).value((d) => d.v);
 
-  // Self-hosted (public/data/india-states.topo.json) rather than an
-  // external CDN -- dissolved from the official Survey of India district
-  // shapefile (github.com/abhatia08/india_shp_2020), so it depicts India's
-  // full claimed territory (all of Jammu & Kashmir and Ladakh as separate
-  // states), and doesn't depend on a third party staying up.
-  d3.json('/data/india-states.topo.json').then((topo) => {
-    const feat = topojson.feature(topo, topo.objects.in_district);
-    const proj = d3.geoMercator().fitExtent([[10, 10], [W - 10, H - 10]], feat);
-    svg.append('g').selectAll('path').data(feat.features).join('path')
-      .attr('d', d3.geoPath(proj)).attr('fill', '#f1efe8').attr('stroke', '#d3d1c7').attr('stroke-width', 0.5);
+  const proj = d3.geoMercator().fitExtent([[10, 10], [W - 10, H - 10]], data.feat);
+  const path = d3.geoPath(proj);
+  const metricKey = delegateMapMetric;
+  const colors = DELEGATE_MAP_COLORS[metricKey];
 
-    const placed = pts.map((c) => ({ ...c, p: proj([c.lng, c.lat]) })).filter((c) => c.p).sort((a, b) => b.total - a.total);
-    const g = svg.append('g').selectAll('g.city').data(placed).join('g')
-      .attr('transform', (d) => `translate(${d.p[0]},${d.p[1]})`).style('cursor', 'pointer')
-      .on('mousemove', (ev, d) => {
-        const b = host.getBoundingClientRect();
-        tip.style('opacity', 1).html(`<b>${esc(d.name)}</b><br>${d.reg} registered · ${d.sign} signed up`)
-          .style('left', (ev.clientX - b.left + 12) + 'px').style('top', (ev.clientY - b.top - 6) + 'px');
-      })
-      .on('mouseleave', () => tip.style('opacity', 0));
-    g.each(function (d) {
-      const rad = rScale(d.total);
-      const arc = d3.arc().innerRadius(0).outerRadius(rad);
-      const slices = pie([{ k: 'reg', v: d.reg }, { k: 'sign', v: d.sign }].filter((s) => s.v > 0));
-      d3.select(this).selectAll('path').data(slices).join('path')
-        .attr('d', arc).attr('fill', (s) => s.data.k === 'reg' ? C_REG : C_SIGN).attr('fill-opacity', 0.85)
-        .attr('stroke', '#fff').attr('stroke-width', slices.length > 1 ? 1 : 0);
-      d3.select(this).append('circle').attr('r', rad).attr('fill', 'none')
-        .attr('stroke', d.host ? '#ea580c' : '#fff').attr('stroke-width', d.host ? 2.5 : 0.8);
-    });
-    svg.append('g').selectAll('text').data(placed.filter((d) => d.total >= 3)).join('text')
-      .attr('x', (d) => d.p[0]).attr('y', (d) => d.p[1] - rScale(d.total) - 3).attr('text-anchor', 'middle')
-      .attr('font-size', '11px').attr('font-weight', '600').attr('fill', '#475569')
-      .text((d) => `${d.name} (${d.total})`);
-  }).catch(() => { setText('delegate-map-summary', 'Could not load the map.'); });
+  const districts = data.feat.features.map((f) => {
+    const key = String(f.properties.dtname || '').toLowerCase().trim();
+    const rec = data.byKey.get(key);
+    return { f, key, name: f.properties.dtname, rec, value: rec ? rec[metricKey] : 0, host: key === 'wardha' };
+  });
+  const maxVal = Math.max(1, ...districts.map((d) => d.value));
+  // Sqrt scale (not linear): with a handful of very high districts and many
+  // low ones, a linear scale crams every low value into the first few percent
+  // of the ramp, right where it's least distinguishable from "no data". Sqrt
+  // spreads the low end out so a 1 and a 5 are visibly different colors.
+  const color = d3.scaleSequentialSqrt().domain([1, maxVal]).interpolator(d3.interpolateRgb(colors.ramp[0], colors.ramp[1])).clamp(true);
+
+  svg.append('g').selectAll('path').data(districts).join('path')
+    .attr('d', (d) => path(d.f))
+    .attr('fill', (d) => d.value > 0 ? color(d.value) : colors.empty)
+    .attr('stroke', (d) => d.host ? '#ea580c' : '#fff').attr('stroke-width', (d) => d.host ? 1.6 : 0.5)
+    .style('cursor', (d) => d.rec ? 'pointer' : 'default')
+    .on('mousemove', (ev, d) => {
+      if (!d.rec) return;
+      const b = host.getBoundingClientRect();
+      tip.style('opacity', 1).html(`<b>${esc(d.rec.rawName || d.name)}</b><br>${d.rec.registered} registered · ${d.rec.signedup} signed up`)
+        .style('left', (ev.clientX - b.left + 12) + 'px').style('top', (ev.clientY - b.top - 6) + 'px');
+    })
+    .on('mouseleave', () => tip.style('opacity', 0));
+
+  // Number labels at every colored district's centroid -- every district
+  // with a non-zero value for the active metric gets a label, always (an
+  // empty district showing "0" everywhere would bury the real numbers in
+  // noise, so those stay unlabeled). A white halo (paint-order stroke) keeps
+  // each number legible over its fill color; two adjacent small districts can
+  // still sit close together, but nothing is ever hidden.
+  const labeled = districts.filter((d) => d.value > 0).sort((a, b) => b.value - a.value);
+  svg.append('g').selectAll('text').data(labeled).join('text')
+    .attr('transform', (d) => `translate(${path.centroid(d.f)})`)
+    .attr('text-anchor', 'middle').attr('dy', '0.32em')
+    .attr('font-size', '9.5px').attr('font-weight', '700').attr('fill', '#1e293b')
+    .attr('paint-order', 'stroke').attr('stroke', '#fff').attr('stroke-width', 2.5).attr('stroke-linejoin', 'round')
+    .style('pointer-events', 'none')
+    .text((d) => d.value);
+
+  // Legend: a small gradient bar for the active metric's color scale.
+  const legend = document.getElementById('delegate-map-legend');
+  if (legend) {
+    legend.innerHTML = `
+      <span class="text-[10px] text-slate-500">0</span>
+      <span class="inline-block w-24 h-2.5 rounded-full" style="background:linear-gradient(to right, ${colors.ramp[0]}, ${colors.ramp[1]})"></span>
+      <span class="text-[10px] text-slate-500">${maxVal}</span>
+      <span class="text-[10px] text-slate-400 ml-1">${metricKey === 'registered' ? 'delegates registered' : 'signed up only'}</span>`;
+  }
+}
+
+function setDelegateMapMetric(metric) {
+  delegateMapMetric = metric;
+  drawDelegateMap();
 }
 
 // --- PAYMENT REVIEW MODAL (verify / force-verify / reject entry point) ---
@@ -1844,7 +1908,7 @@ function openReviewModal(id) {
   setText('review-age', p.delegate_age != null && p.delegate_age !== '' ? p.delegate_age : '—');
   setText('review-gender', p.delegate_gender || '—');
   setText('review-mode', PAYMENT_MODE_LABELS[p.payment_mode] || p.payment_mode || 'UPI');
-  setText('review-amount', `₹${Number(p.paid_amount)}` + (p.expected_amount != null && Number(p.paid_amount) !== Number(p.expected_amount) ? ` (expected ₹${Number(p.expected_amount)})` : ''));
+  setText('review-amount', `₹${inr(Number(p.paid_amount))}` + (p.expected_amount != null && Number(p.paid_amount) !== Number(p.expected_amount) ? ` (expected ₹${inr(Number(p.expected_amount))})` : ''));
   setText('review-utr', p.utr_number);
   setText('review-date', fmtAuditTime(p.submitted_at) || '—');
 
@@ -1939,7 +2003,7 @@ function renderReviewPaymentProgress(p) {
 
   if (wrap) wrap.classList.toggle('hidden', txns.length === 0);
   if (ledger && txns.length) {
-    setText('review-progress-summary', `₹${verifiedTotal} / ₹${fee}${remaining > 0 ? ` · ₹${remaining} due` : ' · fully paid'}`);
+    setText('review-progress-summary', `₹${inr(verifiedTotal)} / ₹${inr(fee)}${remaining > 0 ? ` · ₹${inr(remaining)} due` : ' · fully paid'}`);
     ledger.innerHTML = txns.map(reviewTxnRowHtml).join('');
   }
 
@@ -1964,7 +2028,7 @@ function reviewTxnRowHtml(t) {
   // Unlink is offered on a linked payment until the registration itself is
   // confirmed (BANK_VERIFIED) -- undoing a link un-acknowledges the payment.
   const linkLine = linked
-    ? `<span class="text-emerald-700 font-semibold">🔗 ${esc(t.bank_txn_date || '')} · ₹${esc(t.bank_txn_credit != null ? t.bank_txn_credit : '')}</span>`
+    ? `<span class="text-emerald-700 font-semibold">🔗 ${esc(t.bank_txn_date || '')} · ₹${inr(esc(t.bank_txn_credit != null ? t.bank_txn_credit : ''))}</span>`
         + (reviewRegVerified ? '' : ` <button type="button" class="text-rose-600 hover:underline font-semibold ml-1" onclick="unlinkTxn(${esc(t.id)})">Unlink</button>`)
     : isRejected
       ? `<span class="text-slate-400">Rejected — not linked</span>`
@@ -1973,7 +2037,7 @@ function reviewTxnRowHtml(t) {
     <div class="flex items-center justify-between">
       <span class="font-mono text-slate-500">${esc(t.utr_number || '—')}</span>
       <span class="flex items-center gap-2">
-        <span class="font-semibold">₹${Number(amt)}</span>
+        <span class="font-semibold">₹${inr(Number(amt))}</span>
         <span class="font-bold ${TONE[t.txn_status] || 'text-slate-500'}">${esc(t.txn_status)}</span>
       </span>
     </div>
@@ -1993,7 +2057,7 @@ async function toggleTxnCandidates(txnId) {
   const rows = (await res.json()).transactions || [];
   box.innerHTML = rows.length ? rows.map((c) => `
     <div class="flex items-center justify-between gap-2 p-2 text-[10px]">
-      <div class="min-w-0"><p class="font-semibold text-slate-700">${esc(c.post_date)} · ₹${esc(c.credit)}</p><p class="text-slate-500 truncate">${esc(c.description)}</p></div>
+      <div class="min-w-0"><p class="font-semibold text-slate-700">${esc(c.post_date)} · ₹${inr(esc(c.credit))}</p><p class="text-slate-500 truncate">${esc(c.description)}</p></div>
       <button type="button" class="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded" onclick="linkTxnToBank(${esc(txnId)}, ${esc(c.id)})">Link</button>
     </div>`).join('') : '<p class="text-[10px] text-slate-400 p-2">No unused credits in the statement yet.</p>';
 }
@@ -2062,7 +2126,7 @@ async function reviewLockCategory() {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ categoryKey }),
   })).json();
   if (!data.success) return showToast(data.error || 'Could not lock category.');
-  showToast(`Category locked. Fee is now ₹${data.expectedAmount}${data.remaining > 0 ? `, ₹${data.remaining} balance due from the delegate.` : '.'}`, 'info');
+  showToast(`Category locked. Fee is now ₹${inr(data.expectedAmount)}${data.remaining > 0 ? `, ₹${inr(data.remaining)} balance due from the delegate.` : '.'}`, 'info');
   await renderBackendPayments();
   openReviewModal(reviewTargetId);
 }
@@ -2122,7 +2186,7 @@ function renderReviewTxnLink(p) {
   updateReviewAcceptGate();
 
   if (isLinked) {
-    setText('review-txn-details', `${esc(p.bank_txn_date || '')} · ₹${esc(p.bank_txn_credit)} · ${esc(p.bank_txn_description || '')}`);
+    setText('review-txn-details', `${esc(p.bank_txn_date || '')} · ₹${inr(esc(p.bank_txn_credit))} · ${esc(p.bank_txn_description || '')}`);
     return;
   }
   loadReviewTxnCandidates(p.id);
@@ -2139,7 +2203,7 @@ async function loadReviewTxnCandidates(regId) {
   box.innerHTML = txns.length ? txns.map(t => `
     <div class="flex items-center justify-between gap-2 p-2 text-xs">
       <div class="min-w-0">
-        <p class="font-semibold text-slate-700">${esc(t.post_date)} · ₹${esc(t.credit)}</p>
+        <p class="font-semibold text-slate-700">${esc(t.post_date)} · ₹${inr(esc(t.credit))}</p>
         <p class="text-slate-500 truncate">${esc(t.description)}</p>
       </div>
       <button type="button" class="review-txn-link-btn shrink-0 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg" data-txn-id="${esc(t.id)}">Link</button>
@@ -2206,7 +2270,7 @@ async function reviewRevisePayment() {
     method: 'POST',
   })).json();
   if (!data.success) return showToast(data.error || 'Could not revise the payment.');
-  showToast(`Revised — ₹${data.remaining} balance requested from the delegate.`, 'info');
+  showToast(`Revised — ₹${inr(data.remaining)} balance requested from the delegate.`, 'info');
   closeModal('modal-review');
   renderBackendPayments();
 }
@@ -2215,8 +2279,8 @@ const REG_STATUS_STYLES = {
   BANK_VERIFIED: 'bg-emerald-100 text-emerald-800',
   PENDING: 'bg-amber-100 text-amber-800',
   REJECTED: 'bg-rose-100 text-rose-800',
+  PARTIAL_PAYMENT: 'bg-orange-100 text-orange-800',
 };
-const REG_STATUS_LABELS = { BANK_VERIFIED: 'Verified', PENDING: 'Pending', REJECTED: 'Rejected' };
 
 // Cached so filtering/search re-renders instantly without a round-trip, and
 // so the workshop/QI <select>s below have the full option list to draw from.
@@ -2295,7 +2359,7 @@ function renderBackendUsers() {
       <td class="p-4">${esc(u.designation)} (${esc(u.institution)})</td>
       <td class="p-4 font-mono text-xs">${esc(u.registration_number || '—')}</td>
       <td class="p-4">${u.registration_status
-        ? `<span class="${REG_STATUS_STYLES[u.registration_status] || 'bg-slate-100 text-slate-600'} text-xs font-bold px-2 py-1 rounded-full">${esc(REG_STATUS_LABELS[u.registration_status] || u.registration_status)}</span>`
+        ? `<span class="${REG_STATUS_STYLES[u.registration_status] || 'bg-slate-100 text-slate-600'} text-xs font-bold px-2 py-1 rounded-full">${esc(BANK_STATUS_LABELS[u.registration_status] || u.registration_status)}</span>`
         : `<span class="text-xs text-slate-400">Not registered</span>`}</td>
       <td class="p-4">${programDisplayCell(u, workshopOptions, u.workshop_option_id, 'WORKSHOP')}</td>
       <td class="p-4">${programDisplayCell(u, qiOptions, u.qi_option_id, 'QI')}</td>
@@ -2613,7 +2677,7 @@ async function renderBackendActivity() {
       <td class="py-3 px-4 whitespace-nowrap text-slate-500">${fmtAuditTime(r.imported_at)}</td>
       <td class="py-3 px-4 font-mono text-xs text-slate-600">${esc(r.source_file)}</td>
       <td class="py-3 px-4">${esc(r.rows_imported)}</td>
-      <td class="py-3 px-4 font-semibold">₹${esc(r.total_credit ?? 0)}</td>
+      <td class="py-3 px-4 font-semibold">₹${inr(esc(r.total_credit ?? 0))}</td>
       <td class="py-3 px-4">${esc(r.imported_by)}</td>
     </tr>`).join('') || `<tr><td colspan="5" class="py-6 text-center text-slate-400">No statement imports yet</td></tr>`;
 
@@ -2832,7 +2896,7 @@ async function renderDiscountCodes() {
   const codes = (await res.json()).codes || [];
   const catLabel = (key) => (cats.find((c) => c.key === key) || {}).label || key;
   tbody.innerHTML = codes.length ? codes.map((c) => {
-    const disc = c.discount_type === 'PERCENT' ? `${Number(c.discount_value)}%` : `₹${Number(c.discount_value)}`;
+    const disc = c.discount_type === 'PERCENT' ? `${Number(c.discount_value)}%` : `₹${inr(Number(c.discount_value))}`;
     const indivName = c.scope_type === 'INDIVIDUAL'
       ? ((cachedUsers || []).find((u) => u.phone_number === c.scope_value) || {}).full_name : null;
     const scope = c.scope_type === 'GLOBAL' ? 'All delegates'
@@ -2919,7 +2983,7 @@ async function renderGroupRules() {
     <tr class="${r.active ? '' : 'opacity-50'}">
       <td class="p-4 font-semibold text-slate-800">${esc(catLabel(r.category_key))}${r.active ? '' : ' <span class="text-[10px] text-slate-400">· inactive</span>'}</td>
       <td class="p-4">${esc(r.min_size)}+</td>
-      <td class="p-4 font-semibold">${r.discount_type === 'PERCENT' ? esc(r.discount_value) + '%' : '₹' + esc(r.discount_value)}</td>
+      <td class="p-4 font-semibold">${r.discount_type === 'PERCENT' ? esc(r.discount_value) + '%' : '₹' + inr(r.discount_value)}</td>
       <td class="p-4 text-right whitespace-nowrap">
         <button onclick="toggleGroupRule(${esc(r.id)}, ${r.active ? 0 : 1})" class="px-3 py-1.5 ${r.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg">${r.active ? 'Deactivate' : 'Activate'}</button>
         <button onclick="deleteGroupRule(${esc(r.id)})" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg">Delete</button>
@@ -3004,7 +3068,7 @@ async function renderGroupsMonitor() {
         <span class="min-w-0 truncate">${esc(m.name)}${m.phone === g.leaderPhone ? ' <span class="text-[10px] text-indigo-500 font-semibold">(leader)</span>' : ''} <span class="text-[11px] text-slate-400 font-mono">${esc(m.phone)}</span></span>
         <span class="text-xs font-semibold shrink-0 ${TONE[m.status] || 'text-slate-500'}">${esc(LABEL[m.status] || m.status)}</span>
       </div>`).join('');
-    const disc = g.discountType ? (g.discountType === 'PERCENT' ? g.discountValue + '%' : '₹' + g.discountValue) : '—';
+    const disc = g.discountType ? (g.discountType === 'PERCENT' ? g.discountValue + '%' : '₹' + inr(g.discountValue)) : '—';
     return `<div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
       <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
         <div>
@@ -3277,7 +3341,7 @@ function reportRowCardHtml(row, columns) {
       return `<span class="font-semibold ${tone}">${esc(val)}</span>`;
     }
     if (/amount|paid|credit|fee/i.test(col)) {
-      return `<span class="font-semibold text-slate-700">₹${esc(val)}</span>`;
+      return `<span class="font-semibold text-slate-700">₹${inr(esc(val))}</span>`;
     }
     return `<span>${esc(val)}</span>`;
   };
@@ -3300,7 +3364,7 @@ function reportRowCardHtml(row, columns) {
       <div class="flex items-start justify-between gap-3">
         ${titleBlock}
         <div class="shrink-0 flex items-center gap-1.5">
-          ${amountVal != null && amountVal !== '' ? `<span class="font-semibold text-slate-700 text-sm">₹${esc(amountVal)}</span>` : ''}
+          ${amountVal != null && amountVal !== '' ? `<span class="font-semibold text-slate-700 text-sm">₹${inr(esc(amountVal))}</span>` : ''}
           ${icon ? `<span title="${esc(statusVal)}">${icon}</span>` : ''}
         </div>
       </div>
@@ -3706,7 +3770,7 @@ async function loadReconciliation() {
               <p class="font-bold text-sm truncate">${esc(r.delegate_name)}</p>
               <p class="text-[11px] font-mono text-slate-400">${esc(r.registration_number || '—')}</p>
             </div>
-            <p class="font-semibold text-slate-700 shrink-0">₹${esc(r.paid_amount != null ? r.paid_amount : r.expected_amount)}</p>
+            <p class="font-semibold text-slate-700 shrink-0">₹${inr(esc(r.paid_amount != null ? r.paid_amount : r.expected_amount))}</p>
           </div>
           <div class="flex items-center gap-2 mt-1.5">
             <span class="bg-slate-100 text-slate-600 text-[10px] font-semibold px-2 py-0.5 rounded-full">${esc(PAYMENT_MODE_LABELS[r.payment_mode] || r.payment_mode || 'UPI')}</span>
@@ -3717,7 +3781,7 @@ async function loadReconciliation() {
         <td class="p-3 hidden sm:table-cell">${esc(r.delegate_name)}</td>
         <td class="p-3 hidden sm:table-cell">${esc(PAYMENT_MODE_LABELS[r.payment_mode] || r.payment_mode || 'UPI')}</td>
         <td class="p-3 font-mono text-xs hidden sm:table-cell">${esc(r.utr_number)}</td>
-        <td class="p-3 hidden sm:table-cell">₹${esc(r.paid_amount != null ? r.paid_amount : r.expected_amount)}</td>
+        <td class="p-3 hidden sm:table-cell">₹${inr(esc(r.paid_amount != null ? r.paid_amount : r.expected_amount))}</td>
       </tr>`).join('') : `<tr><td colspan="5" class="p-4 text-center text-slate-400 text-xs">Every registration's reference was found in the statement.</td></tr>`;
   }
 
@@ -3731,37 +3795,63 @@ async function loadReconciliation() {
               <p class="text-sm text-slate-700 truncate">${esc(t.description)}</p>
               <p class="text-[11px] text-slate-400">${esc(t.post_date)}</p>
             </div>
-            <p class="font-semibold text-amber-700 shrink-0">₹${esc(t.credit)}</p>
+            <p class="font-semibold text-amber-700 shrink-0">₹${inr(esc(t.credit))}</p>
           </div>
         </td>
         <td class="p-3 hidden sm:table-cell">${esc(t.post_date)}</td>
         <td class="p-3 hidden sm:table-cell">${esc(t.description)}</td>
-        <td class="p-3 font-semibold hidden sm:table-cell">₹${esc(t.credit)}</td>
+        <td class="p-3 font-semibold hidden sm:table-cell">₹${inr(esc(t.credit))}</td>
       </tr>`).join('') : `<tr><td colspan="3" class="p-4 text-center text-slate-400 text-xs">No unmatched credits.</td></tr>`;
   }
 
-  const matchedBody = document.getElementById('rec-matched-body');
-  if (matchedBody) {
-    matchedBody.innerHTML = data.matched.length ? data.matched.map(m => `
-      <tr class="${m.amountOk ? '' : 'bg-rose-50/50'}">
+  cachedMatched = data.matched || [];
+  filterMatchedRows();
+}
+
+// The matched list, cached so the search box can filter it without refetching.
+let cachedMatched = [];
+function matchedRowHtml(m, serial) {
+  const rejectedTag = m.bank_status === 'REJECTED'
+    ? ' <span class="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5">rejected</span>' : '';
+  return `
+      <tr class="${m.bank_status === 'REJECTED' ? 'bg-rose-50/40' : (m.amountOk ? '' : 'bg-rose-50/50')}">
         <td class="p-3 block sm:hidden">
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
-              <p class="font-bold text-sm truncate">${esc(m.delegate_name)}</p>
+              <p class="font-bold text-sm truncate"><span class="text-slate-400 font-normal">${serial}.</span> ${esc(m.delegate_name)}${rejectedTag}</p>
               <p class="text-[11px] font-mono text-slate-400 truncate">${esc(m.registration_number || '—')} · ${esc(m.utr_number)}</p>
             </div>
             <div class="text-right shrink-0">
-              <p class="font-semibold text-slate-700">₹${esc(m.transaction.credit)}</p>
+              <p class="font-semibold text-slate-700">₹${inr(esc(m.transaction.credit))}</p>
               <p class="text-[10px] text-slate-400">${esc(m.transaction.post_date)}</p>
             </div>
           </div>
-          ${m.amountOk ? '' : `<p class="text-[11px] text-rose-600 font-bold mt-1">≠ claimed ₹${esc(m.paid_amount != null ? m.paid_amount : m.expected_amount)}</p>`}
+          ${m.transaction.description ? `<p class="text-[11px] text-slate-500 mt-1 truncate">${esc(m.transaction.description)}</p>` : ''}
+          ${m.amountOk ? '' : `<p class="text-[11px] text-rose-600 font-bold mt-1">≠ claimed ₹${inr(esc(m.paid_amount != null ? m.paid_amount : m.expected_amount))}</p>`}
         </td>
+        <td class="p-3 text-slate-400 hidden sm:table-cell">${serial}</td>
         <td class="p-3 font-mono text-xs hidden sm:table-cell">${esc(m.registration_number || '—')}</td>
-        <td class="p-3 hidden sm:table-cell">${esc(m.delegate_name)}</td>
+        <td class="p-3 hidden sm:table-cell">${esc(m.delegate_name)}${rejectedTag}</td>
         <td class="p-3 font-mono text-xs hidden sm:table-cell">${esc(m.utr_number)}</td>
         <td class="p-3 hidden sm:table-cell">${esc(m.transaction.post_date)}</td>
-        <td class="p-3 hidden sm:table-cell">₹${esc(m.transaction.credit)}${m.amountOk ? '' : ` <span class="text-rose-600 font-bold">≠ claimed ₹${esc(m.paid_amount != null ? m.paid_amount : m.expected_amount)}</span>`}</td>
-      </tr>`).join('') : `<tr><td colspan="5" class="p-4 text-center text-slate-400 text-xs">No matches yet — upload a statement above.</td></tr>`;
-  }
+        <td class="p-3 text-xs text-slate-500 hidden sm:table-cell max-w-[240px] truncate" title="${esc(m.transaction.description || '')}">${esc(m.transaction.description || '—')}</td>
+        <td class="p-3 hidden sm:table-cell">₹${inr(esc(m.transaction.credit))}${m.amountOk ? '' : ` <span class="text-rose-600 font-bold">≠ claimed ₹${inr(esc(m.paid_amount != null ? m.paid_amount : m.expected_amount))}</span>`}</td>
+      </tr>`;
+}
+
+// Filter the matched list by the search box (reg no, name, UTR, description,
+// amount) and render with running serial numbers.
+function filterMatchedRows() {
+  const body = document.getElementById('rec-matched-body');
+  if (!body) return;
+  const q = (document.getElementById('rec-matched-search')?.value || '').trim().toLowerCase();
+  const list = !q ? cachedMatched : cachedMatched.filter((m) => {
+    const hay = `${m.registration_number || ''} ${m.delegate_name || ''} ${m.utr_number || ''} ${m.transaction.description || ''} ${m.transaction.credit || ''}`.toLowerCase();
+    return hay.includes(q);
+  });
+  const total = cachedMatched.length;
+  setText('rec-matched-count', total ? (q ? `(${list.length} of ${total})` : `(${total})`) : '');
+  body.innerHTML = list.length
+    ? list.map((m, i) => matchedRowHtml(m, i + 1)).join('')
+    : `<tr><td colspan="7" class="p-4 text-center text-slate-400 text-xs">${total ? 'No matches for this search.' : 'No matches yet — upload a statement above.'}</td></tr>`;
 }

@@ -38,6 +38,16 @@ const escapeHtml = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+// Rupee amount with Indian digit grouping (100000 -> 1,00,000). Manual, since
+// toLocaleString('en-IN') falls back to Western grouping without full ICU.
+const inr = (v) => {
+  const num = typeof v === 'number' ? v : Number(String(v == null ? '' : v).replace(/[^0-9.\-]/g, ''));
+  if (!isFinite(num)) return v == null ? '' : String(v);
+  const s = String(Math.round(Math.abs(num)));
+  const grouped = s.length <= 3 ? s : s.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + s.slice(-3);
+  return (num < 0 ? '-' : '') + grouped;
+};
+
 // Mirrors server.js's splitSalutation()/withDelegateSalutation(): the users
 // table holds the canonical salutation separately, but delegate_name on the
 // registration itself may already carry an embedded title from signup --
@@ -81,7 +91,7 @@ function buildDigestHtml(pending, pendingCount, verifiedCount, dateLabel) {
       <td style="padding:.4rem .3rem;font-family:monospace">${escapeHtml(r.registration_number)}</td>
       <td style="padding:.4rem .3rem">${escapeHtml(formatDelegateName(r.delegate_name, r.delegate_salutation))}</td>
       <td style="padding:.4rem .3rem;color:#64748b">${escapeHtml(r.category_label)}</td>
-      <td style="padding:.4rem .3rem;text-align:right">₹${escapeHtml(r.expected_amount)}</td>
+      <td style="padding:.4rem .3rem;text-align:right">₹${inr(escapeHtml(r.expected_amount))}</td>
       <td style="padding:.4rem .3rem;text-align:center">${r.is_flagged ? '⚠️' : '—'}</td>
     </tr>`).join('');
   const moreRow = pending.length > MAX_ROWS_SHOWN

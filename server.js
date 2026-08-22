@@ -219,6 +219,21 @@ function escapeHtml(v) {
     .replace(/'/g, '&#39;');
 }
 
+// Format a rupee amount with Indian digit grouping (e.g. 100000 -> 1,00,000):
+// last three digits grouped, then every two digits. Done manually because
+// toLocaleString('en-IN') falls back to Western grouping on this Node build
+// (no full ICU). Output is plain digits + commas, safe to drop into HTML.
+function inr(v) {
+  const num = typeof v === 'number' ? v : Number(String(v == null ? '' : v).replace(/[^0-9.\-]/g, ''));
+  if (!isFinite(num)) return v == null ? '' : String(v);
+  const neg = num < 0;
+  const s = String(Math.round(Math.abs(num)));
+  let out;
+  if (s.length <= 3) out = s;
+  else out = s.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + s.slice(-3);
+  return (neg ? '-' : '') + out;
+}
+
 // Normalise a person's name to Title Case (idempotent -- safe to re-run on
 // already-cased input). Lower-cases everything, then capitalises the first
 // letter after start-of-string, whitespace, hyphen, period, or apostrophe, so
@@ -2186,8 +2201,8 @@ async function revokeGroupDiscountIfBelowThreshold(groupId) {
     notifyDelegate(reg.phone_number, 'Group discount no longer applies — balance due',
       emailWrap('Your group discount has been withdrawn',
         `<p>Dear ${escapeHtml(reg.delegate_name || 'Delegate')},</p>
-         <p>Your group has dropped below the minimum size required for the group discount, so the full registration fee of <b>₹${escapeHtml(fullFee)}</b> now applies.</p>
-         <p>An outstanding balance of <b>₹${escapeHtml(Math.max(0, fullFee - summary.verifiedTotal))}</b> is due. Please log in to the delegate portal to pay it.</p>`));
+         <p>Your group has dropped below the minimum size required for the group discount, so the full registration fee of <b>₹${inr(escapeHtml(fullFee))}</b> now applies.</p>
+         <p>An outstanding balance of <b>₹${inr(escapeHtml(Math.max(0, fullFee - summary.verifiedTotal)))}</b> is due. Please log in to the delegate portal to pay it.</p>`));
   }
 }
 
@@ -2269,7 +2284,7 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
         ${row('Category', reg.category_label)}
         ${row('Workshop', reg.workshop)}
         ${row('QI Exposure', reg.qi_exposure)}
-        ${row('Amount Paid', '₹' + (reg.expected_amount != null ? reg.expected_amount : reg.paid_amount))}
+        ${row('Amount Paid', '₹' + inr(reg.expected_amount != null ? reg.expected_amount : reg.paid_amount))}
         ${row('UTR / Txn Ref', reg.utr_number)}
         ${row('Verified On', verifiedOn)}
       </table>
@@ -2637,7 +2652,7 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
       if (existing.expected_amount > 0 && summary.verifiedTotal + 0.5 < existing.expected_amount) {
         return res.status(400).json({
           success: false,
-          error: `Only ₹${summary.verifiedTotal} of the ₹${existing.expected_amount} fee has been received. The delegate must pay the ₹${existing.expected_amount - summary.verifiedTotal} balance before this can be confirmed.`,
+          error: `Only ₹${inr(summary.verifiedTotal)} of the ₹${inr(existing.expected_amount)} fee has been received. The delegate must pay the ₹${inr(existing.expected_amount - summary.verifiedTotal)} balance before this can be confirmed.`,
         });
       }
     }
@@ -2800,8 +2815,8 @@ app.put('/api/registrations/:id/lock-category', requireRole('SUPER_ADMIN', 'FINA
     await recordAudit({
       req, entityType: 'registration', entityId: req.params.id,
       action: 'CATEGORY_LOCK',
-      oldValue: `${reg.category_label} (₹${reg.expected_amount})`,
-      newValue: `${feeInfo.label} (₹${newFee}) — locked`,
+      oldValue: `${reg.category_label} (₹${inr(reg.expected_amount)})`,
+      newValue: `${feeInfo.label} (₹${inr(newFee)}) — locked`,
     });
 
     const summary = await getPaymentSummary(reg.id, newFee);
@@ -2839,13 +2854,13 @@ app.post('/api/registrations/:id/revise-payment', requireRole('SUPER_ADMIN', 'FI
     await dbRun("UPDATE registrations SET bank_status = 'PARTIAL_PAYMENT' WHERE id = ?", [reg.id]);
     await recordAudit({
       req, entityType: 'registration', entityId: req.params.id, action: 'PAYMENT_REVISED',
-      oldValue: reg.bank_status, newValue: `PARTIAL_PAYMENT (paid ₹${summary.verifiedTotal}, ₹${remaining} balance)`,
+      oldValue: reg.bank_status, newValue: `PARTIAL_PAYMENT (paid ₹${inr(summary.verifiedTotal)}, ₹${inr(remaining)} balance)`,
     });
     notifyDelegate(reg.phone_number, 'Revised payment required — balance due',
       emailWrap('A balance is due on your registration',
         `<p>Dear ${escapeHtml(reg.delegate_name)},</p>
-         <p>Your registration category is now <b>${escapeHtml(reg.category_label)}</b> with a fee of <b>₹${escapeHtml(reg.expected_amount)}</b>. We have received <b>₹${escapeHtml(summary.verifiedTotal)}</b>.</p>
-         <p>An outstanding balance of <b>₹${escapeHtml(remaining)}</b> is due. Please log in to the delegate portal to pay it.</p>`));
+         <p>Your registration category is now <b>${escapeHtml(reg.category_label)}</b> with a fee of <b>₹${inr(escapeHtml(reg.expected_amount))}</b>. We have received <b>₹${inr(escapeHtml(summary.verifiedTotal))}</b>.</p>
+         <p>An outstanding balance of <b>₹${inr(escapeHtml(remaining))}</b> is due. Please log in to the delegate portal to pay it.</p>`));
     res.json({ success: true, remaining });
   } catch (err) {
     next(err);
@@ -3019,7 +3034,7 @@ app.put('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FIN
       [bankTxnId, req.session.name || req.session.phone, Date.now(), txn.id]);
     await recordAudit({
       req, entityType: 'registration', entityId: String(txn.registration_id),
-      action: 'BANK_TXN_LINK', oldValue: txn.bank_txn_id, newValue: `txn#${txn.id} → bank#${bankTxnId} (₹${txn.amount} acknowledged)`,
+      action: 'BANK_TXN_LINK', oldValue: txn.bank_txn_id, newValue: `txn#${txn.id} → bank#${bankTxnId} (₹${inr(txn.amount)} acknowledged)`,
     });
     res.json({ success: true });
   } catch (err) {
@@ -3463,7 +3478,7 @@ app.post('/api/admin/discount-codes', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'
       [f.code, f.discountType, f.discountValue, f.scopeType, f.scopeValue, f.maxUses, f.expiresAt, Date.now(), req.session.name || req.session.phone]);
     await recordAudit({
       req, entityType: 'discount_code', entityId: result.lastID, action: 'DISCOUNT_CODE_CREATE',
-      oldValue: null, newValue: `${f.code} — ${f.discountType === 'PERCENT' ? f.discountValue + '%' : '₹' + f.discountValue} (${f.scopeType}${f.scopeValue ? ':' + f.scopeValue : ''})`,
+      oldValue: null, newValue: `${f.code} — ${f.discountType === 'PERCENT' ? f.discountValue + '%' : '₹' + inr(f.discountValue)} (${f.scopeType}${f.scopeValue ? ':' + f.scopeValue : ''})`,
     });
     res.json({ success: true });
   } catch (err) {
@@ -3586,7 +3601,7 @@ app.post('/api/admin/group-rules', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), 
       [categoryKey, minSize, discountType, discountValue, Date.now()]);
     await recordAudit({
       req, entityType: 'group_rule', entityId: categoryKey, action: 'GROUP_RULE_SET',
-      oldValue: null, newValue: `${categoryKey}: ≥${minSize} → ${discountType === 'PERCENT' ? discountValue + '%' : '₹' + discountValue}`,
+      oldValue: null, newValue: `${categoryKey}: ≥${minSize} → ${discountType === 'PERCENT' ? discountValue + '%' : '₹' + inr(discountValue)}`,
     });
     res.json({ success: true });
   } catch (err) {
@@ -3671,7 +3686,7 @@ app.post('/api/admin/fees/categories', requireRole('SUPER_ADMIN'), async (req, r
     await recordAudit({
       req, entityType: 'fee_category', entityId: result.lastID,
       action: 'FEE_CATEGORY_CREATE', oldValue: null,
-      newValue: `${categoryKey} "${String(label).trim()}" — early ₹${f.early}, regular ₹${f.regular}, late ₹${f.late}, spot ₹${f.spot}`,
+      newValue: `${categoryKey} "${String(label).trim()}" — early ₹${inr(f.early)}, regular ₹${inr(f.regular)}, late ₹${inr(f.late)}, spot ₹${inr(f.spot)}`,
     });
     res.json({ success: true });
   } catch (err) {
@@ -3703,8 +3718,8 @@ app.put('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (req
     await recordAudit({
       req, entityType: 'fee_category', entityId: req.params.id,
       action: 'FEE_CATEGORY_UPDATE',
-      oldValue: `${existing.label} — early ₹${existing.early_fee}, regular ₹${existing.regular_fee}, late ₹${existing.late_fee}, spot ₹${existing.spot_fee}, ${existing.active ? 'active' : 'inactive'}`,
-      newValue: `${existing.label} — early ₹${f.early}, regular ₹${f.regular}, late ₹${f.late}, spot ₹${f.spot}, ${updated.active ? 'active' : 'inactive'}`,
+      oldValue: `${existing.label} — early ₹${inr(existing.early_fee)}, regular ₹${inr(existing.regular_fee)}, late ₹${inr(existing.late_fee)}, spot ₹${inr(existing.spot_fee)}, ${existing.active ? 'active' : 'inactive'}`,
+      newValue: `${existing.label} — early ₹${inr(f.early)}, regular ₹${inr(f.regular)}, late ₹${inr(f.late)}, spot ₹${inr(f.spot)}, ${updated.active ? 'active' : 'inactive'}`,
     });
     res.json({ success: true });
   } catch (err) {
@@ -3911,49 +3926,65 @@ app.get('/api/admin/bank-statement', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
 // formatting differences don't break the match).
 app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
-    const regs = (await dbAll(
-      `SELECT id, registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, phone_number, utr_number, paid_amount, expected_amount, payment_mode, bank_status, bank_txn_id
-         FROM registrations WHERE utr_number IS NOT NULL AND utr_number != '' AND bank_status != 'REJECTED'`)).map(withDelegateSalutation);
+    // Credit-centric reconciliation: walk EVERY statement credit and decide
+    // whether it maps to a registration, so every credit is accounted for
+    // exactly once (matched or unmatched) with no blind spot -- a registration
+    // with two linked payments contributes two matched credits, and a credit
+    // linked to a rejected registration still shows (flagged), rather than
+    // vanishing from both lists.
     const txns = await dbAll(`SELECT * FROM bank_statement_transactions WHERE credit IS NOT NULL AND credit > 0`);
 
+    // Every registration that carries a payment reference (including rejected,
+    // so a rejected-but-linked credit resolves to its delegate).
+    const allRegs = (await dbAll(
+      `SELECT id, registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, phone_number, utr_number, paid_amount, expected_amount, payment_mode, bank_status
+         FROM registrations WHERE utr_number IS NOT NULL AND utr_number != ''`)).map(withDelegateSalutation);
+    const regById = new Map(allRegs.map((r) => [r.id, r]));
+
     const digits = (v) => String(v || '').replace(/\D/g, '');
-    const byRef = new Map();
-    const byId = new Map();
-    txns.forEach((t) => {
-      if (t.extracted_ref) byRef.set(digits(t.extracted_ref), t);
-      byId.set(t.id, t);
-    });
+    // UTR fallback (for payments not yet per-transaction linked) only resolves
+    // to a non-rejected registration.
+    const regByUtr = new Map();
+    allRegs.forEach((r) => { if (r.bank_status !== 'REJECTED') regByUtr.set(digits(r.utr_number), r); });
+
+    // Which registration each credit is linked to (first payment wins if two
+    // ever pointed at the same credit; the UNIQUE index makes that impossible).
+    const links = await dbAll("SELECT registration_id, bank_txn_id, amount FROM payment_transactions WHERE bank_txn_id IS NOT NULL ORDER BY id ASC");
+    const linkByCredit = new Map();
+    links.forEach((l) => { if (!linkByCredit.has(l.bank_txn_id)) linkByCredit.set(l.bank_txn_id, l); });
 
     const matched = [];
-    const unmatched = [];
-    for (const r of regs) {
-      // A persisted link (auto- or manually-made) is the ground truth; only
-      // fall back to a live UTR-ref lookup when there isn't one yet (so an
-      // IMPS/NEFT payment that was manually linked doesn't show as
-      // "not found" just because it has no extractable reference).
-      const txn = (r.bank_txn_id && byId.get(r.bank_txn_id)) || byRef.get(digits(r.utr_number));
-      if (!txn) {
-        unmatched.push({ ...r, reason: 'No matching transaction found in the statement.' });
-        continue;
-      }
-      const claimedAmount = r.paid_amount != null ? r.paid_amount : r.expected_amount;
-      const amountOk = claimedAmount == null || Number(txn.credit) === Number(claimedAmount);
-      matched.push({ ...r, transaction: txn, amountOk });
+    const unmatchedCredits = [];
+    const matchedRegIds = new Set();
+    for (const t of txns) {
+      const link = linkByCredit.get(t.id);
+      let reg = null;
+      let txnAmount = null;
+      if (link) { reg = regById.get(link.registration_id); txnAmount = link.amount; }
+      else if (t.extracted_ref) { reg = regByUtr.get(digits(t.extracted_ref)); }
+      if (!reg) { unmatchedCredits.push(t); continue; }
+      matchedRegIds.add(reg.id);
+      const claimedAmount = txnAmount != null ? txnAmount : (reg.paid_amount != null ? reg.paid_amount : reg.expected_amount);
+      const amountOk = claimedAmount == null || Number(t.credit) === Number(claimedAmount);
+      matched.push({ ...reg, transaction: t, amountOk });
     }
 
-    const matchedTxnIds = new Set(matched.map((m) => m.transaction.id));
-    const unmatchedCredits = txns.filter((t) => !matchedTxnIds.has(t.id));
+    // Registrations (non-rejected, with a reference) that didn't match any credit.
+    const unmatched = allRegs
+      .filter((r) => r.bank_status !== 'REJECTED' && !matchedRegIds.has(r.id))
+      .map((r) => ({ ...r, reason: 'No matching transaction found in the statement.' }));
 
     res.json({
       matched,
       unmatched,
       unmatchedCredits,
       summary: {
-        registrations: regs.length,
+        registrations: allRegs.filter((r) => r.bank_status !== 'REJECTED').length,
         matched: matched.length,
         amountMismatches: matched.filter((m) => !m.amountOk).length,
         unmatched: unmatched.length,
         unmatchedCredits: unmatchedCredits.length,
+        credits: txns.length,
       },
     });
   } catch (err) {
@@ -4021,6 +4052,9 @@ app.get('/api/admin/activity-log', requireRole('SUPER_ADMIN'), async (req, res, 
 // section per workshop/QI practice option so each can be viewed or exported
 // on its own.
 const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT / RTGS' };
+// Human-readable labels for a registration's bank_status, used everywhere it's
+// displayed (reports, etc.) instead of the raw DB constant (e.g. BANK_VERIFIED).
+const BANK_STATUS_LABELS = { PENDING: 'Pending', BANK_VERIFIED: 'Verified', REJECTED: 'Rejected', PARTIAL_PAYMENT: 'Partial Payment' };
 
 async function buildReport(type, opts = {}) {
   if (type === 'delegates') {
@@ -4045,14 +4079,13 @@ async function buildReport(type, opts = {}) {
          payment_mode, utr_number, paid_amount, expected_amount, bank_status, submitted_at
          FROM registrations ORDER BY registration_number`)).map(withDelegateSalutation);
     const fmtDate = (ms) => ms ? new Date(Number(ms)).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '';
-    const statusLabel = { PENDING: 'Pending', BANK_VERIFIED: 'Verified', REJECTED: 'Rejected' };
     return {
       title: 'Delegate Payment Details & Status',
       sections: [{
         columns: ['Reg No', 'Delegate', 'Mobile', 'Category', 'Mode', 'UTR / Txn No.', 'Amount Paid', 'Expected Amount', 'Status', 'Submitted'],
         rows: rows.map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label,
           PAYMENT_MODE_LABELS[r.payment_mode] || r.payment_mode, r.utr_number, r.paid_amount, r.expected_amount,
-          statusLabel[r.bank_status] || r.bank_status, fmtDate(r.submitted_at)]),
+          BANK_STATUS_LABELS[r.bank_status] || r.bank_status, fmtDate(r.submitted_at)]),
       }],
     };
   }
@@ -4064,7 +4097,7 @@ async function buildReport(type, opts = {}) {
          FROM registrations WHERE bank_status != 'REJECTED'`)).map(withDelegateSalutation);
     const columns = ['Reg No', 'Delegate', 'Mobile', 'Category', 'Status'];
     const rowsFor = (col, id) => regs.filter((r) => r[col] === id)
-      .map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label, r.bank_status]);
+      .map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label, BANK_STATUS_LABELS[r.bank_status] || r.bank_status]);
     const sections = [
       ...options.filter((o) => o.type === 'WORKSHOP').map((o) => ({ name: `Workshop: ${o.name}`, columns, rows: rowsFor('workshop_option_id', o.id) })),
       ...options.filter((o) => o.type === 'QI').map((o) => ({ name: `QI Practice: ${o.name}`, columns, rows: rowsFor('qi_option_id', o.id) })),
