@@ -319,17 +319,23 @@
               <span>Base fee</span><span id="fee-base-display">₹0</span>
             </div>
             <div id="fee-discount-amount-line" class="hidden flex justify-between items-center text-xs text-emerald-700 font-semibold mb-1">
-              <span id="fee-discount-label">Discount</span><span id="fee-discount-display">−₹0</span>
+              <span>
+                <span id="fee-discount-label">Discount</span>
+                <button type="button" onclick="removeAppliedPromo()" class="ml-1 text-slate-400 hover:text-rose-600 font-bold" title="Remove code">✕</button>
+              </span>
+              <span id="fee-discount-display">−₹0</span>
             </div>
             <div class="flex justify-between items-center">
               <span class="text-xs text-slate-500 uppercase font-bold">Amount to Pay</span>
               <span id="calculated-fee-display" class="text-xl font-extrabold text-indigo-600">₹0</span>
             </div>
-            <!-- Promo / discount code: a discreet link that opens the input. -->
+            <!-- Promo / discount code: a discreet link that opens the input.
+                 Once a code is applied, the input+Apply row hides -- the
+                 Discount line above (with its own ✕) is the applied state. -->
             <div class="mt-2 text-right">
               <button type="button" id="promo-toggle" onclick="togglePromoField()" class="text-[11px] text-slate-400 hover:text-slate-600">Apply promo code</button>
               <div id="promo-field" class="hidden mt-2 text-left">
-                <div class="flex gap-2">
+                <div id="promo-input-row" class="flex gap-2">
                   <input type="text" id="promo-code" placeholder="Enter code" class="flex-1 p-2 border rounded-lg text-sm outline-none uppercase font-mono">
                   <button type="button" id="promo-apply-btn" onclick="applyPromoCode()" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-lg shrink-0">Apply</button>
                 </div>
@@ -338,32 +344,42 @@
             </div>
           </div>
 
-          <input type="radio" name="payment-mode" value="UPI" checked class="hidden">
-          <input type="radio" name="payment-mode" value="NEFT_RTGS" class="hidden">
+          <!-- Hidden as a whole (along with payment-verification-fields below)
+               when a 100% discount brings the fee to ₹0 -- there is nothing
+               to pay, so no QR/bank-transfer block or UTR/screenshot fields. -->
+          <div id="payment-method-blocks">
+            <input type="radio" name="payment-mode" value="UPI" checked class="hidden">
+            <input type="radio" name="payment-mode" value="NEFT_RTGS" class="hidden">
 
-          <div id="upi-pay-block" class="text-center space-y-3">
-            <p class="text-xs text-slate-600">Scan using GPay, PhonePe, Paytm, or BHIM.</p>
-            <div class="flex justify-center my-2">
-              <img id="upi-qr-image" src="" alt="Dynamic UPI QR Code" class="w-48 h-48 border-2 border-indigo-300 rounded-xl shadow-md p-1 bg-white">
+            <div id="upi-pay-block" class="text-center space-y-3">
+              <p class="text-xs text-slate-600">Scan using GPay, PhonePe, Paytm, or BHIM.</p>
+              <div class="flex justify-center my-2">
+                <img id="upi-qr-image" src="" alt="Dynamic UPI QR Code" class="w-48 h-48 border-2 border-indigo-300 rounded-xl shadow-md p-1 bg-white">
+              </div>
+              <a id="upi-pay-link" href="#" class="inline-block px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg shadow-sm">Pay via UPI App</a>
+              <p class="text-[10px] text-slate-500">Pays <b>NQOCN 2026</b> · reference is your registration number. On a phone, tap to open your UPI app.</p>
+              <p>
+                <button type="button" onclick="setPaymentMode('NEFT_RTGS')" class="text-xs text-indigo-600 hover:text-indigo-800 underline font-semibold">UPI not working? Pay by Bank Transfer instead</button>
+              </p>
             </div>
-            <a id="upi-pay-link" href="#" class="inline-block px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg shadow-sm">Pay via UPI App</a>
-            <p class="text-[10px] text-slate-500">Pays <b>NQOCN 2026</b> · reference is your registration number. On a phone, tap to open your UPI app.</p>
-            <p>
-              <button type="button" onclick="setPaymentMode('NEFT_RTGS')" class="text-xs text-indigo-600 hover:text-indigo-800 underline font-semibold">UPI not working? Pay by Bank Transfer instead</button>
-            </p>
+
+            <div id="neft-pay-block" class="hidden text-left bg-white border border-indigo-200 rounded-xl p-4 space-y-1 text-sm">
+              <p class="text-xs text-slate-500 uppercase font-bold mb-2">Bank Transfer Details</p>
+              <p>Account Name: <b>NQoCN Conf 2026</b></p>
+              <p>Account No: <b>5975992001</b></p>
+              <p>IFSC Code: <b>CBIN0280697</b></p>
+              <p>Branch: <b>Sewagram</b></p>
+              <p class="text-[10px] text-slate-500 pt-1">After transferring, enter the transaction/UTR number and upload a screenshot of the confirmation below.</p>
+              <p class="text-center pt-2">
+                <button type="button" onclick="setPaymentMode('UPI')" class="text-xs text-indigo-600 hover:text-indigo-800 underline font-semibold">Pay by UPI instead</button>
+              </p>
+            </div>
           </div>
 
-          <div id="neft-pay-block" class="hidden text-left bg-white border border-indigo-200 rounded-xl p-4 space-y-1 text-sm">
-            <p class="text-xs text-slate-500 uppercase font-bold mb-2">Bank Transfer Details</p>
-            <p>Account Name: <b>NQoCN Conf 2026</b></p>
-            <p>Account No: <b>5975992001</b></p>
-            <p>IFSC Code: <b>CBIN0280697</b></p>
-            <p>Branch: <b>Sewagram</b></p>
-            <p class="text-[10px] text-slate-500 pt-1">After transferring, enter the transaction/UTR number and upload a screenshot of the confirmation below.</p>
-            <p class="text-center pt-2">
-              <button type="button" onclick="setPaymentMode('UPI')" class="text-xs text-indigo-600 hover:text-indigo-800 underline font-semibold">Pay by UPI instead</button>
-            </p>
-          </div>
+          <!-- Shown instead of the QR/bank-transfer block when the fee is ₹0. -->
+          <p id="free-registration-note" class="hidden text-center text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+            🎉 Your discount brings this to ₹0 — no payment is needed. Submit to confirm your registration.
+          </p>
         </div>
 
         <div id="payment-verification-fields" class="space-y-4 border-t pt-4">

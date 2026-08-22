@@ -502,14 +502,20 @@ async function recordAudit({ req, entityType, entityId, action, oldValue, newVal
 }
 
 // Fetch program options annotated with live enrollment counts. A slot is held
-// by any non-rejected registration referencing the option.
+// by any non-rejected registration referencing the option -- except faculty,
+// who are attached to the option (so they show on its roster/report) but
+// don't occupy a capacity slot.
 function fetchProgramOptions({ activeOnly } = {}) {
   return dbAll(`
     SELECT o.id, o.type, o.name, o.capacity, o.active,
       (SELECT COUNT(*) FROM registrations r
          WHERE r.bank_status != 'REJECTED'
-           AND ((o.type = 'WORKSHOP' AND r.workshop_option_id = o.id)
-             OR (o.type = 'QI' AND r.qi_option_id = o.id))) AS enrolled
+           AND ((o.type = 'WORKSHOP' AND r.workshop_option_id = o.id AND r.workshop_is_faculty = 0)
+             OR (o.type = 'QI' AND r.qi_option_id = o.id AND r.qi_is_faculty = 0))) AS enrolled,
+      (SELECT COUNT(*) FROM registrations r
+         WHERE r.bank_status != 'REJECTED'
+           AND ((o.type = 'WORKSHOP' AND r.workshop_option_id = o.id AND r.workshop_is_faculty = 1)
+             OR (o.type = 'QI' AND r.qi_option_id = o.id AND r.qi_is_faculty = 1))) AS faculty_count
     FROM program_options o
     ${activeOnly ? 'WHERE o.active = 1' : ''}
     ORDER BY o.type, o.id`);
@@ -523,8 +529,9 @@ async function resolveOption(id, type, ownRegId) {
   if (!opt) return { error: `Please choose an available ${label}.` };
 
   const col = type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
+  const facultyCol = type === 'WORKSHOP' ? 'workshop_is_faculty' : 'qi_is_faculty';
   const { n } = await dbGet(
-    `SELECT COUNT(*) AS n FROM registrations WHERE ${col} = ? AND bank_status != 'REJECTED' AND id != ?`,
+    `SELECT COUNT(*) AS n FROM registrations WHERE ${col} = ? AND bank_status != 'REJECTED' AND id != ? AND ${facultyCol} = 0`,
     [id, ownRegId == null ? -1 : ownRegId]
   );
   if (n >= opt.capacity) return { error: `"${opt.name}" is full. Please choose another ${label}.` };
@@ -576,7 +583,12 @@ async function validateDiscountCode(rawCode, phone, categoryKey) {
   if (!row || !row.active) return { ok: false, error: 'This promo code is not valid.' };
   if (row.expires_at) {
     // Compare as calendar dates in IST; a code is valid through its expiry day.
-    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // YYYY-MM-DD
+    // toLocaleDateString('en-CA', {timeZone}) is the "correct" way to get this,
+    // but silently falls back to US M/D/YYYY on this Node build's limited ICU
+    // (no error -- it just returns the wrong format), which broke the string
+    // comparison below for every code with an expiry. Shifting the clock by
+    // IST's fixed +5:30 offset and reading the UTC date is ICU-independent.
+    const today = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10); // YYYY-MM-DD
     if (row.expires_at < today) return { ok: false, error: 'This promo code has expired.' };
   }
   if (row.scope_type === 'CATEGORY' && row.scope_value !== categoryKey) {
@@ -987,6 +999,12 @@ db.serialize(() => {
     if (!names.includes('registration_number')) db.run('ALTER TABLE registrations ADD COLUMN registration_number TEXT');
     if (!names.includes('workshop_option_id')) db.run('ALTER TABLE registrations ADD COLUMN workshop_option_id INTEGER');
     if (!names.includes('qi_option_id')) db.run('ALTER TABLE registrations ADD COLUMN qi_option_id INTEGER');
+    // Faculty for a workshop/QI practice are enrolled the same way as a
+    // delegate (same option_id columns) but don't occupy a capacity slot and
+    // are labeled "Faculty" instead of counted as an attendee -- see
+    // fetchProgramOptions() and the workshops report.
+    if (!names.includes('workshop_is_faculty')) db.run('ALTER TABLE registrations ADD COLUMN workshop_is_faculty INTEGER DEFAULT 0');
+    if (!names.includes('qi_is_faculty')) db.run('ALTER TABLE registrations ADD COLUMN qi_is_faculty INTEGER DEFAULT 0');
     if (!names.includes('id_card')) db.run('ALTER TABLE registrations ADD COLUMN id_card TEXT');
     if (!names.includes('ocr_id_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_id_match INTEGER');
     if (!names.includes('rejection_reason')) db.run('ALTER TABLE registrations ADD COLUMN rejection_reason TEXT');
@@ -1563,9 +1581,6 @@ app.post('/api/auth/logout', async (req, res, next) => {
 app.post('/api/registrations', requireAuth, async (req, res, next) => {
   try {
     const { categoryKey, workshopOptionId, qiOptionId, amount, utr, screenshot, idCard, acknowledged, paymentMode, discountCode } = req.body;
-    if (!utr || !screenshot) {
-      return res.status(400).json({ success: false, error: 'Missing required registration details.' });
-    }
     const mode = paymentMode === 'NEFT_RTGS' ? 'NEFT_RTGS' : 'UPI';
 
     const phone = req.session.phone; // never from the client
@@ -1591,7 +1606,9 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     // Discounts. Two possible sources, and the delegate gets the better one
     // (they don't stack): a promo code they entered, or a group discount if
     // they're in a qualifying group for this category. Both are re-validated
-    // server-side; the client's computed fee is never trusted.
+    // server-side; the client's computed fee is never trusted. Computed before
+    // the utr/screenshot check below, since a fully-discounted (₹0)
+    // registration needs neither.
     let promoDiscount = 0;
     let promoCode = null;
     if (discountCode && String(discountCode).trim() && String(discountCode).trim().toUpperCase() !== 'GROUP') {
@@ -1615,6 +1632,11 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
       discountAmount = promoDiscount; discountCodeApplied = promoCode;
     }
     const expectedAmount = feeInfo.amount - discountAmount;
+    const isFree = expectedAmount <= 0;
+
+    if (!isFree && (!utr || !screenshot)) {
+      return res.status(400).json({ success: false, error: 'Missing required registration details.' });
+    }
 
     // Once submitted, payment details are locked: no further edits while
     // under review or after verification. Only a rejection re-opens editing
@@ -1643,13 +1665,9 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
       if (qi.error) return res.status(400).json({ success: false, error: qi.error });
     }
 
-    // Validate the payment screenshot (in memory; not written to disk yet).
-    const decoded = decodeScreenshot(screenshot);
-    if (decoded.error) {
-      return res.status(400).json({ success: false, error: decoded.error });
-    }
-
-    // Student categories must upload an ID card, checked against the category.
+    // Student categories must upload an ID card, checked against the category
+    // -- this is an eligibility check, not a payment one, so it still applies
+    // even when the fee is fully discounted to ₹0.
     const needsId = !!STUDENT_CATEGORIES[effectiveCategoryKey];
     let idDecoded = null;
     if (needsId) {
@@ -1660,6 +1678,70 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
       if (idDecoded.error) {
         return res.status(400).json({ success: false, error: `ID card: ${idDecoded.error}` });
       }
+    }
+
+    // A ₹0 registration (fully covered by a promo/group discount) has no
+    // payment to verify -- skip the screenshot/OCR/bank-linking pipeline
+    // entirely and confirm it outright, rather than creating an unlinkable
+    // ₹0 payment_transactions row that would sit stuck forever waiting for a
+    // bank credit that will never arrive.
+    if (isFree) {
+      const idPass = needsId ? await runIdCardCheck(idDecoded.buffer, effectiveCategoryKey) : null;
+      const idMatch = needsId ? (idPass ? 1 : 0) : null;
+      const idFilename = idDecoded ? await writeUploadBuffer(idDecoded.buffer, idDecoded.ext) : null;
+
+      await dbRun(
+        `INSERT INTO registrations
+          (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, workshop_option_id, qi_option_id, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, NULL, ?, NULL, NULL, NULL, ?, 0, 'BANK_VERIFIED', NULL, NULL, NULL, ?, ?, ?)
+          ON CONFLICT(phone_number) DO UPDATE SET
+            delegate_name = excluded.delegate_name,
+            category_key = excluded.category_key,
+            category_label = excluded.category_label,
+            workshop = excluded.workshop,
+            qi_exposure = excluded.qi_exposure,
+            workshop_option_id = excluded.workshop_option_id,
+            qi_option_id = excluded.qi_option_id,
+            expected_amount = 0,
+            paid_amount = 0,
+            utr_number = NULL,
+            screenshot = NULL,
+            id_card = excluded.id_card,
+            ocr_amount_match = NULL,
+            ocr_vpa_match = NULL,
+            ocr_utr_match = NULL,
+            ocr_id_match = excluded.ocr_id_match,
+            is_flagged = 0,
+            bank_status = 'BANK_VERIFIED',
+            rejection_reason = NULL,
+            rejection_note = NULL,
+            payment_mode = NULL,
+            submitted_at = excluded.submitted_at,
+            discount_code = excluded.discount_code,
+            discount_amount = excluded.discount_amount`,
+        [phone, name, effectiveCategoryKey, categoryLabel, ws.opt ? ws.opt.name : null, qi.opt ? qi.opt.name : null, ws.opt ? ws.opt.id : null, qi.opt ? qi.opt.id : null,
+          idFilename, idMatch, Date.now(), discountCodeApplied, discountAmount]
+      );
+
+      if (prev && prev.screenshot) await deleteScreenshotFile(prev.screenshot);
+      if (prev && prev.id_card && prev.id_card !== idFilename) await deleteScreenshotFile(prev.id_card);
+
+      const regNo = await assignUserRegNumber(phone);
+      await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
+
+      notifyDelegate(phone, 'Registration confirmed',
+        emailWrap('Your registration is confirmed',
+          `<p>Dear ${escapeHtml(name)},</p>
+           <p>Your registration for the ${escapeHtml(CONFERENCE_NAME)} is <b>confirmed</b> — a discount code brought your fee to ₹0, so no payment was required.</p>
+           <p>Registration number: <b>${escapeHtml(regNo)}</b></p>`));
+
+      return res.json({ success: true, expectedAmount: 0, checks: {}, flagged: false });
+    }
+
+    // Validate the payment screenshot (in memory; not written to disk yet).
+    const decoded = decodeScreenshot(screenshot);
+    if (decoded.error) {
+      return res.status(400).json({ success: false, error: decoded.error });
     }
 
     // Read the screenshot (amount / UPI ID / UTR) and, for students, the ID card.
@@ -3449,9 +3531,10 @@ app.get('/api/admin/program-options/:id/enrolled', requireRole('SUPER_ADMIN'), a
     const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
     if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
     const col = opt.type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
+    const facultyCol = opt.type === 'WORKSHOP' ? 'workshop_is_faculty' : 'qi_is_faculty';
     const rows = await dbAll(
-      `SELECT id, phone_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registration_number, bank_status
-         FROM registrations WHERE ${col} = ? AND bank_status != 'REJECTED' ORDER BY delegate_name`,
+      `SELECT id, phone_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registration_number, bank_status, ${facultyCol} AS is_faculty
+         FROM registrations WHERE ${col} = ? AND bank_status != 'REJECTED' ORDER BY ${facultyCol} DESC, delegate_name`,
       [opt.id]
     );
     res.json({ option: opt, enrolled: rows.map(withDelegateSalutation) });
@@ -3477,10 +3560,38 @@ app.post('/api/admin/program-options/:id/enroll', requireRole('SUPER_ADMIN'), as
     }
     const col = opt.type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
     const nameCol = opt.type === 'WORKSHOP' ? 'workshop' : 'qi_exposure';
-    await dbRun(`UPDATE registrations SET ${col} = ?, ${nameCol} = ? WHERE id = ?`, [opt.id, opt.name, reg.id]);
+    const facultyCol = opt.type === 'WORKSHOP' ? 'workshop_is_faculty' : 'qi_is_faculty';
+    // Reset the faculty flag on (re-)enroll: it belongs to a specific
+    // option assignment, so moving someone to a different workshop/QI
+    // shouldn't silently carry their old faculty status over.
+    await dbRun(`UPDATE registrations SET ${col} = ?, ${nameCol} = ?, ${facultyCol} = 0 WHERE id = ?`, [opt.id, opt.name, reg.id]);
     await recordAudit({
       req, entityType: 'registration', entityId: reg.id,
       action: 'ADMIN_ENROLL', oldValue: opt.type === 'WORKSHOP' ? reg.workshop_option_id : reg.qi_option_id, newValue: opt.id,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Mark/unmark an enrolled delegate as faculty for this specific workshop/QI
+// option. Faculty stay attached to the option (visible on its roster and
+// report) but are excluded from the capacity count -- see
+// fetchProgramOptions().
+app.put('/api/admin/program-options/:id/enrolled/:phone/faculty', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
+    if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
+    const col = opt.type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
+    const facultyCol = opt.type === 'WORKSHOP' ? 'workshop_is_faculty' : 'qi_is_faculty';
+    const reg = await dbGet(`SELECT id FROM registrations WHERE phone_number = ? AND ${col} = ?`, [req.params.phone, opt.id]);
+    if (!reg) return res.status(404).json({ success: false, error: 'This delegate is not enrolled in this option.' });
+    const isFaculty = req.body.isFaculty ? 1 : 0;
+    await dbRun(`UPDATE registrations SET ${facultyCol} = ? WHERE id = ?`, [isFaculty, reg.id]);
+    await recordAudit({
+      req, entityType: 'registration', entityId: reg.id,
+      action: 'ADMIN_SET_FACULTY', oldValue: opt.id, newValue: isFaculty ? 'FACULTY' : 'DELEGATE',
     });
     res.json({ success: true });
   } catch (err) {
@@ -3496,9 +3607,10 @@ app.delete('/api/admin/program-options/:id/enroll/:phone', requireRole('SUPER_AD
     if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
     const col = opt.type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
     const nameCol = opt.type === 'WORKSHOP' ? 'workshop' : 'qi_exposure';
+    const facultyCol = opt.type === 'WORKSHOP' ? 'workshop_is_faculty' : 'qi_is_faculty';
     const reg = await dbGet(`SELECT id FROM registrations WHERE phone_number = ? AND ${col} = ?`, [req.params.phone, opt.id]);
     if (!reg) return res.status(404).json({ success: false, error: 'This delegate is not enrolled in this option.' });
-    await dbRun(`UPDATE registrations SET ${col} = NULL, ${nameCol} = NULL WHERE id = ?`, [reg.id]);
+    await dbRun(`UPDATE registrations SET ${col} = NULL, ${nameCol} = NULL, ${facultyCol} = 0 WHERE id = ?`, [reg.id]);
     await recordAudit({
       req, entityType: 'registration', entityId: reg.id,
       action: 'ADMIN_UNENROLL', oldValue: opt.id, newValue: null,
@@ -4211,14 +4323,18 @@ async function buildReport(type, opts = {}) {
     const options = (await fetchProgramOptions({ activeOnly: false }))
       .filter((o) => !opts.optionId || String(o.id) === String(opts.optionId));
     const regs = (await dbAll(
-      `SELECT workshop_option_id, qi_option_id, registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, phone_number, category_label, bank_status
+      `SELECT workshop_option_id, qi_option_id, workshop_is_faculty, qi_is_faculty,
+         registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, phone_number, category_label, bank_status
          FROM registrations WHERE bank_status != 'REJECTED'`)).map(withDelegateSalutation);
-    const columns = ['Reg No', 'Delegate', 'Mobile', 'Category', 'Status'];
-    const rowsFor = (col, id) => regs.filter((r) => r[col] === id)
-      .map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label, BANK_STATUS_LABELS[r.bank_status] || r.bank_status]);
+    const columns = ['Reg No', 'Delegate', 'Mobile', 'Category', 'Status', 'Role'];
+    // Faculty listed first within each section, ahead of the attendee list.
+    const rowsFor = (col, id, facultyCol) => regs.filter((r) => r[col] === id)
+      .sort((a, b) => (b[facultyCol] ? 1 : 0) - (a[facultyCol] ? 1 : 0))
+      .map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label,
+        BANK_STATUS_LABELS[r.bank_status] || r.bank_status, r[facultyCol] ? 'Faculty' : 'Delegate']);
     const sections = [
-      ...options.filter((o) => o.type === 'WORKSHOP').map((o) => ({ name: `Workshop: ${o.name}`, columns, rows: rowsFor('workshop_option_id', o.id) })),
-      ...options.filter((o) => o.type === 'QI').map((o) => ({ name: `QI Practice: ${o.name}`, columns, rows: rowsFor('qi_option_id', o.id) })),
+      ...options.filter((o) => o.type === 'WORKSHOP').map((o) => ({ name: `Workshop: ${o.name}`, columns, rows: rowsFor('workshop_option_id', o.id, 'workshop_is_faculty') })),
+      ...options.filter((o) => o.type === 'QI').map((o) => ({ name: `QI Practice: ${o.name}`, columns, rows: rowsFor('qi_option_id', o.id, 'qi_is_faculty') })),
     ];
     return { title: opts.optionId && options[0] ? `Registrations — ${options[0].name}` : 'Registrations per Workshop / QI Practice', sections };
   }

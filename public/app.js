@@ -587,6 +587,18 @@ function clearAppliedPromo() {
   appliedPromo = null;
   const msg = document.getElementById('promo-msg');
   if (msg) msg.classList.add('hidden');
+  const inputRow = document.getElementById('promo-input-row');
+  if (inputRow) inputRow.classList.remove('hidden');
+}
+
+// Explicit remove action once a code is applied -- clearing the input text
+// and re-clicking Apply worked but wasn't a discoverable way to drop a code.
+// Triggered by the small ✕ shown next to the "Discount (CODE)" line.
+function removeAppliedPromo() {
+  const codeInput = document.getElementById('promo-code');
+  if (codeInput) codeInput.value = '';
+  clearAppliedPromo();
+  calculateFee();
 }
 
 function togglePromoField() {
@@ -623,6 +635,10 @@ async function applyPromoCode() {
     if (!data.success) { clearAppliedPromo(); showMsg(data.error || 'Invalid code.', false); calculateFee(); return; }
     appliedPromo = { code: data.code, discountAmount: data.discountAmount, finalFee: data.finalFee, categoryKey: catKey };
     showMsg(`Code applied — you save ₹${inr(data.discountAmount)}. New fee: ₹${inr(data.finalFee)}.`, true);
+    // The input+Apply row is no longer needed once a code is applied -- the
+    // Discount line above (with its own ✕) is now the applied-state UI.
+    const inputRow = document.getElementById('promo-input-row');
+    if (inputRow) inputRow.classList.add('hidden');
     calculateFee();
   } catch (e) {
     showMsg('Could not check the code. Try again.', false);
@@ -673,6 +689,27 @@ function calculateFee() {
   document.getElementById('calculated-fee-display').innerText = `₹${inr(currentFee)}`;
   document.getElementById('entered-amount').value = currentFee;
 
+  // A 100%-off discount brings the fee to ₹0 -- there's nothing to pay, so
+  // hide the QR/bank-transfer block and the UTR/screenshot fields entirely
+  // (and stop requiring them) rather than asking for payment proof of a
+  // payment that was never made.
+  const isFreeReg = currentFee <= 0;
+  const methodBlocks = document.getElementById('payment-method-blocks');
+  const freeNote = document.getElementById('free-registration-note');
+  const verifyFields = document.getElementById('payment-verification-fields');
+  const utrInput = document.getElementById('entered-utr');
+  const screenshotInput = document.getElementById('payment-screenshot');
+  if (methodBlocks) methodBlocks.classList.toggle('hidden', isFreeReg);
+  if (freeNote) freeNote.classList.toggle('hidden', !isFreeReg);
+  if (verifyFields) verifyFields.classList.toggle('hidden', isFreeReg);
+  if (utrInput) utrInput.required = !isFreeReg;
+  if (screenshotInput) screenshotInput.required = !isFreeReg;
+  const submitBtn = document.getElementById('submit-payment-btn');
+  if (submitBtn) submitBtn.innerText = isFreeReg ? 'Confirm Registration (No Payment Needed)' : 'Submit for Verification';
+
+  document.getElementById('qr-container').classList.remove('hidden');
+  if (isFreeReg) return;
+
   // Reference is the delegate's registration number plus name, so the
   // transaction note (and therefore the QR code and the "Pay via UPI App"
   // link, which both encode the same note) let finance match a payment to a
@@ -684,7 +721,6 @@ function calculateFee() {
   document.getElementById('upi-qr-image').src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiUri)}`;
   const payLink = document.getElementById('upi-pay-link');
   if (payLink) payLink.href = upiUri;
-  document.getElementById('qr-container').classList.remove('hidden');
   togglePaymentMode();
 }
 
@@ -855,29 +891,34 @@ async function verifyAndSubmitPayment(e) {
   const isStudent = STUDENT_CATEGORIES.includes(categoryKey);
 
   // Belt-and-braces: entered-amount is only ever auto-filled by
-  // calculateFee(), which now refuses to fall back to ₹0 -- but guard here
-  // too in case it's ever empty for another reason, since a ₹0 claimed
-  // amount gets silently flagged as tampering server-side.
-  const enteredAmount = parseFloat(document.getElementById('entered-amount').value);
-  if (!enteredAmount || enteredAmount <= 0) {
+  // calculateFee(), which leaves it blank (not 0) on a load failure -- so an
+  // empty/non-numeric value means something didn't load, while an explicit
+  // 0 is a legitimate 100%-discounted registration with nothing to pay.
+  const enteredAmountRaw = document.getElementById('entered-amount').value;
+  const enteredAmount = parseFloat(enteredAmountRaw);
+  if (enteredAmountRaw === '' || !Number.isFinite(enteredAmount) || enteredAmount < 0) {
     return showToast('Could not determine the fee for this category. Please close and reopen this form.');
   }
+  const isFreeReg = enteredAmount === 0;
 
-  const file = document.getElementById('payment-screenshot').files[0];
-  if (!file) return showToast('Please upload your payment screenshot.');
+  let file = null;
+  if (!isFreeReg) {
+    file = document.getElementById('payment-screenshot').files[0];
+    if (!file) return showToast('Please upload your payment screenshot.');
+  }
 
   const idFile = document.getElementById('payment-id-card').files[0];
   if (isStudent && !idFile) return showToast('Please upload your student ID card for this category.');
 
   const submitBtn = document.getElementById('submit-payment-btn');
   const originalBtnText = submitBtn.innerText;
-  submitBtn.innerText = 'Checking uploads...';
+  submitBtn.innerText = isFreeReg ? 'Confirming...' : 'Checking uploads...';
   submitBtn.disabled = true;
 
   try {
-    const screenshot = await readFileAsDataURL(file);
+    const screenshot = isFreeReg ? undefined : await readFileAsDataURL(file);
     const idCard = isStudent ? await readFileAsDataURL(idFile) : undefined;
-    const utr = document.getElementById('entered-utr').value.trim();
+    const utr = isFreeReg ? '' : document.getElementById('entered-utr').value.trim();
 
     // The server derives the fee from the category and reads the screenshot
     // (amount / UPI ID / UTR) and, for students, the ID card.
@@ -931,7 +972,7 @@ async function verifyAndSubmitPayment(e) {
     if (data.success) {
       showToast(data.flagged
         ? "Submission received and FLAGGED for manual scrutiny (some details could not be auto-verified)."
-        : "Registration submitted successfully! It is PENDING manual verification.",
+        : (isFreeReg ? "Registration confirmed — no payment was required." : "Registration submitted successfully! It is PENDING manual verification."),
         data.flagged ? 'info' : 'success'
       );
       closeModal('modal-conference');
@@ -1404,6 +1445,10 @@ function setupAdminDelegation() {
     rosterList.addEventListener('click', (e) => {
       const del = e.target.closest('.roster-remove');
       if (del) return handleRosterRemove(del.dataset.phone);
+    });
+    rosterList.addEventListener('change', (e) => {
+      const toggle = e.target.closest('.roster-faculty-toggle');
+      if (toggle) return toggleRosterFaculty(toggle.dataset.phone, toggle.checked);
     });
   }
 
@@ -2596,17 +2641,20 @@ function renderUserDetail() {
     }).join('');
   }
 
-  // Workshop / QI with change buttons (verified registrations only)
+  // Workshop / QI with change buttons (verified registrations only). Faculty
+  // status is set from that option's Roster (Settings → Workshop/QI Master),
+  // not editable here -- just shown for context.
   const canChange = reg && reg.bank_status === 'BANK_VERIFIED';
-  const progLine = (label, name, type) => `<div class="flex justify-between items-center gap-3 py-1">
+  const progLine = (label, name, type, isFaculty) => `<div class="flex justify-between items-center gap-3 py-1">
     <span class="text-slate-500">${esc(label)}</span>
     <span class="text-right">
       <span class="text-slate-800 font-medium">${name ? esc(name) : '—'}</span>
+      ${name && isFaculty ? '<span class="ml-1.5 text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide align-middle">Faculty</span>' : ''}
       ${canChange ? `<button type="button" onclick="openProgramChangeModalFromDetail('${type}')" class="ml-2 text-[11px] text-indigo-600 hover:text-indigo-800 underline font-semibold">${name ? 'Change' : 'Add'}</button>` : ''}
     </span>
   </div>`;
   const programs = reg
-    ? progLine('Workshop', reg.workshop_name, 'WORKSHOP') + progLine('QI Exposure', reg.qi_name, 'QI')
+    ? progLine('Workshop', reg.workshop_name, 'WORKSHOP', Number(reg.workshop_is_faculty)) + progLine('QI Exposure', reg.qi_name, 'QI', Number(reg.qi_is_faculty))
     : `<p class="text-slate-400 py-1">No enrollment.</p>`;
 
   // Role setter
@@ -2718,11 +2766,12 @@ async function renderBackendPrograms() {
   const rowsHtml = (type) =>
     options.filter(o => o.type === type).map(o => {
       const remaining = Math.max(0, o.capacity - o.enrolled);
+      const facultyCount = Number(o.faculty_count) || 0;
       return `
       <div class="flex flex-wrap items-center gap-3 py-3 border-b border-slate-100 ${o.active ? '' : 'opacity-60'}">
         <div class="flex-1 min-w-[180px]">
           <p class="font-semibold text-sm text-slate-800">${esc(o.name)}</p>
-          <p class="text-[11px] text-slate-500">Enrolled ${Number(o.enrolled)} / ${Number(o.capacity)} · ${remaining} left${o.active ? '' : ' · inactive'}</p>
+          <p class="text-[11px] text-slate-500">Enrolled ${Number(o.enrolled)} / ${Number(o.capacity)} · ${remaining} left${facultyCount ? ` · ${facultyCount} faculty` : ''}${o.active ? '' : ' · inactive'}</p>
         </div>
         <input type="number" min="0" value="${esc(o.capacity)}" class="prog-capacity w-20 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
         <button class="prog-save px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Save</button>
@@ -2800,14 +2849,32 @@ async function loadRoster() {
   rosterEnrolledPhones = new Set(enrolled.map((r) => r.phone_number));
   list.innerHTML = enrolled.length
     ? enrolled.map(r => `
-      <div class="flex items-center justify-between py-2">
-        <div>
-          <p class="font-semibold text-slate-800">${esc(r.delegate_name)}</p>
+      <div class="flex items-center justify-between py-2 gap-2">
+        <div class="min-w-0">
+          <p class="font-semibold text-slate-800 truncate">${esc(r.delegate_name)}${Number(r.is_faculty) ? ' <span class="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide align-middle">Faculty</span>' : ''}</p>
           <p class="text-[11px] text-slate-500">+91 ${esc(r.phone_number)} · ${esc(r.registration_number || '—')}</p>
         </div>
-        <button class="roster-remove px-2.5 py-1 bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 text-xs font-semibold rounded-lg" data-phone="${esc(r.phone_number)}">Remove</button>
+        <div class="flex items-center gap-2 shrink-0">
+          <label class="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer select-none">
+            <input type="checkbox" class="roster-faculty-toggle" data-phone="${esc(r.phone_number)}" ${Number(r.is_faculty) ? 'checked' : ''}>
+            Faculty
+          </label>
+          <button class="roster-remove px-2.5 py-1 bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 text-xs font-semibold rounded-lg" data-phone="${esc(r.phone_number)}">Remove</button>
+        </div>
       </div>`).join('')
     : '<p class="text-xs text-slate-400 py-3">Nobody enrolled yet.</p>';
+}
+
+// Faculty don't occupy a capacity slot on this option and are labeled
+// "Faculty" instead of "Delegate" on the workshops/QI report.
+async function toggleRosterFaculty(phone, isFaculty) {
+  const data = await (await fetch(`/api/admin/program-options/${encodeURIComponent(rosterOptionId)}/enrolled/${encodeURIComponent(phone)}/faculty`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isFaculty }),
+  })).json();
+  if (!data.success) { showToast(data.error || 'Could not update faculty status.'); await loadRoster(); return; }
+  await loadRoster();
+  renderBackendPrograms();
+  if (userDetailPhone) await openUserDetail(userDetailPhone);
 }
 
 function hideRosterSearchResults() {
