@@ -213,11 +213,16 @@ async function sendOtpSms(phone, otp) {
 // AWS_SECRET_ACCESS_KEY, AWS_REGION). SES_FROM must be a verified sender.
 // Dormant until credentials, region, and a From address are all present.
 // From address / display name / region, and now the IAM credentials too, are
-// admin-editable from Settings → General. The credentials are read straight
-// from process.env (not cached in a const) since writeEnvVar() can now change
-// them after boot -- the AWS SDK's default credential provider also reads
-// process.env per-call, so updating it here is enough without touching the
-// SDK client's construction.
+// admin-editable from Settings → General. awsCredsPresent() reads process.env
+// live so capability checks see a mid-run credential change immediately.
+//
+// IMPORTANT: that alone does NOT make an existing SESv2Client use new
+// credentials. The AWS SDK v3 default provider chain resolves static IAM keys
+// from process.env once, when the client first needs them, and memoizes the
+// result for that client's lifetime (only expiring/STS credentials refresh) --
+// it does NOT re-read process.env per .send(). So a credential OR region change
+// only takes effect because rebuildSesClient() constructs a brand-new client;
+// keep calling it on every such change (see the general-settings PUT handler).
 const EMAIL = {
   from: (process.env.SES_FROM || '').trim(),
   fromName: process.env.SES_FROM_NAME || 'NQOCN 2026',
@@ -228,7 +233,9 @@ const emailEnabled = () => awsCredsPresent() && !!EMAIL.region && !!EMAIL.from;
 // RFC 5322 "Display Name <address>" form -- without it SES sends with no
 // name, so inboxes show only the bare address instead of "NQOCN 2026".
 const emailFromFormatted = () => EMAIL.from ? `"${EMAIL.fromName.replace(/"/g, '')}" <${EMAIL.from}>` : EMAIL.from;
-// Rebuilt whenever the region changes, since the client is region-bound.
+// Construct a fresh client on every credential/region change: a live client
+// caches its resolved credentials and is bound to its region, so mutating
+// EMAIL/process.env is not enough on its own (see the block comment above).
 let sesClient = null;
 function rebuildSesClient() {
   sesClient = emailEnabled() ? new SESv2Client({ region: EMAIL.region }) : null;
