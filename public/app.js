@@ -3488,12 +3488,13 @@ async function renderGeneralSettings() {
   setVal('gs-upi-id', data.upi.id);
   setVal('gs-upi-payeename', data.upi.payeeName);
 
-  // Credential fields are never prefilled -- only a masked hint of the
-  // currently-active key, so the admin knows one is set without it ever
-  // appearing in the DOM.
-  setText('gs-sms-apikey-hint', data.sms.apiKeyMasked ? `(current: ${data.sms.apiKeyMasked})` : '(not set)');
+  // Credential fields are never prefilled. Bearer secrets (SMS API key, AWS
+  // Secret Access Key) show only a set/not-set state -- no bytes ever reach the
+  // DOM. The AWS Access Key ID isn't a bearer secret, so a last-4 preview is
+  // shown to help confirm which key is active.
+  setText('gs-sms-apikey-hint', data.sms.hasApiKey ? '(configured)' : '(not set)');
   setText('gs-email-accesskey-hint', data.email.accessKeyMasked ? `(current: ${data.email.accessKeyMasked})` : '(not set)');
-  setText('gs-email-secretkey-hint', data.email.secretKeyMasked ? `(current: ${data.email.secretKeyMasked})` : '(not set)');
+  setText('gs-email-secretkey-hint', data.email.hasSecretKey ? '(configured)' : '(not set)');
 
   const envBody = document.getElementById('gs-other-env-body');
   if (envBody) {

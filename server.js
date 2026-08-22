@@ -104,8 +104,11 @@ function writeEnvVar(key, value) {
   content = re.test(content) ? content.replace(re, () => line) : (content.replace(/\n*$/, '\n') + line + '\n');
   fs.writeFileSync(ENV_PATH, content);
 }
-// Last 4 characters only, for the admin to confirm which key is active
-// without the full secret ever reaching the browser.
+// Last-4 preview, used ONLY for the AWS Access Key ID -- which is not a bearer
+// secret (it's the public half of the pair, shown by AWS's own console), so a
+// tail is safe and lets an admin confirm which key is active. True secrets
+// (SMS API key, AWS Secret Access Key) are never passed through this; the
+// browser gets only a set/not-set boolean for those.
 const maskSecret = (v) => v ? `••••${String(v).slice(-4)}` : null;
 
 // --- SMS (Vynttra) ------------------------------------------------------
@@ -114,7 +117,8 @@ const maskSecret = (v) => v ? `••••${String(v).slice(-4)}` : null;
 // Operational fields, and now the API key itself too, are admin-editable from
 // Settings → General -- operational fields persist to schema_meta, while the
 // key (like every credential here) persists to .env via writeEnvVar(), never
-// to the database, and the browser is only ever shown a masked preview.
+// to the database, and the browser is only ever told whether it is set, never
+// any of its bytes.
 const SMS = {
   apiKey: process.env.SMS_API_KEY || '',
   url: process.env.SMS_URL || 'https://api.vynttra.in/index.php/sms/json',
@@ -3947,12 +3951,19 @@ app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
   try {
     res.json({
       sms: {
-        enabled: notifyToggle.sms, available: smsEnabled(), hasApiKey: !!SMS.apiKey, apiKeyMasked: maskSecret(SMS.apiKey),
+        // The SMS API key is a bearer secret -- send only whether it's set, no
+        // real bytes (not even a masked tail), so nothing sensitive reaches the
+        // browser. See maskSecret's note on why the Access Key ID differs.
+        enabled: notifyToggle.sms, available: smsEnabled(), hasApiKey: !!SMS.apiKey,
         sender: SMS.sender, url: SMS.url, entityId: SMS.entityId, templateId: SMS.templateId, headerId: SMS.headerId, type: SMS.type,
       },
       email: {
         enabled: notifyToggle.email, available: emailEnabled(), hasCredentials: awsCredsPresent(),
-        accessKeyMasked: maskSecret(process.env.AWS_ACCESS_KEY_ID), secretKeyMasked: maskSecret(process.env.AWS_SECRET_ACCESS_KEY),
+        // Access Key ID is not a bearer secret (it's the public half, like a
+        // username), so a last-4 preview is fine and helps confirm which key is
+        // active. The Secret Access Key IS a bearer secret -- send only a
+        // boolean, never any real bytes.
+        accessKeyMasked: maskSecret(process.env.AWS_ACCESS_KEY_ID), hasSecretKey: !!process.env.AWS_SECRET_ACCESS_KEY,
         from: EMAIL.from, fromName: EMAIL.fromName, region: EMAIL.region,
       },
       upi: { id: UPI.id, payeeName: UPI.payeeName },
@@ -4019,16 +4030,17 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
     await applyFields(email, EMAIL, { from: 'email_from', fromName: 'email_from_name', region: 'email_region' });
     await applyFields(upi, UPI, { id: 'upi_id', payeeName: 'upi_payee_name' });
 
-    // Credentials persist to .env, never to schema_meta -- the change log
-    // records only that a key changed and its new masked tail, never the
-    // secret itself. Newlines were already rejected at the top of the handler.
+    // Credentials persist to .env, never to schema_meta. The change log records
+    // only that a key changed, never any bytes of a bearer secret (SMS API key,
+    // AWS secret); the Access Key ID isn't a bearer secret so its tail is fine.
+    // Newlines were already rejected at the top of the handler.
     let credsChanged = false;
     if (sms && sms.apiKey !== undefined && String(sms.apiKey).trim()) {
       const val = String(sms.apiKey).trim();
       if (val !== SMS.apiKey) {
         SMS.apiKey = val;
         writeEnvVar('SMS_API_KEY', val);
-        changes.push(`SMS API key changed (now ends ${maskSecret(val)})`);
+        changes.push('SMS API key changed');
         credsChanged = true;
       }
     }
