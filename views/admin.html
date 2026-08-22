@@ -611,11 +611,11 @@
       <!-- Other .env variables (read-only, not editable here) -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <h3 class="text-lg font-bold text-slate-800 mb-1">🗄️ Other Environment Variables</h3>
-        <p class="text-xs text-slate-500 mb-3">Server-level settings read from .env at startup. Not editable here — change them on the server and restart.</p>
+        <p class="text-xs text-slate-500 mb-3">Server-level settings, showing the value actually in effect right now. Not editable here — set these in .env on the server and restart.</p>
         <div class="overflow-x-auto">
           <table class="w-full text-left border-collapse text-sm">
             <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
-              <th class="py-2 px-3">Variable</th><th class="py-2 px-3">Value</th>
+              <th class="py-2 px-3">Variable</th><th class="py-2 px-3">Effective Value</th><th class="py-2 px-3">Source</th>
             </tr></thead>
             <tbody id="gs-other-env-body" class="divide-y divide-slate-100"></tbody>
           </table>

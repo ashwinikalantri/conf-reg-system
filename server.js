@@ -87,12 +87,21 @@ const PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
 // process.env immediately too, so the change takes effect without a restart.
 const ENV_PATH = path.join(__dirname, '.env');
 function writeEnvVar(key, value) {
+  // A value with an embedded newline/CR would break out of its `KEY=...` line
+  // and inject arbitrary extra lines (i.e. arbitrary new env vars) into .env.
+  // Reject at this boundary so no caller can ever write a multi-line value,
+  // and mutate process.env only after the value is proven safe.
+  if (/[\r\n]/.test(value)) throw new Error(`Refusing to write ${key}: value must not contain a line break.`);
   process.env[key] = value;
   let content = '';
   try { content = fs.readFileSync(ENV_PATH, 'utf8'); } catch (err) { if (err.code !== 'ENOENT') throw err; }
   const line = `${key}=${value}`;
   const re = new RegExp(`^${key}=.*$`, 'm');
-  content = re.test(content) ? content.replace(re, line) : (content.replace(/\n*$/, '\n') + line + '\n');
+  // Replace with a function, not the string `line`: a string replacement
+  // interprets $&, $$, $`, $', $n as special tokens, so a secret containing
+  // any of those would be silently corrupted. A replacer function inserts the
+  // value verbatim.
+  content = re.test(content) ? content.replace(re, () => line) : (content.replace(/\n*$/, '\n') + line + '\n');
   fs.writeFileSync(ENV_PATH, content);
 }
 // Last 4 characters only, for the admin to confirm which key is active
@@ -3907,18 +3916,20 @@ app.get('/api/admin/group-rules', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), a
 // unavailable without the secret itself ever reaching the browser.
 // Every env var the app knows how to read, beyond the SMS/Email/UPI fields
 // already editable above -- shown read-only in Settings → General so an
-// admin can see the full picture of what's configured via .env without
-// needing shell access. Secret-shaped names get a masked preview; the rest
-// (none of them sensitive) show their actual current value.
-const OTHER_ENV_VARS = [
-  { key: 'PORT', secret: false }, { key: 'PORTAL_URL', secret: false },
-  { key: 'NODE_ENV', secret: false }, { key: 'COOKIE_SECURE', secret: false }, { key: 'OTP_ECHO', secret: false },
-];
+// admin can see the full picture of what's actually running, not just
+// what's in .env. None of these are secret, so the *effective* value is
+// shown (the resolved runtime constant, same as what the server actually
+// used at boot) rather than the raw env var -- most of these run on their
+// coded-in default with nothing in .env at all, and showing "not set" for
+// those would look broken even though it's accurate.
 function describeOtherEnvVars() {
-  return OTHER_ENV_VARS.map(({ key, secret }) => {
-    const raw = process.env[key];
-    return { key, set: raw !== undefined && raw !== '', value: secret ? undefined : (raw ?? null) };
-  });
+  return [
+    { key: 'PORT', value: String(PORT), fromEnv: process.env.PORT !== undefined },
+    { key: 'PORTAL_URL', value: PORTAL_URL, fromEnv: process.env.PORTAL_URL !== undefined },
+    { key: 'NODE_ENV', value: process.env.NODE_ENV || '(unset)', fromEnv: process.env.NODE_ENV !== undefined },
+    { key: 'COOKIE_SECURE', value: String(COOKIE_SECURE), fromEnv: process.env.COOKIE_SECURE !== undefined },
+    { key: 'OTP_ECHO', value: String(OTP_ECHO), fromEnv: process.env.OTP_ECHO !== undefined },
+  ];
 }
 
 app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, res, next) => {
@@ -3944,6 +3955,19 @@ app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
 app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
     const { sms, email, upi, notify } = req.body || {};
+
+    // Reject line breaks in the credential fields up front, before anything is
+    // persisted, so a bad paste can't inject extra .env lines and a malformed
+    // request doesn't partially apply. (writeEnvVar also guards this, but this
+    // returns a clean 400 instead of a generic 500.)
+    for (const [label, raw] of [
+      ['SMS API key', sms && sms.apiKey], ['AWS Access Key ID', email && email.awsAccessKeyId], ['AWS Secret Access Key', email && email.awsSecretAccessKey],
+    ]) {
+      if (raw !== undefined && raw !== null && /[\r\n]/.test(String(raw))) {
+        return res.status(400).json({ success: false, error: `${label} must not contain line breaks.` });
+      }
+    }
+
     const changes = [];
     const setKV = (key, value) => dbRun(
       "INSERT INTO schema_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value]);
@@ -3966,7 +3990,7 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
 
     // Credentials persist to .env, never to schema_meta -- the change log
     // records only that a key changed and its new masked tail, never the
-    // secret itself.
+    // secret itself. Newlines were already rejected at the top of the handler.
     let credsChanged = false;
     if (sms && sms.apiKey !== undefined && String(sms.apiKey).trim()) {
       const val = String(sms.apiKey).trim();

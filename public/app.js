@@ -3500,8 +3500,9 @@ async function renderGeneralSettings() {
     envBody.innerHTML = (data.otherEnvVars || []).map((v) => `
       <tr>
         <td class="py-2 px-3 font-mono text-xs text-slate-700">${esc(v.key)}</td>
-        <td class="py-2 px-3 text-xs ${v.set ? 'text-slate-600' : 'text-slate-400 italic'}">${v.set ? esc(v.value) : 'not set'}</td>
-      </tr>`).join('') || `<tr><td colspan="2" class="py-3 text-center text-slate-400">None</td></tr>`;
+        <td class="py-2 px-3 text-xs text-slate-600">${esc(v.value)}</td>
+        <td class="py-2 px-3 text-[10px]">${v.fromEnv ? '<span class="text-indigo-600 font-semibold">.env</span>' : '<span class="text-slate-400">default</span>'}</td>
+      </tr>`).join('') || `<tr><td colspan="3" class="py-3 text-center text-slate-400">None</td></tr>`;
   }
 }
 
