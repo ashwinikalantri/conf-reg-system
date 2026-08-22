@@ -667,7 +667,6 @@ db.serialize(() => {
       pincode TEXT,
       state TEXT,
       district TEXT,
-      post_office TEXT,
       role TEXT DEFAULT 'DELEGATE'
     )
   `);
@@ -680,7 +679,23 @@ db.serialize(() => {
    'ALTER TABLE users ADD COLUMN email TEXT',
    'ALTER TABLE users ADD COLUMN registration_number TEXT',
    'ALTER TABLE users ADD COLUMN salutation TEXT',
+   'ALTER TABLE users ADD COLUMN created_at INTEGER',
   ].forEach((sql) => db.run(sql, () => {}));
+
+  // One-time backfill of created_at (account signup time) for rows predating
+  // the column. The true original signup is lost for old accounts (12h
+  // sessions are pruned), so estimate it as the earliest evidence we still
+  // have: the earliest surviving session, floored by the registration date so
+  // "signed up" can never fall after "registered". NULL stays NULL only when
+  // there is neither a session nor a registration to anchor to.
+  db.run(`UPDATE users SET created_at = (
+            SELECT MIN(t) FROM (
+              SELECT MIN(se.created_at) AS t FROM sessions se WHERE se.phone_number = users.phone_number
+              UNION ALL
+              SELECT r.submitted_at AS t FROM registrations r WHERE r.phone_number = users.phone_number
+            ) WHERE t IS NOT NULL
+          )
+          WHERE created_at IS NULL`, () => {});
 
   // Monotonic source for registration numbers. Reserved to start at 1001 so
   // new numbers never collide with older registration-id-derived ones.
@@ -1470,8 +1485,8 @@ app.post('/api/auth/register', async (req, res, next) => {
     // OTP proves control of this number, so upserting the caller's own
     // record is safe. Role is never set from the request body.
     await dbRun(
-      `INSERT INTO users (phone_number, salutation, full_name, designation, institution, pincode, state, district, age, gender, email, role)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE')
+      `INSERT INTO users (phone_number, salutation, full_name, designation, institution, pincode, state, district, age, gender, email, role, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE', ?)
        ON CONFLICT(phone_number) DO UPDATE SET
          salutation = excluded.salutation,
          full_name = excluded.full_name,
@@ -1482,8 +1497,9 @@ app.post('/api/auth/register', async (req, res, next) => {
          district = excluded.district,
          age = excluded.age,
          gender = excluded.gender,
-         email = excluded.email`,
-      [phone, salutationVal, nameVal, designation, institute, pincode, state, district, ageNum, genderVal, emailVal]
+         email = excluded.email,
+         created_at = COALESCE(users.created_at, excluded.created_at)`,
+      [phone, salutationVal, nameVal, designation, institute, pincode, state, district, ageNum, genderVal, emailVal, Date.now()]
     );
 
     await assignUserRegNumber(phone); // ensure a registration number exists
@@ -2657,8 +2673,14 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
       }
     }
 
+    // Approval is the resolution of a flag, not a reason to keep showing it --
+    // once an admin has reviewed and verified a flagged registration, the
+    // "Flagged" badge should disappear from the worklist/verified list rather
+    // than following it forever. Rejection/pending leave is_flagged as-is so
+    // the reviewer still sees why it was raised while it's still unresolved.
+    const clearFlagSql = bankStatus === 'BANK_VERIFIED' ? ', is_flagged = 0' : '';
     await dbRun(
-      'UPDATE registrations SET bank_status = ?, rejection_reason = ?, rejection_note = ? WHERE id = ?',
+      `UPDATE registrations SET bank_status = ?, rejection_reason = ?, rejection_note = ?${clearFlagSql} WHERE id = ?`,
       [bankStatus, reason, note, req.params.id]
     );
 
@@ -3025,6 +3047,24 @@ app.put('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FIN
       return res.status(409).json({ success: false, error: 'That bank transaction is already linked to another payment.' });
     }
 
+    // Linking acknowledges the payment at its own claimed amount, so it must
+    // not push the registration's cumulative verified total past the fee
+    // actually due -- catches the exact bug found with Divya Selokar
+    // (a duplicate resubmission transaction wrongly linked to a second, real
+    // credit, over-crediting her registration and stranding someone else's
+    // payment). Skipped for a registration with no fee on record.
+    const reg = await dbGet('SELECT expected_amount FROM registrations WHERE id = ?', [txn.registration_id]);
+    if (reg && reg.expected_amount > 0) {
+      const summary = await getPaymentSummary(txn.registration_id, reg.expected_amount);
+      const wouldBeTotal = summary.verifiedTotal + (txn.amount || 0);
+      if (wouldBeTotal > reg.expected_amount + 0.5) {
+        return res.status(400).json({
+          success: false,
+          error: `Linking this payment (₹${inr(txn.amount)}) would bring the total acknowledged to ₹${inr(wouldBeTotal)}, which is more than the ₹${inr(reg.expected_amount)} fee due. Check whether this credit really belongs to this registration.`,
+        });
+      }
+    }
+
     // Linking acknowledges the payment at its own amount.
     await dbRun(
       `UPDATE payment_transactions
@@ -3096,6 +3136,65 @@ app.get('/api/users', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   }
 });
 
+// Full profile for the Users side-panel: demography, contact, registration +
+// payment ledger, workshop/QI enrollment, and a best-effort signup date.
+app.get('/api/users/:phone/detail', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const phone = req.params.phone;
+    const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+
+    const reg = await dbGet(
+      `SELECT r.*, ws.name AS workshop_name, qi.name AS qi_name
+         FROM registrations r
+         LEFT JOIN program_options ws ON ws.id = r.workshop_option_id
+         LEFT JOIN program_options qi ON qi.id = r.qi_option_id
+        WHERE r.phone_number = ?`, [phone]);
+
+    let payment = null;
+    if (reg) payment = await getPaymentSummary(reg.id, reg.expected_amount);
+
+    res.json({
+      success: true,
+      user,
+      registration: reg || null,
+      payment,
+      signup_at: user.created_at || null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Edit a user's demographic / contact details (super admin only). Role and
+// registration data are managed through their own endpoints; this only
+// touches the profile fields.
+app.put('/api/users/:phone', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const phone = req.params.phone;
+    const existing = await dbGet('SELECT phone_number FROM users WHERE phone_number = ?', [phone]);
+    if (!existing) return res.status(404).json({ success: false, error: 'User not found.' });
+
+    const b = req.body || {};
+    const fields = ['salutation', 'full_name', 'designation', 'institution', 'email',
+      'age', 'gender', 'pincode', 'state', 'district'];
+    const sets = [];
+    const params = [];
+    for (const f of fields) {
+      if (Object.prototype.hasOwnProperty.call(b, f)) {
+        sets.push(`${f} = ?`);
+        params.push(b[f] === '' ? null : b[f]);
+      }
+    }
+    if (!sets.length) return res.status(400).json({ success: false, error: 'Nothing to update.' });
+    params.push(phone);
+    await dbRun(`UPDATE users SET ${sets.join(', ')} WHERE phone_number = ?`, params);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.post('/api/users', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
     const { name, phone, designation, institute, role } = req.body;
@@ -3106,8 +3205,8 @@ app.post('/api/users', requireRole('SUPER_ADMIN'), async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Invalid role.' });
     }
     await dbRun(
-      'INSERT INTO users (phone_number, full_name, designation, institution, role) VALUES (?, ?, ?, ?, ?)',
-      [phone, name, designation, institute, role]
+      'INSERT INTO users (phone_number, full_name, designation, institution, role, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [phone, name, designation, institute, role, Date.now()]
     );
     res.json({ success: true });
   } catch (err) {
@@ -3831,8 +3930,9 @@ async function autoLinkTransactions() {
   // current mechanism -- linking lives on payment_transactions, not the
   // registration.
   const pend = await dbAll(
-    `SELECT id, amount, utr_number FROM payment_transactions
-      WHERE bank_txn_id IS NULL AND utr_number IS NOT NULL AND utr_number != '' AND txn_status != 'REJECTED'`);
+    `SELECT pt.id, pt.registration_id, pt.amount, pt.utr_number, r.expected_amount
+       FROM payment_transactions pt JOIN registrations r ON r.id = pt.registration_id
+      WHERE pt.bank_txn_id IS NULL AND pt.utr_number IS NOT NULL AND pt.utr_number != '' AND pt.txn_status != 'REJECTED'`);
   if (!pend.length) return 0;
 
   const credits = await dbAll(
@@ -3842,23 +3942,41 @@ async function autoLinkTransactions() {
   const byRef = new Map();
   credits.forEach((t) => byRef.set(digitsOnly(t.extracted_ref), t.id));
 
+  // Running verified total per registration, so the "not more than what's
+  // due" cap holds even when a batch links more than one transaction for the
+  // same registration in this same pass. Seeded from already-VERIFIED rows.
+  const regIds = [...new Set(pend.map((t) => t.registration_id))];
+  const verifiedSoFar = new Map();
+  if (regIds.length) {
+    const rows = await dbAll(
+      `SELECT registration_id, SUM(COALESCE(verified_amount, amount, 0)) AS total
+         FROM payment_transactions WHERE registration_id IN (${regIds.map(() => '?').join(',')}) AND txn_status = 'VERIFIED'
+        GROUP BY registration_id`, regIds);
+    rows.forEach((r) => verifiedSoFar.set(r.registration_id, r.total || 0));
+  }
+
   let linked = 0;
   for (const txn of pend) {
     const bankId = byRef.get(digitsOnly(txn.utr_number));
     if (!bankId) continue;
+    // A UTR match acknowledges the payment at its own amount (same as a
+    // manual link) -- don't let it push the registration's cumulative total
+    // past the fee actually due. Leave it unlinked/pending for a human to
+    // review rather than silently over-crediting (e.g. a genuine accidental
+    // double payment, or a duplicate resubmission artifact).
+    const already = verifiedSoFar.get(txn.registration_id) || 0;
+    if (txn.expected_amount > 0 && already + (txn.amount || 0) > txn.expected_amount + 0.5) continue;
     // Guard against two transactions racing for the same still-unused credit
     // within this loop (the UNIQUE index is the final backstop).
     byRef.delete(digitsOnly(txn.utr_number));
     try {
-      // A UTR match against a real bank credit IS the acknowledgement (same as
-      // a manual link), so the transaction is verified at its amount -- the
-      // registration still needs the admin's Accept & Verify to be confirmed.
       await dbRun(
         `UPDATE payment_transactions
             SET bank_txn_id = ?, txn_status = 'VERIFIED', verified_amount = amount,
                 reviewed_by = 'auto (bank match)', reviewed_at = ?
           WHERE id = ? AND bank_txn_id IS NULL`,
         [bankId, Date.now(), txn.id]);
+      verifiedSoFar.set(txn.registration_id, already + (txn.amount || 0));
       linked++;
     } catch (err) {
       if (err.code !== 'SQLITE_CONSTRAINT') throw err;

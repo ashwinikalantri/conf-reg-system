@@ -1379,22 +1379,25 @@ function setupAdminDelegation() {
     });
   }
 
-  const programsBox = document.getElementById('programs-container');
-  if (programsBox) {
-    programsBox.addEventListener('click', (e) => {
-      const save = e.target.closest('.prog-save');
-      if (save) {
-        const input = programsBox.querySelector(`.prog-capacity[data-id="${save.dataset.id}"]`);
-        return saveProgramCapacity(save.dataset.id, parseInt(input.value, 10));
-      }
-      const toggle = e.target.closest('.prog-toggle');
-      if (toggle) return toggleProgram(toggle.dataset.id, toggle.dataset.active === '1' ? 0 : 1);
-      const del = e.target.closest('.prog-delete');
-      if (del) return deleteProgram(del.dataset.id);
-      const roster = e.target.closest('.prog-roster');
-      if (roster) return openRosterModal(roster.dataset.id, roster.dataset.type, roster.dataset.name);
-    });
-  }
+  // Workshop and QI masters share the same program-row controls; wire the
+  // delegated click handler to both containers.
+  const programClickHandler = (box) => (e) => {
+    const save = e.target.closest('.prog-save');
+    if (save) {
+      const input = box.querySelector(`.prog-capacity[data-id="${save.dataset.id}"]`);
+      return saveProgramCapacity(save.dataset.id, parseInt(input.value, 10));
+    }
+    const toggle = e.target.closest('.prog-toggle');
+    if (toggle) return toggleProgram(toggle.dataset.id, toggle.dataset.active === '1' ? 0 : 1);
+    const del = e.target.closest('.prog-delete');
+    if (del) return deleteProgram(del.dataset.id);
+    const roster = e.target.closest('.prog-roster');
+    if (roster) return openRosterModal(roster.dataset.id, roster.dataset.type, roster.dataset.name);
+  };
+  ['workshops-container', 'qi-container'].forEach((id) => {
+    const box = document.getElementById(id);
+    if (box) box.addEventListener('click', programClickHandler(box));
+  });
 
   const rosterList = document.getElementById('roster-list');
   if (rosterList) {
@@ -1476,16 +1479,17 @@ function applyRoleVisibility(role) {
   // the main tab bar. The menu button itself only shows if at least one
   // item would.
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
-  const settingsMasters = document.getElementById('settings-item-masters');
-  const settingsUsers = document.getElementById('settings-item-users');
-  const settingsReminders = document.getElementById('settings-item-reminders');
-  const settingsActivity = document.getElementById('settings-item-activity');
-  const settingsGroups = document.getElementById('settings-item-groups');
-  if (settingsMasters) settingsMasters.classList.toggle('hidden', !isSuper);
-  if (settingsUsers) settingsUsers.classList.toggle('hidden', !isSuper);
-  if (settingsReminders) settingsReminders.classList.toggle('hidden', !isFinance);
-  if (settingsGroups) settingsGroups.classList.toggle('hidden', !isFinance);
-  if (settingsActivity) settingsActivity.classList.toggle('hidden', !isSuper);
+  // Super-admin-only masters; Reminders + Group Discount also open to finance.
+  const superItems = ['workshops', 'qi', 'fees', 'notification', 'discount', 'users', 'activity'];
+  const financeItems = ['reminders', 'groupdiscount'];
+  superItems.forEach((key) => {
+    const el = document.getElementById(`settings-item-${key}`);
+    if (el) el.classList.toggle('hidden', !isSuper);
+  });
+  financeItems.forEach((key) => {
+    const el = document.getElementById(`settings-item-${key}`);
+    if (el) el.classList.toggle('hidden', !isFinance);
+  });
   if (settingsMenuBtn) settingsMenuBtn.classList.toggle('hidden', !(isSuper || isFinance));
 
   // Show only the report cards this role can access.
@@ -1521,7 +1525,7 @@ async function initBackendPortal() {
   // means an admin who clicks a different tab while data is still loading
   // stays where they clicked; switching again afterwards would silently
   // snap them back to this default tab once loading finished.
-  const defaultTab = isFinance ? 'payments' : isReviewer ? 'abstracts' : 'programs';
+  const defaultTab = isFinance ? 'payments' : isReviewer ? 'abstracts' : 'workshops';
   const loading = document.getElementById('admin-initial-loading');
   if (loading) loading.classList.add('hidden');
   switchBackendTab(defaultTab);
@@ -2312,6 +2316,23 @@ const ROLE_ICONS = {
   DELEGATE: '🎫',
 };
 
+// Subtle, monochrome role marks for the Users table (staff stand out without
+// colour). Delegates — the overwhelming majority — get no mark, keeping the
+// list quiet; only staff roles show a glyph.
+const ROLE_ICONS_BW = {
+  SUPER_ADMIN: '★',
+  FINANCE_ADMIN: '₹',
+  ACADEMIC_REVIEWER: '✎',
+  FINANCE_ACADEMIC: '❖',
+  DELEGATE: '',
+};
+
+function roleMarkBW(role) {
+  const glyph = ROLE_ICONS_BW[role];
+  if (!glyph) return '';
+  return `<span class="text-slate-400 mr-1" title="${esc(roleLabel(role))}">${glyph}</span>`;
+}
+
 function programDisplayCell(u, options, currentId, type) {
   const current = options.find((o) => String(o.id) === String(currentId));
   const label = type === 'WORKSHOP' ? 'Workshop' : 'QI Exposure';
@@ -2321,22 +2342,51 @@ function programDisplayCell(u, options, currentId, type) {
   return `<span class="text-xs ${current ? 'text-slate-700 font-semibold' : 'text-slate-400'}">${current ? esc(current.name) : '—'}</span>${changeBtn}`;
 }
 
+// Fills the Designation and Institute filter <select>s from the distinct
+// values present in the current user list, preserving the current selection.
+function populateUserFilterOptions() {
+  const fill = (id, values) => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const current = sel.value;
+    const first = sel.querySelector('option'); // keep the "All …" option
+    sel.innerHTML = '';
+    if (first) sel.appendChild(first);
+    values.forEach((v) => {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = v;
+      sel.appendChild(opt);
+    });
+    if (values.includes(current)) sel.value = current;
+  };
+  const uniqSorted = (key) => [...new Set(cachedUsers.map((u) => (u[key] || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  fill('user-filter-designation', uniqSorted('designation'));
+  fill('user-filter-institute', uniqSorted('institution'));
+}
+
 function renderBackendUsers() {
   const tbody = document.getElementById('user-table-body');
   if (!tbody) return;
 
+  populateUserFilterOptions();
+
   const search = (document.getElementById('user-filter-search')?.value || '').trim().toLowerCase();
   const roleFilter = document.getElementById('user-filter-role')?.value || '';
   const statusFilter = document.getElementById('user-filter-status')?.value || '';
+  const designationFilter = document.getElementById('user-filter-designation')?.value || '';
+  const instituteFilter = document.getElementById('user-filter-institute')?.value || '';
 
   const filtered = cachedUsers.filter((u) => {
     if (roleFilter && u.role !== roleFilter) return false;
+    if (designationFilter && (u.designation || '').trim() !== designationFilter) return false;
+    if (instituteFilter && (u.institution || '').trim() !== instituteFilter) return false;
     if (statusFilter) {
       const matches = statusFilter === 'NONE' ? !u.registration_status : u.registration_status === statusFilter;
       if (!matches) return false;
     }
     if (search) {
-      const hay = [u.full_name, u.phone_number, u.designation, u.institution].filter(Boolean).join(' ').toLowerCase();
+      const hay = [u.full_name, u.phone_number, u.registration_number].filter(Boolean).join(' ').toLowerCase();
       if (!hay.includes(search)) return false;
     }
     return true;
@@ -2346,34 +2396,20 @@ function renderBackendUsers() {
   setText('user-filter-count', String(filtered.length));
   setText('badge-user-count', String(cachedUsers.length));
 
-  const workshopOptions = cachedAdminProgramOptions.filter((o) => o.type === 'WORKSHOP');
-  const qiOptions = cachedAdminProgramOptions.filter((o) => o.type === 'QI');
-
   tbody.innerHTML = filtered.length ? filtered.map((u) => `
-    <tr>
-      <td class="p-4">
-        <span class="inline-flex items-center justify-center w-6 h-6 mb-1 bg-indigo-100 rounded-full text-xs" title="${esc(roleLabel(u.role))}">${ROLE_ICONS[u.role] || '👤'}</span>
-        <p class="font-bold">${u.salutation ? esc(u.salutation) + ' ' : ''}${esc(u.full_name)}</p>
-        <span class="text-xs text-slate-400">+91 ${esc(u.phone_number)}</span>
-      </td>
-      <td class="p-4">${esc(u.designation)} (${esc(u.institution)})</td>
+    <tr class="hover:bg-slate-50 cursor-pointer" onclick="openUserDetail('${esc(u.phone_number)}')">
       <td class="p-4 font-mono text-xs">${esc(u.registration_number || '—')}</td>
+      <td class="p-4 font-semibold text-slate-800">${roleMarkBW(u.role)}${u.salutation ? esc(u.salutation) + ' ' : ''}${esc(u.full_name)}</td>
+      <td class="p-4 text-slate-600">${esc(u.designation || '—')}</td>
+      <td class="p-4 text-slate-600">${esc(u.institution || '—')}</td>
       <td class="p-4">${u.registration_status
         ? `<span class="${REG_STATUS_STYLES[u.registration_status] || 'bg-slate-100 text-slate-600'} text-xs font-bold px-2 py-1 rounded-full">${esc(BANK_STATUS_LABELS[u.registration_status] || u.registration_status)}</span>`
         : `<span class="text-xs text-slate-400">Not registered</span>`}</td>
-      <td class="p-4">${programDisplayCell(u, workshopOptions, u.workshop_option_id, 'WORKSHOP')}</td>
-      <td class="p-4">${programDisplayCell(u, qiOptions, u.qi_option_id, 'QI')}</td>
       <td class="p-4 text-right">
-        <select class="role-select text-xs p-1 border rounded" data-phone="${esc(u.phone_number)}">
-          <option value="DELEGATE" ${u.role === 'DELEGATE' ? 'selected' : ''}>Delegate</option>
-          <option value="FINANCE_ADMIN" ${u.role === 'FINANCE_ADMIN' ? 'selected' : ''}>Finance Admin</option>
-          <option value="ACADEMIC_REVIEWER" ${u.role === 'ACADEMIC_REVIEWER' ? 'selected' : ''}>Academic Reviewer</option>
-          <option value="FINANCE_ACADEMIC" ${u.role === 'FINANCE_ACADEMIC' ? 'selected' : ''}>Finance &amp; Academic Reviewer</option>
-          <option value="SUPER_ADMIN" ${u.role === 'SUPER_ADMIN' ? 'selected' : ''}>Super Admin</option>
-        </select>
+        <button type="button" onclick="event.stopPropagation();openUserDetail('${esc(u.phone_number)}')" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg">Details →</button>
       </td>
     </tr>
-  `).join('') : `<tr><td colspan="7" class="p-8 text-center text-sm text-slate-400">No users match these filters.</td></tr>`;
+  `).join('') : `<tr><td colspan="6" class="p-8 text-center text-sm text-slate-400">No users match these filters.</td></tr>`;
 }
 
 // State for the shared workshop/QI change modal -- one modal, reused for
@@ -2432,6 +2468,7 @@ async function saveProgramChange() {
   closeModal('modal-program-change');
   showToast('Enrollment updated.', 'success');
   await loadBackendUsers();
+  if (userDetailPhone) await openUserDetail(userDetailPhone);
 }
 
 async function updateRole(phone, role) {
@@ -2443,20 +2480,243 @@ async function updateRole(phone, role) {
   await loadBackendUsers();
 }
 
+// --- USER DETAIL SIDE PANEL ------------------------------------------------
+let userDetailPhone = null;
+let userDetailData = null;
+let userDetailEditing = false;
+
+const ROLE_OPTIONS = [
+  ['DELEGATE', 'Delegate'],
+  ['FINANCE_ADMIN', 'Finance Admin'],
+  ['ACADEMIC_REVIEWER', 'Academic Reviewer'],
+  ['FINANCE_ACADEMIC', 'Finance & Academic Reviewer'],
+  ['SUPER_ADMIN', 'Super Admin'],
+];
+
+function isSuperAdminViewer() {
+  return activeAdminUser && activeAdminUser.role === 'SUPER_ADMIN';
+}
+
+async function openUserDetail(phone) {
+  userDetailPhone = phone;
+  userDetailEditing = false;
+  const overlay = document.getElementById('user-detail-overlay');
+  const panel = document.getElementById('user-detail-panel');
+  const body = document.getElementById('user-detail-body');
+  if (!overlay || !panel) return;
+  overlay.classList.remove('hidden');
+  // Slide in on the next frame so the transform transition plays.
+  requestAnimationFrame(() => panel.classList.remove('translate-x-full'));
+  if (body) body.innerHTML = '<p class="text-slate-400">Loading…</p>';
+
+  const res = await fetch(`/api/users/${encodeURIComponent(phone)}/detail`);
+  if (!res.ok) {
+    if (body) body.innerHTML = '<p class="text-rose-600">Could not load this user.</p>';
+    return;
+  }
+  userDetailData = await res.json();
+  renderUserDetail();
+}
+
+function closeUserDetail(event) {
+  if (event && event.target && event.target.id && event.target.id !== 'user-detail-overlay') return;
+  const overlay = document.getElementById('user-detail-overlay');
+  const panel = document.getElementById('user-detail-panel');
+  if (panel) panel.classList.add('translate-x-full');
+  // Wait for the slide-out before hiding the overlay.
+  setTimeout(() => { if (overlay) overlay.classList.add('hidden'); }, 200);
+  userDetailPhone = null;
+  userDetailData = null;
+  userDetailEditing = false;
+}
+
+function detailRow(label, value) {
+  return `<div class="flex justify-between gap-3 py-1">
+    <span class="text-slate-500">${esc(label)}</span>
+    <span class="text-slate-800 font-medium text-right">${value == null || value === '' ? '—' : esc(String(value))}</span>
+  </div>`;
+}
+
+function detailCard(title, inner, actionHtml) {
+  return `<div class="border border-slate-200 rounded-xl overflow-hidden">
+    <div class="bg-slate-50 px-3 py-2 border-b border-slate-100 flex items-center justify-between">
+      <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wide">${esc(title)}</h4>
+      ${actionHtml || ''}
+    </div>
+    <div class="px-3 py-2">${inner}</div>
+  </div>`;
+}
+
+function renderUserDetail() {
+  const body = document.getElementById('user-detail-body');
+  if (!body || !userDetailData) return;
+  const { user: u, registration: reg, payment, signup_at } = userDetailData;
+
+  const nameEl = document.getElementById('user-detail-name');
+  if (nameEl) nameEl.innerHTML = `${roleMarkBW(u.role)}${u.salutation ? esc(u.salutation) + ' ' : ''}${esc(u.full_name || '—')}`;
+  setText('user-detail-subline', `${u.registration_number || 'No reg no'} · +91 ${u.phone_number} · ${roleLabel(u.role)}`);
+
+  if (userDetailEditing) { body.innerHTML = userDetailEditForm(u); return; }
+
+  // Demography
+  const demography = detailRow('Age', u.age) + detailRow('Gender', u.gender)
+    + detailRow('District', u.district) + detailRow('State', u.state)
+    + detailRow('Pincode', u.pincode);
+
+  // Contact
+  const contact = detailRow('Email', u.email) + detailRow('Phone', '+91 ' + u.phone_number);
+
+  // Registration + payment
+  let regHtml;
+  if (reg) {
+    const paidBits = payment ? detailRow('Fee', '₹' + inr(payment.fee))
+      + detailRow('Verified paid', '₹' + inr(payment.verifiedTotal))
+      + detailRow('Remaining', '₹' + inr(payment.remaining)) : '';
+    regHtml = detailRow('Category', reg.category_label)
+      + detailRow('Status', BANK_STATUS_LABELS[reg.bank_status] || reg.bank_status)
+      + (reg.discount_code ? detailRow('Discount', `${reg.discount_code} (−₹${inr(reg.discount_amount || 0)})`) : '')
+      + detailRow('Registered', fmtAuditTime(reg.submitted_at))
+      + detailRow('Signed up', fmtAuditTime(signup_at))
+      + paidBits;
+  } else {
+    regHtml = `<p class="text-slate-400 py-1">Not registered.</p>`
+      + detailRow('Signed up', fmtAuditTime(signup_at));
+  }
+
+  // Payment ledger
+  let ledger = '';
+  if (payment && payment.txns && payment.txns.length) {
+    ledger = payment.txns.map((t) => {
+      const st = t.txn_status || 'PENDING';
+      const stColor = st === 'VERIFIED' ? 'text-emerald-700' : st === 'REJECTED' ? 'text-rose-600' : 'text-amber-600';
+      return `<div class="flex justify-between gap-3 py-1 border-b border-slate-50 last:border-0">
+        <span class="text-slate-600">${fmtAuditTime(t.submitted_at) || '—'}<br><span class="text-[10px] text-slate-400 font-mono">${esc(t.utr_number || '')}</span></span>
+        <span class="text-right"><span class="font-semibold text-slate-800">₹${inr(t.amount)}</span><br><span class="text-[10px] font-bold ${stColor}">${esc(st)}</span></span>
+      </div>`;
+    }).join('');
+  }
+
+  // Workshop / QI with change buttons (verified registrations only)
+  const canChange = reg && reg.bank_status === 'BANK_VERIFIED';
+  const progLine = (label, name, type) => `<div class="flex justify-between items-center gap-3 py-1">
+    <span class="text-slate-500">${esc(label)}</span>
+    <span class="text-right">
+      <span class="text-slate-800 font-medium">${name ? esc(name) : '—'}</span>
+      ${canChange ? `<button type="button" onclick="openProgramChangeModalFromDetail('${type}')" class="ml-2 text-[11px] text-indigo-600 hover:text-indigo-800 underline font-semibold">${name ? 'Change' : 'Add'}</button>` : ''}
+    </span>
+  </div>`;
+  const programs = reg
+    ? progLine('Workshop', reg.workshop_name, 'WORKSHOP') + progLine('QI Exposure', reg.qi_name, 'QI')
+    : `<p class="text-slate-400 py-1">No enrollment.</p>`;
+
+  // Role setter
+  const roleSelect = `<div class="flex items-center gap-2">
+    <select id="user-detail-role-select" class="flex-1 p-2 border rounded-lg text-sm bg-white outline-none">
+      ${ROLE_OPTIONS.map(([v, l]) => `<option value="${v}" ${u.role === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+    </select>
+    <button type="button" onclick="saveUserDetailRole()" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Save</button>
+  </div>`;
+
+  const editBtn = isSuperAdminViewer()
+    ? `<button type="button" onclick="toggleUserDetailEdit()" class="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold underline">Edit</button>`
+    : '';
+
+  body.innerHTML =
+    detailCard('Demography', demography, editBtn)
+    + detailCard('Contact', contact)
+    + detailCard('Registration', regHtml)
+    + (ledger ? detailCard('Payments', ledger) : '')
+    + detailCard('Programs', programs)
+    + detailCard('Role', roleSelect);
+}
+
+function userDetailEditForm(u) {
+  const field = (id, label, val, type = 'text') =>
+    `<div><label class="block text-[11px] font-semibold text-slate-600 mb-1">${esc(label)}</label>
+      <input id="ude-${id}" type="${type}" value="${val == null ? '' : esc(String(val))}" class="w-full p-2 border rounded-lg text-sm outline-none"></div>`;
+  return `<div class="space-y-3">
+    <div class="grid grid-cols-2 gap-3">
+      ${field('salutation', 'Salutation', u.salutation)}
+      ${field('full_name', 'Full name', u.full_name)}
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      ${field('designation', 'Designation', u.designation)}
+      ${field('institution', 'Institute', u.institution)}
+    </div>
+    ${field('email', 'Email', u.email, 'email')}
+    <div class="grid grid-cols-2 gap-3">
+      ${field('age', 'Age', u.age, 'number')}
+      ${field('gender', 'Gender', u.gender)}
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      ${field('district', 'District', u.district)}
+      ${field('state', 'State', u.state)}
+    </div>
+    ${field('pincode', 'Pincode', u.pincode)}
+    <div class="flex justify-end gap-2 pt-2">
+      <button type="button" onclick="toggleUserDetailEdit()" class="px-4 py-2 border rounded-xl text-xs font-semibold text-slate-600">Cancel</button>
+      <button type="button" onclick="saveUserDetailEdit()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-md">Save changes</button>
+    </div>
+  </div>`;
+}
+
+function toggleUserDetailEdit() {
+  if (!isSuperAdminViewer()) return showToast('Only a super admin can edit user details.');
+  userDetailEditing = !userDetailEditing;
+  renderUserDetail();
+}
+
+async function saveUserDetailEdit() {
+  if (!userDetailPhone) return;
+  const ids = ['salutation', 'full_name', 'designation', 'institution', 'email',
+    'age', 'gender', 'district', 'state', 'pincode'];
+  const payload = {};
+  ids.forEach((id) => {
+    const el = document.getElementById(`ude-${id}`);
+    if (el) payload[id] = el.value.trim();
+  });
+  if (!payload.full_name) return showToast('Full name is required.');
+  const data = await (await fetch(`/api/users/${encodeURIComponent(userDetailPhone)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not save changes.');
+  showToast('Details updated.', 'success');
+  userDetailEditing = false;
+  await loadBackendUsers();
+  await openUserDetail(userDetailPhone); // refetch + re-render the panel
+}
+
+async function saveUserDetailRole() {
+  const sel = document.getElementById('user-detail-role-select');
+  if (!sel || !userDetailPhone) return;
+  await updateRole(userDetailPhone, sel.value);
+  showToast('Role updated.', 'success');
+  await openUserDetail(userDetailPhone);
+}
+
+// Bridges the detail panel to the shared workshop/QI change modal, which
+// reads from cachedUsers (already loaded for the Users table).
+function openProgramChangeModalFromDetail(type) {
+  if (userDetailPhone) openProgramChangeModal(userDetailPhone, type);
+}
+
 // --- WORKSHOPS & QI PRACTICES (admin) ---
 async function renderBackendPrograms() {
+  const wsBox = document.getElementById('workshops-container');
+  const qiBox = document.getElementById('qi-container');
+  if (!wsBox && !qiBox) return;
   const res = await fetch('/api/admin/program-options');
-  const container = document.getElementById('programs-container');
-  if (!container) return;
   if (!res.ok) {
-    container.innerHTML = '<p class="text-sm text-slate-500 p-4">Unable to load programs.</p>';
+    const msg = '<p class="text-sm text-slate-500 p-4">Unable to load programs.</p>';
+    if (wsBox) wsBox.innerHTML = msg;
+    if (qiBox) qiBox.innerHTML = msg;
     return;
   }
   const options = (await res.json()).options || [];
   setText('badge-program-count', options.length);
 
-  const groupHtml = (type, title) => {
-    const rows = options.filter(o => o.type === type).map(o => {
+  const rowsHtml = (type) =>
+    options.filter(o => o.type === type).map(o => {
       const remaining = Math.max(0, o.capacity - o.enrolled);
       return `
       <div class="flex flex-wrap items-center gap-3 py-3 border-b border-slate-100 ${o.active ? '' : 'opacity-60'}">
@@ -2471,25 +2731,26 @@ async function renderBackendPrograms() {
         <button class="prog-delete px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Delete</button>
       </div>`;
     }).join('') || '<p class="text-sm text-slate-400 py-2">None yet.</p>';
-    return `<div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-        <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide mb-2">${esc(title)}</h3>${rows}</div>`;
-  };
 
-  container.innerHTML = groupHtml('WORKSHOP', 'Workshops') + groupHtml('QI', 'QI Practices');
+  const card = (rows) => `<div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">${rows}</div>`;
+  if (wsBox) wsBox.innerHTML = card(rowsHtml('WORKSHOP'));
+  if (qiBox) qiBox.innerHTML = card(rowsHtml('QI'));
 }
 
-async function handleAddProgram(e) {
+async function handleAddProgram(e, type) {
   e.preventDefault();
+  const prefix = type === 'QI' ? 'qi' : 'workshop';
+  const nameInput = document.getElementById(`new-${prefix}-name`);
   const payload = {
-    type: document.getElementById('new-program-type').value,
-    name: document.getElementById('new-program-name').value,
-    capacity: parseInt(document.getElementById('new-program-capacity').value, 10),
+    type,
+    name: nameInput.value,
+    capacity: parseInt(document.getElementById(`new-${prefix}-capacity`).value, 10),
   };
   const data = await (await fetch('/api/admin/program-options', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   })).json();
   if (!data.success) return showToast(data.error || 'Could not add option.');
-  document.getElementById('new-program-name').value = '';
+  nameInput.value = '';
   renderBackendPrograms();
 }
 
@@ -3667,12 +3928,15 @@ document.addEventListener('click', (e) => {
   menu.classList.add('hidden');
 });
 
-const MASTERS_SUBTABS = ['programs', 'fees'];
-let lastMastersTab = 'programs';
+// Settings sub-menu tabs (each is now its own top-level <section>) vs. the
+// main nav-bar tabs. The Settings items highlight in the dropdown; the main
+// tabs highlight in the tab bar.
+const SETTINGS_TABS = ['workshops', 'qi', 'fees', 'notification', 'reminders', 'groupdiscount', 'discount', 'users', 'activity'];
+const MAIN_TABS = ['payments', 'statement', 'abstracts', 'reports'];
 
 function switchBackendTab(tab) {
-  if (tab === 'groups') renderGroupsMonitor();
-  ['payments', 'statement', 'abstracts', 'programs', 'fees', 'reports', 'reminders', 'activity', 'users', 'groups'].forEach(t => {
+  if (tab === 'groupdiscount') renderGroupsMonitor();
+  [...MAIN_TABS, ...SETTINGS_TABS].forEach(t => {
     const section = document.getElementById(`section-${t}`);
     if (section) section.classList.toggle('hidden', t !== tab);
 
@@ -3686,31 +3950,15 @@ function switchBackendTab(tab) {
     }
   });
 
-  // Highlight whichever Settings-menu item (Masters/Users/Reminders/Logs)
-  // is currently selected, since those tabs no longer live in the main bar.
-  ['masters', 'users', 'reminders', 'groups', 'activity'].forEach((key) => {
+  // Highlight whichever Settings-menu item is currently selected, since those
+  // tabs live in the header dropdown rather than the main tab bar.
+  SETTINGS_TABS.forEach((key) => {
     const item = document.getElementById(`settings-item-${key}`);
     if (!item) return;
-    const active = key === 'masters' ? MASTERS_SUBTABS.includes(tab) : key === tab;
+    const active = key === tab;
     item.classList.toggle('bg-indigo-50', active);
     item.classList.toggle('text-indigo-700', active);
   });
-
-  const inMasters = MASTERS_SUBTABS.includes(tab);
-  const mastersWrap = document.getElementById('section-masters-wrapper');
-  if (mastersWrap) mastersWrap.classList.toggle('hidden', !inMasters);
-  if (inMasters) {
-    lastMastersTab = tab;
-    MASTERS_SUBTABS.forEach((t) => {
-      const sb = document.getElementById(`subnav-${t}`);
-      if (!sb) return;
-      const active = t === tab;
-      sb.classList.toggle('bg-indigo-600', active);
-      sb.classList.toggle('text-white', active);
-      sb.classList.toggle('bg-slate-100', !active);
-      sb.classList.toggle('text-slate-600', !active);
-    });
-  }
 
   if (tab === 'statement') loadReconciliation();
 }
