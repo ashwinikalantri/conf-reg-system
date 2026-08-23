@@ -1,4 +1,19 @@
-# NQOCN 2026 Conference Portal & RBAC Operations
+# Conference Registration Portal & RBAC Admin
+
+A self-hosted registration portal for a conference: phone+OTP delegate
+signup, payment collection with OCR-assisted verification, workshop/QI-style
+program tracks with capacity limits, abstract submission and review, discount
+codes, and a role-based admin panel with a full audit trail. Built for one
+event (this deployment currently runs the *International Conference on
+Healthcare Quality & Patient Safety 2026* / NQOCN 2026 at MGIMS Sevagram),
+but the conference's identity, fee structure, and program tracks are all
+admin-editable rather than hardcoded — see **Settings → General** below.
+
+Categories that require a student ID upload (nursing/medical UG/PG) reflect
+this deployment's delegate mix; if you're adapting this for a different kind
+of conference, that logic (`STUDENT_CATEGORIES` in `server.js`) is the one
+place still specific to a healthcare-education audience rather than
+admin-configurable.
 
 ## How to Run
 
@@ -18,18 +33,24 @@
 4. Delegate portal: <http://localhost:3000>
    Admin panel: <http://localhost:3000/admin>
 
-`conference.db` is created automatically on first run.
+`conference.db` (SQLite) is created automatically on first run, seeded with
+one `SUPER_ADMIN` and a starter set of fee categories and program options.
 
 ## SMS OTP (Vynttra)
 
-OTPs are delivered by SMS via the Vynttra JSON API using the registered DLT
-template. Set `SMS_API_KEY` to enable it; the sender/entity/template/header IDs
-default to the NQOCN values and are overridable via env (`SMS_SENDER`,
-`SMS_ENTITY_ID`, `SMS_TEMPLATE_ID`, `SMS_HEADER_ID`, `SMS_TYPE`, `SMS_URL`) —
-or, once the server is running, from **Settings → General → SMS** in the admin
-panel (see below). Without an API key, SMS is skipped and (outside production)
-the OTP is echoed for local testing. Sending is fire-and-forget — failures are
-logged (console and the admin SMS activity log), never blocking OTP issuance.
+OTPs are delivered by SMS via the Vynttra JSON API using a registered DLT
+template. Set `SMS_API_KEY` to enable it; the sender/entity/template/header
+IDs default to this deployment's registered values and are overridable via
+env (`SMS_SENDER`, `SMS_ENTITY_ID`, `SMS_TEMPLATE_ID`, `SMS_HEADER_ID`,
+`SMS_TYPE`, `SMS_URL`) — or, once the server is running, from **Settings →
+General → SMS** in the admin panel (see below). Without an API key, SMS is
+skipped and (outside production) the OTP is echoed for local testing.
+Sending is fire-and-forget — failures are logged (console and the admin SMS
+activity log), never blocking OTP issuance.
+
+Swapping to a different SMS provider means replacing the request body in
+`sendOtpSms()` (`server.js`) for that provider's API shape; the admin-editable
+fields, the on/off toggle, and the activity log are otherwise provider-agnostic.
 
 ## Email notifications (AWS SES)
 
@@ -50,6 +71,11 @@ sandbox (in sandbox, only verified recipients receive mail).
 A single admin page (`/admin` → Settings → General) for everything that used
 to require editing code and redeploying:
 
+- **Conference Details** — full name, acronym, dates, and location, used
+  across confirmation emails, the payment receipt, printable reports, the
+  discount-code voucher, and the public delegate landing page (dates render
+  as "21–22 Nov 2026" or, spanning months, "28 Nov – 2 Dec 2026"). This is
+  the main lever for retargeting the portal at a different event.
 - **SMS** — sender ID, gateway URL, DLT entity/template/header IDs, message
   type, and the API key itself, plus the on/off switch (turning SMS off also
   stops login OTPs).
@@ -58,11 +84,6 @@ to require editing code and redeploying:
 - **UPI** — the conference's UPI ID (VPA) and payee name shown on the payment
   QR code; the delegate form and the server's OCR screenshot check both read
   this live, so they can never drift apart.
-- **Conference Details** — full name, acronym, dates, and location, used
-  across confirmation emails, the payment receipt, and printable reports and
-  voucher pages (dates render as "21–22 Nov 2026" or, spanning months,
-  "28 Nov – 2 Dec 2026"). The public delegate landing page (`public/index.html`)
-  is static and not wired to these yet.
 - **Other Environment Variables** — a read-only reference showing every other
   env var the server reads (`PORT`, `PORTAL_URL`, `NODE_ENV`,
   `COOKIE_SECURE`, `OTP_ECHO`), its effective value, and whether it came from
@@ -81,10 +102,12 @@ characters) — no secret bytes are ever sent to or rendered in the admin UI.
 Credential fields reject a value containing a line break, since one could
 otherwise inject an unrelated new line into `.env`.
 
-`scripts/daily-digest.js` (the cron-run daily summary email) is a standalone
-process independent of the running server, and re-reads `schema_meta` for the
-conference name and email from-address/name/region on every run, so it stays
-in sync with changes made on this page.
+`scripts/daily-digest.js` (an optional cron-run daily summary email; see its
+`RECIPIENT_PHONES` list, which is currently hardcoded to this deployment's
+finance/admin team) is a standalone process independent of the running
+server, and re-reads `schema_meta` for the conference name and email
+from-address/name/region on every run, so it stays in sync with changes made
+on this page.
 
 ## Authentication & sessions
 
@@ -104,15 +127,16 @@ Only a hash of the session token and of the OTP is stored in the database.
 
 | Role                | Access                                              |
 | ------------------- | --------------------------------------------------- |
-| `SUPER_ADMIN`       | Everything, including user & role management        |
-| `FINANCE_ADMIN`     | Payment reconciliation (view + verify)              |
-| `ACADEMIC_REVIEWER` | Admin panel (abstract desk — not yet built)         |
+| `SUPER_ADMIN`       | Everything, including settings, user & role management |
+| `FINANCE_ADMIN`     | Payment reconciliation, reminders, group discounts (view + verify) |
+| `ACADEMIC_REVIEWER` | Abstract review & allotment                          |
+| `FINANCE_ACADEMIC`  | Both of the above                                    |
 | `DELEGATE`          | Own registration, payment, and abstract submission  |
 
 Admins log in through the normal portal with their own phone number; their
 DB role grants access. The database ships with one `SUPER_ADMIN`. Roles can
-only be changed by a `SUPER_ADMIN` via the user-management screen — they are
-never accepted from a login or registration request body.
+only be changed by a `SUPER_ADMIN` via the Users screen — they are never
+accepted from a login or registration request body.
 
 ### Environment variables
 
@@ -122,12 +146,13 @@ never accepted from a login or registration request body.
 | `NODE_ENV`           | –              | `production` disables the dev OTP echo         |
 | `OTP_ECHO`           | on if not prod | Force the OTP echo on (`true`) or off (`false`)|
 | `COOKIE_SECURE`      | `false`        | Set `true` when served over HTTPS              |
+| `PORTAL_URL`         | –              | Base URL used in emailed links                 |
 
 Serve over HTTPS in production and set `COOKIE_SECURE=true` so the session
-cookie is only sent over TLS. These five, plus every SMS/Email/UPI/Conference
+cookie is only sent over TLS. These, plus every SMS/Email/UPI/Conference
 variable, are also listed live (with their effective value) under
 **Settings → General → Other Environment Variables** once the server is
-running — see below.
+running — see above.
 
 ## Templates
 
@@ -218,8 +243,8 @@ On submission the server runs OCR (tesseract.js) over the payment screenshot
 and checks three things against it:
 
 1. **Amount** — the category fee appears in the image.
-2. **UPI ID** — the conference VPA (set in Settings → General → UPI, default
-   `abhishekraut@cbin`) appears.
+2. **UPI ID** — the conference's own VPA (set in Settings → General → UPI)
+   appears.
 3. **UTR** — the UTR the delegate typed appears in the image.
 
 If any check fails the delegate sees a warning listing what could not be
@@ -237,13 +262,16 @@ access to fetch it.
 
 ## Registration number & receipt
 
-Each registration is assigned a stable unique number (`NQOCN2026-000N`, derived
-from its row id) at submission. The number, the chosen workshop and QI practice,
-and a **View / Download Receipt** button are shown to the delegate only once the
-payment is verified; before that the dashboard shows the register/pay action.
-`GET /api/registrations/me/receipt` returns a printable HTML receipt (own
-registration, verified only). Verification also backfills a number for any
-older row that lacked one.
+Each registration is assigned a stable unique number at submission —
+currently a fixed `NQOCN2026` prefix plus a zero-padded sequence
+(`assignUserRegNumber()` in `server.js`); unlike the conference name/acronym,
+this prefix is not yet wired to Settings → General, so retargeting the portal
+at a different event means changing that one string in code. The number, the
+chosen workshop and QI practice, and a **View / Download Receipt** button are
+shown to the delegate only once the payment is verified; before that the
+dashboard shows the register/pay action. `GET /api/registrations/me/receipt`
+returns a printable HTML receipt (own registration, verified only).
+Verification also backfills a number for any older row that lacked one.
 
 ## Reports
 
@@ -261,30 +289,45 @@ The active phase is computed from today's date (on/before early cutoff = early;
 on/before regular cutoff = regular; after = late). The delegate form and the
 authoritative fee both come from the master via `GET /api/fees`; the admin
 **Fees** tab edits the dates and per-category fees. Deleting a category in use
-is refused (deactivate instead). This replaces the old hardcoded price table
-and `REGISTRATION_PHASE` env.
+is refused (deactivate instead).
 
 ## Workshops & QI practices (capacity-limited)
 
 Workshops and QI practice tracks live in an admin-editable `program_options`
 master (type, name, capacity, active). A super admin manages them under the
-**Workshops & QI Practices** tab (add, edit capacity, activate/deactivate,
-delete — delete is refused while anyone is enrolled). The delegate payment form
-is populated from `GET /api/program-options`, showing remaining spots and
-disabling full options. On submit the server records the chosen option ids and
-enforces capacity: a slot is held by any non-rejected registration, and a full
-option is rejected. The default eight options are seeded on first run.
+**Workshop Master** / **QI Practice Master** tabs (add, edit capacity,
+activate/deactivate, delete — delete is refused while anyone is enrolled).
+The delegate payment form is populated from `GET /api/program-options`,
+showing remaining spots and disabling full options. On submit the server
+records the chosen option ids and enforces capacity: a slot is held by any
+non-rejected registration, and a full option is rejected. An enrolled
+delegate can be marked **Faculty** for a specific option from its roster,
+which excludes them from the capacity count and labels them accordingly on
+reports.
 
 ## Student ID verification
 
-Nursing UG/PG, Medical UG, and PG/Resident categories must upload a student ID
-card with their registration. The server OCRs the card and does a preliminary
-check that its discipline (nursing vs medical) and level (UG vs PG) match the
-chosen category. Like the payment checks this is advisory: a mismatch flags the
-registration for manual review rather than blocking it. The card is stored in
-`uploads/` and served only through the authed `GET /api/registrations/:id/id-card`
-route (owner or finance admin). Finance sees the ID check result and a link to
-view the card.
+Categories flagged as student categories (see `STUDENT_CATEGORIES` in
+`server.js` — currently nursing and medical UG/PG, reflecting this
+deployment's delegate mix) must upload a student ID card with their
+registration. The server OCRs the card and does a preliminary check that its
+discipline and level match the chosen category. Like the payment checks this
+is advisory: a mismatch flags the registration for manual review rather than
+blocking it. The card is stored in `uploads/` and served only through the
+authed `GET /api/registrations/:id/id-card` route (owner or finance admin).
+Finance sees the ID check result and a link to view the card.
+
+## Discount codes & group discounts
+
+Super admins can create promo codes (percent or flat, scoped globally, to a
+category, or to one delegate by phone, with an optional max-use cap and
+expiry) under **Discount Code**, and per-category group-registration
+discounts (unlocked once a group reaches a minimum size) under **Group
+Discount**. A code that discounts a registration to ₹0 skips the payment
+step entirely — no screenshot or UTR required, confirmed immediately. Every
+code's usage is logged (first use only, not resubmissions of the same
+registration) and codes can be shared as a WhatsApp message or a printable
+voucher from the Discount Code table.
 
 ## Rejection workflow
 
@@ -311,3 +354,11 @@ crash.
   Settings → General. This matches how every other secret in this app is
   already handled, but is worth knowing if you're evaluating this for an
   environment that requires a managed secrets store.
+- A handful of identifiers are still fixed rather than admin-configurable if
+  you're retargeting this at a different event: the registration-number
+  prefix (`NQOCN2026`, in `server.js`), the session cookie name (`nqocn_sid`),
+  the student-category discipline/level checks (`STUDENT_CATEGORIES`), and
+  the daily-digest recipient list (`scripts/daily-digest.js`). Conference
+  name/acronym/dates/location, fee structure, program tracks, discount
+  codes, SMS/Email provider config, and the UPI payment ID are all
+  admin-editable without a code change.
