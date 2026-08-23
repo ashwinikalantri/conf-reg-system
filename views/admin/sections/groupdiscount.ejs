@@ -1,0 +1,41 @@
+    <!-- SETTINGS: GROUP DISCOUNT (rules + group registration monitoring) -->
+    <section id="section-groupdiscount" class="hidden space-y-4">
+      <h2 class="text-xl font-bold text-slate-800">Group Discount Rules</h2>
+      <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+        <p class="text-xs text-slate-500 mb-3">Set a per-category discount that unlocks once a group reaches the minimum size. One rule per category.</p>
+        <form onsubmit="handleAddGroupRule(event)" class="flex flex-wrap gap-3 items-end">
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Category</label>
+            <select id="new-grp-cat" class="w-48 h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></select>
+          </div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Min size</label><input id="new-grp-min" type="number" min="2" value="5" class="w-24 h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Type</label>
+            <select id="new-grp-type" class="w-28 h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+              <option value="PERCENT">Percent %</option>
+              <option value="FLAT">Flat ₹</option>
+            </select>
+          </div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Value</label><input id="new-grp-value" type="number" min="1" required placeholder="10" class="w-24 h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Rule</button>
+        </form>
+      </div>
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+        <table class="w-full text-left border-collapse min-w-[640px]">
+          <thead>
+            <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Category</th>
+              <th class="py-3 px-4">Min size</th>
+              <th class="py-3 px-4">Discount</th>
+              <th class="py-3 px-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="group-rule-table-body" class="divide-y divide-slate-100 text-sm"></tbody>
+        </table>
+      </div>
+
+      <!-- Group registration monitoring (moved here from the old Groups tab) -->
+      <div class="flex items-center justify-between flex-wrap gap-2 pt-4 mt-2 border-t border-slate-200">
+        <h2 class="text-xl font-bold text-slate-800">Group Registrations</h2>
+        <span class="text-xs text-slate-500">A group's discount is confirmed once every member's payment is verified.</span>
+      </div>
+      <div id="groups-monitor-container" class="space-y-4"></div>
+    </section>

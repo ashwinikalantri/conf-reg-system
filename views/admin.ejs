@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NQOCN 2026 - Admin & Backend Portal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-slate-100 font-sans min-h-screen p-4 sm:p-8">
+
+<%- include('admin/partials/header') %>
+
+  <main class="max-w-7xl mx-auto">
+<%- include('admin/partials/nav-tabs') %>
+
+    <!-- Main nav-bar tabs -->
+<%- include('admin/sections/payments') %>
+<%- include('admin/sections/abstracts') %>
+<%- include('admin/sections/statement') %>
+<%- include('admin/sections/reports') %>
+
+    <!-- Settings-menu tabs (header ⚙️ dropdown, not the main tab bar) -->
+<%- include('admin/sections/reminders') %>
+<%- include('admin/sections/activity') %>
+<%- include('admin/sections/general') %>
+<%- include('admin/sections/workshops') %>
+<%- include('admin/sections/qi') %>
+<%- include('admin/sections/fees') %>
+<%- include('admin/sections/discount') %>
+<%- include('admin/sections/groupdiscount') %>
+<%- include('admin/sections/users') %>
+  </main>
+
+<%- include('admin/modals/user-detail-panel') %>
+<%- include('admin/modals/share-discount') %>
+<%- include('admin/modals/create-user') %>
+<%- include('admin/modals/program-change') %>
+<%- include('admin/modals/confirm') %>
+<%- include('admin/modals/screenshot') %>
+<%- include('admin/modals/abstract-pdf') %>
+<%- include('admin/modals/reject') %>
+<%- include('admin/modals/review') %>
+<%- include('admin/modals/roster') %>
+
+  <script src="app.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      initBackendPortal();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+    <div class="flex flex-wrap border-b border-slate-300 mb-6 gap-x-3 gap-y-1 sm:gap-x-4">
+      <button id="nav-tab-payments" onclick="switchBackendTab('payments')" class="py-2 px-2 sm:py-3 sm:px-5 font-bold text-slate-500 hover:text-slate-700 text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 shrink-0">
+        <span>✅ <span class="hidden sm:inline">Registration </span>Approval</span>
+        <span id="badge-pending-payments" class="bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
+      </button>
+      <button id="nav-tab-statement" onclick="switchBackendTab('statement')" class="py-2 px-2 sm:py-3 sm:px-5 font-bold text-slate-500 hover:text-slate-700 text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 shrink-0">
+        <span>🏦 Bank Statement</span>
+      </button>
+      <button id="nav-tab-abstracts" onclick="switchBackendTab('abstracts')" class="py-2 px-2 sm:py-3 sm:px-5 font-bold text-slate-500 hover:text-slate-700 text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 shrink-0">
+        <span>📄 <span class="hidden sm:inline">Abstract </span>Review<span class="hidden sm:inline"> Desk</span></span>
+        <span id="badge-pending-abstracts" class="bg-indigo-100 text-indigo-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
+      </button>
+      <button id="nav-tab-reports" onclick="switchBackendTab('reports')" class="py-2 px-2 sm:py-3 sm:px-5 font-bold text-slate-500 hover:text-slate-700 text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2 shrink-0">
+        <span>📊 Reports</span>
+      </button>
+    </div>
+
+    <div id="admin-initial-loading" class="text-center py-20 text-slate-400 text-sm">Loading…</div>

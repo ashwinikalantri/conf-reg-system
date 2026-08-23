@@ -129,6 +129,30 @@ variable, are also listed live (with their effective value) under
 **Settings → General → Other Environment Variables** once the server is
 running — see below.
 
+## Admin panel templates
+
+The admin panel is assembled at request time from `views/admin.ejs`, which is
+just a skeleton of `<%- include %>` lines — one partial per tab, section, and
+modal:
+
+```
+views/admin.ejs              page skeleton (head, body, include list)
+views/admin/partials/        header (+ Settings dropdown), main nav tabs
+views/admin/sections/        one file per tab: payments, abstracts, statement,
+                             reports, reminders, activity, general, workshops,
+                             qi, fees, discount, groupdiscount, users
+views/admin/modals/          one file per modal / side panel
+```
+
+EJS is used *only* for includes — there is no server-rendered data in these
+templates. Everything is still populated client-side by `public/app.js`
+against the JSON API, exactly as before, so a section's markup and the code
+that fills it stay in the two obvious places (`sections/<tab>.ejs` and the
+matching `render*()` in `app.js`).
+
+The delegate portal (`public/index.html`) is still a single static file served
+from the static root, unchanged.
+
 ## Route protection
 
 | Route                                 | Access                          |

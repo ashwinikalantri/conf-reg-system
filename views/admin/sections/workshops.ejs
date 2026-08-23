@@ -1,0 +1,18 @@
+    <!-- SETTINGS: WORKSHOP MASTER -->
+    <section id="section-workshops" class="hidden space-y-6">
+      <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-800 mb-3">Add Workshop</h3>
+        <form onsubmit="handleAddProgram(event, 'WORKSHOP')" class="flex flex-col sm:flex-row flex-wrap gap-3 sm:items-end">
+          <div class="flex-1 min-w-[200px]">
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Name</label>
+            <input id="new-workshop-name" required placeholder="e.g. WS 5: Data for QI" class="w-full p-2.5 border rounded-lg text-sm outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Capacity</label>
+            <input id="new-workshop-capacity" type="number" min="0" value="50" required class="w-28 p-2.5 border rounded-lg text-sm outline-none">
+          </div>
+          <button type="submit" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md">+ Add Workshop</button>
+        </form>
+      </div>
+      <div id="workshops-container" class="space-y-6"></div>
+    </section>

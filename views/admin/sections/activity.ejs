@@ -1,0 +1,143 @@
+    <!-- TAB: ACTIVITY LOG -->
+    <section id="section-activity" class="hidden space-y-4">
+      <p class="text-xs text-slate-500">Who did what, when. Pick a log below — one at a time.</p>
+
+      <div class="flex flex-wrap gap-2">
+        <button id="activity-subnav-imports" onclick="switchActivityLog('imports')" class="px-4 py-2 rounded-lg text-xs font-bold bg-indigo-600 text-white flex items-center gap-1.5">🏦 Bank Reconciliation <span id="activity-count-imports" class="bg-white/20 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+        <button id="activity-subnav-mapping" onclick="switchActivityLog('mapping')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">🔗 Transaction Mapping <span id="activity-count-mapping" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+        <button id="activity-subnav-approval" onclick="switchActivityLog('approval')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">✅ Registration Approval <span id="activity-count-approval" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+        <button id="activity-subnav-abstract-approval" onclick="switchActivityLog('abstract-approval')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">📄 Abstract Approval <span id="activity-count-abstract-approval" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+        <button id="activity-subnav-abstract-allotment" onclick="switchActivityLog('abstract-allotment')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">🎤 Abstract Allotment <span id="activity-count-abstract-allotment" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+        <button id="activity-subnav-master" onclick="switchActivityLog('master')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">🗂️ General Logs <span id="activity-count-master" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+        <button id="activity-subnav-login" onclick="switchActivityLog('login')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">🔑 Login <span id="activity-count-login" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+        <button id="activity-subnav-sms" onclick="switchActivityLog('sms')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">📱 SMS <span id="activity-count-sms" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+        <button id="activity-subnav-email" onclick="switchActivityLog('email')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5">✉️ Email <span id="activity-count-email" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+      </div>
+
+      <div id="activity-panel-imports" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <h3 class="font-bold text-slate-800 text-sm">🏦 Bank Reconciliation</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[700px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Imported</th><th class="py-3 px-4">Source File</th><th class="py-3 px-4">Rows</th><th class="py-3 px-4">Total Credits</th><th class="py-3 px-4">By</th>
+            </tr></thead>
+            <tbody id="activity-imports-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="activity-panel-mapping" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <h3 class="font-bold text-slate-800 text-sm">🔗 Transaction Mapping</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[800px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Registration</th><th class="py-3 px-4">Delegate</th><th class="py-3 px-4">Change</th><th class="py-3 px-4">By</th>
+            </tr></thead>
+            <tbody id="activity-mapping-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="activity-panel-approval" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <h3 class="font-bold text-slate-800 text-sm">✅ Registration Approval</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[850px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Registration</th><th class="py-3 px-4">Delegate</th><th class="py-3 px-4">Action</th><th class="py-3 px-4">Change</th><th class="py-3 px-4">By</th>
+            </tr></thead>
+            <tbody id="activity-approval-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="activity-panel-abstract-approval" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <h3 class="font-bold text-slate-800 text-sm">📄 Abstract Approval</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[700px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Abstract</th><th class="py-3 px-4">Author</th><th class="py-3 px-4">Change</th><th class="py-3 px-4">By</th>
+            </tr></thead>
+            <tbody id="activity-abstract-approval-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="activity-panel-abstract-allotment" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <h3 class="font-bold text-slate-800 text-sm">🎤 Abstract Allotment</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[700px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Abstract</th><th class="py-3 px-4">Author</th><th class="py-3 px-4">Change</th><th class="py-3 px-4">By</th>
+            </tr></thead>
+            <tbody id="activity-abstract-allotment-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="activity-panel-master" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <h3 class="font-bold text-slate-800 text-sm">🗂️ General Logs</h3>
+          <p class="text-[11px] text-slate-500">Every change made on a Settings page: Workshop/QI Master, Fee Master, Discount Codes, Group Discount Rules, and General (SMS/Email/UPI).</p>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[800px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Area</th><th class="py-3 px-4">Change</th><th class="py-3 px-4">By</th>
+            </tr></thead>
+            <tbody id="activity-master-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="activity-panel-login" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <h3 class="font-bold text-slate-800 text-sm">🔑 Login</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[600px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Name</th><th class="py-3 px-4">Mobile</th><th class="py-3 px-4">Role</th>
+            </tr></thead>
+            <tbody id="activity-login-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="activity-panel-sms" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <h3 class="font-bold text-slate-800 text-sm">📱 SMS</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[650px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Mobile</th><th class="py-3 px-4">Status</th><th class="py-3 px-4">Detail</th>
+            </tr></thead>
+            <tbody id="activity-sms-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="activity-panel-email" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <h3 class="font-bold text-slate-800 text-sm">✉️ Email</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse min-w-[700px] text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Time</th><th class="py-3 px-4">To</th><th class="py-3 px-4">Subject</th><th class="py-3 px-4">Status</th>
+            </tr></thead>
+            <tbody id="activity-email-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>

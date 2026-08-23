@@ -1,0 +1,127 @@
+    <!-- TAB 1: REGISTRATION APPROVAL -->
+    <section id="section-payments" class="hidden space-y-6">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+          <p class="text-xs font-bold text-slate-500 uppercase">Total Revenue Cleared</p>
+          <p id="metric-total-amount" class="text-2xl font-black text-slate-800 mt-1">₹0</p>
+        </div>
+        <div class="bg-white rounded-2xl p-5 border border-emerald-200 bg-emerald-50/30 shadow-sm">
+          <p class="text-xs font-bold text-emerald-600 uppercase">Verified in Bank</p>
+          <p id="metric-verified-count" class="text-2xl font-black text-emerald-700 mt-1">0</p>
+        </div>
+        <div class="bg-white rounded-2xl p-5 border border-amber-200 bg-amber-50/30 shadow-sm">
+          <p class="text-xs font-bold text-amber-600 uppercase">Pending Bank Clearing</p>
+          <p id="metric-pending-count" class="text-2xl font-black text-amber-700 mt-1">0</p>
+        </div>
+        <div class="bg-white rounded-2xl p-5 border border-rose-200 bg-rose-50/30 shadow-sm">
+          <p class="text-xs font-bold text-rose-600 uppercase">Flagged Mismatches</p>
+          <p id="metric-flagged-count" class="text-2xl font-black text-rose-700 mt-1">0</p>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <p class="text-xs text-slate-500">Showing registrations awaiting a decision. Once verified, a delegate drops off this list — see <button type="button" onclick="switchBackendTab('reports')" class="text-indigo-600 underline font-semibold">Reports</button> for the full verified list.</p>
+        <button id="rescan-flagged-btn" onclick="rescanFlaggedPayments()" class="shrink-0 px-3 py-1.5 bg-slate-700 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg">
+          🔄 Rescan Flagged
+        </button>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+        <table class="w-full text-left border-collapse sm:min-w-[640px]">
+          <thead class="hidden sm:table-header-group">
+            <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3.5 px-4">Delegate & Category</th>
+              <th class="py-3.5 px-4">Amount</th>
+              <th class="py-3.5 px-4">Status</th>
+              <th class="py-3.5 px-4 text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody id="payment-table-body" class="divide-y divide-slate-100 text-sm">
+          </tbody>
+        </table>
+      </div>
+
+      <details id="rejected-section" class="hidden bg-white rounded-2xl border border-rose-200 shadow-sm overflow-hidden">
+        <summary class="cursor-pointer select-none px-4 py-3.5 font-bold text-rose-700 text-sm flex items-center gap-2 hover:bg-rose-50/50">
+          <span>🚫 Rejected Registrations</span>
+          <span id="badge-rejected-count" class="bg-rose-100 text-rose-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
+        </summary>
+        <div class="overflow-x-auto border-t border-rose-100">
+          <table class="w-full text-left border-collapse sm:min-w-[640px]">
+            <thead class="hidden sm:table-header-group">
+              <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+                <th class="py-3.5 px-4">Delegate & Category</th>
+                <th class="py-3.5 px-4">Amount</th>
+                <th class="py-3.5 px-4">Status</th>
+                <th class="py-3.5 px-4 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody id="rejected-table-body" class="divide-y divide-slate-100 text-sm"></tbody>
+          </table>
+        </div>
+      </details>
+
+      <!-- Balance due: delegates whose fee changed (e.g. a category correction)
+           so their verified payment no longer covers the full fee. They've been
+           emailed to pay the difference; it's their turn, so they sit here
+           rather than in the main worklist. -->
+      <details id="balance-section" class="hidden bg-white rounded-2xl border border-orange-200 shadow-sm overflow-hidden">
+        <summary class="cursor-pointer select-none px-4 py-3.5 font-bold text-orange-700 text-sm flex items-center gap-2 hover:bg-orange-50/50">
+          <span>💳 Awaiting Balance Payment</span>
+          <span id="badge-balance-count" class="bg-orange-100 text-orange-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
+        </summary>
+        <div class="overflow-x-auto border-t border-orange-100">
+          <table class="w-full text-left border-collapse sm:min-w-[640px]">
+            <thead class="hidden sm:table-header-group">
+              <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+                <th class="py-3.5 px-4">Delegate & Category</th>
+                <th class="py-3.5 px-4">Amount</th>
+                <th class="py-3.5 px-4">Status</th>
+                <th class="py-3.5 px-4 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody id="balance-table-body" class="divide-y divide-slate-100 text-sm"></tbody>
+          </table>
+        </div>
+      </details>
+
+      <!-- Verified registrations: hidden by default, shown only to super admins
+           (see applyRoleVisibility). Gives a reachable entry point to open the
+           review modal for an already-verified delegate and un-approve it. -->
+      <details id="verified-section" class="hidden bg-white rounded-2xl border border-emerald-200 shadow-sm overflow-hidden">
+        <summary class="cursor-pointer select-none px-4 py-3.5 font-bold text-emerald-700 text-sm flex items-center gap-2 hover:bg-emerald-50/50">
+          <span>✅ Verified Registrations</span>
+          <span id="badge-verified-count" class="bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
+        </summary>
+        <div class="overflow-x-auto border-t border-emerald-100">
+          <table class="w-full text-left border-collapse sm:min-w-[640px]">
+            <thead class="hidden sm:table-header-group">
+              <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+                <th class="py-3.5 px-4">Delegate & Category</th>
+                <th class="py-3.5 px-4">Amount</th>
+                <th class="py-3.5 px-4">Status</th>
+                <th class="py-3.5 px-4 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody id="verified-table-body" class="divide-y divide-slate-100 text-sm"></tbody>
+          </table>
+        </div>
+      </details>
+
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <h3 class="font-bold text-slate-800">Delegate Locations</h3>
+          <div class="flex items-center gap-2">
+            <div class="flex bg-slate-100 rounded-lg p-0.5 text-xs font-semibold">
+              <button type="button" id="delegate-map-btn-registered" onclick="setDelegateMapMetric('registered')" class="px-3 py-1.5 rounded-md bg-white text-emerald-700 shadow-sm">Registered</button>
+              <button type="button" id="delegate-map-btn-signedup" onclick="setDelegateMapMetric('signedup')" class="px-3 py-1.5 rounded-md text-slate-500">Signed Up</button>
+            </div>
+            <span class="flex items-center gap-1.5 text-xs text-slate-500"><span class="w-3 h-3 rounded-full inline-block border-2" style="border-color:#ea580c"></span>Host</span>
+          </div>
+        </div>
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <p id="delegate-map-summary" class="text-xs text-slate-500">Loading distribution…</p>
+          <div id="delegate-map-legend" class="flex items-center gap-1.5"></div>
+        </div>
+        <div id="delegate-map" class="w-full relative"></div>
+      </div>
+    </section>

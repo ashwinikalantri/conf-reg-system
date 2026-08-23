@@ -1,0 +1,15 @@
+  <!-- MODAL: WORKSHOP / QI ROSTER (manual enroll / remove) -->
+  <div id="modal-roster" class="hidden fixed inset-0 bg-slate-900/60 flex justify-center items-center p-4 z-50">
+    <div class="bg-white max-w-lg w-full rounded-2xl p-6 shadow-2xl relative max-h-[85vh] overflow-y-auto">
+      <button onclick="closeModal('modal-roster')" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
+      <h3 id="roster-title" class="text-lg font-bold text-slate-800 mb-1">Roster</h3>
+      <p class="text-xs text-slate-500 mb-4">Manually add or remove a delegate from this option's enrolled list.</p>
+
+      <div class="relative mb-4">
+        <input type="text" id="roster-search" placeholder="Search by name, mobile, or reg. no…" autocomplete="off" class="w-full p-2.5 border rounded-lg text-sm outline-none">
+        <div id="roster-search-results" class="hidden absolute z-10 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto divide-y divide-slate-100"></div>
+      </div>
+
+      <div id="roster-list" class="divide-y divide-slate-100 text-sm"></div>
+    </div>
+  </div>

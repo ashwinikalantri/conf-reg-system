@@ -1,0 +1,100 @@
+    <!-- SETTINGS: GENERAL (SMS / Email / UPI) -->
+    <section id="section-general" class="hidden space-y-6">
+      <!-- Conference Details -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-800 mb-1">🏛️ Conference Details</h3>
+        <p class="text-xs text-slate-500 mb-3">Shown across confirmation emails, reports, and printable pages.</p>
+        <form onsubmit="saveGeneralSettings(event, 'conference')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="sm:col-span-2"><label class="block text-[10px] font-semibold text-slate-600 mb-1">Full Name</label><input id="gs-conf-name" required class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Acronym <span class="font-normal text-slate-400">(optional)</span></label><input id="gs-conf-acronym" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Location <span class="font-normal text-slate-400">(optional)</span></label><input id="gs-conf-location" placeholder="e.g. MGIMS, Sevagram" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Start Date <span class="font-normal text-slate-400">(optional)</span></label><input id="gs-conf-startdate" type="date" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">End Date <span class="font-normal text-slate-400">(optional)</span></label><input id="gs-conf-enddate" type="date" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Conference Details</button></div>
+        </form>
+      </div>
+
+      <!-- SMS -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div>
+            <h3 class="text-lg font-bold text-slate-800">📱 SMS</h3>
+            <p class="text-xs text-slate-500">DLT gateway configuration. Turning this off also stops login OTPs.</p>
+          </div>
+          <label class="flex items-center gap-2 cursor-pointer shrink-0">
+            <input type="checkbox" id="notify-sms-toggle" onchange="setGeneralToggle('sms', this.checked)" class="w-5 h-5">
+            <span class="text-sm font-semibold text-slate-700">Enabled <span id="notify-sms-state" class="text-xs font-normal text-slate-400"></span></span>
+          </label>
+        </div>
+        <p id="sms-key-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3">⚠️ No SMS_API_KEY set in the server environment — SMS cannot send regardless of this configuration.</p>
+        <form onsubmit="saveGeneralSettings(event, 'sms')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Sender ID</label><input id="gs-sms-sender" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Gateway URL</label><input id="gs-sms-url" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">DLT Entity ID</label><input id="gs-sms-entityid" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">DLT Template ID</label><input id="gs-sms-templateid" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">DLT Header ID</label><input id="gs-sms-headerid" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Message Type</label><input id="gs-sms-type" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div class="sm:col-span-2 border-t pt-3">
+            <label class="block text-[10px] font-semibold text-slate-600 mb-1">API Key <span id="gs-sms-apikey-hint" class="font-normal text-slate-400"></span></label>
+            <input id="gs-sms-apikey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
+            <p class="text-[10px] text-slate-400 mt-1">Stored in the server's .env file, never in the database. Only entered when changing it.</p>
+          </div>
+          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save SMS Settings</button></div>
+        </form>
+      </div>
+
+      <!-- Email -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div>
+            <h3 class="text-lg font-bold text-slate-800">✉️ Email</h3>
+            <p class="text-xs text-slate-500">Amazon SES sender configuration.</p>
+          </div>
+          <label class="flex items-center gap-2 cursor-pointer shrink-0">
+            <input type="checkbox" id="notify-email-toggle" onchange="setGeneralToggle('email', this.checked)" class="w-5 h-5">
+            <span class="text-sm font-semibold text-slate-700">Enabled <span id="notify-email-state" class="text-xs font-normal text-slate-400"></span></span>
+          </label>
+        </div>
+        <p id="email-key-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3">⚠️ AWS credentials are not set in the server environment — Email cannot send regardless of this configuration.</p>
+        <form onsubmit="saveGeneralSettings(event, 'email')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">From address</label><input id="gs-email-from" type="email" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">From name</label><input id="gs-email-fromname" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">AWS Region</label><input id="gs-email-region" placeholder="ap-south-1" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div class="border-t pt-3">
+            <label class="block text-[10px] font-semibold text-slate-600 mb-1">AWS Access Key ID <span id="gs-email-accesskey-hint" class="font-normal text-slate-400"></span></label>
+            <input id="gs-email-accesskey" type="password" autocomplete="new-password" placeholder="Leave blank to keep current" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
+          </div>
+          <div class="border-t pt-3">
+            <label class="block text-[10px] font-semibold text-slate-600 mb-1">AWS Secret Access Key <span id="gs-email-secretkey-hint" class="font-normal text-slate-400"></span></label>
+            <input id="gs-email-secretkey" type="password" autocomplete="new-password" placeholder="Leave blank to keep current" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
+          </div>
+          <p class="text-[10px] text-slate-400 sm:col-span-2">Credentials are stored in the server's .env file, never in the database. Only entered when changing them.</p>
+          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Email Settings</button></div>
+        </form>
+      </div>
+
+      <!-- UPI -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-800 mb-1">💳 UPI</h3>
+        <p class="text-xs text-slate-500 mb-3">The conference's own UPI ID. Used to generate the payment QR code and to check payment screenshots.</p>
+        <form onsubmit="saveGeneralSettings(event, 'upi')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">UPI ID (VPA)</label><input id="gs-upi-id" placeholder="name@bank" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Payee Name</label><input id="gs-upi-payeename" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save UPI Settings</button></div>
+        </form>
+      </div>
+
+      <!-- Other .env variables (read-only, not editable here) -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-800 mb-1">🗄️ Other Environment Variables</h3>
+        <p class="text-xs text-slate-500 mb-3">Server-level settings, showing the value actually in effect right now. Not editable here — set these in .env on the server and restart.</p>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-sm">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-2 px-3">Variable</th><th class="py-2 px-3">Effective Value</th><th class="py-2 px-3">Source</th>
+            </tr></thead>
+            <tbody id="gs-other-env-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>

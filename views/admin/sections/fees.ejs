@@ -1,0 +1,52 @@
+    <!-- SETTINGS: FEE MASTER -->
+    <section id="section-fees" class="hidden space-y-6">
+      <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-800 mb-1">Pricing Phase Dates</h3>
+        <p class="text-xs text-slate-500 mb-3">Current phase: <span id="fee-current-phase" class="font-bold">—</span>. On/before "Early until" = Early Bird; on/before "Regular until" = Regular; on/before "Late until" = Late; after = Spot Registration.</p>
+        <div class="flex flex-wrap gap-3 items-end">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Early Bird until</label>
+            <input type="date" id="fee-early-until" class="p-2.5 border rounded-lg text-sm outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Regular until</label>
+            <input type="date" id="fee-regular-until" class="p-2.5 border rounded-lg text-sm outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Late until</label>
+            <input type="date" id="fee-late-until" class="p-2.5 border rounded-lg text-sm outline-none">
+          </div>
+          <button onclick="saveFeeConfig()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md">Save Dates</button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-800 mb-3">Add Category</h3>
+        <form onsubmit="handleAddFeeCategory(event)" class="flex flex-wrap gap-2 items-end">
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Key</label><input id="new-fee-key" required placeholder="e.g. intl_delegate" class="w-32 p-2 border rounded-lg text-sm outline-none"></div>
+          <div class="flex-1 min-w-[140px]"><label class="block text-[10px] font-semibold text-slate-600 mb-1">Label</label><input id="new-fee-label" required placeholder="Label" class="w-full p-2 border rounded-lg text-sm outline-none"></div>
+          <div class="flex-1 min-w-[180px]"><label class="block text-[10px] font-semibold text-slate-600 mb-1">Subtitle</label><input id="new-fee-subtitle" placeholder="Who this category is for" class="w-full p-2 border rounded-lg text-sm outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Early ₹</label><input id="new-fee-early" type="number" min="0" value="0" class="w-20 p-2 border rounded-lg text-sm outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Regular ₹</label><input id="new-fee-regular" type="number" min="0" value="0" class="w-20 p-2 border rounded-lg text-sm outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Late ₹</label><input id="new-fee-late" type="number" min="0" value="0" class="w-20 p-2 border rounded-lg text-sm outline-none"></div>
+          <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Spot ₹</label><input id="new-fee-spot" type="number" min="0" value="0" class="w-20 p-2 border rounded-lg text-sm outline-none"></div>
+          <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md">+ Add</button>
+        </form>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+        <table class="w-full text-left border-collapse min-w-[980px]">
+          <thead>
+            <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4 min-w-[260px]">Category</th>
+              <th class="py-3 px-4">Early ₹</th>
+              <th class="py-3 px-4">Regular ₹</th>
+              <th class="py-3 px-4">Late ₹</th>
+              <th class="py-3 px-4">Spot ₹</th>
+              <th class="py-3 px-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="fee-table-body" class="divide-y divide-slate-100 text-sm"></tbody>
+        </table>
+      </div>
+    </section>

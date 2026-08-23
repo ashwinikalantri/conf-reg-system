@@ -1,0 +1,56 @@
+  <header class="max-w-7xl mx-auto bg-slate-900 text-white rounded-2xl p-6 mb-8 shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+    <div>
+      <span class="bg-indigo-500 text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full text-white">Admin Panel</span>
+      <h1 id="conf-name-h1" data-suffix=" — Admin" class="text-2xl font-extrabold mt-2">International Conference on Healthcare Quality & Patient Safety 2026 — Admin</h1>
+      <p class="text-xs text-slate-400 mt-1">Bank Clearing Verification • Discrepancy Flagging • Role Management</p>
+    </div>
+
+    <div class="flex flex-wrap items-center justify-end gap-3 self-stretch md:self-auto w-full md:w-auto">
+      <a href="/" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-sm font-semibold transition">
+        ← Delegate Portal
+      </a>
+      <div class="relative">
+        <button id="settings-menu-btn" onclick="toggleSettingsMenu()" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-sm font-semibold transition flex items-center gap-1.5">
+          ⚙️ Settings <span class="text-[10px]">▾</span>
+        </button>
+        <div id="settings-menu" class="hidden absolute right-0 mt-2 w-60 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-slate-800 max-h-[80vh] overflow-y-auto">
+          <button id="settings-item-workshops" onclick="selectSettingsTab('workshops')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
+            <span>🛠️ Workshop Master</span>
+          </button>
+          <button id="settings-item-qi" onclick="selectSettingsTab('qi')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
+            <span>📈 QI Practice Master</span>
+          </button>
+          <button id="settings-item-fees" onclick="selectSettingsTab('fees')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
+            <span>💰 Fee Master</span>
+          </button>
+          <button id="settings-item-general" onclick="selectSettingsTab('general')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
+            <span>⚙️ General</span>
+          </button>
+          <button id="settings-item-reminders" onclick="selectSettingsTab('reminders')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
+            <span>✉️ Reminders</span>
+            <span id="badge-pending-signups" class="ml-auto bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
+          </button>
+          <button id="settings-item-groupdiscount" onclick="selectSettingsTab('groupdiscount')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
+            <span>👥 Group Discount</span>
+          </button>
+          <button id="settings-item-discount" onclick="selectSettingsTab('discount')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
+            <span>🎟️ Discount Code</span>
+          </button>
+          <button id="settings-item-users" onclick="selectSettingsTab('users')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
+            <span>👤 Users and Roles</span>
+          </button>
+          <button id="settings-item-activity" onclick="selectSettingsTab('activity')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
+            <span>📋 Logs</span>
+          </button>
+        </div>
+      </div>
+      <div class="flex items-center bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+        <span id="active-admin-role-badge" class="px-4 py-2.5 text-sm font-semibold text-slate-200 whitespace-nowrap">
+          Admin
+        </span>
+        <button onclick="logout()" class="px-4 py-2.5 border-l border-slate-700 hover:bg-slate-700 text-slate-200 text-sm font-semibold transition">
+          Logout
+        </button>
+      </div>
+    </div>
+  </header>

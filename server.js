@@ -66,6 +66,14 @@ const OTP_ECHO = process.env.OTP_ECHO
 const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
 if (COOKIE_SECURE) app.set('trust proxy', 1);
 
+// The admin panel is assembled at request time from views/admin.ejs and its
+// partials (one file per tab/section/modal under views/admin/) rather than
+// being one 1,200-line HTML file. EJS is used only for <%- include %> --
+// there's no server-rendered data in these templates; everything is still
+// populated client-side by app.js against the JSON API.
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+
 const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC'];
 
 // Some roles imply others for permission checks. FINANCE_ACADEMIC is a combined
@@ -1552,7 +1560,7 @@ app.get('/admin', (req, res) => {
       '<p><a href="/">Return to the delegate portal</a></p></body>'
     );
   }
-  res.sendFile(path.join(__dirname, 'views', 'admin.html'));
+  res.render('admin');
 });
 
 // Autocomplete source for the signup form's Designation/Institute fields --

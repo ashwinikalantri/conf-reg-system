@@ -1,0 +1,15 @@
+  <!-- MODAL: ABSTRACT PDF VIEWER -->
+  <div id="modal-abstract-pdf" class="hidden fixed inset-0 bg-slate-900/70 flex justify-center items-center p-4 z-50" onclick="closeModal('modal-abstract-pdf')">
+    <div class="bg-white max-w-3xl w-full rounded-2xl p-4 shadow-2xl relative h-[90vh] flex flex-col" onclick="event.stopPropagation()">
+      <div class="flex items-center justify-between mb-3 shrink-0">
+        <h3 id="abstract-pdf-modal-title" class="text-sm font-bold text-slate-700 truncate pr-8">Abstract PDF</h3>
+        <button onclick="closeModal('modal-abstract-pdf')" class="absolute top-3 right-3 text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
+      </div>
+      <iframe id="abstract-pdf-modal-frame" src="" class="w-full flex-1 rounded-lg border border-slate-200" title="Abstract PDF"></iframe>
+      <div id="abstract-pdf-modal-actions" class="hidden flex-wrap gap-2 mt-3 pt-3 border-t border-slate-100 shrink-0">
+        <button type="button" class="abstract-status-btn px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs" data-status="ACCEPTED">Approve</button>
+        <button type="button" class="abstract-status-btn px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg text-xs" data-status="REJECTED">Reject</button>
+        <button type="button" class="abstract-status-btn px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg text-xs" data-status="UNDER_REVIEW">Reset</button>
+      </div>
+    </div>
+  </div>

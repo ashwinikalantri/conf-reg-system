@@ -1,0 +1,101 @@
+  <!-- MODAL: PAYMENT REVIEW (verify / force verify entry point) -->
+  <div id="modal-review" class="hidden fixed inset-0 bg-slate-900/70 flex justify-center items-center p-2 sm:p-4 z-50">
+    <div class="bg-white w-full max-w-5xl rounded-2xl shadow-2xl relative max-h-[95vh] flex flex-col">
+      <button onclick="closeModal('modal-review')" class="absolute top-3 right-3 text-slate-400 hover:text-slate-600 text-xl font-bold z-10">✕</button>
+      <div class="p-5 border-b border-slate-100 shrink-0">
+        <h3 id="review-title" class="text-lg font-bold text-slate-800">Review Payment</h3>
+      </div>
+      <div class="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 overflow-hidden">
+        <!-- Screenshot: sized to fill available height without needing to scroll -->
+        <div class="bg-slate-900 flex items-center justify-center min-h-[260px] md:min-h-0 md:h-full">
+          <img id="review-screenshot" src="" alt="Payment screenshot" class="max-h-[40vh] md:max-h-[75vh] h-full w-full object-contain">
+        </div>
+        <div class="p-5 overflow-y-auto space-y-4 text-sm">
+          <div>
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Delegate</p>
+            <p id="review-name" class="font-bold text-slate-800"></p>
+            <p id="review-category" class="text-xs text-slate-500"></p>
+            <p id="review-regno" class="text-xs font-mono text-indigo-700 font-semibold mt-0.5"></p>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Designation</p><p id="review-designation" class="font-semibold"></p></div>
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Institute</p><p id="review-institute" class="font-semibold"></p></div>
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Age</p><p id="review-age" class="font-semibold"></p></div>
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Gender</p><p id="review-gender" class="font-semibold"></p></div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mode</p><p id="review-mode" class="font-semibold"></p></div>
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Amount</p><p id="review-amount" class="font-semibold"></p></div>
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Transaction ID</p><p id="review-utr" class="font-mono font-semibold"></p></div>
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date Submitted</p><p id="review-date" class="font-semibold"></p></div>
+          </div>
+
+          <!-- Payment progress: fee vs cumulative verified vs balance due,
+               plus the per-transaction ledger. Shown when there's more than a
+               single clean full payment (partial payments / top-ups). -->
+          <div id="review-payment-progress" class="hidden bg-slate-50 border border-slate-200 rounded-lg p-3">
+            <div class="flex items-center justify-between text-xs mb-2">
+              <span class="text-slate-500 font-semibold uppercase tracking-wider text-[10px]">Transactions &amp; Bank Reconciliation</span>
+              <span id="review-progress-summary" class="font-bold"></span>
+            </div>
+            <div id="review-txn-ledger" class="space-y-2 text-[11px]"></div>
+          </div>
+
+          <!-- Category lock: set the correct delegate category and lock it so
+               the delegate can't change it; the fee recalculates. -->
+          <div class="border border-slate-200 rounded-lg p-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Delegate Category</p>
+              <span id="review-category-locked-badge" class="hidden text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">🔒 Locked</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <select id="review-category-select" class="flex-1 p-2 border rounded-lg text-sm bg-white outline-none"></select>
+              <button type="button" id="review-category-lock-btn" onclick="reviewLockCategory()" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shrink-0">Lock</button>
+              <button type="button" id="review-category-unlock-btn" onclick="reviewUnlockCategory()" class="hidden px-3 py-2 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 rounded-lg text-xs font-semibold shrink-0">Unlock</button>
+            </div>
+            <p class="text-[11px] text-slate-500 mt-1">Locking recalculates the fee and prevents the delegate from changing category.</p>
+          </div>
+
+          <div>
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Automated Checks</p>
+            <div id="review-checks" class="flex flex-wrap gap-1.5"></div>
+          </div>
+          <div id="review-idcard-wrap" class="hidden">
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Student ID Card</p>
+            <img id="review-idcard" src="" alt="Student ID card" class="w-full rounded-lg border border-slate-200">
+          </div>
+          <div id="review-idverify-wrap" class="hidden border-t border-slate-100 pt-3">
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Student ID Verification <span class="normal-case font-normal">(required to verify)</span></p>
+            <label class="flex items-start gap-2 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-2.5 cursor-pointer">
+              <input type="checkbox" id="review-idverify-checkbox" class="mt-0.5 shrink-0" onchange="reviewSetIdVerified(this.checked)">
+              <span>I have reviewed the ID card above and confirm it verifies this delegate's student status for the selected category.</span>
+            </label>
+            <p id="review-idverify-note" class="hidden text-[11px] text-emerald-700 font-semibold mt-1"></p>
+          </div>
+          <div id="review-flagged-note" class="hidden bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-lg p-2.5">⚠️ Flagged for manual scrutiny — one or more automated checks did not pass.</div>
+
+          <!-- Legacy registration-level link section: superseded by the
+               per-transaction reconciliation in the ledger above. Hidden by
+               renderReviewPaymentProgress; kept in the DOM for its helpers. -->
+          <div id="review-legacy-link-section" class="hidden border-t border-slate-100 pt-3">
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Bank Statement Link <span class="normal-case font-normal">(required to verify)</span></p>
+            <div id="review-txn-linked" class="hidden bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 space-y-1">
+              <p class="text-emerald-800 font-semibold text-xs">✓ Linked to a statement transaction</p>
+              <p id="review-txn-details" class="text-[11px] text-emerald-700"></p>
+              <button type="button" onclick="reviewUnlinkTransaction()" class="text-[11px] text-rose-600 hover:underline font-semibold">Unlink</button>
+            </div>
+            <div id="review-txn-unlinked">
+              <p id="review-txn-empty" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">⚠️ No matching statement transaction found automatically. Pick one below, or upload/refresh the bank statement first.</p>
+              <div id="review-txn-candidates" class="mt-2 divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-48 overflow-y-auto"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="p-4 border-t border-slate-100 flex justify-end gap-2 shrink-0">
+        <button type="button" id="review-unapprove-btn" onclick="reviewUnapprove()" class="hidden px-4 py-2 bg-white border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-xl text-sm font-semibold mr-auto">Un-approve</button>
+        <button type="button" id="review-revise-btn" onclick="reviewRevisePayment()" title="" class="hidden px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-sm font-semibold shadow-md disabled:opacity-40 disabled:cursor-not-allowed">Revise Payment</button>
+        <button type="button" id="review-reject-btn" onclick="reviewReject()" class="px-4 py-2 bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-xl text-sm font-semibold">Reject</button>
+        <button type="button" id="review-accept-btn" onclick="reviewAccept()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold shadow-md disabled:opacity-40 disabled:cursor-not-allowed">Accept &amp; Verify</button>
+      </div>
+    </div>
+  </div>
