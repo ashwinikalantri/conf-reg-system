@@ -1,0 +1,96 @@
+  <!-- PAGE 3: DELEGATE DASHBOARD -->
+  <section id="dashboard-page" class="hidden w-full max-w-4xl bg-white shadow-xl rounded-2xl p-8 border border-slate-200">
+    <div class="flex flex-col sm:flex-row justify-between sm:items-center border-b pb-4 mb-6 gap-4">
+      <div>
+        <h2 class="text-2xl font-bold text-slate-800">Welcome, <span id="user-display-name" class="text-indigo-600">Delegate</span></h2>
+        <p id="user-display-sub" class="text-xs text-slate-500 mt-0.5"></p>
+      </div>
+      <div class="self-start sm:self-auto flex items-center gap-2">
+        <a id="admin-nav-btn" href="/admin" title="Admin Backend Panel" aria-label="Admin Backend Panel" class="hidden px-3 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 hover:text-indigo-600 transition">⚙️</a>
+        <button onclick="logout()" class="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50">Logout</button>
+      </div>
+    </div>
+
+    <div id="reverify-banner" class="hidden mb-6 bg-rose-50 border-l-4 border-rose-500 p-4 rounded-r-xl">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h4 id="reverify-title" class="text-sm font-bold text-rose-800 flex items-center gap-2">⚠️ Action Needed</h4>
+          <p id="reverify-msg" class="text-xs text-rose-700 mt-1"></p>
+        </div>
+        <button id="reverify-btn" onclick="resolveRejection()" class="shrink-0 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-lg shadow">Update</button>
+      </div>
+    </div>
+
+    <!-- Partial-payment / outstanding-balance banner: shown when part of the
+         fee has been verified but a balance is still due. -->
+    <div id="balance-banner" class="hidden mb-6 bg-orange-50 border-l-4 border-orange-500 p-4 rounded-r-xl">
+      <div class="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h4 class="text-sm font-bold text-orange-800 flex items-center gap-2">💳 Balance Due</h4>
+          <p class="text-xs text-orange-700 mt-1">Part of your registration fee has been received. Please pay the remaining balance to complete your registration.</p>
+          <div class="flex flex-wrap gap-x-5 gap-y-1 mt-2 text-xs">
+            <span class="text-slate-600">Total fee: <b id="balance-fee" class="text-slate-800"></b></span>
+            <span class="text-slate-600">Paid &amp; verified: <b id="balance-paid" class="text-emerald-700"></b></span>
+            <span class="text-slate-600">Balance due: <b id="balance-due" class="text-orange-700"></b></span>
+          </div>
+        </div>
+        <button id="balance-topup-btn" onclick="openTopupModal()" class="shrink-0 px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs rounded-lg shadow">Pay Balance</button>
+      </div>
+      <p id="balance-pending-note" class="hidden text-[11px] text-orange-700 mt-2 font-semibold">⏳ Your top-up payment is submitted and pending verification.</p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div class="border border-indigo-100 bg-indigo-50/50 rounded-xl p-6 flex flex-col justify-between">
+        <div>
+          <div class="flex justify-between items-center mb-2">
+            <span class="text-xs font-bold text-indigo-600 uppercase tracking-wide">Step 1</span>
+            <span id="payment-status-tag" class="text-xs bg-amber-100 text-amber-800 font-bold px-2.5 py-1 rounded-full border border-amber-200">
+              Registration Pending
+            </span>
+          </div>
+          <h3 class="text-xl font-bold text-slate-800 mt-1">Conference Registration & Payment</h3>
+          <p id="payment-desc" class="text-sm text-slate-600 mt-2">Select category, workshop & QI exposure choices, scan dynamic QR, and submit UTR with screenshot.</p>
+
+          <!-- Shown only once the payment is verified -->
+          <div id="confirmed-block" class="hidden mt-4 bg-white border border-emerald-200 rounded-xl p-4 space-y-3">
+            <div>
+              <p class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Registration Number</p>
+              <p id="reg-number-display" class="text-lg font-extrabold font-mono text-emerald-800 mt-0.5">—</p>
+            </div>
+            <div class="text-xs space-y-1 border-t border-emerald-100 pt-2">
+              <div><span class="text-slate-500">Workshop:</span> <span id="conf-workshop" class="font-semibold text-slate-800"></span></div>
+              <div><span class="text-slate-500">QI Practice:</span> <span id="conf-qi" class="font-semibold text-slate-800"></span></div>
+            </div>
+            <button onclick="window.open('/api/registrations/me/receipt','_blank')" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-lg shadow-sm">
+              View / Download Receipt
+            </button>
+          </div>
+        </div>
+
+        <div id="payment-action-area" class="mt-6">
+          <div id="payment-action-note" class="mb-3 bg-white p-3 rounded-xl border border-amber-200 text-xs text-amber-900 leading-relaxed">
+            <b>Note:</b> Registration remains <b>Pending</b> until payment is verified manually by the finance admin.
+          </div>
+          <button id="register-conf-btn" onclick="openPaymentModal()" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md">
+            Register & Pay Now
+          </button>
+        </div>
+      </div>
+
+      <div class="border border-emerald-100 bg-emerald-50/50 rounded-xl p-6 flex flex-col justify-between">
+        <div>
+          <div class="flex justify-between items-center">
+            <span class="text-xs font-bold text-emerald-600 uppercase tracking-wide">Step 2</span>
+            <span id="abstract-status-tag" class="text-xs bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-full">Not Submitted</span>
+          </div>
+          <h3 class="text-xl font-bold text-slate-800 mt-1">Submit Abstract</h3>
+          <p id="abstract-desc" class="text-sm text-slate-600 mt-2">Submit papers or posters under Healthcare Quality &amp; Patient Safety. One abstract per delegate; it cannot be changed once submitted.</p>
+        </div>
+        <button id="abstract-action-btn" onclick="openModal('modal-abstract')" class="mt-6 w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow-md">Submit Abstract</button>
+      </div>
+    </div>
+
+    <!-- Group registration (shown only when a group discount is available or
+         the delegate is already in a group). Rendered by renderGroupSection. -->
+    <div id="group-section" class="hidden mt-6 border border-indigo-100 bg-indigo-50/40 rounded-xl p-6"></div>
+  </section>

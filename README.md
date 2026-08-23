@@ -129,29 +129,42 @@ variable, are also listed live (with their effective value) under
 **Settings → General → Other Environment Variables** once the server is
 running — see below.
 
-## Admin panel templates
+## Templates
 
-The admin panel is assembled at request time from `views/admin.ejs`, which is
-just a skeleton of `<%- include %>` lines — one partial per tab, section, and
-modal:
+Both pages are assembled at request time from a skeleton of `<%- include %>`
+lines — one partial per section and modal — rather than one long HTML file:
 
 ```
-views/admin.ejs              page skeleton (head, body, include list)
+views/admin.ejs              admin skeleton (head, body, include list)
 views/admin/partials/        header (+ Settings dropdown), main nav tabs
 views/admin/sections/        one file per tab: payments, abstracts, statement,
                              reports, reminders, activity, general, workshops,
                              qi, fees, discount, groupdiscount, users
 views/admin/modals/          one file per modal / side panel
+
+views/index.ejs              delegate-portal skeleton
+views/portal/partials/       hero (conference name / dates / location)
+views/portal/sections/       auth (login + signup), dashboard
+views/portal/modals/         registration & payment, top-up, correct
+                             submission, abstract, add group member, confirm
 ```
 
 EJS is used *only* for includes — there is no server-rendered data in these
 templates. Everything is still populated client-side by `public/app.js`
 against the JSON API, exactly as before, so a section's markup and the code
-that fills it stay in the two obvious places (`sections/<tab>.ejs` and the
+that fills it stay in the two obvious places (`sections/<name>.ejs` and the
 matching `render*()` in `app.js`).
 
-The delegate portal (`public/index.html`) is still a single static file served
-from the static root, unchanged.
+Both are served by explicit routes (`GET /` and `GET /admin`) and live outside
+the static root, so `express.static` is mounted with `index: false` — without
+that it would auto-serve a `public/index.html` for `/` and shadow the route.
+`public/` now holds only assets (`app.js`, `styles.css`, `data/`).
+
+The admin panel records its active tab in the URL hash (`/admin#general`), so
+a refresh or a bookmark returns to the same section; a hash the current role
+can't open falls back to that role's default tab. The delegate portal needs no
+equivalent — its two pages are chosen by login state, and `restoreSession()`
+already puts a logged-in delegate back on the dashboard after a refresh.
 
 ## Route protection
 

@@ -1,0 +1,44 @@
+  <!-- MODAL 2: ABSTRACT SUBMISSION -->
+  <div id="modal-abstract" class="hidden fixed inset-0 bg-slate-900/60 flex justify-center items-center p-4 z-50">
+    <div class="bg-white max-w-lg w-full rounded-2xl p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+      <button onclick="closeModal('modal-abstract')" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
+      <h3 class="text-xl font-bold text-slate-800 mb-2">Abstract Submission</h3>
+
+      <!-- Submission guidelines (from the conference site) -->
+      <div class="bg-indigo-50/60 border border-indigo-100 rounded-xl p-4 mb-4 text-xs text-slate-700 leading-relaxed">
+        <p class="font-bold text-indigo-800 mb-1">Submission Guidelines</p>
+        <ul class="list-disc list-inside space-y-1">
+          <li>Only registered delegates may submit papers or posters.</li>
+          <li>Topic must relate to <b>Healthcare Quality &amp; Patient Safety</b>.</li>
+          <li>Submit a <b>structured abstract</b>, maximum <b>400 words</b>, as a <b>PDF</b>.</li>
+          <li>Accepted for <b>Oral</b> (5 min + 2 min discussion) or <b>Poster</b> presentation.</li>
+          <li>Reviewed by an expert scientific committee; decisions are final.</li>
+          <li>Top 5 papers are selected for the Award Paper Session (NQOCN Gold Medal).</li>
+          <li>Presentations: <b id="conf-presentations-date">22 November 2026</b>; time &amp; venue communicated in advance.</li>
+        </ul>
+      </div>
+
+      <form onsubmit="handleAbstractSubmit(event)" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Presentation Format</label>
+          <select id="abstract-format" required class="w-full mt-1 p-2.5 border rounded-lg outline-none">
+            <option value="Oral Paper">Oral Paper</option>
+            <option value="Poster Presentation">Poster Presentation</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Abstract Title</label>
+          <input type="text" id="abstract-title" required class="w-full mt-1 p-2.5 border rounded-lg outline-none">
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Abstract PDF <span class="text-xs text-slate-500">(max 5 MB)</span></label>
+          <input type="file" id="abstract-pdf" accept="application/pdf" required class="w-full mt-1 p-2 border rounded-lg bg-white text-sm outline-none file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100">
+          <p class="text-[10px] text-slate-500 mt-1">Upload your structured abstract (≤ 400 words) as a PDF.</p>
+        </div>
+
+        <button type="submit" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl">Submit Abstract for Review</button>
+      </form>
+    </div>
+  </div>

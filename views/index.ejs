@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>International Conference on Healthcare Quality & Patient Safety 2026</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 font-sans min-h-screen flex flex-col justify-center items-center p-4">
+
+<%- include('portal/partials/hero') %>
+
+<%- include('portal/sections/auth') %>
+<%- include('portal/sections/dashboard') %>
+
+<%- include('portal/modals/add-group-member') %>
+<%- include('portal/modals/registration-payment') %>
+<%- include('portal/modals/topup') %>
+<%- include('portal/modals/correct-submission') %>
+<%- include('portal/modals/abstract') %>
+<%- include('portal/modals/confirm') %>
+
+  <script src="app.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', restoreSession);
+  </script>
+</body>
+</html>

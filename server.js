@@ -1544,8 +1544,17 @@ function requireRole(...roles) {
 // encoding overhead + form fields), not the old 50 MB.
 app.use(express.json({ limit: '8mb' }));
 app.use(express.urlencoded({ limit: '8mb', extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
+// index: false -- the delegate portal is a template now (views/index.ejs plus
+// its partials), served by the explicit GET / below. Without this, static
+// would try to auto-serve public/index.html for '/' and shadow that route.
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 app.use(loadSession);
+
+// Delegate portal. Assembled from partials the same way as /admin; no
+// server-rendered data, everything is still populated client-side by app.js.
+app.get('/', (req, res) => {
+  res.render('index');
+});
 
 // Admin panel lives outside the static root and is only served to a
 // logged-in admin. Anonymous users go to the portal to log in first.
