@@ -3539,6 +3539,67 @@ async function deleteGroupRule(id) {
 // --- GENERAL SETTINGS: SMS / Email / UPI (super admin) ---
 let cachedGeneralSettings = null;
 
+// Daily digest recipients, picked by name/phone search over cachedUsers
+// (same picker pattern as searchDiscDelegate) rather than typed as raw
+// phone numbers. State lives here as {phone, name} objects; only the phone
+// is what's actually persisted (email.digestRecipients, comma-separated).
+let gsDigestRecipients = [];
+
+// Rebuilds gsDigestRecipients from the comma-separated phone list the server
+// returns, resolving each to a name via cachedUsers where possible (a number
+// with no matching user -- e.g. set by hand outside this UI -- still shows
+// as a chip, just without a name).
+function loadDigestRecipients(csv) {
+  const phones = String(csv || '').split(',').map((p) => p.trim()).filter(Boolean);
+  gsDigestRecipients = phones.map((phone) => {
+    const u = (cachedUsers || []).find((x) => x.phone_number === phone);
+    return { phone, name: u ? u.full_name : '' };
+  });
+  renderDigestChips();
+}
+
+function renderDigestChips() {
+  const box = document.getElementById('gs-digest-chips');
+  if (!box) return;
+  box.innerHTML = gsDigestRecipients.map((r) => `
+    <span class="inline-flex items-center gap-1.5 bg-indigo-50 text-indigo-700 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-full">
+      ${esc(r.name || 'Unknown')} <span class="text-indigo-400">+91 ${esc(r.phone)}</span>
+      <button type="button" onclick="removeDigestRecipient('${esc(r.phone)}')" class="text-indigo-400 hover:text-indigo-900 font-bold leading-none px-0.5">×</button>
+    </span>`).join('') || '<p class="text-xs text-slate-400">No recipients selected.</p>';
+}
+
+function searchDigestRecipient(query) {
+  const box = document.getElementById('gs-digest-search-results');
+  if (!box) return;
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) { box.classList.add('hidden'); return; }
+  const already = new Set(gsDigestRecipients.map((r) => r.phone));
+  const matches = (cachedUsers || [])
+    .filter((u) => !already.has(u.phone_number) && `${u.full_name || ''} ${u.phone_number || ''}`.toLowerCase().includes(q))
+    .slice(0, 8);
+  box.innerHTML = matches.length
+    ? matches.map((u) => `<button type="button" class="w-full text-left px-3 py-2 hover:bg-indigo-50" onclick="addDigestRecipient('${esc(u.phone_number)}', '${esc((u.full_name || '').replace(/'/g, "\\'"))}')">
+        <p class="font-semibold text-slate-800 text-sm">${esc(u.full_name || '—')}</p>
+        <p class="text-[11px] text-slate-500">+91 ${esc(u.phone_number)}</p>
+      </button>`).join('')
+    : '<p class="text-xs text-slate-400 p-3">No matching user.</p>';
+  box.classList.remove('hidden');
+}
+
+function addDigestRecipient(phone, name) {
+  if (!gsDigestRecipients.some((r) => r.phone === phone)) gsDigestRecipients.push({ phone, name });
+  renderDigestChips();
+  const search = document.getElementById('gs-digest-search');
+  const results = document.getElementById('gs-digest-search-results');
+  if (search) search.value = '';
+  if (results) results.classList.add('hidden');
+}
+
+function removeDigestRecipient(phone) {
+  gsDigestRecipients = gsDigestRecipients.filter((r) => r.phone !== phone);
+  renderDigestChips();
+}
+
 async function renderGeneralSettings() {
   const res = await fetch('/api/admin/general-settings');
   if (!res.ok) return;
@@ -3566,6 +3627,7 @@ async function renderGeneralSettings() {
   setVal('gs-email-from', data.email.from);
   setVal('gs-email-fromname', data.email.fromName);
   setVal('gs-email-region', data.email.region);
+  loadDigestRecipients(data.email.digestRecipients);
   setVal('gs-upi-id', data.upi.id);
   setVal('gs-upi-payeename', data.upi.payeeName);
   setVal('gs-conf-name', data.conference.name);
@@ -3642,6 +3704,10 @@ async function saveGeneralSettings(e, group) {
       startDate: document.getElementById('gs-conf-startdate').value,
       endDate: document.getElementById('gs-conf-enddate').value,
     } };
+  } else if (group === 'notifications') {
+    // Digest recipients are still persisted as email.digestRecipients server-side
+    // (same schema_meta key as before) -- only the admin UI moved to its own card.
+    body = { email: { digestRecipients: gsDigestRecipients.map((r) => r.phone).join(',') } };
   } else {
     return;
   }
@@ -3649,7 +3715,7 @@ async function saveGeneralSettings(e, group) {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   })).json();
   if (!data.success) return showToast(data.error || 'Could not save.');
-  const groupLabels = { sms: 'SMS', email: 'Email', upi: 'UPI', conference: 'Conference Details' };
+  const groupLabels = { sms: 'SMS', email: 'Email', upi: 'UPI', conference: 'Conference Details', notifications: 'Notification' };
   showToast(`${groupLabels[group] || group} settings saved.`, 'success');
   // Clear any credential inputs immediately after a successful save -- they
   // should never sit filled-in on screen once submitted.

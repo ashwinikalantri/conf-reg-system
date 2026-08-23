@@ -49,7 +49,7 @@ const IMAGE_EXT = {
 const EXT_MIME = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
 
 // --- CONFIG -------------------------------------------------------------
-const COOKIE_NAME = 'nqocn_sid';
+const COOKIE_NAME = process.env.COOKIE_NAME || 'nqocn_sid';
 const OTP_TTL_MS = 5 * 60 * 1000;        // OTP valid for 5 minutes
 const OTP_RESEND_MS = 30 * 1000;         // min gap between OTP requests
 const OTP_MAX_ATTEMPTS = 5;              // wrong tries before OTP is burned
@@ -191,6 +191,7 @@ const GENERAL_SETTINGS_KEYS = {
   sms_sender: ['SMS', 'sender'], sms_url: ['SMS', 'url'], sms_entity_id: ['SMS', 'entityId'],
   sms_template_id: ['SMS', 'templateId'], sms_header_id: ['SMS', 'headerId'], sms_type: ['SMS', 'type'],
   email_from: ['EMAIL', 'from'], email_from_name: ['EMAIL', 'fromName'], email_region: ['EMAIL', 'region'],
+  email_digest_recipients: ['EMAIL', 'digestRecipients'],
   upi_id: ['UPI', 'id'], upi_payee_name: ['UPI', 'payeeName'],
   conference_name: ['CONFERENCE', 'name'], conference_acronym: ['CONFERENCE', 'acronym'],
   conference_start_date: ['CONFERENCE', 'startDate'], conference_end_date: ['CONFERENCE', 'endDate'],
@@ -265,10 +266,15 @@ async function sendOtpSms(phone, otp) {
 // it does NOT re-read process.env per .send(). So a credential OR region change
 // only takes effect because rebuildSesClient() constructs a brand-new client;
 // keep calling it on every such change (see the general-settings PUT handler).
+// digestRecipients: comma-separated 10-digit phone numbers looked up in the
+// users table by scripts/daily-digest.js (a standalone cron script, not part
+// of this process) -- phone rather than a hardcoded email list, so it keeps
+// working if someone updates their email address in Users & Roles.
 const EMAIL = {
   from: (process.env.SES_FROM || '').trim(),
   fromName: process.env.SES_FROM_NAME || 'NQOCN 2026',
   region: (process.env.AWS_REGION || '').trim(),
+  digestRecipients: process.env.DIGEST_RECIPIENT_PHONES || '7440977777,7083170552,9167565576',
 };
 const awsCredsPresent = () => !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
 const emailEnabled = () => awsCredsPresent() && !!EMAIL.region && !!EMAIL.from;
@@ -4026,6 +4032,7 @@ function describeOtherEnvVars() {
     { key: 'PORT', value: String(PORT), fromEnv: process.env.PORT !== undefined },
     { key: 'PORTAL_URL', value: PORTAL_URL, fromEnv: process.env.PORTAL_URL !== undefined },
     { key: 'NODE_ENV', value: process.env.NODE_ENV || '(unset)', fromEnv: process.env.NODE_ENV !== undefined },
+    { key: 'COOKIE_NAME', value: COOKIE_NAME, fromEnv: process.env.COOKIE_NAME !== undefined },
     { key: 'COOKIE_SECURE', value: String(COOKIE_SECURE), fromEnv: process.env.COOKIE_SECURE !== undefined },
     { key: 'OTP_ECHO', value: String(OTP_ECHO), fromEnv: process.env.OTP_ECHO !== undefined },
   ];
@@ -4048,7 +4055,7 @@ app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
         // active. The Secret Access Key IS a bearer secret -- send only a
         // boolean, never any real bytes.
         accessKeyMasked: maskSecret(process.env.AWS_ACCESS_KEY_ID), hasSecretKey: !!process.env.AWS_SECRET_ACCESS_KEY,
-        from: EMAIL.from, fromName: EMAIL.fromName, region: EMAIL.region,
+        from: EMAIL.from, fromName: EMAIL.fromName, region: EMAIL.region, digestRecipients: EMAIL.digestRecipients,
       },
       upi: { id: UPI.id, payeeName: UPI.payeeName },
       conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym, startDate: CONFERENCE.startDate, endDate: CONFERENCE.endDate, location: CONFERENCE.location },
@@ -4096,6 +4103,17 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
       }
     }
 
+    // Digest recipients is a comma-separated list of 10-digit phone numbers
+    // (looked up in the users table by the standalone daily-digest script),
+    // not a single free-text field, so it needs its own shape check rather
+    // than the generic blank/newline guards above.
+    if (email && email.digestRecipients !== undefined) {
+      const parts = String(email.digestRecipients).split(',').map((p) => p.trim()).filter(Boolean);
+      if (parts.some((p) => !/^\d{10}$/.test(p))) {
+        return res.status(400).json({ success: false, error: 'Digest recipients must be a comma-separated list of 10-digit mobile numbers.' });
+      }
+    }
+
     const changes = [];
     const setKV = (key, value) => dbRun(
       "INSERT INTO schema_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value]);
@@ -4120,7 +4138,8 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
     }
 
     await applyFields(sms, SMS, { sender: 'sms_sender', url: 'sms_url', entityId: 'sms_entity_id', templateId: 'sms_template_id', headerId: 'sms_header_id', type: 'sms_type' });
-    await applyFields(email, EMAIL, { from: 'email_from', fromName: 'email_from_name', region: 'email_region' });
+    await applyFields(email, EMAIL, { from: 'email_from', fromName: 'email_from_name', region: 'email_region', digestRecipients: 'email_digest_recipients' },
+      new Set(['digestRecipients']));
     await applyFields(upi, UPI, { id: 'upi_id', payeeName: 'upi_payee_name' });
     await applyFields(conference, CONFERENCE,
       { name: 'conference_name', acronym: 'conference_acronym', startDate: 'conference_start_date', endDate: 'conference_end_date', location: 'conference_location' },

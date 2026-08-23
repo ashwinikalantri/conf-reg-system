@@ -41,7 +41,7 @@ let EMAIL_FROM_FORMATTED = EMAIL_FROM ? `"${EMAIL_FROM_NAME.replace(/"/g, '')}" 
 // Pulls the same schema_meta keys server.js's loadGeneralSettings() applies,
 // and re-derives the two values computed from them.
 async function resyncFromSchemaMeta(db) {
-  const keys = ['conference_name', 'conference_acronym', 'conference_location', 'email_from', 'email_from_name', 'email_region'];
+  const keys = ['conference_name', 'conference_acronym', 'conference_location', 'email_from', 'email_from_name', 'email_region', 'email_digest_recipients'];
   const rows = await dbAll(db, `SELECT key, value FROM schema_meta WHERE key IN (${keys.map(() => '?').join(',')})`, keys);
   const byKey = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   if (byKey.conference_name) CONFERENCE_NAME = byKey.conference_name;
@@ -50,13 +50,21 @@ async function resyncFromSchemaMeta(db) {
   if (byKey.email_from) EMAIL_FROM = byKey.email_from;
   if (byKey.email_from_name) EMAIL_FROM_NAME = byKey.email_from_name;
   if (byKey.email_region) EMAIL_REGION = byKey.email_region;
+  if (byKey.email_digest_recipients !== undefined) {
+    RECIPIENT_PHONES = byKey.email_digest_recipients.split(',').map((p) => p.trim()).filter(Boolean);
+  }
   EMAIL_FROM_FORMATTED = EMAIL_FROM ? `"${EMAIL_FROM_NAME.replace(/"/g, '')}" <${EMAIL_FROM}>` : EMAIL_FROM;
 }
 
 // Recipients are looked up by phone number (stable identifier) rather than
 // a hardcoded email list, so this keeps working if someone updates their
-// email address in Users & Roles.
-const RECIPIENT_PHONES = ['7440977777', '7083170552', '9167565576']; // Ashwini Kalantri, Abhishek V. Raut, Dipak Kumar Das
+// email address in Users & Roles. Same resync story as CONFERENCE_NAME/
+// EMAIL_FROM above: this starts from the .env-derived default and is
+// overridden in main() by whatever's set in Settings -> General -> Email ->
+// Daily Digest Recipients, since that's the only way a super admin can
+// change it (there's no schema_meta editor outside the running app).
+let RECIPIENT_PHONES = (process.env.DIGEST_RECIPIENT_PHONES || '7440977777,7083170552,9167565576')
+  .split(',').map((p) => p.trim()).filter(Boolean);
 
 const MAX_ROWS_SHOWN = 10;
 

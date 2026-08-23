@@ -79,13 +79,16 @@ to require editing code and redeploying:
 - **SMS** — sender ID, gateway URL, DLT entity/template/header IDs, message
   type, and the API key itself, plus the on/off switch (turning SMS off also
   stops login OTPs).
-- **Email** — From address, From name, AWS region, and the AWS Access Key ID /
-  Secret Access Key, plus the on/off switch.
+- **Email** — From address, From name, AWS region, and the AWS Access Key ID
+  / Secret Access Key, plus the on/off switch.
 - **UPI** — the conference's UPI ID (VPA) and payee name shown on the payment
   QR code; the delegate form and the server's OCR screenshot check both read
   this live, so they can never drift apart.
+- **Notifications** — the daily-digest recipient list (see below). Picked by
+  searching name or phone over the Users table rather than typing raw
+  numbers; only the phone number is actually persisted.
 - **Other Environment Variables** — a read-only reference showing every other
-  env var the server reads (`PORT`, `PORTAL_URL`, `NODE_ENV`,
+  env var the server reads (`PORT`, `PORTAL_URL`, `NODE_ENV`, `COOKIE_NAME`,
   `COOKIE_SECURE`, `OTP_ECHO`), its effective value, and whether it came from
   `.env` or a coded-in default.
 
@@ -102,17 +105,24 @@ characters) — no secret bytes are ever sent to or rendered in the admin UI.
 Credential fields reject a value containing a line break, since one could
 otherwise inject an unrelated new line into `.env`.
 
-`scripts/daily-digest.js` (an optional cron-run daily summary email; see its
-`RECIPIENT_PHONES` list, which is currently hardcoded to this deployment's
-finance/admin team) is a standalone process independent of the running
-server, and re-reads `schema_meta` for the conference name and email
-from-address/name/region on every run, so it stays in sync with changes made
-on this page.
+`scripts/daily-digest.js` (an optional cron-run daily summary email listing
+pending-approval registrations) is a standalone process independent of the
+running server, and re-reads `schema_meta` on every run for the conference
+name, email from-address/name/region, and the digest recipient list, so it
+stays in sync with changes made on this page. Its default recipient list —
+used only if nothing has ever been saved from Settings → General →
+Notifications — comes from `DIGEST_RECIPIENT_PHONES` (comma-separated
+10-digit numbers) or, failing that, a coded-in default of three phone
+numbers from
+this deployment's finance/admin team. Recipients are matched by phone number
+against Users & Roles (not stored as email addresses), so the list keeps
+working if someone's email changes.
 
 ## Authentication & sessions
 
 Login is phone + OTP. On success the server issues a server-side session
-and sets an `httpOnly`, `SameSite=Lax` cookie (`nqocn_sid`, 12-hour life).
+and sets an `httpOnly`, `SameSite=Lax` cookie (`COOKIE_NAME`, default
+`nqocn_sid`, 12-hour life).
 Only a hash of the session token and of the OTP is stored in the database.
 
 - OTP is a random 6-digit code, valid for 5 minutes, single-use, capped at
@@ -145,6 +155,7 @@ accepted from a login or registration request body.
 | `PORT`               | `3000`         | HTTP port                                      |
 | `NODE_ENV`           | –              | `production` disables the dev OTP echo         |
 | `OTP_ECHO`           | on if not prod | Force the OTP echo on (`true`) or off (`false`)|
+| `COOKIE_NAME`        | `nqocn_sid`    | Name of the session cookie                     |
 | `COOKIE_SECURE`      | `false`        | Set `true` when served over HTTPS              |
 | `PORTAL_URL`         | –              | Base URL used in emailed links                 |
 
@@ -354,11 +365,12 @@ crash.
   Settings → General. This matches how every other secret in this app is
   already handled, but is worth knowing if you're evaluating this for an
   environment that requires a managed secrets store.
-- A handful of identifiers are still fixed rather than admin-configurable if
+- A couple of identifiers are still fixed rather than admin-configurable if
   you're retargeting this at a different event: the registration-number
-  prefix (`NQOCN2026`, in `server.js`), the session cookie name (`nqocn_sid`),
-  the student-category discipline/level checks (`STUDENT_CATEGORIES`), and
-  the daily-digest recipient list (`scripts/daily-digest.js`). Conference
+  prefix (`NQOCN2026`, in `server.js`) and the student-category
+  discipline/level checks (`STUDENT_CATEGORIES`). The session cookie name and
+  the daily-digest recipient list are now admin-configurable too — see
+  Authentication & sessions and Settings → General above. Conference
   name/acronym/dates/location, fee structure, program tracks, discount
   codes, SMS/Email provider config, and the UPI payment ID are all
   admin-editable without a code change.

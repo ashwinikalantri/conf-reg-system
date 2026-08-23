@@ -84,6 +84,24 @@
         </form>
       </div>
 
+      <!-- Notifications -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-800 mb-1">🔔 Notifications</h3>
+        <p class="text-xs text-slate-500 mb-3">Who receives automated summaries — separate from the SMS/Email channel setup above.</p>
+        <form onsubmit="saveGeneralSettings(event, 'notifications')" class="space-y-2">
+          <div>
+            <label class="block text-[10px] font-semibold text-slate-600 mb-1">Daily Digest Recipients</label>
+            <p class="text-[10px] text-slate-400 mb-2">Gets the daily pending-approvals summary email (scripts/daily-digest.js). Search and pick by name or phone — matched by phone number under the hood, so it keeps working if someone's email changes.</p>
+            <div class="relative">
+              <input id="gs-digest-search" type="text" placeholder="Search by name or phone…" autocomplete="off" oninput="searchDigestRecipient(this.value)" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+              <div id="gs-digest-search-results" class="hidden absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto"></div>
+            </div>
+            <div id="gs-digest-chips" class="flex flex-wrap gap-2 mt-2"></div>
+          </div>
+          <div class="pt-1"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Notification Settings</button></div>
+        </form>
+      </div>
+
       <!-- Other .env variables (read-only, not editable here) -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <h3 class="text-lg font-bold text-slate-800 mb-1">🗄️ Other Environment Variables</h3>
