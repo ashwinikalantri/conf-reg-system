@@ -1,0 +1,16 @@
+  <!-- Shown instead of the login form / dashboard while maintenance mode is on.
+       Super admins never see this (checkMaintenanceMode in app.js), and the
+       real enforcement is server-side in maintenanceGate -- this is UX only. -->
+  <section id="maintenance-page" class="hidden w-full max-w-lg">
+    <div class="bg-white rounded-2xl p-8 shadow-xl text-center">
+      <div class="text-5xl mb-4">🔧</div>
+      <h2 class="text-2xl font-bold text-slate-800 mb-2">Under Maintenance</h2>
+      <p id="maintenance-page-message" class="text-slate-600 text-sm leading-relaxed mb-6"></p>
+      <p class="text-xs text-slate-400">
+        Already have a registration? Your details are safe — nothing has been lost.
+      </p>
+      <button onclick="navigateTo('auth-page')" class="mt-5 text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline">
+        Staff login
+      </button>
+    </div>
+  </section>

@@ -89,6 +89,8 @@ to require editing code and redeploying:
 - **Notifications** — the daily-digest recipient list (see below). Picked by
   searching name or phone over the Users table rather than typing raw
   numbers; only the phone number is actually persisted.
+- **Maintenance Mode** — close the portal to everyone except super admins,
+  with an editable notice. See Maintenance mode below.
 - **Other Environment Variables** — a read-only reference showing every other
   env var the server reads (`PORT`, `PORTAL_URL`, `NODE_ENV`, `COOKIE_NAME`,
   `COOKIE_SECURE`, `OTP_ECHO`), its effective value, and whether it came from
@@ -203,6 +205,35 @@ a refresh or a bookmark returns to the same section; a hash the current role
 can't open falls back to that role's default tab. The delegate portal needs no
 equivalent — its two pages are chosen by login state, and `restoreSession()`
 already puts a logged-in delegate back on the dashboard after a refresh.
+
+## Maintenance mode
+
+A super admin can close the portal from **Settings → General → Maintenance
+Mode** (toggle plus an editable message). While it's on:
+
+- **Delegates** get a maintenance notice instead of the login form or
+  dashboard, and every delegate API call returns `503` with
+  `{ maintenance: true }`. New signups (`POST /api/auth/register`) are
+  blocked — stopping registrations mid-flight is the point.
+- **Finance and reviewer admins** are locked out too: `/admin` serves a
+  maintenance page rather than a panel of empty tables, since the API calls
+  behind it are being 503'd.
+- **Super admins** keep full access, so the maintenance can actually be done.
+
+Enforcement is server-side in `maintenanceGate` (`server.js`), mounted after
+`loadSession` and ahead of every API route; the delegate-facing screen is UX
+only and is never the control. The state persists in `schema_meta`, so it
+survives a restart — **a crash mid-maintenance comes back up still closed**,
+which is the safe direction but worth remembering.
+
+The OTP/login endpoints stay open during maintenance by design
+(`MAINTENANCE_OPEN_PATHS`). A super admin arriving at an already-closed
+portal has no session yet, so gating login would lock the only role that can
+lift maintenance out of the app entirely. A delegate can therefore still log
+in while it's on — they just land on the maintenance notice.
+
+Both toggling and message edits are written to the audit log
+(`GENERAL_SETTINGS_UPDATE`) with the acting super admin's name and role.
 
 ## Route protection
 

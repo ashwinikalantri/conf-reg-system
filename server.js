@@ -186,6 +186,20 @@ async function loadNotificationToggles() {
   if (e) notifyToggle.email = e.value !== '0';
 }
 
+// Maintenance mode: closes the portal to everyone except SUPER_ADMIN, so the
+// conference team can work on a live deployment (DB edits, a migration, an OS
+// window) without delegates half-completing registrations against it.
+// Persisted in schema_meta and enforced server-side by maintenanceGate below
+// -- the client-side screen is UX only, never the actual control.
+const DEFAULT_MAINTENANCE_MESSAGE = 'The portal is temporarily unavailable for scheduled maintenance. Please check back shortly.';
+const maintenance = { enabled: false, message: DEFAULT_MAINTENANCE_MESSAGE };
+async function loadMaintenanceMode() {
+  const on = await dbGet("SELECT value FROM schema_meta WHERE key = 'maintenance_enabled'").catch(() => null);
+  const msg = await dbGet("SELECT value FROM schema_meta WHERE key = 'maintenance_message'").catch(() => null);
+  if (on) maintenance.enabled = on.value === '1';
+  if (msg && msg.value) maintenance.message = msg.value;
+}
+
 // Non-secret operational fields for SMS/Email/UPI, admin-editable from
 // Settings → General, persisted in schema_meta and applied over the env
 // defaults set on SMS/EMAIL/UPI above. Credentials (SMS_API_KEY, AWS keys)
@@ -1580,6 +1594,33 @@ function requireAuth(req, res, next) {
   next();
 }
 
+// API paths that stay open during maintenance. The auth trio is the important
+// one: a super admin arriving at a portal already in maintenance has no
+// session yet, so blocking OTP/login would lock the only role that can turn
+// maintenance back off out of the app entirely. Registration is deliberately
+// NOT here -- stopping new signups is the point of maintenance mode. The rest
+// are read-only endpoints the login screen itself needs to render.
+const MAINTENANCE_OPEN_PATHS = new Set([
+  '/api/otp/request',
+  '/api/auth/login',
+  '/api/auth/me',
+  '/api/auth/logout',
+  '/api/maintenance',
+  '/api/conference',
+]);
+
+// Server-side enforcement of maintenance mode. Mounted after loadSession (so
+// req.session is populated) and before every API route. Page routes are left
+// alone here and handle their own rendering -- GET / must keep serving the
+// login form so a super admin can get in.
+function maintenanceGate(req, res, next) {
+  if (!maintenance.enabled) return next();
+  if (req.session && req.session.role === 'SUPER_ADMIN') return next();
+  if (!req.path.startsWith('/api/')) return next();
+  if (MAINTENANCE_OPEN_PATHS.has(req.path)) return next();
+  return res.status(503).json({ success: false, maintenance: true, error: maintenance.message });
+}
+
 function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.session) return res.status(401).json({ success: false, error: 'Login required.' });
@@ -1601,6 +1642,13 @@ app.use(express.urlencoded({ limit: '8mb', extended: true }));
 // would try to auto-serve public/index.html for '/' and shadow that route.
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 app.use(loadSession);
+app.use(maintenanceGate);
+
+// Public (pre-auth) maintenance state, so the login screen can show the
+// notice before anyone has a session. Never returns anything sensitive.
+app.get('/api/maintenance', (req, res) => {
+  res.json({ enabled: maintenance.enabled, message: maintenance.message });
+});
 
 // Delegate portal. Assembled from partials the same way as /admin; no
 // server-rendered data, everything is still populated client-side by app.js.
@@ -1612,6 +1660,18 @@ app.get('/', (req, res) => {
 // logged-in admin. Anonymous users go to the portal to log in first.
 app.get('/admin', (req, res) => {
   if (!req.session) return res.redirect('/');
+  // During maintenance the admin panel is super-admin-only: every other role's
+  // panel is driven by API calls that maintenanceGate is now 503ing, so it
+  // would render as a shell of empty tables rather than anything usable.
+  if (maintenance.enabled && req.session.role !== 'SUPER_ADMIN') {
+    return res.status(503).send(
+      '<!doctype html><meta charset="utf-8"><title>Under maintenance</title>' +
+      '<body style="font-family:sans-serif;max-width:32rem;margin:4rem auto;text-align:center">' +
+      '<h1>🔧 Under maintenance</h1>' +
+      `<p>${escapeHtml(maintenance.message)}</p>` +
+      '<p><a href="/">Return to the delegate portal</a></p></body>'
+    );
+  }
   if (!ADMIN_ROLES.includes(req.session.role)) {
     return res.status(403).send(
       '<!doctype html><meta charset="utf-8"><title>Forbidden</title>' +
@@ -4119,6 +4179,7 @@ app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
       },
       upi: { id: UPI.id, payeeName: UPI.payeeName },
       conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym, startDate: CONFERENCE.startDate, endDate: CONFERENCE.endDate, location: CONFERENCE.location, regPrefix: CONFERENCE.regPrefix },
+      maintenance: { enabled: maintenance.enabled, message: maintenance.message },
       otherEnvVars: describeOtherEnvVars(),
     });
   } catch (err) {
@@ -4128,7 +4189,7 @@ app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
 
 app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
-    const { sms, email, upi, conference, notify } = req.body || {};
+    const { sms, email, upi, conference, notify, maintenance: maintenanceBody } = req.body || {};
 
     // Reject line breaks in the credential fields up front, before anything is
     // persisted, so a bad paste can't inject extra .env lines and a malformed
@@ -4260,10 +4321,33 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
       }
     }
 
+    // Maintenance mode. This route is already SUPER_ADMIN-only, which is the
+    // access control that matters -- it's the one role that can still use the
+    // portal once this is on, so no other role can strand itself (or everyone
+    // else) by flipping it.
+    if (maintenanceBody) {
+      if (maintenanceBody.message !== undefined) {
+        const msg = String(maintenanceBody.message).trim() || DEFAULT_MAINTENANCE_MESSAGE;
+        if (msg !== maintenance.message) {
+          maintenance.message = msg;
+          await setKV('maintenance_message', msg);
+          changes.push('Maintenance message updated');
+        }
+      }
+      if (maintenanceBody.enabled !== undefined) {
+        const on = !!maintenanceBody.enabled;
+        if (on !== maintenance.enabled) {
+          maintenance.enabled = on;
+          await setKV('maintenance_enabled', on ? '1' : '0');
+          changes.push(`Maintenance mode ${on ? 'ON — portal closed to everyone except super admins' : 'OFF — portal reopened'}`);
+        }
+      }
+    }
+
     if (changes.length) {
       await recordAudit({ req, entityType: 'general_settings', entityId: 'general', action: 'GENERAL_SETTINGS_UPDATE', oldValue: null, newValue: changes.join('; ') });
     }
-    res.json({ success: true, sms: notifyToggle.sms, email: notifyToggle.email });
+    res.json({ success: true, sms: notifyToggle.sms, email: notifyToggle.email, maintenance: maintenance.enabled });
   } catch (err) {
     next(err);
   }
@@ -5087,6 +5171,7 @@ retitleNamesOnBoot()
   .then(() => backfillPaymentTransactionsOnBoot().catch((err) => console.error('Payment-transaction backfill failed (continuing to start):', err.message)))
   .then(() => autoLinkTransactions().catch((err) => console.error('Bank-transaction auto-link failed (continuing to start):', err.message)))
   .then(() => loadNotificationToggles().catch((err) => console.error('Notification-toggle load failed (continuing to start):', err.message)))
+  .then(() => loadMaintenanceMode().catch((err) => console.error('Maintenance-mode load failed (continuing to start):', err.message)))
   .then(() => loadGeneralSettings().catch((err) => console.error('General-settings load failed (continuing to start):', err.message)))
   .then(startServer);
 

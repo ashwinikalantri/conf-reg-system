@@ -355,6 +355,9 @@ async function handleLogin(e) {
     persistDelegate(currentDelegate);
     const welcomeName = currentDelegate.full_name || currentDelegate.name;
     showToast(`Welcome back, ${currentDelegate.salutation ? currentDelegate.salutation + ' ' : ''}${welcomeName}!`, 'success');
+    // A delegate who logs in mid-maintenance gets the notice, not a dashboard
+    // whose every API call is going to come back 503.
+    if (await shouldShowMaintenance(currentDelegate)) return navigateTo('maintenance-page');
     loadDashboard();
   } else if (data.notRegistered) {
     // New number — switch to sign-up, carrying the phone and (still-valid) OTP.
@@ -1350,6 +1353,25 @@ async function logout() {
 
 // Restore an active server session on page load. The session cookie is the
 // source of truth; localStorage only caches display fields.
+// True when maintenance mode is on AND this visitor isn't a super admin, i.e.
+// the maintenance screen should replace whatever they'd normally see. Super
+// admins pass straight through so they can actually do the maintenance.
+// Fails open on a network error: the server-side gate is the real control, so
+// a failed check here can only ever show a portal whose APIs still 503.
+async function shouldShowMaintenance(user) {
+  try {
+    const res = await fetch('/api/maintenance');
+    if (!res.ok) return false;
+    const m = await res.json();
+    if (!m.enabled) return false;
+    if (user && user.role === 'SUPER_ADMIN') return false;
+    setText('maintenance-page-message', m.message || '');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 async function restoreSession() {
   try {
     const res = await fetch('/api/auth/me');
@@ -1359,18 +1381,23 @@ async function restoreSession() {
       // not just clear storage and leave the dashboard on screen.
       currentDelegate = null;
       persistDelegate(null);
-      if (document.getElementById('dashboard-page')) navigateTo('auth-page');
+      if (document.getElementById('dashboard-page')) {
+        navigateTo(await shouldShowMaintenance(null) ? 'maintenance-page' : 'auth-page');
+      }
       return;
     }
     const data = await res.json();
     if (data.success && data.user) {
       currentDelegate = data.user;
       persistDelegate(currentDelegate);
+      if (await shouldShowMaintenance(data.user)) return navigateTo('maintenance-page');
       loadDashboard();
     } else {
       currentDelegate = null;
       persistDelegate(null);
-      if (document.getElementById('dashboard-page')) navigateTo('auth-page');
+      if (document.getElementById('dashboard-page')) {
+        navigateTo(await shouldShowMaintenance(null) ? 'maintenance-page' : 'auth-page');
+      }
     }
   } catch (e) {
     /* offline — keep showing whatever's already on screen (cached dashboard or login) */
@@ -3648,6 +3675,12 @@ async function renderGeneralSettings() {
   if (emailToggle) { emailToggle.checked = !!data.email.enabled; emailToggle.disabled = !data.email.available; }
   setText('notify-sms-state', data.sms.available ? (data.sms.enabled ? '· on' : '· off') : '· not configured');
   setText('notify-email-state', data.email.available ? (data.email.enabled ? '· on' : '· off') : '· not configured');
+  const maintToggle = document.getElementById('maintenance-toggle');
+  if (maintToggle) maintToggle.checked = !!(data.maintenance && data.maintenance.enabled);
+  setText('maintenance-state', data.maintenance && data.maintenance.enabled ? '· ON' : '· off');
+  const maintNote = document.getElementById('maintenance-active-note');
+  if (maintNote) maintNote.classList.toggle('hidden', !(data.maintenance && data.maintenance.enabled));
+
   const smsKeyNote = document.getElementById('sms-key-note');
   if (smsKeyNote) smsKeyNote.classList.toggle('hidden', data.sms.hasApiKey);
   const emailKeyNote = document.getElementById('email-key-note');
@@ -3672,6 +3705,7 @@ async function renderGeneralSettings() {
   setVal('gs-conf-startdate', data.conference.startDate);
   setVal('gs-conf-enddate', data.conference.endDate);
   setVal('gs-conf-regprefix', data.conference.regPrefix);
+  setVal('gs-maintenance-message', data.maintenance && data.maintenance.message);
 
   // Credential fields are never prefilled. Bearer secrets (SMS API key, AWS
   // Secret Access Key) show only a set/not-set state -- no bytes ever reach the
@@ -3690,6 +3724,23 @@ async function renderGeneralSettings() {
         <td class="py-2 px-3 text-[10px]">${v.fromEnv ? '<span class="text-indigo-600 font-semibold">.env</span>' : '<span class="text-slate-400">default</span>'}</td>
       </tr>`).join('') || `<tr><td colspan="3" class="py-3 text-center text-slate-400">None</td></tr>`;
   }
+}
+
+// Turning this on locks every delegate and non-super admin out of the portal,
+// so it confirms first rather than acting on a single stray click. Turning it
+// back off is the safe direction and goes straight through.
+async function setMaintenanceMode(enabled) {
+  const toggle = document.getElementById('maintenance-toggle');
+  if (enabled && !(await showConfirm('Turn ON maintenance mode? Delegates will not be able to register, pay, or submit abstracts, and finance/reviewer admins will lose access to the panel. Only super admins can use the portal until you turn this off.'))) {
+    if (toggle) toggle.checked = false; // the click already flipped it -- put it back
+    return;
+  }
+  const data = await (await fetch('/api/admin/general-settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ maintenance: { enabled } }),
+  })).json();
+  if (!data.success) { showToast(data.error || 'Could not update.'); renderGeneralSettings(); return; }
+  showToast(enabled ? 'Maintenance mode is ON — the portal is closed to everyone except super admins.' : 'Maintenance mode is OFF — the portal is open again.', enabled ? 'info' : 'success');
+  renderGeneralSettings();
 }
 
 async function setGeneralToggle(channel, enabled) {
@@ -3742,6 +3793,8 @@ async function saveGeneralSettings(e, group) {
       endDate: document.getElementById('gs-conf-enddate').value,
       regPrefix: document.getElementById('gs-conf-regprefix').value,
     } };
+  } else if (group === 'maintenance') {
+    body = { maintenance: { message: document.getElementById('gs-maintenance-message').value } };
   } else if (group === 'notifications') {
     // Digest recipients are still persisted as email.digestRecipients server-side
     // (same schema_meta key as before) -- only the admin UI moved to its own card.
@@ -3753,7 +3806,7 @@ async function saveGeneralSettings(e, group) {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   })).json();
   if (!data.success) return showToast(data.error || 'Could not save.');
-  const groupLabels = { sms: 'SMS', email: 'Email', upi: 'UPI', conference: 'Conference Details', notifications: 'Notification' };
+  const groupLabels = { sms: 'SMS', email: 'Email', upi: 'UPI', conference: 'Conference Details', notifications: 'Notification', maintenance: 'Maintenance' };
   showToast(`${groupLabels[group] || group} settings saved.`, 'success');
   // Clear any credential inputs immediately after a successful save -- they
   // should never sit filled-in on screen once submitted.
