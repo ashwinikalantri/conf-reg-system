@@ -63,8 +63,6 @@ function applyConferenceInfoToDom() {
   }
 }
 
-// Categories that must upload a student ID card (kept in sync with the server).
-const STUDENT_CATEGORIES = ['nursing_ug', 'nursing_pg', 'med_student', 'pg_doctor'];
 
 // Human-readable labels for a registration's bank_status, used everywhere it's
 // shown so raw DB constants (e.g. BANK_VERIFIED, PARTIAL_PAYMENT) never leak
@@ -712,9 +710,10 @@ async function applyPromoCode() {
 function calculateFee() {
   const catKey = document.getElementById('payment-category').value;
 
-  // Student categories must upload an ID card.
+  // Student categories must upload an ID card (feeCategories, from /api/fees,
+  // carries requiresStudentId -- see loadFees).
   const idBlock = document.getElementById('id-card-block');
-  if (idBlock) idBlock.classList.toggle('hidden', !STUDENT_CATEGORIES.includes(catKey));
+  if (idBlock) idBlock.classList.toggle('hidden', !(feeCategories[catKey] && feeCategories[catKey].requiresStudentId));
 
   if (!catKey) return;
 
@@ -955,7 +954,7 @@ async function verifyAndSubmitPayment(e) {
 
   const categoryKey = document.getElementById('payment-category').value;
   if (!categoryKey) return showToast('Please select your delegate category.');
-  const isStudent = STUDENT_CATEGORIES.includes(categoryKey);
+  const isStudent = !!(feeCategories[categoryKey] && feeCategories[categoryKey].requiresStudentId);
 
   // Belt-and-braces: entered-amount is only ever auto-filled by
   // calculateFee(), which leaves it blank (not 0) on a load failure -- so an
@@ -1726,7 +1725,7 @@ function paymentRowHtml(p) {
   const allPendingLinked = pendingTxns.length > 0 && pendingTxns.every((t) => t.bank_txn_id != null);
   const linkedPill = pendingTxns.length === 0 ? ''
     : `<span class="text-[10px] ${allPendingLinked ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${allPendingLinked ? '🔗 Linked' : '⚠ Not linked'}</span>`;
-  const idPill = STUDENT_CATEGORIES.includes(p.category_key)
+  const idPill = isStudentCategory(p.category_key)
     ? `<span class="text-[10px] ${p.id_verified ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${p.id_verified ? '🎓 ID Verified' : '⚠ ID Not Verified'}</span>`
     : '';
   const rejectionNote = p.bank_status === 'REJECTED' && p.rejection_reason
@@ -1801,6 +1800,7 @@ async function rescanFlaggedPayments() {
 }
 
 async function renderBackendPayments() {
+  await ensureReviewCategories(); // warms isStudentCategory() before rows render below
   const res = await fetch('/api/registrations');
   const data = await res.json();
   const tbody = document.getElementById('payment-table-body');
@@ -2225,15 +2225,26 @@ function updateReviewAcceptGate() {
 }
 
 // Category list for the review modal's lock control, loaded once from the fee
-// master and cached.
+// master and cached. Also the one source of truth for which categories
+// require a student ID (requires_student_id, admin-editable on the Fees
+// tab) -- see isStudentCategory below.
 let reviewCategoryList = null;
 async function ensureReviewCategories() {
   if (reviewCategoryList) return reviewCategoryList;
   try {
     const data = await (await fetch('/api/admin/fees')).json();
-    reviewCategoryList = (data.categories || []).map((c) => ({ key: c.category_key, label: c.label }));
+    reviewCategoryList = (data.categories || []).map((c) => ({ key: c.category_key, label: c.label, requiresStudentId: !!c.requires_student_id }));
   } catch (e) { reviewCategoryList = []; }
   return reviewCategoryList;
+}
+
+// Sync check for render paths that can't await -- returns false (not,
+// conservatively, "unknown") until ensureReviewCategories() has resolved at
+// least once. Every admin render path that uses this calls
+// ensureReviewCategories() itself first (see renderBackendPayments), so in
+// practice the cache is always warm by the time this runs.
+function isStudentCategory(categoryKey) {
+  return !!(reviewCategoryList || []).find((c) => c.key === categoryKey && c.requiresStudentId);
 }
 
 async function renderReviewCategoryLock(p) {
@@ -2281,7 +2292,7 @@ function renderReviewIdVerification(p) {
   const wrap = document.getElementById('review-idverify-wrap');
   const checkbox = document.getElementById('review-idverify-checkbox');
   const note = document.getElementById('review-idverify-note');
-  const isStudent = STUDENT_CATEGORIES.includes(p.category_key);
+  const isStudent = isStudentCategory(p.category_key);
 
   if (wrap) wrap.classList.toggle('hidden', !isStudent);
   reviewGate.idOk = !isStudent || !!p.id_verified;
@@ -3039,6 +3050,15 @@ async function renderBackendFees() {
       <td class="p-4"><input type="number" min="0" value="${esc(c.regular_fee)}" class="fee-regular w-20 p-1.5 border rounded text-sm" data-id="${esc(c.id)}"></td>
       <td class="p-4"><input type="number" min="0" value="${esc(c.late_fee)}" class="fee-late w-20 p-1.5 border rounded text-sm" data-id="${esc(c.id)}"></td>
       <td class="p-4"><input type="number" min="0" value="${esc(c.spot_fee)}" class="fee-spot w-20 p-1.5 border rounded text-sm" data-id="${esc(c.id)}"></td>
+      <td class="p-4">
+        <select class="fee-studentid p-1.5 border rounded text-sm bg-white" data-id="${esc(c.id)}">
+          <option value="" ${!c.requires_student_id ? 'selected' : ''}>Not required</option>
+          <option value="nursing|UG" ${c.requires_student_id && c.id_discipline === 'nursing' && c.id_level === 'UG' ? 'selected' : ''}>Nursing UG</option>
+          <option value="nursing|PG" ${c.requires_student_id && c.id_discipline === 'nursing' && c.id_level === 'PG' ? 'selected' : ''}>Nursing PG</option>
+          <option value="medical|UG" ${c.requires_student_id && c.id_discipline === 'medical' && c.id_level === 'UG' ? 'selected' : ''}>Medical UG</option>
+          <option value="medical|PG" ${c.requires_student_id && c.id_discipline === 'medical' && c.id_level === 'PG' ? 'selected' : ''}>Medical PG</option>
+        </select>
+      </td>
       <td class="p-4 text-right whitespace-nowrap">
         <button class="fee-save px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(c.id)}">Save</button>
         <button class="fee-toggle px-3 py-1.5 ${c.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(c.id)}" data-active="${c.active ? 1 : 0}">${c.active ? 'Deactivate' : 'Activate'}</button>
@@ -3198,6 +3218,16 @@ async function saveFeeConfig() {
   renderBackendFees();
 }
 
+// The Student ID <select> encodes discipline+level as "nursing|UG" etc (or
+// "" for not required) -- the only four combos runIdCardCheck's OCR keyword
+// matching recognizes (see studentCategoryInfo in server.js). Parses that
+// into the three body fields the fees API expects.
+function studentIdBodyFields(selectValue) {
+  if (!selectValue) return { requiresStudentId: false };
+  const [idDiscipline, idLevel] = selectValue.split('|');
+  return { requiresStudentId: true, idDiscipline, idLevel };
+}
+
 async function handleAddFeeCategory(e) {
   e.preventDefault();
   const body = {
@@ -3208,6 +3238,7 @@ async function handleAddFeeCategory(e) {
     regularFee: Number(document.getElementById('new-fee-regular').value),
     lateFee: Number(document.getElementById('new-fee-late').value),
     spotFee: Number(document.getElementById('new-fee-spot').value),
+    ...studentIdBodyFields(document.getElementById('new-fee-studentid').value),
   };
   const data = await (await fetch('/api/admin/fees/categories', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
@@ -3216,6 +3247,8 @@ async function handleAddFeeCategory(e) {
   document.getElementById('new-fee-key').value = '';
   document.getElementById('new-fee-label').value = '';
   document.getElementById('new-fee-subtitle').value = '';
+  document.getElementById('new-fee-studentid').value = '';
+  reviewCategoryList = null; // category list changed -- force ensureReviewCategories() to refetch
   renderBackendFees();
 }
 
@@ -3228,9 +3261,11 @@ async function saveFeeCategory(id) {
       regularFee: Number(q('fee-regular').value),
       lateFee: Number(q('fee-late').value),
       spotFee: Number(q('fee-spot').value),
+      ...studentIdBodyFields(q('fee-studentid').value),
     })
   })).json();
   if (!data.success) showToast(data.error || 'Update failed.');
+  reviewCategoryList = null; // requiresStudentId may have changed -- force ensureReviewCategories() to refetch
   renderBackendFees();
 }
 
@@ -3253,6 +3288,7 @@ async function deleteFeeCategory(id) {
   if (!(await showConfirm('Delete this category? This cannot be undone.'))) return;
   const data = await (await fetch(`/api/admin/fees/categories/${encodeURIComponent(id)}`, { method: 'DELETE' })).json();
   if (!data.success) showToast(data.error || 'Delete failed.');
+  reviewCategoryList = null; // category list changed -- force ensureReviewCategories() to refetch
   renderBackendFees();
 }
 
@@ -3635,6 +3671,7 @@ async function renderGeneralSettings() {
   setVal('gs-conf-location', data.conference.location);
   setVal('gs-conf-startdate', data.conference.startDate);
   setVal('gs-conf-enddate', data.conference.endDate);
+  setVal('gs-conf-regprefix', data.conference.regPrefix);
 
   // Credential fields are never prefilled. Bearer secrets (SMS API key, AWS
   // Secret Access Key) show only a set/not-set state -- no bytes ever reach the
@@ -3703,6 +3740,7 @@ async function saveGeneralSettings(e, group) {
       location: document.getElementById('gs-conf-location').value,
       startDate: document.getElementById('gs-conf-startdate').value,
       endDate: document.getElementById('gs-conf-enddate').value,
+      regPrefix: document.getElementById('gs-conf-regprefix').value,
     } };
   } else if (group === 'notifications') {
     // Digest recipients are still persisted as email.digestRecipients server-side

@@ -88,13 +88,16 @@ function roleGrants(role) {
 // persisted in schema_meta. name/acronym/dates/location are display-only text
 // used across confirmation emails, reports, and printable pages -- nothing
 // here gates any capability, so unlike SMS/EMAIL/UPI there's no *Enabled()
-// check for it.
+// check for it. regPrefix feeds assignUserRegNumber() below -- changing it
+// only affects registrations created from that point on; existing
+// registration numbers are never rewritten.
 const CONFERENCE = {
   name: 'International Conference on Healthcare Quality & Patient Safety 2026',
   acronym: 'NQOCN 2026',
   startDate: '2026-11-21',
   endDate: '2026-11-22',
   location: 'MGIMS, Sevagram, Wardha',
+  regPrefix: 'NQOCN2026',
 };
 const PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
 
@@ -195,7 +198,7 @@ const GENERAL_SETTINGS_KEYS = {
   upi_id: ['UPI', 'id'], upi_payee_name: ['UPI', 'payeeName'],
   conference_name: ['CONFERENCE', 'name'], conference_acronym: ['CONFERENCE', 'acronym'],
   conference_start_date: ['CONFERENCE', 'startDate'], conference_end_date: ['CONFERENCE', 'endDate'],
-  conference_location: ['CONFERENCE', 'location'],
+  conference_location: ['CONFERENCE', 'location'], conference_reg_prefix: ['CONFERENCE', 'regPrefix'],
 };
 async function loadGeneralSettings() {
   const keys = Object.keys(GENERAL_SETTINGS_KEYS);
@@ -338,14 +341,18 @@ const UPI = {
   payeeName: process.env.UPI_PAYEE_NAME || 'NQOCN 2026',
 };
 
-// Categories that must upload a student ID card, with the discipline and level
-// the card is expected to show. OCR does a preliminary check against these.
-const STUDENT_CATEGORIES = {
-  nursing_ug:  { discipline: 'nursing', level: 'UG', label: 'Nursing UG' },
-  nursing_pg:  { discipline: 'nursing', level: 'PG', label: 'Nursing PG' },
-  med_student: { discipline: 'medical', level: 'UG', label: 'Medical UG' },
-  pg_doctor:   { discipline: 'medical', level: 'PG', label: 'Medical PG / Resident' },
-};
+// Whether a category must upload a student ID card, and the discipline/level
+// the card is expected to show -- admin-editable per category (Settings →
+// Fees), persisted on fee_categories (requires_student_id/id_discipline/
+// id_level) rather than hardcoded. Returns null for a category that doesn't
+// require one, so every call site keeps working as a truthy/falsy check.
+async function studentCategoryInfo(categoryKey) {
+  if (!categoryKey) return null;
+  const cat = await dbGet(
+    'SELECT requires_student_id, id_discipline, id_level FROM fee_categories WHERE category_key = ?', [categoryKey]);
+  if (!cat || !cat.requires_student_id) return null;
+  return { discipline: cat.id_discipline, level: cat.id_level };
+}
 
 // --- CRYPTO / COOKIE HELPERS --------------------------------------------
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
@@ -586,7 +593,7 @@ async function ocrIdCardText(buffer) {
 // re-OCRing at 90/180/270 degrees, keeping whichever rotation is the first
 // to produce a match.
 async function runIdCardCheck(buffer, categoryKey) {
-  const expect = STUDENT_CATEGORIES[categoryKey];
+  const expect = await studentCategoryInfo(categoryKey);
   if (!expect) return null; // category does not require an ID card
 
   const text = await ocrIdCardText(buffer);
@@ -803,12 +810,15 @@ async function getGroupDiscountAmount(phone, baseFee) {
 }
 
 // Assign (once) and return a delegate's registration number, drawn from a
-// monotonic sequence at signup so it exists before any payment.
+// monotonic sequence at signup so it exists before any payment. The prefix
+// is CONFERENCE.regPrefix (Settings → General → Conference Details) at the
+// moment of assignment -- a later prefix change never touches numbers
+// already assigned, only ones generated after the change.
 async function assignUserRegNumber(phone) {
   const u = await dbGet('SELECT registration_number FROM users WHERE phone_number = ?', [phone]);
   if (u && u.registration_number) return u.registration_number;
   const seq = await dbRun('INSERT INTO reg_seq DEFAULT VALUES');
-  const number = 'NQOCN2026' + String(seq.lastID).padStart(4, '0');
+  const number = CONFERENCE.regPrefix + String(seq.lastID).padStart(4, '0');
   await dbRun(
     "UPDATE users SET registration_number = ? WHERE phone_number = ? AND (registration_number IS NULL OR registration_number = '')",
     [number, phone]
@@ -1024,6 +1034,35 @@ db.serialize(() => {
     if (!names.includes('subtitle')) {
       db.run("ALTER TABLE fee_categories ADD COLUMN subtitle TEXT NOT NULL DEFAULT ''");
     }
+    // Student-ID requirement moved from the hardcoded STUDENT_CATEGORIES
+    // object to per-category columns, admin-editable from the Fees tab.
+    // id_discipline/id_level stay a closed 'nursing'/'medical' x 'UG'/'PG'
+    // enum -- runIdCardCheck's OCR keyword matching only recognizes those
+    // four values, so a category outside them can still require an ID
+    // upload but can't get an automated OCR match (falls through to manual
+    // approver verification, same as an OCR miss on any other category).
+    if (!names.includes('requires_student_id')) {
+      db.run('ALTER TABLE fee_categories ADD COLUMN requires_student_id INTEGER NOT NULL DEFAULT 0', () => {
+        db.run('ALTER TABLE fee_categories ADD COLUMN id_discipline TEXT', () => {
+          db.run('ALTER TABLE fee_categories ADD COLUMN id_level TEXT', () => {
+            // One-time backfill: the four categories STUDENT_CATEGORIES used to
+            // hardcode already exist as fee_categories rows with these exact
+            // keys (seeded at 1270-1275 below) -- carry their old discipline/
+            // level over so behavior is unchanged for existing deployments.
+            const legacy = [
+              ['nursing_ug', 'nursing', 'UG'], ['nursing_pg', 'nursing', 'PG'],
+              ['med_student', 'medical', 'UG'], ['pg_doctor', 'medical', 'PG'],
+            ];
+            for (const [key, discipline, level] of legacy) {
+              db.run(
+                'UPDATE fee_categories SET requires_student_id = 1, id_discipline = ?, id_level = ? WHERE category_key = ? AND requires_student_id = 0',
+                [discipline, level, key]
+              );
+            }
+          });
+        });
+      });
+    }
   });
   db.all('PRAGMA table_info(fee_config)', (err, cols) => {
     if (err) return console.error('Schema check failed:', err.message);
@@ -1206,7 +1245,12 @@ db.serialize(() => {
     if (!names.includes('discount_amount')) db.run('ALTER TABLE registrations ADD COLUMN discount_amount REAL DEFAULT 0');
 
     // Backfill a number for any already-verified registration that predates
-    // number assignment. Idempotent -- matches nothing once filled.
+    // number assignment. Idempotent -- matches nothing once filled. Runs at
+    // boot, before loadGeneralSettings() has read CONFERENCE.regPrefix from
+    // schema_meta, and only ever repairs pre-existing legacy rows -- so it
+    // intentionally stays on the literal historical prefix rather than
+    // CONFERENCE.regPrefix (unlike assignUserRegNumber, which runs from
+    // request handlers well after boot and does use the live value).
     db.run(
       `UPDATE registrations
           SET registration_number = 'NQOCN2026' || printf('%04d', id)
@@ -1254,17 +1298,17 @@ db.serialize(() => {
   // spot (walk-in) fee defaults to a step above the late fee.
   db.get('SELECT COUNT(*) AS n FROM fee_categories', (err, r) => {
     if (err || (r && r.n > 0)) return;
-    const stmt = db.prepare('INSERT INTO fee_categories (category_key, label, early_fee, regular_fee, late_fee, spot_fee, active, sort_order) VALUES (?, ?, ?, ?, ?, ?, 1, ?)');
+    const stmt = db.prepare('INSERT INTO fee_categories (category_key, label, early_fee, regular_fee, late_fee, spot_fee, active, sort_order, requires_student_id, id_discipline, id_level) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)');
     const seed = [
-      ['nursing_ug', 'Nursing Student UG', 500, 1000, 2000, 2500],
-      ['nursing_pg', 'Nursing Student PG', 750, 1500, 2500, 3000],
-      ['med_student', 'Medical Student UG', 1500, 2200, 3000, 3500],
-      ['nurse_cho', 'Nurse / Paramedical / CHO', 2000, 2800, 3500, 4000],
-      ['pg_doctor', 'PG Student / Resident Doctor', 3000, 4000, 5000, 5500],
-      ['faculty_mo', 'Doctors / Faculty / NHM MO', 3000, 4000, 5000, 5500],
-      ['chw', 'Frontline CHWs (ASHA/ANM/AWW)', 200, 200, 200, 200],
+      ['nursing_ug', 'Nursing Student UG', 500, 1000, 2000, 2500, 1, 'nursing', 'UG'],
+      ['nursing_pg', 'Nursing Student PG', 750, 1500, 2500, 3000, 1, 'nursing', 'PG'],
+      ['med_student', 'Medical Student UG', 1500, 2200, 3000, 3500, 1, 'medical', 'UG'],
+      ['nurse_cho', 'Nurse / Paramedical / CHO', 2000, 2800, 3500, 4000, 0, null, null],
+      ['pg_doctor', 'PG Student / Resident Doctor', 3000, 4000, 5000, 5500, 1, 'medical', 'PG'],
+      ['faculty_mo', 'Doctors / Faculty / NHM MO', 3000, 4000, 5000, 5500, 0, null, null],
+      ['chw', 'Frontline CHWs (ASHA/ANM/AWW)', 200, 200, 200, 200, 0, null, null],
     ];
-    seed.forEach((s, i) => stmt.run(s[0], s[1], s[2], s[3], s[4], s[5], i));
+    seed.forEach((s, i) => stmt.run(s[0], s[1], s[2], s[3], s[4], s[5], i, s[6], s[7], s[8]));
     stmt.finalize();
     console.log('Seeded default fee categories.');
   });
@@ -1426,6 +1470,8 @@ db.serialize(() => {
 
 // One-time backfill: give every existing user a registration number (reusing
 // their registration's number if it has one), then sync registrations to it.
+// Same boot-time-ordering reasoning as the backfill above -- stays on the
+// literal prefix rather than CONFERENCE.regPrefix, which isn't loaded yet.
 db.serialize(() => {
   db.all(
     `SELECT phone_number,
@@ -1858,7 +1904,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     // Student categories must upload an ID card, checked against the category
     // -- this is an eligibility check, not a payment one, so it still applies
     // even when the fee is fully discounted to ₹0.
-    const needsId = !!STUDENT_CATEGORIES[effectiveCategoryKey];
+    const needsId = !!(await studentCategoryInfo(effectiveCategoryKey));
     let idDecoded = null;
     if (needsId) {
       if (!idCard) {
@@ -2300,7 +2346,7 @@ app.get('/api/fees', requireAuth, async (req, res, next) => {
   try {
     const config = await getFeeConfig();
     const phase = currentPhase(config);
-    const cats = await dbAll('SELECT category_key, label, subtitle, early_fee, regular_fee, late_fee, spot_fee FROM fee_categories WHERE active = 1 ORDER BY sort_order, id');
+    const cats = await dbAll('SELECT category_key, label, subtitle, early_fee, regular_fee, late_fee, spot_fee, requires_student_id FROM fee_categories WHERE active = 1 ORDER BY sort_order, id');
     res.json({
       phase,
       earlyUntil: config ? config.early_until : null,
@@ -2311,6 +2357,7 @@ app.get('/api/fees', requireAuth, async (req, res, next) => {
         label: c.label,
         subtitle: c.subtitle || '',
         fee: { early: c.early_fee, regular: c.regular_fee, late: c.late_fee, spot: c.spot_fee }[phase],
+        requiresStudentId: !!c.requires_student_id,
       })),
       upi: { id: UPI.id, payeeName: UPI.payeeName },
     });
@@ -2865,7 +2912,7 @@ app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', '
       const checks = await runOcrChecks(buffer, { expectedAmount: reg.expected_amount, utr: reg.utr_number });
       if (reg.payment_mode === 'NEFT_RTGS') checks.vpa = true;
 
-      const needsId = !!STUDENT_CATEGORIES[reg.category_key];
+      const needsId = !!(await studentCategoryInfo(reg.category_key));
       let idMatch = null;
       if (needsId) {
         const idBuffer = await readStoredUpload(reg.id_card);
@@ -2946,7 +2993,7 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
     // Student categories additionally require an approver to have confirmed
     // the uploaded ID card verifies that status (the automated OCR check is
     // only advisory) -- see PUT .../verify-id.
-    if (bankStatus === 'BANK_VERIFIED' && STUDENT_CATEGORIES[existing.category_key] && !existing.id_verified) {
+    if (bankStatus === 'BANK_VERIFIED' && (await studentCategoryInfo(existing.category_key)) && !existing.id_verified) {
       return res.status(400).json({
         success: false,
         error: 'This is a student registration and its ID card has not been verified by an approver yet. Verify the student ID before approving.',
@@ -3210,7 +3257,7 @@ app.put('/api/registrations/:id/verify-id', requireRole('SUPER_ADMIN', 'FINANCE_
     const verified = !!req.body.verified;
     const existing = await dbGet('SELECT id, category_key, id_verified FROM registrations WHERE id = ?', [req.params.id]);
     if (!existing) return res.status(404).json({ success: false, error: 'Registration not found.' });
-    if (!STUDENT_CATEGORIES[existing.category_key]) {
+    if (!(await studentCategoryInfo(existing.category_key))) {
       return res.status(400).json({ success: false, error: 'This category does not require student ID verification.' });
     }
     await dbRun(
@@ -3842,6 +3889,19 @@ const feeFields = (b) => ({
   early: Number(b.earlyFee), regular: Number(b.regularFee), late: Number(b.lateFee), spot: Number(b.spotFee),
 });
 
+// discipline/level stay a closed enum -- see the comment on studentCategoryInfo
+// for why (runIdCardCheck's OCR keyword matching only recognizes these four
+// combinations). Returns null on a bad request body rather than throwing, so
+// callers can turn that into a clean 400.
+function studentIdFields(b) {
+  const requiresStudentId = !!b.requiresStudentId;
+  if (!requiresStudentId) return { requiresStudentId: false, idDiscipline: null, idLevel: null };
+  const idDiscipline = String(b.idDiscipline || '');
+  const idLevel = String(b.idLevel || '');
+  if (!['nursing', 'medical'].includes(idDiscipline) || !['UG', 'PG'].includes(idLevel)) return null;
+  return { requiresStudentId: true, idDiscipline, idLevel };
+}
+
 app.get('/api/admin/fees', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
     const config = await getFeeConfig();
@@ -4058,7 +4118,7 @@ app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
         from: EMAIL.from, fromName: EMAIL.fromName, region: EMAIL.region, digestRecipients: EMAIL.digestRecipients,
       },
       upi: { id: UPI.id, payeeName: UPI.payeeName },
-      conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym, startDate: CONFERENCE.startDate, endDate: CONFERENCE.endDate, location: CONFERENCE.location },
+      conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym, startDate: CONFERENCE.startDate, endDate: CONFERENCE.endDate, location: CONFERENCE.location, regPrefix: CONFERENCE.regPrefix },
       otherEnvVars: describeOtherEnvVars(),
     });
   } catch (err) {
@@ -4092,7 +4152,7 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
       [sms, SMS, { sender: 'Sender ID', url: 'Gateway URL', entityId: 'DLT Entity ID', templateId: 'DLT Template ID', headerId: 'DLT Header ID', type: 'Message Type' }],
       [email, EMAIL, { from: 'From address', fromName: 'From name', region: 'AWS Region' }],
       [upi, UPI, { id: 'UPI ID', payeeName: 'Payee Name' }],
-      [conference, CONFERENCE, { name: 'Conference Name' }], // acronym/dates/location are optional and may be cleared
+      [conference, CONFERENCE, { name: 'Conference Name', regPrefix: 'Registration Number Prefix' }], // acronym/dates/location are optional and may be cleared
     ]) {
       if (!group) continue;
       for (const field of Object.keys(labels)) {
@@ -4112,6 +4172,16 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
       if (parts.some((p) => !/^\d{10}$/.test(p))) {
         return res.status(400).json({ success: false, error: 'Digest recipients must be a comma-separated list of 10-digit mobile numbers.' });
       }
+    }
+
+    // Registration prefix is concatenated directly in front of a zero-padded
+    // sequence number to form every new registration number (see
+    // assignUserRegNumber) and is printed on receipts/reports, so it's
+    // restricted to plain alphanumerics -- no spaces, punctuation, or line
+    // breaks that could look broken or, worse, get misread when quoted back.
+    if (conference && conference.regPrefix !== undefined && String(conference.regPrefix).trim()
+      && !/^[A-Za-z0-9]{1,20}$/.test(String(conference.regPrefix).trim())) {
+      return res.status(400).json({ success: false, error: 'Registration Number Prefix must be 1-20 letters/numbers only.' });
     }
 
     const changes = [];
@@ -4142,7 +4212,7 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
       new Set(['digestRecipients']));
     await applyFields(upi, UPI, { id: 'upi_id', payeeName: 'upi_payee_name' });
     await applyFields(conference, CONFERENCE,
-      { name: 'conference_name', acronym: 'conference_acronym', startDate: 'conference_start_date', endDate: 'conference_end_date', location: 'conference_location' },
+      { name: 'conference_name', acronym: 'conference_acronym', startDate: 'conference_start_date', endDate: 'conference_end_date', location: 'conference_location', regPrefix: 'conference_reg_prefix' },
       new Set(['acronym', 'startDate', 'endDate', 'location']));
 
     // Credentials persist to .env, never to schema_meta. The change log records
@@ -4305,15 +4375,18 @@ app.post('/api/admin/fees/categories', requireRole('SUPER_ADMIN'), async (req, r
     if ([f.early, f.regular, f.late, f.spot].some((x) => !Number.isFinite(x) || x < 0)) {
       return res.status(400).json({ success: false, error: 'Fees must be non-negative numbers.' });
     }
+    const sid = studentIdFields(req.body);
+    if (!sid) return res.status(400).json({ success: false, error: 'Choose a discipline and level for the student ID requirement.' });
     const max = await dbGet('SELECT COALESCE(MAX(sort_order), -1) AS m FROM fee_categories');
     const result = await dbRun(
-      'INSERT INTO fee_categories (category_key, label, subtitle, early_fee, regular_fee, late_fee, spot_fee, active, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)',
-      [categoryKey, String(label).trim(), subtitle ? String(subtitle).trim() : '', f.early, f.regular, f.late, f.spot, max.m + 1]
+      'INSERT INTO fee_categories (category_key, label, subtitle, early_fee, regular_fee, late_fee, spot_fee, active, sort_order, requires_student_id, id_discipline, id_level) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)',
+      [categoryKey, String(label).trim(), subtitle ? String(subtitle).trim() : '', f.early, f.regular, f.late, f.spot, max.m + 1, sid.requiresStudentId ? 1 : 0, sid.idDiscipline, sid.idLevel]
     );
     await recordAudit({
       req, entityType: 'fee_category', entityId: result.lastID,
       action: 'FEE_CATEGORY_CREATE', oldValue: null,
-      newValue: `${categoryKey} "${String(label).trim()}" — early ₹${inr(f.early)}, regular ₹${inr(f.regular)}, late ₹${inr(f.late)}, spot ₹${inr(f.spot)}`,
+      newValue: `${categoryKey} "${String(label).trim()}" — early ₹${inr(f.early)}, regular ₹${inr(f.regular)}, late ₹${inr(f.late)}, spot ₹${inr(f.spot)}`
+        + (sid.requiresStudentId ? `, requires student ID (${sid.idDiscipline}/${sid.idLevel})` : ''),
     });
     res.json({ success: true });
   } catch (err) {
@@ -4334,19 +4407,29 @@ app.put('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (req
       return res.status(400).json({ success: false, error: 'Fees must be non-negative numbers.' });
     }
     // Label and subtitle are set once at category creation and are not
-    // editable afterwards -- only fees and active status can be updated here.
+    // editable afterwards -- only fees, active status, and the student-ID
+    // requirement can be updated here. requiresStudentId is left untouched
+    // when the field is absent from the body (same "absent = no change"
+    // convention as active), so a plain fee edit never has to resend it.
+    let sid = { requiresStudentId: !!existing.requires_student_id, idDiscipline: existing.id_discipline, idLevel: existing.id_level };
+    if (req.body.requiresStudentId !== undefined) {
+      const parsed = studentIdFields(req.body);
+      if (!parsed) return res.status(400).json({ success: false, error: 'Choose a discipline and level for the student ID requirement.' });
+      sid = parsed;
+    }
     const updated = {
       active: active !== undefined ? (active ? 1 : 0) : existing.active,
     };
     await dbRun(
-      'UPDATE fee_categories SET early_fee = ?, regular_fee = ?, late_fee = ?, spot_fee = ?, active = ? WHERE id = ?',
-      [f.early, f.regular, f.late, f.spot, updated.active, req.params.id]
+      'UPDATE fee_categories SET early_fee = ?, regular_fee = ?, late_fee = ?, spot_fee = ?, active = ?, requires_student_id = ?, id_discipline = ?, id_level = ? WHERE id = ?',
+      [f.early, f.regular, f.late, f.spot, updated.active, sid.requiresStudentId ? 1 : 0, sid.idDiscipline, sid.idLevel, req.params.id]
     );
+    const idNote = (v) => v.requiresStudentId ? `, requires student ID (${v.idDiscipline}/${v.idLevel})` : '';
     await recordAudit({
       req, entityType: 'fee_category', entityId: req.params.id,
       action: 'FEE_CATEGORY_UPDATE',
-      oldValue: `${existing.label} — early ₹${inr(existing.early_fee)}, regular ₹${inr(existing.regular_fee)}, late ₹${inr(existing.late_fee)}, spot ₹${inr(existing.spot_fee)}, ${existing.active ? 'active' : 'inactive'}`,
-      newValue: `${existing.label} — early ₹${inr(f.early)}, regular ₹${inr(f.regular)}, late ₹${inr(f.late)}, spot ₹${inr(f.spot)}, ${updated.active ? 'active' : 'inactive'}`,
+      oldValue: `${existing.label} — early ₹${inr(existing.early_fee)}, regular ₹${inr(existing.regular_fee)}, late ₹${inr(existing.late_fee)}, spot ₹${inr(existing.spot_fee)}, ${existing.active ? 'active' : 'inactive'}${idNote({ requiresStudentId: !!existing.requires_student_id, idDiscipline: existing.id_discipline, idLevel: existing.id_level })}`,
+      newValue: `${existing.label} — early ₹${inr(f.early)}, regular ₹${inr(f.regular)}, late ₹${inr(f.late)}, spot ₹${inr(f.spot)}, ${updated.active ? 'active' : 'inactive'}${idNote(sid)}`,
     });
     res.json({ success: true });
   } catch (err) {

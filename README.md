@@ -9,11 +9,10 @@ Healthcare Quality & Patient Safety 2026* / NQOCN 2026 at MGIMS Sevagram),
 but the conference's identity, fee structure, and program tracks are all
 admin-editable rather than hardcoded — see **Settings → General** below.
 
-Categories that require a student ID upload (nursing/medical UG/PG) reflect
-this deployment's delegate mix; if you're adapting this for a different kind
-of conference, that logic (`STUDENT_CATEGORIES` in `server.js`) is the one
-place still specific to a healthcare-education audience rather than
-admin-configurable.
+Which categories require a student ID upload is admin-editable per category
+(Settings → Fees) rather than hardcoded, but the automated OCR check behind
+it still only recognizes a nursing/medical × UG/PG vocabulary — see Student
+ID verification below for what that means for a non-healthcare deployment.
 
 ## How to Run
 
@@ -71,11 +70,14 @@ sandbox (in sandbox, only verified recipients receive mail).
 A single admin page (`/admin` → Settings → General) for everything that used
 to require editing code and redeploying:
 
-- **Conference Details** — full name, acronym, dates, and location, used
-  across confirmation emails, the payment receipt, printable reports, the
-  discount-code voucher, and the public delegate landing page (dates render
-  as "21–22 Nov 2026" or, spanning months, "28 Nov – 2 Dec 2026"). This is
-  the main lever for retargeting the portal at a different event.
+- **Conference Details** — full name, acronym, dates, location, and the
+  registration-number prefix, used across confirmation emails, the payment
+  receipt, printable reports, the discount-code voucher, and the public
+  delegate landing page (dates render as "21–22 Nov 2026" or, spanning
+  months, "28 Nov – 2 Dec 2026"). This is the main lever for retargeting the
+  portal at a different event. Changing the registration-number prefix only
+  affects registrations created after the change — see Registration number
+  & receipt below.
 - **SMS** — sender ID, gateway URL, DLT entity/template/header IDs, message
   type, and the API key itself, plus the on/off switch (turning SMS off also
   stops login OTPs).
@@ -273,11 +275,14 @@ access to fetch it.
 
 ## Registration number & receipt
 
-Each registration is assigned a stable unique number at submission —
-currently a fixed `NQOCN2026` prefix plus a zero-padded sequence
-(`assignUserRegNumber()` in `server.js`); unlike the conference name/acronym,
-this prefix is not yet wired to Settings → General, so retargeting the portal
-at a different event means changing that one string in code. The number, the
+Each registration is assigned a stable unique number at submission: the
+prefix set in Settings → General → Conference Details → Registration Number
+Prefix (default `NQOCN2026`, letters/numbers only), plus a 4+-digit
+zero-padded sequence shared by every registration regardless of prefix
+(`assignUserRegNumber()` in `server.js`) — e.g. `NQOCN20261188`. Changing the
+prefix only affects registrations created after the change; existing numbers
+are never rewritten, so a deployment that retargets mid-event ends up with
+old- and new-prefix numbers coexisting, by design. The number, the
 chosen workshop and QI practice, and a **View / Download Receipt** button are
 shown to the delegate only once the payment is verified; before that the
 dashboard shows the register/pay action. `GET /api/registrations/me/receipt`
@@ -299,8 +304,9 @@ early/regular/late fees) plus a global `fee_config` with the two cutoff dates.
 The active phase is computed from today's date (on/before early cutoff = early;
 on/before regular cutoff = regular; after = late). The delegate form and the
 authoritative fee both come from the master via `GET /api/fees`; the admin
-**Fees** tab edits the dates and per-category fees. Deleting a category in use
-is refused (deactivate instead).
+**Fees** tab edits the dates, per-category fees, and (see Student ID
+verification below) whether a category requires a student ID upload.
+Deleting a category in use is refused (deactivate instead).
 
 ## Workshops & QI practices (capacity-limited)
 
@@ -318,15 +324,28 @@ reports.
 
 ## Student ID verification
 
-Categories flagged as student categories (see `STUDENT_CATEGORIES` in
-`server.js` — currently nursing and medical UG/PG, reflecting this
-deployment's delegate mix) must upload a student ID card with their
-registration. The server OCRs the card and does a preliminary check that its
-discipline and level match the chosen category. Like the payment checks this
-is advisory: a mismatch flags the registration for manual review rather than
-blocking it. The card is stored in `uploads/` and served only through the
-authed `GET /api/registrations/:id/id-card` route (owner or finance admin).
-Finance sees the ID check result and a link to view the card.
+Whether a category requires a student ID upload is set per category from
+Settings → Fees (a "Student ID" dropdown next to its fees: **Not required**,
+or one of **Nursing UG/PG** / **Medical UG/PG**). A category so flagged must
+upload a student ID card with registration; the server OCRs the card and does
+a preliminary check that its discipline and level match. Like the payment
+checks this is advisory: a mismatch flags the registration for manual review
+rather than blocking it — an approver still confirms the ID before the
+registration can be verified (`PUT /api/registrations/:id/verify-id`).
+
+The four dropdown options are a closed set (the API rejects anything else)
+because the OCR keyword matcher (`detectIdAttributes()` in `server.js`) only
+recognizes nursing/medical UG/PG vocabulary — the one piece of this still
+specific to a healthcare-education audience. Any category can be flagged as
+requiring an ID and matched against one of the four combos, but a
+conference with a genuinely different student population (e.g. engineering,
+law) can't add its own discipline/level through this UI — extending
+`detectIdAttributes()`'s keyword patterns is a code change, not an admin
+setting.
+
+The card is stored in `uploads/` and served only through the authed
+`GET /api/registrations/:id/id-card` route (owner or finance admin). Finance
+sees the ID check result and a link to view the card.
 
 ## Discount codes & group discounts
 
@@ -365,12 +384,16 @@ crash.
   Settings → General. This matches how every other secret in this app is
   already handled, but is worth knowing if you're evaluating this for an
   environment that requires a managed secrets store.
-- A couple of identifiers are still fixed rather than admin-configurable if
-  you're retargeting this at a different event: the registration-number
-  prefix (`NQOCN2026`, in `server.js`) and the student-category
-  discipline/level checks (`STUDENT_CATEGORIES`). The session cookie name and
-  the daily-digest recipient list are now admin-configurable too — see
-  Authentication & sessions and Settings → General above. Conference
-  name/acronym/dates/location, fee structure, program tracks, discount
-  codes, SMS/Email provider config, and the UPI payment ID are all
-  admin-editable without a code change.
+- The session cookie name, the daily-digest recipient list, the
+  registration-number prefix, and which categories require a student ID are
+  all admin-configurable — see Authentication & sessions, Settings →
+  General, Registration number & receipt, and Student ID verification
+  above. Conference name/acronym/dates/location, fee structure, program
+  tracks, discount codes, SMS/Email provider config, and the UPI payment ID
+  are all admin-editable too, without a code change.
+- The student-ID OCR check itself is still limited to a fixed
+  nursing/medical × UG/PG vocabulary (`detectIdAttributes()` in
+  `server.js`) — any category can require an ID and be matched against one
+  of those four combos, but a conference with a different student
+  population can't teach it new keywords without a code change. See Student
+  ID verification above.

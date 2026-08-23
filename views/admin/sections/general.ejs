@@ -10,6 +10,11 @@
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Location <span class="font-normal text-slate-400">(optional)</span></label><input id="gs-conf-location" placeholder="e.g. MGIMS, Sevagram" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Start Date <span class="font-normal text-slate-400">(optional)</span></label><input id="gs-conf-startdate" type="date" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">End Date <span class="font-normal text-slate-400">(optional)</span></label><input id="gs-conf-enddate" type="date" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
+          <div class="sm:col-span-2 border-t pt-3">
+            <label class="block text-[10px] font-semibold text-slate-600 mb-1">Registration Number Prefix</label>
+            <input id="gs-conf-regprefix" required pattern="[A-Za-z0-9]{1,20}" placeholder="e.g. NQOCN2026" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
+            <p class="text-[10px] text-slate-400 mt-1">Letters/numbers only. Prefixed to every new registration number going forward (e.g. NQOCN20261188) — changing it does <b>not</b> renumber existing registrations.</p>
+          </div>
           <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Conference Details</button></div>
         </form>
       </div>
