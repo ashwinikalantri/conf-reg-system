@@ -1575,12 +1575,22 @@ function fmtAuditTime(ms) {
   return isNaN(d) ? '' : d.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+// Which broad capabilities a role grants. Single source of truth -- used by
+// applyRoleVisibility() to show/hide chrome and by allowedBackendTabs() to
+// decide which tabs may be opened, so the two can't drift apart.
+function rolesFor(role) {
+  const isSuper = role === 'SUPER_ADMIN';
+  return {
+    isSuper,
+    isFinance: isSuper || role === 'FINANCE_ADMIN' || role === 'FINANCE_ACADEMIC',
+    isReviewer: isSuper || role === 'ACADEMIC_REVIEWER' || role === 'FINANCE_ACADEMIC',
+  };
+}
+
 // Show only the nav tabs and default to the first section this admin's role
 // is allowed to use.
 function applyRoleVisibility(role) {
-  const isSuper = role === 'SUPER_ADMIN';
-  const isFinance = isSuper || role === 'FINANCE_ADMIN' || role === 'FINANCE_ACADEMIC';
-  const isReviewer = isSuper || role === 'ACADEMIC_REVIEWER' || role === 'FINANCE_ACADEMIC';
+  const { isSuper, isFinance, isReviewer } = rolesFor(role);
 
   const tabPayments = document.getElementById('nav-tab-payments');
   const tabStatement = document.getElementById('nav-tab-statement');
@@ -1636,15 +1646,20 @@ async function initBackendPortal() {
 
   const { isSuper, isFinance, isReviewer } = applyRoleVisibility(activeAdminUser.role);
 
-  // Land on the first section the role can actually use, and do it now --
-  // before the awaited renders below, not after. Switching tabs here first
-  // means an admin who clicks a different tab while data is still loading
-  // stays where they clicked; switching again afterwards would silently
-  // snap them back to this default tab once loading finished.
+  // Land on the section from the URL (so a refresh, bookmark, or shared link
+  // stays put), falling back to the first section this role can actually use.
+  // A hash naming a tab this role can't open -- a stale bookmark, or a link
+  // from a super admin -- falls back too rather than showing an empty page.
+  // Done now, before the awaited renders below, not after: switching tabs
+  // here first means an admin who clicks a different tab while data is still
+  // loading stays where they clicked; switching again afterwards would
+  // silently snap them back once loading finished.
   const defaultTab = isFinance ? 'payments' : isReviewer ? 'abstracts' : 'workshops';
+  const allowed = allowedBackendTabs({ isSuper, isFinance, isReviewer });
+  const hashTab = window.location.hash.slice(1);
   const loading = document.getElementById('admin-initial-loading');
   if (loading) loading.classList.add('hidden');
-  switchBackendTab(defaultTab);
+  switchBackendTab(allowed.includes(hashTab) ? hashTab : defaultTab);
 
   // Render every section this role may see (this also fills the tab badges).
   if (isFinance) await renderBackendPayments();
@@ -4279,7 +4294,31 @@ document.addEventListener('click', (e) => {
 const SETTINGS_TABS = ['workshops', 'qi', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'activity'];
 const MAIN_TABS = ['payments', 'statement', 'abstracts', 'reports'];
 
+// Which tabs each role may open -- the single source of truth used both to
+// pick the landing tab and to validate a tab restored from the URL, so a
+// bookmarked #users can't drop a finance admin on a section they can't see.
+// Mirrors the show/hide rules in applyRoleVisibility().
+function allowedBackendTabs({ isSuper, isFinance, isReviewer }) {
+  const allowed = [];
+  if (isFinance) allowed.push('payments', 'statement');
+  if (isReviewer) allowed.push('abstracts');
+  if (isFinance || isReviewer) allowed.push('reports');
+  if (isFinance) allowed.push('reminders', 'groupdiscount');
+  if (isSuper) allowed.push('workshops', 'qi', 'fees', 'general', 'discount', 'users', 'activity');
+  return allowed;
+}
+
+// The tab currently shown. Kept so the hashchange listener can tell a
+// user-driven back/forward from the hash we just wrote ourselves.
+let currentBackendTab = null;
+
 function switchBackendTab(tab) {
+  currentBackendTab = tab;
+  // Persist in the URL so a refresh (or a bookmark, or back/forward) returns
+  // to the section you were on instead of snapping back to the role default.
+  if (window.location.hash.slice(1) !== tab) {
+    history.replaceState(null, '', `#${tab}`);
+  }
   if (tab === 'groupdiscount') renderGroupsMonitor();
   // General settings was only ever fetched once at initial page load, so
   // switching away and back showed stale data (or none, for a non-super-admin
@@ -4312,6 +4351,17 @@ function switchBackendTab(tab) {
 
   if (tab === 'statement') loadReconciliation();
 }
+
+// Follow the hash if it changes from outside our own navigation -- editing it
+// in the address bar, or following a link to #general. switchBackendTab writes
+// it with replaceState (no new history entry, so clicking through tabs doesn't
+// bury the previous page behind a dozen Back presses), which doesn't emit
+// hashchange, and the guard below ignores a tab already showing.
+window.addEventListener('hashchange', () => {
+  const tab = window.location.hash.slice(1);
+  if (!tab || tab === currentBackendTab || !activeAdminUser) return;
+  if (allowedBackendTabs(rolesFor(activeAdminUser.role)).includes(tab)) switchBackendTab(tab);
+});
 
 // --- BANK STATEMENT RECONCILIATION (admin) ---
 async function handleStatementUpload(e) {
