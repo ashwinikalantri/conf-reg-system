@@ -30,6 +30,8 @@ const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 // the live app but never to this digest, which would keep sending from the
 // stale address indefinitely.
 let CONFERENCE_NAME = 'International Conference on Healthcare Quality & Patient Safety 2026';
+let CONFERENCE_ACRONYM = 'NQOCN 2026';
+let CONFERENCE_LOCATION = 'MGIMS, Sevagram, Wardha';
 const PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
 let EMAIL_FROM = (process.env.SES_FROM || '').trim();
 let EMAIL_FROM_NAME = process.env.SES_FROM_NAME || 'NQOCN 2026';
@@ -39,10 +41,12 @@ let EMAIL_FROM_FORMATTED = EMAIL_FROM ? `"${EMAIL_FROM_NAME.replace(/"/g, '')}" 
 // Pulls the same schema_meta keys server.js's loadGeneralSettings() applies,
 // and re-derives the two values computed from them.
 async function resyncFromSchemaMeta(db) {
-  const keys = ['conference_name', 'email_from', 'email_from_name', 'email_region'];
+  const keys = ['conference_name', 'conference_acronym', 'conference_location', 'email_from', 'email_from_name', 'email_region'];
   const rows = await dbAll(db, `SELECT key, value FROM schema_meta WHERE key IN (${keys.map(() => '?').join(',')})`, keys);
   const byKey = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   if (byKey.conference_name) CONFERENCE_NAME = byKey.conference_name;
+  if (byKey.conference_acronym) CONFERENCE_ACRONYM = byKey.conference_acronym;
+  if (byKey.conference_location) CONFERENCE_LOCATION = byKey.conference_location;
   if (byKey.email_from) EMAIL_FROM = byKey.email_from;
   if (byKey.email_from_name) EMAIL_FROM_NAME = byKey.email_from_name;
   if (byKey.email_region) EMAIL_REGION = byKey.email_region;
@@ -97,7 +101,7 @@ function dbGet(db, sql, params = []) {
 const emailWrap = (title, bodyHtml) =>
   `<div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;color:#0f172a">
      <div style="background:#312e81;color:#fff;padding:1.25rem 1.5rem;border-radius:12px 12px 0 0">
-       <div style="font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:#c7d2fe">NQOCN &amp; MGIMS Sevagram</div>
+       <div style="font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:#c7d2fe">${escapeHtml([CONFERENCE_ACRONYM, CONFERENCE_LOCATION].filter(Boolean).join(' · '))}</div>
        <h1 style="font-size:1.05rem;margin:.35rem 0 0">${escapeHtml(CONFERENCE_NAME)}</h1>
      </div>
      <div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:1.5rem">

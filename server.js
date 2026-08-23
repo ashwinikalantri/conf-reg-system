@@ -302,7 +302,7 @@ async function notifyDelegate(phone, subject, html) {
 const emailWrap = (title, bodyHtml) =>
   `<div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;color:#0f172a">
      <div style="background:#312e81;color:#fff;padding:1.25rem 1.5rem;border-radius:12px 12px 0 0">
-       <div style="font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:#c7d2fe">NQOCN &amp; MGIMS Sevagram</div>
+       <div style="font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:#c7d2fe">${escapeHtml([CONFERENCE.acronym, CONFERENCE.location].filter(Boolean).join(' · '))}</div>
        <h1 style="font-size:1.05rem;margin:.35rem 0 0">${escapeHtml(CONFERENCE.name)}</h1>
      </div>
      <div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:1.5rem">
@@ -2257,6 +2257,21 @@ app.get('/api/program-options', requireAuth, async (req, res, next) => {
   }
 });
 
+// Conference name/acronym/dates/location, for both the pre-login delegate
+// landing page and the admin header -- deliberately public (no requireAuth):
+// none of this is sensitive, and the landing page needs it before anyone has
+// logged in. Settings → General is the only way to change it.
+app.get('/api/conference', (req, res) => {
+  res.json({
+    name: CONFERENCE.name,
+    acronym: CONFERENCE.acronym,
+    startDate: CONFERENCE.startDate,
+    endDate: CONFERENCE.endDate,
+    location: CONFERENCE.location,
+    dateLabel: formatConferenceDates(),
+  });
+});
+
 // Active fee categories with the fee at today's phase, for the payment form.
 app.get('/api/fees', requireAuth, async (req, res, next) => {
   try {
@@ -2536,7 +2551,7 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
 <body>
   <div class="receipt">
     <div class="head">
-      <div class="tag">NQOCN &amp; MGIMS Sevagram · Payment Receipt</div>
+      <div class="tag">${escapeHtml(CONFERENCE.acronym)} · Payment Receipt</div>
       <h1>${escapeHtml(CONFERENCE.name)}</h1>
       <p>${escapeHtml([formatConferenceDates(), CONFERENCE.location].filter(Boolean).join(' · '))}</p>
     </div>
@@ -3951,7 +3966,7 @@ app.get('/api/admin/discount-codes/:id/share', requireRole('SUPER_ADMIN', 'FINAN
   @media print{body{margin:0;}.actions{display:none;}.card{border-style:solid;}}
 </style></head><body>
   <div class="card">
-    <div class="eyebrow">NQOCN 2026 · Discount Code</div>
+    <div class="eyebrow">${escapeHtml(CONFERENCE.acronym)} · Discount Code</div>
     <h1>${escapeHtml(CONFERENCE.name)}</h1>
     <div class="code">${escapeHtml(code.code)}</div>
     <div class="discount">${discountLine}</div>
@@ -4779,7 +4794,7 @@ function reportHtml(rep) {
   button{background:#4f46e5;color:#fff;border:0;border-radius:8px;padding:.55rem 1.25rem;font-weight:700;cursor:pointer;}
   @media print{body{margin:0;}.actions{display:none;}}
 </style></head><body>
-  <h1>NQOCN 2026 · ${escapeHtml(rep.title)}</h1>
+  <h1>${escapeHtml(CONFERENCE.acronym)} · ${escapeHtml(rep.title)}</h1>
   <p class="sub">Generated ${escapeHtml(now)} · ${total} record(s)</p>
   <div class="actions"><button onclick="window.print()">Print / Save as PDF</button></div>
   ${rep.sections.map(table).join('')}

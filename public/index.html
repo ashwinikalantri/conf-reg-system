@@ -9,9 +9,9 @@
 <body class="bg-slate-100 font-sans min-h-screen flex flex-col justify-center items-center p-4">
 
   <div class="w-full max-w-xl text-center mb-4 px-2">
-    <span class="text-[10px] font-bold uppercase tracking-widest text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">21–22 November 2026</span>
-    <h1 class="text-xl font-extrabold text-slate-800 mt-2">International Conference on Healthcare Quality & Patient Safety 2026</h1>
-    <p class="text-slate-500 text-xs mt-1">MGIMS, Sevagram, Wardha, Maharashtra</p>
+    <span id="conf-date-badge" class="text-[10px] font-bold uppercase tracking-widest text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">21–22 November 2026</span>
+    <h1 id="conf-name-h1" class="text-xl font-extrabold text-slate-800 mt-2">International Conference on Healthcare Quality & Patient Safety 2026</h1>
+    <p id="conf-location-line" class="text-slate-500 text-xs mt-1">MGIMS, Sevagram, Wardha, Maharashtra</p>
   </div>
 
   <!-- AUTHENTICATION / PHONE + OTP CREATION (the delegate portal starts here) -->
@@ -357,7 +357,7 @@
                 <img id="upi-qr-image" src="" alt="Dynamic UPI QR Code" class="w-48 h-48 border-2 border-indigo-300 rounded-xl shadow-md p-1 bg-white">
               </div>
               <a id="upi-pay-link" href="#" class="inline-block px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg shadow-sm">Pay via UPI App</a>
-              <p class="text-[10px] text-slate-500">Pays <b>NQOCN 2026</b> · reference is your registration number. On a phone, tap to open your UPI app.</p>
+              <p class="text-[10px] text-slate-500">Pays <b id="upi-payee-label">NQOCN 2026</b> · reference is your registration number. On a phone, tap to open your UPI app.</p>
               <p>
                 <button type="button" onclick="setPaymentMode('NEFT_RTGS')" class="text-xs text-indigo-600 hover:text-indigo-800 underline font-semibold">UPI not working? Pay by Bank Transfer instead</button>
               </p>
@@ -478,7 +478,7 @@
           <li>Accepted for <b>Oral</b> (5 min + 2 min discussion) or <b>Poster</b> presentation.</li>
           <li>Reviewed by an expert scientific committee; decisions are final.</li>
           <li>Top 5 papers are selected for the Award Paper Session (NQOCN Gold Medal).</li>
-          <li>Presentations: <b>22 November 2026</b>; time &amp; venue communicated in advance.</li>
+          <li>Presentations: <b id="conf-presentations-date">22 November 2026</b>; time &amp; venue communicated in advance.</li>
         </ul>
       </div>
 

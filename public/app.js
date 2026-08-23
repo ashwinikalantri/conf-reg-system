@@ -4,6 +4,65 @@
 let OFFICIAL_UPI_ID = "abhishekraut@cbin";
 let OFFICIAL_UPI_PAYEE_NAME = "NQOCN 2026";
 
+// Conference name/acronym/dates/location, admin-editable from Settings →
+// General. These fallback values match server.js's CONFERENCE defaults, used
+// only until loadConferenceInfo() resolves (or if the fetch fails). Every
+// page load calls it (see the DOMContentLoaded listener below) so the
+// landing page, admin header, and reminder composer default text all reflect
+// the current setting without a code change.
+let conferenceInfo = {
+  name: 'International Conference on Healthcare Quality & Patient Safety 2026',
+  acronym: 'NQOCN 2026',
+  startDate: '2026-11-21',
+  endDate: '2026-11-22',
+  location: 'MGIMS, Sevagram, Wardha',
+  dateLabel: '21–22 Nov 2026',
+};
+
+async function loadConferenceInfo() {
+  try {
+    const data = await (await fetch('/api/conference')).json();
+    conferenceInfo = { ...conferenceInfo, ...data };
+  } catch (e) {
+    /* keep the fallback defaults above */
+  }
+  applyConferenceInfoToDom();
+}
+
+// Full month name, e.g. "22 November 2026" -- matches the wording already on
+// the landing page (formatConferenceDates() server-side uses short "Nov" for
+// the compact date-range badge instead; both read from the same fields).
+function formatFullDate(isoDate) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate || '');
+  if (!m) return '';
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}`;
+}
+
+function applyConferenceInfoToDom() {
+  const c = conferenceInfo;
+  document.title = document.title.includes('Admin') ? `${c.acronym} - Admin & Backend Portal` : c.name;
+
+  const nameEl = document.getElementById('conf-name-h1');
+  if (nameEl) nameEl.textContent = c.name + (nameEl.dataset.suffix || '');
+
+  const dateBadge = document.getElementById('conf-date-badge');
+  if (dateBadge && c.dateLabel) dateBadge.textContent = c.dateLabel;
+
+  const locationLine = document.getElementById('conf-location-line');
+  if (locationLine && c.location) locationLine.textContent = c.location;
+
+  const presentDate = document.getElementById('conf-presentations-date');
+  if (presentDate) presentDate.textContent = formatFullDate(c.endDate) || presentDate.textContent;
+
+  // Reminder composer defaults (admin only) -- set once at load, well before
+  // an admin could have opened the panel and started typing.
+  const subjectInput = document.getElementById('reminder-subject');
+  if (subjectInput && document.activeElement !== subjectInput) {
+    subjectInput.value = `Complete your registration for ${c.acronym}`;
+  }
+}
+
 // Categories that must upload a student ID card (kept in sync with the server).
 const STUDENT_CATEGORIES = ['nursing_ug', 'nursing_pg', 'med_student', 'pg_doctor'];
 
@@ -783,7 +842,10 @@ async function loadFees() {
     feeCategories = {};
     (data.categories || []).forEach((c) => { feeCategories[c.key] = c; });
     if (data.upi && data.upi.id) OFFICIAL_UPI_ID = data.upi.id;
-    if (data.upi && data.upi.payeeName) OFFICIAL_UPI_PAYEE_NAME = data.upi.payeeName;
+    if (data.upi && data.upi.payeeName) {
+      OFFICIAL_UPI_PAYEE_NAME = data.upi.payeeName;
+      setText('upi-payee-label', OFFICIAL_UPI_PAYEE_NAME);
+    }
     const sel = document.getElementById('payment-category');
     if (sel) {
       const current = sel.value;
@@ -1340,6 +1402,10 @@ async function loadDirectorySuggestions() {
   }
 }
 document.addEventListener('DOMContentLoaded', loadDirectorySuggestions);
+// Public (no login required) -- runs on both the delegate landing page and
+// the admin panel, so conference name/dates/location/acronym shown as static
+// page text everywhere reflect the current Settings → General value.
+document.addEventListener('DOMContentLoaded', loadConferenceInfo);
 
 // --- ADMIN & BACKEND LOGIC ---
 
@@ -3199,7 +3265,7 @@ function openShareDiscountModal(id) {
   // Deliberately emoji-free: emoji in this message rendered as tofu/blanks on
   // some recipients' devices, so the structure comes from WhatsApp's own
   // *bold* markup instead of decorative characters.
-  const message = `*NQOCN 2026 — Discount Code*\n\n` +
+  const message = `*${conferenceInfo.acronym} — Discount Code*\n\n` +
     `Code: *${c.code}*\n` +
     `Discount: ${discountLine}${scopeLine}${expiryLine}\n\n` +
     `How to use:\n` +
@@ -3645,13 +3711,22 @@ function reportWorkshopQuery() {
 
 // --- REGISTRATION REMINDERS (admin) ---
 
-const REMINDER_DEFAULT_BODY = `<p>Dear {{name}},</p>
-<p>Thanks for signing up for the International Conference on Healthcare Quality &amp; Patient Safety 2026 (21&ndash;22 November 2026, MGIMS, Sevagram, Wardha). We noticed your registration isn't complete yet &mdash; your account is set up, but we haven't received your payment details.</p>
+// Built fresh (not a frozen const) so it always reflects the current
+// conference name/dates/location, same as the reminder-subject default.
+function reminderDefaultBody() {
+  const c = conferenceInfo;
+  const start = formatFullDate(c.startDate);
+  const end = formatFullDate(c.endDate);
+  const dateRange = (start && end && c.startDate !== c.endDate) ? `${start} – ${end}` : (start || end);
+  const when = [dateRange, c.location].filter(Boolean).join(', ');
+  return `<p>Dear {{name}},</p>
+<p>Thanks for signing up for the ${esc(c.name)}${when ? ` (${esc(when)})` : ''}. We noticed your registration isn't complete yet &mdash; your account is set up, but we haven't received your payment details.</p>
 <p>Completing your registration only takes a couple of minutes.</p>
 <p style="text-align:center;margin:1.5rem 0">
-  <a href="https://registration.mgims.ac.in" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Complete My Registration</a>
+  <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Complete My Registration</a>
 </p>
 <p>If you've already registered, please disregard this email.</p>`;
+}
 
 let cachedReminderRecipients = [];
 let reminderIsSuper = false;
@@ -3674,7 +3749,7 @@ async function renderBackendReminders(isSuper) {
   setText('reminders-count', String(cachedReminderRecipients.length));
 
   const bodyBox = document.getElementById('reminder-body');
-  if (bodyBox && !bodyBox.value.trim()) bodyBox.value = REMINDER_DEFAULT_BODY;
+  if (bodyBox && !bodyBox.value.trim()) bodyBox.value = reminderDefaultBody();
 
   const list = document.getElementById('reminders-list');
   if (list) {
