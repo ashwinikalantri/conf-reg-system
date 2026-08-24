@@ -1710,7 +1710,10 @@ async function initBackendPortal() {
   if (isFinance) await renderBackendPayments();
   if (isFinance) renderDelegateMap();
   if (isReviewer) await renderBackendAbstracts();
-  if (isSuper) await loadBackendUsers();
+  // Users & Roles is also open to OPERATIONS (see allowedBackendTabs/
+  // applyRoleVisibility above) -- everything below this line stays
+  // isSuper-only, since those are the SUPER_ADMIN-only masters.
+  if (isSuper || isOperations) await loadBackendUsers();
   if (isSuper) await renderBackendPrograms();
   if (isSuper) await renderBackendFees();
   if (isSuper) await renderDiscountCodes();
