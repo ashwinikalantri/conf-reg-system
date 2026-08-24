@@ -74,7 +74,10 @@ if (COOKIE_SECURE) app.set('trust proxy', 1);
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
-const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC'];
+// OPERATIONS is deliberately not in ROLE_IMPLIES below -- it grants exactly
+// two things (all reports, Users & Roles), not the Payments/Bank
+// Statement/Abstracts actions FINANCE_ADMIN or ACADEMIC_REVIEWER carry.
+const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC', 'OPERATIONS'];
 
 // Some roles imply others for permission checks. FINANCE_ACADEMIC is a combined
 // role that grants both finance-admin and academic-reviewer access; every other
@@ -101,13 +104,14 @@ const CONFERENCE = {
 };
 const PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
 
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 // "21–22 Nov 2026" (same month) or "28 Nov – 2 Dec 2026" (spanning months),
 // from the YYYY-MM-DD strings Settings → General's date inputs produce.
 function formatConferenceDates() {
-  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const parse = (d) => {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || '');
-    return m ? { year: m[1], month: MONTHS[Number(m[2]) - 1], day: Number(m[3]) } : null;
+    return m ? { year: m[1], month: SHORT_MONTHS[Number(m[2]) - 1], day: Number(m[3]) } : null;
   };
   const s = parse(CONFERENCE.startDate);
   const e = parse(CONFERENCE.endDate);
@@ -119,6 +123,15 @@ function formatConferenceDates() {
   }
   const one = s || e;
   return `${one.day} ${one.month} ${one.year}`;
+}
+
+// "28 Aug 2026" from a YYYY-MM-DD string (the format HTML date inputs
+// produce, e.g. discount_codes.expires_at). Returns '' on anything else --
+// callers treat that the same as "no date" rather than printing garbage.
+function formatDMY(dateStr) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr || '');
+  if (!m) return '';
+  return `${Number(m[3])} ${SHORT_MONTHS[Number(m[2]) - 1]} ${m[1]}`;
 }
 
 // --- .ENV FILE HELPERS ---------------------------------------------------
@@ -3526,7 +3539,7 @@ app.get('/api/registrations/:id/audit', requireRole('SUPER_ADMIN', 'FINANCE_ADMI
 });
 
 // User administration (super admin only).
-app.get('/api/users', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.get('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res, next) => {
   try {
     const rows = await dbAll(
       `SELECT users.*, r.bank_status AS registration_status,
@@ -3541,7 +3554,7 @@ app.get('/api/users', requireRole('SUPER_ADMIN'), async (req, res, next) => {
 
 // Full profile for the Users side-panel: demography, contact, registration +
 // payment ledger, workshop/QI enrollment, and a best-effort signup date.
-app.get('/api/users/:phone/detail', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.get('/api/users/:phone/detail', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res, next) => {
   try {
     const phone = req.params.phone;
     const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
@@ -3572,6 +3585,11 @@ app.get('/api/users/:phone/detail', requireRole('SUPER_ADMIN'), async (req, res,
 // Edit a user's demographic / contact details (super admin only). Role and
 // registration data are managed through their own endpoints; this only
 // touches the profile fields.
+// Demographic edits (salutation, age, district, etc.) stay Super-Admin-only
+// -- OPERATIONS gets user listing/detail, creating staff accounts, and role
+// changes (see the routes below), but editing a delegate's personal details
+// is a separate capability the "reports + user and role" request didn't ask
+// for, so it's left narrower on purpose.
 app.put('/api/users/:phone', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
     const phone = req.params.phone;
@@ -3598,7 +3616,7 @@ app.put('/api/users/:phone', requireRole('SUPER_ADMIN'), async (req, res, next) 
   }
 });
 
-app.post('/api/users', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.post('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res, next) => {
   try {
     const { name, phone, designation, institute, role } = req.body;
     if (!phone || !/^\d{10}$/.test(phone)) {
@@ -3606,6 +3624,12 @@ app.post('/api/users', requireRole('SUPER_ADMIN'), async (req, res, next) => {
     }
     if (!ADMIN_ROLES.includes(role) && role !== 'DELEGATE') {
       return res.status(400).json({ success: false, error: 'Invalid role.' });
+    }
+    // OPERATIONS gets Users & Roles so it can manage staff accounts, but not
+    // so it can hand out (or hand itself) the one role above it -- only an
+    // existing SUPER_ADMIN can create another.
+    if (role === 'SUPER_ADMIN' && req.session.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ success: false, error: 'Only a Super Admin can grant Super Admin.' });
     }
     await dbRun(
       'INSERT INTO users (phone_number, full_name, designation, institution, role, created_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -3620,11 +3644,24 @@ app.post('/api/users', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   }
 });
 
-app.put('/api/users/:phone/role', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.put('/api/users/:phone/role', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res, next) => {
   try {
     const { role } = req.body;
     if (!ADMIN_ROLES.includes(role) && role !== 'DELEGATE') {
       return res.status(400).json({ success: false, error: 'Invalid role.' });
+    }
+    // Same escalation boundary as user creation: OPERATIONS can move anyone
+    // between the other roles, but can't grant Super Admin, and can't touch
+    // an existing Super Admin's role (grant OR demote) -- both directions
+    // would otherwise let OPERATIONS tamper with the role above it.
+    if (req.session.role !== 'SUPER_ADMIN') {
+      if (role === 'SUPER_ADMIN') {
+        return res.status(403).json({ success: false, error: 'Only a Super Admin can grant Super Admin.' });
+      }
+      const target = await dbGet('SELECT role FROM users WHERE phone_number = ?', [req.params.phone]);
+      if (target && target.role === 'SUPER_ADMIN') {
+        return res.status(403).json({ success: false, error: 'Only a Super Admin can change another Super Admin\'s role.' });
+      }
     }
     await dbRun('UPDATE users SET role = ? WHERE phone_number = ?', [role, req.params.phone]);
     res.json({ success: true });
@@ -3742,6 +3779,130 @@ app.post('/api/admin/reminders/send', requireRole('SUPER_ADMIN'), async (req, re
     }
 
     res.json({ success: true, sent, skippedNoEmail, skippedSentRecently, total: recipients.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Same shape as the pending-signup reminders above, for the other worklist
+// that benefits from a nudge: PARTIAL_PAYMENT registrations, where the admin
+// has revised the payment after a fee change and the delegate owes a
+// balance (see isBalanceDue() client-side / the Awaiting Balance Payment
+// section). registrations.phone_number is not aliased here because
+// DELEGATE_SALUTATION_COLUMN's subquery hardcodes that table name.
+const BALANCE_DUE_QUERY =
+  `SELECT registrations.id, registrations.phone_number, registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN},
+     category_label, expected_amount, u.email,
+     (SELECT MAX(created_at) FROM audit_log a
+        WHERE a.entity_type = 'reminder_email' AND a.action = 'BALANCE_DUE_REMINDER_SENT' AND a.entity_id = registrations.phone_number
+     ) AS last_reminder_sent_at
+     FROM registrations
+     LEFT JOIN users u ON u.phone_number = registrations.phone_number
+     WHERE registrations.bank_status = 'PARTIAL_PAYMENT'
+     ORDER BY delegate_name`;
+
+app.get('/api/admin/reminders/balance-due', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const regs = (await dbAll(BALANCE_DUE_QUERY)).map(withDelegateSalutation);
+    const rows = [];
+    for (const r of regs) {
+      const summary = await getPaymentSummary(r.id, r.expected_amount);
+      rows.push({ ...r, paid: summary.verifiedTotal, remaining: summary.remaining });
+    }
+    res.json({ users: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// {{name}} -> "Salutation Full Name", {{amount}} -> the caller's own last
+// PARTIAL_PAYMENT balance if they have one (else ₹0, just so the preview
+// shows something plausible rather than a literal placeholder).
+app.post('/api/admin/reminders/balance-due/test-send', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const { subject, bodyHtml } = req.body;
+    if (!subject || !String(subject).trim()) {
+      return res.status(400).json({ success: false, error: 'Subject is required.' });
+    }
+    if (!bodyHtml || !String(bodyHtml).trim()) {
+      return res.status(400).json({ success: false, error: 'Email body is required.' });
+    }
+    if (!emailEnabled()) {
+      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
+    }
+
+    const me = await dbGet('SELECT salutation, full_name, email FROM users WHERE phone_number = ?', [req.session.phone]);
+    if (!me || !me.email) {
+      return res.status(400).json({ success: false, error: 'No email on file for your own account.' });
+    }
+
+    const myReg = await dbGet(
+      `SELECT id, expected_amount FROM registrations WHERE phone_number = ? AND bank_status = 'PARTIAL_PAYMENT'`,
+      [req.session.phone]);
+    const remaining = myReg ? (await getPaymentSummary(myReg.id, myReg.expected_amount)).remaining : 0;
+
+    const name = [me.salutation, me.full_name].filter(Boolean).join(' ') || 'Delegate';
+    const personalizedBody = String(bodyHtml).split('{{name}}').join(escapeHtml(name)).split('{{amount}}').join(`₹${inr(remaining)}`);
+    await sendEmail(me.email, `[TEST] ${subject}`, emailWrap(subject, personalizedBody));
+
+    res.json({ success: true, sentTo: me.email });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Deliberately SUPER_ADMIN only, same reasoning as /reminders/send: a
+// one-way bulk email blast to real delegates, nothing to undo if wrong.
+app.post('/api/admin/reminders/balance-due/send', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const { subject, bodyHtml, phones } = req.body;
+    if (!subject || !String(subject).trim()) {
+      return res.status(400).json({ success: false, error: 'Subject is required.' });
+    }
+    if (!bodyHtml || !String(bodyHtml).trim()) {
+      return res.status(400).json({ success: false, error: 'Email body is required.' });
+    }
+    if (!emailEnabled()) {
+      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
+    }
+    if (!Array.isArray(phones) || !phones.length) {
+      return res.status(400).json({ success: false, error: 'Select at least one delegate to send to.' });
+    }
+    const phoneSet = new Set(phones.map(String));
+
+    // Same rolling 24h dedupe as the registration reminders, keyed to this
+    // reminder's own action name so the two reminder types never suppress
+    // each other.
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    const sentRecentlyRows = await dbAll(
+      `SELECT DISTINCT entity_id FROM audit_log
+        WHERE entity_type = 'reminder_email' AND action = 'BALANCE_DUE_REMINDER_SENT' AND created_at >= ?`,
+      [since]
+    );
+    const sentRecentlySet = new Set(sentRecentlyRows.map((r) => r.entity_id));
+
+    const regs = (await dbAll(BALANCE_DUE_QUERY)).map(withDelegateSalutation).filter((r) => phoneSet.has(r.phone_number));
+    let sent = 0;
+    let skippedNoEmail = 0;
+    let skippedSentRecently = 0;
+    for (const r of regs) {
+      if (sentRecentlySet.has(r.phone_number)) { skippedSentRecently++; continue; }
+      if (!r.email) { skippedNoEmail++; continue; }
+      const summary = await getPaymentSummary(r.id, r.expected_amount);
+      // r.delegate_name already has its salutation folded in by
+      // withDelegateSalutation() above, unlike PENDING_SIGNUP_QUERY's
+      // separate salutation/full_name fields.
+      const name = r.delegate_name || 'Delegate';
+      const personalizedBody = String(bodyHtml).split('{{name}}').join(escapeHtml(name)).split('{{amount}}').join(`₹${inr(summary.remaining)}`);
+      await sendEmail(r.email, subject, emailWrap(subject, personalizedBody));
+      await recordAudit({
+        req, entityType: 'reminder_email', entityId: r.phone_number,
+        action: 'BALANCE_DUE_REMINDER_SENT', oldValue: null, newValue: `${subject} (₹${inr(summary.remaining)} due)`,
+      });
+      sent++;
+    }
+
+    res.json({ success: true, sent, skippedNoEmail, skippedSentRecently, total: regs.length });
   } catch (err) {
     next(err);
   }
@@ -4078,27 +4239,35 @@ app.delete('/api/admin/discount-codes/:id', requireRole('SUPER_ADMIN', 'FINANCE_
 // is needed. Also backs the admin's "Share" action alongside a copyable
 // WhatsApp message (built client-side from the same /api/admin/discount-codes
 // list data, so this endpoint only needs to handle the PDF/print path).
+// Shared by the printable voucher, the emailed voucher, and (client-side,
+// from this same /discount-codes list data) the WhatsApp message -- one
+// place computing what a discount code's scope/discount/expiry actually say.
+async function discountCodeLines(code) {
+  let scopeLine = 'Valid for any delegate.';
+  if (code.scope_type === 'CATEGORY') {
+    const cat = await dbGet('SELECT label FROM fee_categories WHERE category_key = ?', [code.scope_value]);
+    scopeLine = `Valid for the "${escapeHtml(cat ? cat.label : code.scope_value)}" category only.`;
+  } else if (code.scope_type === 'INDIVIDUAL') {
+    const u = await dbGet('SELECT full_name FROM users WHERE phone_number = ?', [code.scope_value]);
+    scopeLine = `Reserved for ${escapeHtml(u ? u.full_name : 'this delegate')} (+91 ${escapeHtml(code.scope_value || '')}) only.`;
+  }
+  const discountLine = code.discount_type === 'PERCENT' ? `${Number(code.discount_value)}% off` : `₹${inr(Number(code.discount_value))} off`;
+  const expiryLine = code.expires_at ? `Valid through ${escapeHtml(formatDMY(code.expires_at))}.` : 'No expiry date set.';
+  return { scopeLine, discountLine, expiryLine };
+}
+
 app.get('/api/admin/discount-codes/:id/share', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
     const code = await dbGet('SELECT * FROM discount_codes WHERE id = ?', [req.params.id]);
     if (!code) return res.status(404).send('Discount code not found.');
 
-    let scopeLine = 'Valid for any delegate.';
-    if (code.scope_type === 'CATEGORY') {
-      const cat = await dbGet('SELECT label FROM fee_categories WHERE category_key = ?', [code.scope_value]);
-      scopeLine = `Valid for the "${escapeHtml(cat ? cat.label : code.scope_value)}" category only.`;
-    } else if (code.scope_type === 'INDIVIDUAL') {
-      const u = await dbGet('SELECT full_name FROM users WHERE phone_number = ?', [code.scope_value]);
-      scopeLine = `Reserved for ${escapeHtml(u ? u.full_name : 'this delegate')} (+91 ${escapeHtml(code.scope_value || '')}) only.`;
-    }
-    const discountLine = code.discount_type === 'PERCENT' ? `${Number(code.discount_value)}% off` : `₹${inr(Number(code.discount_value))} off`;
-    const expiryLine = code.expires_at ? `Valid through ${escapeHtml(code.expires_at)}.` : 'No expiry date set.';
+    const { scopeLine, discountLine, expiryLine } = await discountCodeLines(code);
 
     res.type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Discount Code ${escapeHtml(code.code)}</title>
 <style>
-  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#0f172a;margin:2rem;display:flex;justify-content:center;}
-  .card{max-width:420px;width:100%;border:2px dashed #4f46e5;border-radius:16px;padding:2rem;text-align:center;}
+  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#0f172a;margin:2rem;}
+  .card{max-width:420px;width:100%;margin:0 auto;border:2px dashed #4f46e5;border-radius:16px;padding:2rem;text-align:center;box-sizing:border-box;}
   .eyebrow{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:#6366f1;font-weight:700;}
   h1{font-size:.95rem;margin:.35rem 0 1.25rem;color:#312e81;}
   .code{font-family:ui-monospace,Menlo,monospace;font-size:2.25rem;font-weight:800;letter-spacing:.1em;background:#eef2ff;border-radius:12px;padding:1rem;margin:0 0 1rem;color:#312e81;}
@@ -4119,6 +4288,48 @@ app.get('/api/admin/discount-codes/:id/share', requireRole('SUPER_ADMIN', 'FINAN
     <div class="actions"><button onclick="window.print()">Print / Save as PDF</button></div>
   </div>
 </body></html>`);
+  } catch (err) {
+    next(err);
+  }
+});
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Emails the same voucher card as /share (HTML/print) and the WhatsApp
+// message -- to any address the admin types in, not just a delegate already
+// on file, so a code can be sent to a fresh contact before they've even
+// signed up. Fire-and-forget like every other email in this app (see
+// sendEmail); the admin is told up front if email isn't configured at all,
+// rather than getting a false "sent" for something that silently no-ops.
+app.post('/api/admin/discount-codes/:id/email', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const to = String(req.body.email || '').trim();
+    if (!EMAIL_RE.test(to)) {
+      return res.status(400).json({ success: false, error: 'Enter a valid email address.' });
+    }
+    if (!emailEnabled() || !notifyToggle.email) {
+      return res.status(400).json({ success: false, error: 'Email is not enabled (Settings → General → Email).' });
+    }
+    const code = await dbGet('SELECT * FROM discount_codes WHERE id = ?', [req.params.id]);
+    if (!code) return res.status(404).json({ success: false, error: 'Discount code not found.' });
+
+    const { scopeLine, discountLine, expiryLine } = await discountCodeLines(code);
+    const body = `
+      <div style="text-align:center;border:2px dashed #4f46e5;border-radius:12px;padding:1.5rem;margin:0 0 1rem">
+        <div style="font-family:ui-monospace,Menlo,monospace;font-size:1.75rem;font-weight:800;letter-spacing:.08em;background:#eef2ff;border-radius:10px;padding:.85rem;margin:0 0 .75rem;color:#312e81">${escapeHtml(code.code)}</div>
+        <p style="font-size:1rem;font-weight:700;color:#047857;margin:0 0 .5rem">${discountLine}</p>
+        <p style="font-size:.82rem;color:#475569;margin:.3rem 0">${scopeLine}</p>
+        <p style="font-size:.82rem;color:#475569;margin:.3rem 0">${expiryLine}</p>
+      </div>
+      <p style="font-size:.85rem;color:#334155">Register at <b>${escapeHtml(PORTAL_URL)}</b> and enter this code under "Apply promo code" on the payment step.</p>`;
+    const subject = `${CONFERENCE.acronym} — Your Discount Code`;
+    await sendEmail(to, subject, emailWrap(subject, body));
+
+    await recordAudit({
+      req, entityType: 'discount_code', entityId: code.id, action: 'DISCOUNT_CODE_EMAILED',
+      oldValue: null, newValue: `${code.code} emailed to ${to}`,
+    });
+    res.json({ success: true });
   } catch (err) {
     next(err);
   }
@@ -4953,10 +5164,10 @@ async function buildReport(type, opts = {}) {
 }
 
 const REPORT_ROLES = {
-  delegates: ['SUPER_ADMIN', 'FINANCE_ADMIN'],
-  payments: ['SUPER_ADMIN', 'FINANCE_ADMIN'],
-  workshops: ['SUPER_ADMIN', 'FINANCE_ADMIN'],
-  abstracts: ['SUPER_ADMIN', 'ACADEMIC_REVIEWER'],
+  delegates: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'OPERATIONS'],
+  payments: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'OPERATIONS'],
+  workshops: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'OPERATIONS'],
+  abstracts: ['SUPER_ADMIN', 'ACADEMIC_REVIEWER', 'OPERATIONS'],
 };
 
 function toCsv(rep) {

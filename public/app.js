@@ -39,6 +39,16 @@ function formatFullDate(isoDate) {
   return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}`;
 }
 
+// "28 Aug 2026" from a YYYY-MM-DD string -- same short-month style as the
+// server's formatDMY() (server.js), used for the discount-code voucher and
+// WhatsApp share message so both read the same way.
+function formatDMY(isoDate) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate || '');
+  if (!m) return '';
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}`;
+}
+
 function applyConferenceInfoToDom() {
   const c = conferenceInfo;
   document.title = document.title.includes('Admin') ? `${c.acronym} - Admin & Backend Portal` : c.name;
@@ -151,7 +161,7 @@ function showToast(message, type = 'error') {
   setTimeout(() => toast.remove(), type === 'error' ? 7000 : 4000);
 }
 
-const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC'];
+const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC', 'OPERATIONS'];
 function isAdminUser() {
   return !!currentDelegate && ADMIN_ROLES.includes(currentDelegate.role);
 }
@@ -162,6 +172,7 @@ const ROLE_LABELS = {
   FINANCE_ADMIN: 'Finance Admin',
   ACADEMIC_REVIEWER: 'Academic Reviewer',
   FINANCE_ACADEMIC: 'Finance & Academic Reviewer',
+  OPERATIONS: 'Operations',
   SUPER_ADMIN: 'Super Admin',
 };
 function roleLabel(role) {
@@ -1610,13 +1621,17 @@ function rolesFor(role) {
     isSuper,
     isFinance: isSuper || role === 'FINANCE_ADMIN' || role === 'FINANCE_ACADEMIC',
     isReviewer: isSuper || role === 'ACADEMIC_REVIEWER' || role === 'FINANCE_ACADEMIC',
+    // Reports (all of them) + Users & Roles only -- not Payments/Statement/
+    // Abstracts, so isOperations is its own flag rather than folded into
+    // isFinance/isReviewer above.
+    isOperations: isSuper || role === 'OPERATIONS',
   };
 }
 
 // Show only the nav tabs and default to the first section this admin's role
 // is allowed to use.
 function applyRoleVisibility(role) {
-  const { isSuper, isFinance, isReviewer } = rolesFor(role);
+  const { isSuper, isFinance, isReviewer, isOperations } = rolesFor(role);
 
   const tabPayments = document.getElementById('nav-tab-payments');
   const tabStatement = document.getElementById('nav-tab-statement');
@@ -1625,14 +1640,15 @@ function applyRoleVisibility(role) {
   if (tabPayments) tabPayments.classList.toggle('hidden', !isFinance);
   if (tabStatement) tabStatement.classList.toggle('hidden', !isFinance);
   if (tabAbstracts) tabAbstracts.classList.toggle('hidden', !isReviewer);
-  if (tabReports) tabReports.classList.toggle('hidden', !(isFinance || isReviewer));
+  if (tabReports) tabReports.classList.toggle('hidden', !(isFinance || isReviewer || isOperations));
 
   // Masters/Users/Reminders/Logs live in the header's Settings menu, not
   // the main tab bar. The menu button itself only shows if at least one
   // item would.
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
-  // Super-admin-only masters; Reminders + Group Discount also open to finance.
-  const superItems = ['workshops', 'qi', 'fees', 'general', 'discount', 'users', 'activity'];
+  // Super-admin-only masters; Reminders + Group Discount also open to finance;
+  // Users & Roles also opens to Operations (see isOperations above).
+  const superItems = ['workshops', 'qi', 'fees', 'general', 'discount', 'activity'];
   const financeItems = ['reminders', 'groupdiscount'];
   superItems.forEach((key) => {
     const el = document.getElementById(`settings-item-${key}`);
@@ -1642,19 +1658,22 @@ function applyRoleVisibility(role) {
     const el = document.getElementById(`settings-item-${key}`);
     if (el) el.classList.toggle('hidden', !isFinance);
   });
-  if (settingsMenuBtn) settingsMenuBtn.classList.toggle('hidden', !(isSuper || isFinance));
+  const usersItem = document.getElementById('settings-item-users');
+  if (usersItem) usersItem.classList.toggle('hidden', !(isSuper || isOperations));
+  if (settingsMenuBtn) settingsMenuBtn.classList.toggle('hidden', !(isSuper || isFinance || isOperations));
 
-  // Show only the report cards this role can access.
+  // Show only the report cards this role can access. Operations sees all of
+  // them, same as Super Admin.
   const rd = document.getElementById('report-delegates');
   const rp = document.getElementById('report-payments');
   const rw = document.getElementById('report-workshops');
   const ra = document.getElementById('report-abstracts');
-  if (rd) rd.classList.toggle('hidden', !isFinance);
-  if (rp) rp.classList.toggle('hidden', !isFinance);
-  if (rw) rw.classList.toggle('hidden', !isFinance);
-  if (ra) ra.classList.toggle('hidden', !isReviewer);
+  if (rd) rd.classList.toggle('hidden', !(isFinance || isOperations));
+  if (rp) rp.classList.toggle('hidden', !(isFinance || isOperations));
+  if (rw) rw.classList.toggle('hidden', !(isFinance || isOperations));
+  if (ra) ra.classList.toggle('hidden', !(isReviewer || isOperations));
 
-  return { isSuper, isFinance, isReviewer };
+  return { isSuper, isFinance, isReviewer, isOperations };
 }
 
 async function initBackendPortal() {
@@ -1670,7 +1689,7 @@ async function initBackendPortal() {
   activeAdminUser = (await meRes.json()).user;
   setText('active-admin-role-badge', activeAdminUser.full_name);
 
-  const { isSuper, isFinance, isReviewer } = applyRoleVisibility(activeAdminUser.role);
+  const { isSuper, isFinance, isReviewer, isOperations } = applyRoleVisibility(activeAdminUser.role);
 
   // Land on the section from the URL (so a refresh, bookmark, or shared link
   // stays put), falling back to the first section this role can actually use.
@@ -1680,8 +1699,8 @@ async function initBackendPortal() {
   // here first means an admin who clicks a different tab while data is still
   // loading stays where they clicked; switching again afterwards would
   // silently snap them back once loading finished.
-  const defaultTab = isFinance ? 'payments' : isReviewer ? 'abstracts' : 'workshops';
-  const allowed = allowedBackendTabs({ isSuper, isFinance, isReviewer });
+  const defaultTab = isFinance ? 'payments' : isReviewer ? 'abstracts' : isOperations ? 'reports' : 'workshops';
+  const allowed = allowedBackendTabs({ isSuper, isFinance, isReviewer, isOperations });
   const hashTab = window.location.hash.slice(1);
   const loading = document.getElementById('admin-initial-loading');
   if (loading) loading.classList.add('hidden');
@@ -1700,6 +1719,7 @@ async function initBackendPortal() {
   if (isSuper) await renderBackendActivity();
   if (isFinance) await loadReportWorkshopOptions();
   if (isFinance) await renderBackendReminders(isSuper);
+  if (isFinance) await renderBackendBalanceDueReminders(isSuper);
 }
 
 const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT / RTGS' };
@@ -2482,6 +2502,7 @@ const ROLE_ICONS = {
   FINANCE_ADMIN: '💰',
   ACADEMIC_REVIEWER: '🎓',
   FINANCE_ACADEMIC: '💰🎓',
+  OPERATIONS: '📊',
   DELEGATE: '🎫',
 };
 
@@ -2493,6 +2514,7 @@ const ROLE_ICONS_BW = {
   FINANCE_ADMIN: '₹',
   ACADEMIC_REVIEWER: '✎',
   FINANCE_ACADEMIC: '❖',
+  OPERATIONS: '◆',
   DELEGATE: '',
 };
 
@@ -2659,6 +2681,7 @@ const ROLE_OPTIONS = [
   ['FINANCE_ADMIN', 'Finance Admin'],
   ['ACADEMIC_REVIEWER', 'Academic Reviewer'],
   ['FINANCE_ACADEMIC', 'Finance & Academic Reviewer'],
+  ['OPERATIONS', 'Operations'],
   ['SUPER_ADMIN', 'Super Admin'],
 ];
 
@@ -2781,13 +2804,21 @@ function renderUserDetail() {
     ? progLine('Workshop', reg.workshop_name, 'WORKSHOP', Number(reg.workshop_is_faculty)) + progLine('QI Exposure', reg.qi_name, 'QI', Number(reg.qi_is_faculty))
     : `<p class="text-slate-400 py-1">No enrollment.</p>`;
 
-  // Role setter
+  // Role setter. Mirrors the server's escalation boundary (see
+  // PUT /api/users/:phone/role): a non-super-admin viewer -- i.e. an
+  // Operations admin, the only other role with Users & Roles access -- can't
+  // grant Super Admin, and can't touch an existing Super Admin's role at
+  // all. Hiding/disabling here is UX only; the server enforces regardless.
+  const viewerIsSuper = isSuperAdminViewer();
+  const targetIsSuper = u.role === 'SUPER_ADMIN';
+  const roleOptions = viewerIsSuper ? ROLE_OPTIONS : ROLE_OPTIONS.filter(([v]) => v !== 'SUPER_ADMIN');
+  const roleLocked = targetIsSuper && !viewerIsSuper;
   const roleSelect = `<div class="flex items-center gap-2">
-    <select id="user-detail-role-select" class="flex-1 p-2 border rounded-lg text-sm bg-white outline-none">
-      ${ROLE_OPTIONS.map(([v, l]) => `<option value="${v}" ${u.role === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+    <select id="user-detail-role-select" ${roleLocked ? 'disabled' : ''} class="flex-1 p-2 border rounded-lg text-sm bg-white outline-none disabled:bg-slate-100 disabled:text-slate-400">
+      ${roleLocked ? `<option value="SUPER_ADMIN" selected>${esc(roleLabel('SUPER_ADMIN'))}</option>` : roleOptions.map(([v, l]) => `<option value="${v}" ${u.role === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}
     </select>
-    <button type="button" onclick="saveUserDetailRole()" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Save</button>
-  </div>`;
+    <button type="button" onclick="saveUserDetailRole()" ${roleLocked ? 'disabled' : ''} class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:bg-slate-300 disabled:cursor-not-allowed">Save</button>
+  </div>${roleLocked ? `<p class="text-[11px] text-slate-400 mt-1.5">Only a Super Admin can change another Super Admin's role.</p>` : ''}`;
 
   const editBtn = isSuperAdminViewer()
     ? `<button type="button" onclick="toggleUserDetailEdit()" class="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold underline">Edit</button>`
@@ -3116,7 +3147,7 @@ const ACTIVITY_ACTION_LABELS = {
   BANK_TXN_LINK: 'Linked', BANK_TXN_UNLINK: 'Unlinked', ABSTRACT_STATUS_CHANGE: 'Status', ABSTRACT_ALLOCATION: 'Allotted',
   PROGRAM_OPTION_CREATE: 'Created', PROGRAM_OPTION_UPDATE: 'Updated', PROGRAM_OPTION_DELETE: 'Deleted',
   FEE_CONFIG_UPDATE: 'Dates Updated', FEE_CATEGORY_CREATE: 'Created', FEE_CATEGORY_UPDATE: 'Updated', FEE_CATEGORY_DELETE: 'Deleted',
-  DISCOUNT_CODE_CREATE: 'Created', DISCOUNT_CODE_UPDATE: 'Updated', DISCOUNT_CODE_DELETE: 'Deleted', DISCOUNT_CODE_USED: 'Used',
+  DISCOUNT_CODE_CREATE: 'Created', DISCOUNT_CODE_UPDATE: 'Updated', DISCOUNT_CODE_DELETE: 'Deleted', DISCOUNT_CODE_USED: 'Used', DISCOUNT_CODE_EMAILED: 'Emailed',
   GROUP_RULE_SET: 'Created', GROUP_RULE_UPDATE: 'Updated', GROUP_RULE_DELETE: 'Deleted',
   GENERAL_SETTINGS_UPDATE: 'Updated',
 };
@@ -3321,6 +3352,7 @@ async function deleteFeeCategory(id) {
 
 // --- DISCOUNT CODES (admin) ---
 let cachedDiscountCodes = [];
+let shareDiscountCodeId = null;
 
 // Build the copy-pasteable WhatsApp message and open the share modal (PDF
 // voucher link + WhatsApp text). Reuses the already-fetched code list rather
@@ -3337,7 +3369,7 @@ function openShareDiscountModal(id) {
   } else if (c.scope_type === 'CATEGORY') {
     scopeLine = '\nApplies to a specific delegate category — check on the registration page.';
   }
-  const expiryLine = c.expires_at ? `\nValid through ${c.expires_at}.` : '';
+  const expiryLine = c.expires_at ? `\nValid through ${formatDMY(c.expires_at)}.` : '';
   const portalUrl = window.location.origin;
 
   // Deliberately emoji-free: emoji in this message rendered as tofu/blanks on
@@ -3364,7 +3396,35 @@ function openShareDiscountModal(id) {
   const pdfLink = document.getElementById('share-pdf-link');
   if (pdfLink) pdfLink.href = `/api/admin/discount-codes/${encodeURIComponent(c.id)}/share`;
 
+  shareDiscountCodeId = c.id;
+  const emailInput = document.getElementById('share-email-address');
+  if (emailInput) {
+    // Pre-fill for an individual code if that delegate has an email on file
+    // (same convenience as the WhatsApp number pre-fill above) -- still a
+    // plain editable field, so sending to a different/new address just means
+    // typing over it.
+    const u = c.scope_type === 'INDIVIDUAL' ? (cachedUsers || []).find((x) => x.phone_number === c.scope_value) : null;
+    emailInput.value = (u && u.email) || '';
+  }
+
   openModal('modal-share-discount');
+}
+
+async function handleEmailShareDiscount(e) {
+  e.preventDefault();
+  if (!shareDiscountCodeId) return;
+  const email = document.getElementById('share-email-address').value.trim();
+  const btn = document.getElementById('share-email-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    const data = await (await fetch(`/api/admin/discount-codes/${encodeURIComponent(shareDiscountCodeId)}/email`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }),
+    })).json();
+    if (!data.success) return showToast(data.error || 'Could not send the email.');
+    showToast(`Sent to ${email}.`, 'success');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✉️ Send'; }
+  }
 }
 
 async function copyShareWhatsappText() {
@@ -4045,6 +4105,159 @@ async function sendRegistrationReminders() {
   await renderBackendReminders(reminderIsSuper);
 }
 
+// --- BALANCE-DUE PAYMENT REMINDERS (admin) ---
+// Mirrors REGISTRATION REMINDERS above one-for-one -- same cooldown/select-all/
+// test-then-send flow -- for the other worklist that benefits from a nudge:
+// PARTIAL_PAYMENT registrations (see isBalanceDue()). The one addition is
+// {{amount}}, each recipient's own outstanding balance.
+
+function balanceDueReminderDefaultBody() {
+  const c = conferenceInfo;
+  return `<p>Dear {{name}},</p>
+<p>Thanks for registering for the ${esc(c.name)}. Your registration currently has a balance of <b>{{amount}}</b> still due.</p>
+<p>Please log in and complete your payment at your earliest convenience to confirm your spot.</p>
+<p style="text-align:center;margin:1.5rem 0">
+  <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Pay My Balance</a>
+</p>
+<p>If you've already paid, please disregard this email.</p>`;
+}
+
+let cachedBalanceDueRecipients = [];
+let balanceDueIsSuper = false;
+
+function balanceDueReminderOnCooldown(u) {
+  return u.last_reminder_sent_at && (Date.now() - Number(u.last_reminder_sent_at)) < REMINDER_COOLDOWN_MS;
+}
+
+async function renderBackendBalanceDueReminders(isSuper) {
+  balanceDueIsSuper = isSuper;
+  const res = await fetch('/api/admin/reminders/balance-due');
+  if (!res.ok) return;
+  const data = await res.json();
+  cachedBalanceDueRecipients = data.users || [];
+
+  setText('bdreminders-count', String(cachedBalanceDueRecipients.length));
+
+  const bodyBox = document.getElementById('bdreminder-body');
+  if (bodyBox && !bodyBox.value.trim()) bodyBox.value = balanceDueReminderDefaultBody();
+
+  const list = document.getElementById('bdreminders-list');
+  if (list) {
+    list.innerHTML = cachedBalanceDueRecipients.length
+      ? cachedBalanceDueRecipients.map((u) => {
+        const onCooldown = balanceDueReminderOnCooldown(u);
+        const disabled = !u.email || onCooldown;
+        return `
+        <div class="px-3 py-2 flex items-center gap-2">
+          <input type="checkbox" class="bdreminder-recipient-checkbox shrink-0" value="${esc(u.phone_number)}" ${disabled ? 'disabled' : ''} onchange="updateBalanceDueReminderSelectedCount()">
+          <div class="min-w-0 flex-1">
+            <p class="font-semibold text-slate-700 truncate">${esc(u.delegate_name)} <span class="font-normal text-slate-400">· ₹${inr(u.remaining)} due</span></p>
+            <p class="text-xs text-slate-400 truncate">${esc(u.email || 'No email on file')}${u.last_reminder_sent_at ? ` · last sent ${esc(fmtAuditTime(u.last_reminder_sent_at))}` : ''}</p>
+          </div>
+          ${!u.email ? '<span class="text-[10px] bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-bold shrink-0">No email</span>' : ''}
+          ${onCooldown ? '<span class="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold shrink-0">Sent within 24h</span>' : ''}
+        </div>`;
+      }).join('')
+      : `<div class="px-3 py-6 text-center text-slate-400 text-sm">No registrations have a balance due right now.</div>`;
+  }
+
+  const testBtn = document.getElementById('bdreminder-test-btn');
+  if (testBtn) {
+    testBtn.disabled = !isSuper;
+    testBtn.title = isSuper ? '' : 'Only a Super Admin can send reminder emails.';
+  }
+  updateBalanceDueReminderSelectedCount();
+}
+
+function updateBalanceDueReminderSelectedCount() {
+  const boxes = Array.from(document.querySelectorAll('.bdreminder-recipient-checkbox'));
+  const selectable = boxes.filter((b) => !b.disabled);
+  const selected = boxes.filter((b) => b.checked);
+
+  setText('bdreminder-selected-count', String(selected.length));
+  setText('bdreminder-send-count', String(selected.length));
+
+  const selectAll = document.getElementById('bdreminders-select-all');
+  if (selectAll) {
+    selectAll.checked = selectable.length > 0 && selected.length === selectable.length;
+    selectAll.disabled = selectable.length === 0;
+  }
+
+  const sendBtn = document.getElementById('bdreminder-send-btn');
+  if (sendBtn) {
+    sendBtn.disabled = selected.length === 0 || !balanceDueIsSuper;
+    sendBtn.title = balanceDueIsSuper ? '' : 'Only a Super Admin can send bulk reminder emails.';
+  }
+}
+
+function toggleAllBalanceDueRecipients(checked) {
+  document.querySelectorAll('.bdreminder-recipient-checkbox').forEach((b) => {
+    if (!b.disabled) b.checked = checked;
+  });
+  updateBalanceDueReminderSelectedCount();
+}
+
+async function sendBalanceDueReminderTest() {
+  const subject = document.getElementById('bdreminder-subject').value.trim();
+  const bodyHtml = document.getElementById('bdreminder-body').value.trim();
+  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
+
+  const btn = document.getElementById('bdreminder-test-btn');
+  const resultEl = document.getElementById('bdreminder-send-result');
+  if (btn) btn.disabled = true;
+  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending test…'; }
+
+  const data = await (await fetch('/api/admin/reminders/balance-due/test-send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject, bodyHtml }),
+  })).json();
+
+  if (!data.success) {
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Test send failed.'; }
+    showToast(data.error || 'Could not send test email.');
+  } else {
+    const msg = `Test sent to ${data.sentTo}.`;
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
+    showToast(msg, 'success');
+  }
+  if (btn) btn.disabled = false;
+}
+
+async function sendBalanceDueReminders() {
+  const subject = document.getElementById('bdreminder-subject').value.trim();
+  const bodyHtml = document.getElementById('bdreminder-body').value.trim();
+  const phones = Array.from(document.querySelectorAll('.bdreminder-recipient-checkbox:checked')).map((b) => b.value);
+  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
+  if (!phones.length) return showToast('Select at least one recipient.');
+
+  if (!confirm(`Send this reminder to ${phones.length} selected ${phones.length === 1 ? 'person' : 'people'}? This can't be undone.`)) return;
+
+  const btn = document.getElementById('bdreminder-send-btn');
+  const resultEl = document.getElementById('bdreminder-send-result');
+  if (btn) btn.disabled = true;
+  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending…'; }
+
+  const data = await (await fetch('/api/admin/reminders/balance-due/send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject, bodyHtml, phones }),
+  })).json();
+
+  if (!data.success) {
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Send failed.'; }
+    showToast(data.error || 'Could not send reminders.');
+  } else {
+    const skipNotes = [
+      data.skippedNoEmail ? `${data.skippedNoEmail} no email on file` : null,
+      data.skippedSentRecently ? `${data.skippedSentRecently} sent within the last 24h` : null,
+    ].filter(Boolean).join(', ');
+    const msg = `Sent to ${data.sent} of ${data.total}${skipNotes ? ` (${skipNotes})` : ''}.`;
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
+    showToast(msg, 'success');
+  }
+  // Refresh so last-sent times and cooldown badges reflect what just happened.
+  await renderBackendBalanceDueReminders(balanceDueIsSuper);
+}
+
 // CSV downloads; HTML opens a printable report (Print / Save as PDF).
 // `extraQuery` is an already-encoded query fragment like "&optionId=5"
 // (used by the workshops report's one-at-a-time picker).
@@ -4378,7 +4591,14 @@ async function updateAbstractAllocation(id, allocation) {
   renderBackendAbstracts();
 }
 
-function openCreateUserModal() { openModal('modal-create-user'); }
+function openCreateUserModal() {
+  // Same escalation boundary as the role-change select in openUserDetail:
+  // only a Super Admin can hand out Super Admin (see the server-side check
+  // in POST /api/users).
+  const superOpt = document.querySelector('#new-user-role option[value="SUPER_ADMIN"]');
+  if (superOpt) superOpt.disabled = !isSuperAdminViewer();
+  openModal('modal-create-user');
+}
 
 async function handleCreateUserSubmit(e) {
   e.preventDefault();
@@ -4455,13 +4675,14 @@ const MAIN_TABS = ['payments', 'statement', 'abstracts', 'reports'];
 // pick the landing tab and to validate a tab restored from the URL, so a
 // bookmarked #users can't drop a finance admin on a section they can't see.
 // Mirrors the show/hide rules in applyRoleVisibility().
-function allowedBackendTabs({ isSuper, isFinance, isReviewer }) {
+function allowedBackendTabs({ isSuper, isFinance, isReviewer, isOperations }) {
   const allowed = [];
   if (isFinance) allowed.push('payments', 'statement');
   if (isReviewer) allowed.push('abstracts');
-  if (isFinance || isReviewer) allowed.push('reports');
+  if (isFinance || isReviewer || isOperations) allowed.push('reports');
   if (isFinance) allowed.push('reminders', 'groupdiscount');
-  if (isSuper) allowed.push('workshops', 'qi', 'fees', 'general', 'discount', 'users', 'activity');
+  if (isSuper) allowed.push('workshops', 'qi', 'fees', 'general', 'discount', 'activity');
+  if (isSuper || isOperations) allowed.push('users');
   return allowed;
 }
 

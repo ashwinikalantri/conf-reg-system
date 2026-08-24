@@ -145,12 +145,18 @@ Only a hash of the session token and of the OTP is stored in the database.
 | `FINANCE_ADMIN`     | Payment reconciliation, reminders, group discounts (view + verify) |
 | `ACADEMIC_REVIEWER` | Abstract review & allotment                          |
 | `FINANCE_ACADEMIC`  | Both of the above                                    |
+| `OPERATIONS`        | All reports, plus Users & Roles (view/create/change role — not demographic edits, still `SUPER_ADMIN`-only) |
 | `DELEGATE`          | Own registration, payment, and abstract submission  |
+
+`OPERATIONS` cannot grant `SUPER_ADMIN` to anyone (including itself) and
+cannot change an existing `SUPER_ADMIN`'s role in either direction —
+enforced in both `POST /api/users` and `PUT /api/users/:phone/role`, not
+just hidden in the UI, so it can't be bypassed by calling the API directly.
 
 Admins log in through the normal portal with their own phone number; their
 DB role grants access. The database ships with one `SUPER_ADMIN`. Roles can
-only be changed by a `SUPER_ADMIN` via the Users screen — they are never
-accepted from a login or registration request body.
+only be changed by a `SUPER_ADMIN` or `OPERATIONS` admin via the Users
+screen — they are never accepted from a login or registration request body.
 
 ### Environment variables
 
@@ -249,7 +255,9 @@ Both toggling and message edits are written to the audit log
 | `GET  /admin`                         | Any admin role                  |
 | `GET  /api/registrations`             | `SUPER_ADMIN`, `FINANCE_ADMIN`  |
 | `PUT  /api/registrations/:id/status`  | `SUPER_ADMIN`, `FINANCE_ADMIN`  |
-| `GET/POST /api/users`, `PUT .../role` | `SUPER_ADMIN`                   |
+| `GET/POST /api/users`, `PUT .../role` | `SUPER_ADMIN`, `OPERATIONS` (see Roles above for the escalation limits on `OPERATIONS`) |
+| `PUT /api/users/:phone` (demographic edit) | `SUPER_ADMIN`             |
+| `GET /api/admin/reports/:type`        | Per report type — see Reports below |
 | `GET /api/registrations/:id/screenshot` | Owning delegate or finance admin |
 | `GET /api/registrations/:id/audit`    | `SUPER_ADMIN`, `FINANCE_ADMIN`  |
 
@@ -322,11 +330,19 @@ Verification also backfills a number for any older row that lacked one.
 
 ## Reports
 
-The admin **Reports** tab offers three exportable reports: verified
-registrations, registrations per workshop (finance/super), and accepted
-abstracts (reviewer/super). Each is available via `GET /api/admin/reports/:type`
-as a **printable HTML page** (Print / Save as PDF) or, with `?format=csv`, as a
-**CSV download** that opens in Excel. Role is enforced per report.
+The admin **Reports** tab offers four exportable reports, each independently
+role-gated in `REPORT_ROLES` (`server.js`):
+
+| Report | Roles |
+| --- | --- |
+| Registered delegates (demography & institute) | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
+| Payment details & status | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
+| Registrations per workshop/QI practice | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
+| Accepted abstracts | `SUPER_ADMIN`, `ACADEMIC_REVIEWER`, `OPERATIONS` |
+
+Each is available via `GET /api/admin/reports/:type` as a **printable HTML
+page** (Print / Save as PDF) or, with `?format=csv`, as a **CSV download**
+that opens in Excel.
 
 ## Fees (categories × date tiers)
 
@@ -387,8 +403,12 @@ discounts (unlocked once a group reaches a minimum size) under **Group
 Discount**. A code that discounts a registration to ₹0 skips the payment
 step entirely — no screenshot or UTR required, confirmed immediately. Every
 code's usage is logged (first use only, not resubmissions of the same
-registration) and codes can be shared as a WhatsApp message or a printable
-voucher from the Discount Code table.
+registration) and codes can be shared as a WhatsApp message, a printable
+voucher, or emailed straight from the Discount Code table to any address
+typed in — not limited to a delegate already on file, so a code can go out
+before someone has even signed up. Emailing reuses the same voucher content
+as the printable version and is gated behind Email being configured and
+turned on (Settings → General → Email).
 
 ## Rejection workflow
 
