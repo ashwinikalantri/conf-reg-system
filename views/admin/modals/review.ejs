@@ -41,6 +41,15 @@
             <div id="review-txn-ledger" class="space-y-2 text-[11px]"></div>
           </div>
 
+          <!-- Admin-initiated: attach a bank credit that never had a matching
+               claim submitted (e.g. a second transfer the delegate didn't
+               mention). Always available, unlike the ledger above which only
+               shows once a transaction exists. -->
+          <div class="border border-slate-200 rounded-lg p-3">
+            <button type="button" onclick="toggleAdminAddPayment()" class="text-[11px] text-indigo-600 hover:underline font-semibold">+ Add a bank credit not yet claimed</button>
+            <div id="review-admin-add-payment-box" class="hidden mt-2 divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-40 overflow-y-auto"></div>
+          </div>
+
           <!-- Category lock: set the correct delegate category and lock it so
                the delegate can't change it; the fee recalculates. -->
           <div class="border border-slate-200 rounded-lg p-3">

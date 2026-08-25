@@ -3519,6 +3519,70 @@ app.put('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FIN
   }
 });
 
+// Admin-initiated: attach a bank credit to a registration that never
+// submitted a matching claim for it (e.g. a second bank transfer the
+// delegate didn't mention in the app). Every other path to a
+// payment_transactions row starts with the delegate (registration submission
+// or top-up); this is the one place an admin creates one directly instead of
+// just linking an existing PENDING row -- same acknowledgement semantics as
+// PUT .../link above (full credit amount, VERIFIED, reviewed_by/at stamped),
+// just without a pre-existing row to attach it to. Takes the credit's whole
+// amount, not a partial split -- splitting one credit across several
+// registrations is a separate, not-yet-built feature.
+app.post('/api/registrations/:id/admin-add-payment', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const { bankTxnId } = req.body;
+    const reg = await dbGet('SELECT id, phone_number, expected_amount FROM registrations WHERE id = ?', [req.params.id]);
+    if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
+
+    const bank = await dbGet('SELECT id, credit, extracted_ref, is_non_registration FROM bank_statement_transactions WHERE id = ?', [bankTxnId]);
+    if (!bank) return res.status(404).json({ success: false, error: 'Statement transaction not found.' });
+    if (!(bank.credit > 0)) return res.status(400).json({ success: false, error: 'That statement row has no credit amount.' });
+    if (bank.is_non_registration) {
+      return res.status(400).json({ success: false, error: 'This transaction is marked as non-registration and cannot be linked to a payment.' });
+    }
+
+    const usedByTxn = await dbGet('SELECT id FROM payment_transactions WHERE bank_txn_id = ?', [bankTxnId]);
+    const usedByReg = await dbGet('SELECT registration_number FROM registrations WHERE bank_txn_id = ?', [bankTxnId]);
+    if (usedByTxn || usedByReg) {
+      return res.status(409).json({ success: false, error: 'That bank transaction is already linked to another payment.' });
+    }
+
+    // Same over-crediting guard as the regular link endpoint (see the Divya
+    // Selokar comment there): don't let this push the registration's
+    // cumulative acknowledged total past the fee actually due.
+    if (reg.expected_amount > 0) {
+      const summary = await getPaymentSummary(reg.id, reg.expected_amount);
+      const wouldBeTotal = summary.verifiedTotal + bank.credit;
+      if (wouldBeTotal > reg.expected_amount + 0.5) {
+        return res.status(400).json({
+          success: false,
+          error: `Adding this credit (₹${inr(bank.credit)}) would bring the total acknowledged to ₹${inr(wouldBeTotal)}, which is more than the ₹${inr(reg.expected_amount)} fee due. Check whether this credit really belongs to this registration.`,
+        });
+      }
+    }
+
+    const now = Date.now();
+    const result = await dbRun(
+      `INSERT INTO payment_transactions
+        (registration_id, phone_number, amount, verified_amount, utr_number, payment_mode, txn_status, bank_txn_id, submitted_at, reviewed_by, reviewed_at)
+       VALUES (?, ?, ?, ?, ?, 'NEFT_RTGS', 'VERIFIED', ?, ?, ?, ?)`,
+      [reg.id, reg.phone_number, bank.credit, bank.credit, bank.extracted_ref || null, bankTxnId, now, req.session.name || req.session.phone, now]
+    );
+    await recordAudit({
+      req, entityType: 'registration', entityId: req.params.id,
+      action: 'PAYMENT_ADMIN_ADDED', oldValue: null,
+      newValue: `txn#${result.lastID} ← bank#${bankTxnId} (₹${inr(bank.credit)} added by admin, no prior claim)`,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    if (err.code === 'SQLITE_CONSTRAINT') {
+      return res.status(409).json({ success: false, error: 'That bank transaction is already linked to another payment.' });
+    }
+    next(err);
+  }
+});
+
 // Unlink a payment transaction, which also un-acknowledges it (back to pending).
 app.delete('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {

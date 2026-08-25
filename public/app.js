@@ -2264,6 +2264,39 @@ async function unlinkTxn(txnId) {
   openReviewModal(reviewTargetId);
 }
 
+// Admin-initiated: unlike toggleTxnCandidates/linkTxnToBank above, there's no
+// existing payment_transactions row to attach a candidate to here -- picking
+// one creates the row and links it in the same request (see
+// POST .../admin-add-payment). Reuses the same unused-credits query as the
+// legacy registration-level picker (candidate-transactions), just for a new
+// purpose.
+async function toggleAdminAddPayment() {
+  const box = document.getElementById('review-admin-add-payment-box');
+  if (!box) return;
+  if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  box.innerHTML = '<p class="text-[10px] text-slate-400 p-2">Loading candidates…</p>';
+  const res = await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/candidate-transactions`);
+  if (!res.ok) { box.innerHTML = '<p class="text-[10px] text-rose-600 p-2">Could not load candidates.</p>'; return; }
+  const rows = (await res.json()).transactions || [];
+  box.innerHTML = rows.length ? rows.map((c) => `
+    <div class="flex items-center justify-between gap-2 p-2 text-[10px]">
+      <div class="min-w-0"><p class="font-semibold text-slate-700">${esc(c.post_date)} · ₹${inr(esc(c.credit))}</p><p class="text-slate-500 truncate">${esc(c.description)}</p></div>
+      <button type="button" class="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded" onclick="adminAddPayment(${esc(c.id)}, ${esc(c.credit)})">Add ₹${inr(esc(c.credit))}</button>
+    </div>`).join('') : '<p class="text-[10px] text-slate-400 p-2">No unused credits in the statement yet.</p>';
+}
+
+async function adminAddPayment(bankTxnId, credit) {
+  if (!(await showConfirm(`Add this ₹${inr(credit)} bank credit as a verified payment for this registration? This is for a payment the delegate never submitted a claim for.`))) return;
+  const data = await (await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/admin-add-payment`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bankTxnId }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not add this payment.');
+  showToast('Payment added.', 'success');
+  await renderBackendPayments();
+  openReviewModal(reviewTargetId);
+}
+
 // Accept & Verify is gated on every applicable requirement being met: a
 // linked bank transaction always, and (for student categories) an
 // approver's confirmation that the ID card verifies that status. Each
@@ -3147,7 +3180,7 @@ function activityTransition(oldVal, newVal) {
 const ACTIVITY_ACTION_LABELS = {
   BANK_STATUS_CHANGE: 'Status', STUDENT_ID_VERIFICATION: 'ID Verified', UTR_CORRECTION: 'UTR Fix',
   PAYMENT_MODE_CORRECTION: 'Mode Fix', ADMIN_ENROLL: 'Roster +', ADMIN_UNENROLL: 'Roster −',
-  BANK_TXN_LINK: 'Linked', BANK_TXN_UNLINK: 'Unlinked', ABSTRACT_STATUS_CHANGE: 'Status', ABSTRACT_ALLOCATION: 'Allotted',
+  BANK_TXN_LINK: 'Linked', BANK_TXN_UNLINK: 'Unlinked', PAYMENT_ADMIN_ADDED: 'Payment Added', ABSTRACT_STATUS_CHANGE: 'Status', ABSTRACT_ALLOCATION: 'Allotted',
   PROGRAM_OPTION_CREATE: 'Created', PROGRAM_OPTION_UPDATE: 'Updated', PROGRAM_OPTION_DELETE: 'Deleted',
   FEE_CONFIG_UPDATE: 'Dates Updated', FEE_CATEGORY_CREATE: 'Created', FEE_CATEGORY_UPDATE: 'Updated', FEE_CATEGORY_DELETE: 'Deleted',
   DISCOUNT_CODE_CREATE: 'Created', DISCOUNT_CODE_UPDATE: 'Updated', DISCOUNT_CODE_DELETE: 'Deleted', DISCOUNT_CODE_USED: 'Used', DISCOUNT_CODE_EMAILED: 'Emailed',
@@ -3158,7 +3191,7 @@ function activityActionPill(action) {
   const label = ACTIVITY_ACTION_LABELS[action] || action;
   let tone = 'muted';
   if (action === 'BANK_STATUS_CHANGE') tone = 'info';
-  else if (action === 'STUDENT_ID_VERIFICATION' || action === 'BANK_TXN_LINK' || action === 'PROGRAM_OPTION_CREATE' || action === 'FEE_CATEGORY_CREATE'
+  else if (action === 'STUDENT_ID_VERIFICATION' || action === 'BANK_TXN_LINK' || action === 'PAYMENT_ADMIN_ADDED' || action === 'PROGRAM_OPTION_CREATE' || action === 'FEE_CATEGORY_CREATE'
     || action === 'DISCOUNT_CODE_CREATE' || action === 'DISCOUNT_CODE_USED' || action === 'GROUP_RULE_SET') tone = 'ok';
   else if (action === 'ADMIN_UNENROLL' || action === 'BANK_TXN_UNLINK' || action.endsWith('_DELETE')) tone = 'bad';
   else if (action.includes('CORRECTION') || action.endsWith('_UPDATE')) tone = 'warn';
