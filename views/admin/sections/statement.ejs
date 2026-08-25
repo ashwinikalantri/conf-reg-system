@@ -13,7 +13,7 @@
         </form>
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
           <p class="text-xs font-bold text-slate-500 uppercase">Registrations with a Payment Ref</p>
           <p id="rec-metric-total" class="text-2xl font-black text-slate-800 mt-1">0</p>
@@ -29,6 +29,10 @@
         <div class="bg-white rounded-2xl p-5 border border-amber-200 bg-amber-50/30 shadow-sm">
           <p class="text-xs font-bold text-amber-600 uppercase">Unmatched Credits in Bank</p>
           <p id="rec-metric-credits" class="text-2xl font-black text-amber-700 mt-1">0</p>
+        </div>
+        <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+          <p class="text-xs font-bold text-slate-500 uppercase">Marked Non-Registration</p>
+          <p id="rec-metric-nonreg" class="text-2xl font-black text-slate-600 mt-1">0</p>
         </div>
       </div>
 
@@ -46,13 +50,26 @@
 
       <div>
         <h3 class="text-sm font-bold text-amber-700 uppercase tracking-wide mb-2">Bank Credits Not Matched to a Registration</h3>
-        <p class="text-xs text-slate-500 mb-2">Includes non-UPI credits (NEFT/RTGS/IMPS) which don't carry a machine-readable reference — match these manually by amount, date, and description.</p>
+        <p class="text-xs text-slate-500 mb-2">Includes non-UPI credits (NEFT/RTGS/IMPS) which don't carry a machine-readable reference — match these manually by amount, date, and description. If a credit will never belong to a registration (bank charges, interest, an unrelated transfer), mark it as non-registration instead of leaving it here.</p>
         <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-          <table class="w-full text-left border-collapse sm:min-w-[700px] text-sm">
+          <table class="w-full text-left border-collapse sm:min-w-[820px] text-sm">
             <thead class="hidden sm:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
-              <th class="py-3 px-4">Date</th><th class="py-3 px-4">Description</th><th class="py-3 px-4">Credit ₹</th>
+              <th class="py-3 px-4">Date</th><th class="py-3 px-4">Description</th><th class="py-3 px-4">Credit ₹</th><th class="py-3 px-4 text-right">Actions</th>
             </tr></thead>
             <tbody id="rec-credits-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <h3 class="text-sm font-bold text-slate-600 uppercase tracking-wide mb-2">Non-Registration Transactions</h3>
+        <p class="text-xs text-slate-500 mb-2">Credits marked as not belonging to any registration. They're excluded from matching and can't be linked to a payment — unmark to bring one back into the pool.</p>
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+          <table class="w-full text-left border-collapse sm:min-w-[820px] text-sm">
+            <thead class="hidden sm:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Date</th><th class="py-3 px-4">Description</th><th class="py-3 px-4">Credit ₹</th><th class="py-3 px-4 text-right">Actions</th>
+            </tr></thead>
+            <tbody id="rec-nonreg-body" class="divide-y divide-slate-100"></tbody>
           </table>
         </div>
       </div>

@@ -3152,7 +3152,7 @@ const ACTIVITY_ACTION_LABELS = {
   FEE_CONFIG_UPDATE: 'Dates Updated', FEE_CATEGORY_CREATE: 'Created', FEE_CATEGORY_UPDATE: 'Updated', FEE_CATEGORY_DELETE: 'Deleted',
   DISCOUNT_CODE_CREATE: 'Created', DISCOUNT_CODE_UPDATE: 'Updated', DISCOUNT_CODE_DELETE: 'Deleted', DISCOUNT_CODE_USED: 'Used', DISCOUNT_CODE_EMAILED: 'Emailed',
   GROUP_RULE_SET: 'Created', GROUP_RULE_UPDATE: 'Updated', GROUP_RULE_DELETE: 'Deleted',
-  GENERAL_SETTINGS_UPDATE: 'Updated',
+  GENERAL_SETTINGS_UPDATE: 'Updated', BANK_TXN_NON_REGISTRATION_UPDATE: 'Non-Reg Marking',
 };
 function activityActionPill(action) {
   const label = ACTIVITY_ACTION_LABELS[action] || action;
@@ -3224,6 +3224,7 @@ async function renderBackendActivity() {
   const areaLabels = {
     program_option: 'Workshop / QI', fee_config: 'Fee Dates', fee_category: 'Fee Category',
     discount_code: 'Discount Code', group_rule: 'Group Discount', general_settings: 'General', settings: 'General',
+    bank_statement_transaction: 'Bank Statement',
   };
   setText('activity-count-master', String((data.master || []).length));
   document.getElementById('activity-master-body').innerHTML = (data.master || []).map((r) => `
@@ -4788,6 +4789,7 @@ async function loadReconciliation() {
   setText('rec-metric-matched', data.summary.matched);
   setText('rec-metric-unmatched', data.summary.unmatched);
   setText('rec-metric-credits', data.summary.unmatchedCredits);
+  setText('rec-metric-nonreg', data.summary.nonRegistrationCredits);
 
   const unmatchedBody = document.getElementById('rec-unmatched-body');
   if (unmatchedBody) {
@@ -4826,15 +4828,55 @@ async function loadReconciliation() {
             </div>
             <p class="font-semibold text-amber-700 shrink-0">₹${inr(esc(t.credit))}</p>
           </div>
+          <div class="mt-1.5"><button type="button" onclick="markNonRegistration(${esc(t.id)}, true)" class="text-[11px] text-slate-500 hover:text-slate-700 underline font-semibold">Mark as non-registration</button></div>
         </td>
         <td class="p-3 hidden sm:table-cell">${esc(t.post_date)}</td>
         <td class="p-3 hidden sm:table-cell">${esc(t.description)}</td>
         <td class="p-3 font-semibold hidden sm:table-cell">₹${inr(esc(t.credit))}</td>
-      </tr>`).join('') : `<tr><td colspan="3" class="p-4 text-center text-slate-400 text-xs">No unmatched credits.</td></tr>`;
+        <td class="p-3 text-right hidden sm:table-cell">
+          <button type="button" onclick="markNonRegistration(${esc(t.id)}, true)" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg">Mark as Non-Registration</button>
+        </td>
+      </tr>`).join('') : `<tr><td colspan="4" class="p-4 text-center text-slate-400 text-xs">No unmatched credits.</td></tr>`;
+  }
+
+  const nonregBody = document.getElementById('rec-nonreg-body');
+  if (nonregBody) {
+    nonregBody.innerHTML = (data.nonRegistrationCredits || []).length ? data.nonRegistrationCredits.map(t => `
+      <tr>
+        <td class="p-3 block sm:hidden">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <p class="text-sm text-slate-700 truncate">${esc(t.description)}</p>
+              <p class="text-[11px] text-slate-400">${esc(t.post_date)}</p>
+            </div>
+            <p class="font-semibold text-slate-600 shrink-0">₹${inr(esc(t.credit))}</p>
+          </div>
+          <div class="mt-1.5"><button type="button" onclick="markNonRegistration(${esc(t.id)}, false)" class="text-[11px] text-indigo-600 hover:text-indigo-800 underline font-semibold">Unmark</button></div>
+        </td>
+        <td class="p-3 hidden sm:table-cell">${esc(t.post_date)}</td>
+        <td class="p-3 hidden sm:table-cell">${esc(t.description)}</td>
+        <td class="p-3 font-semibold hidden sm:table-cell">₹${inr(esc(t.credit))}</td>
+        <td class="p-3 text-right hidden sm:table-cell">
+          <button type="button" onclick="markNonRegistration(${esc(t.id)}, false)" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Unmark</button>
+        </td>
+      </tr>`).join('') : `<tr><td colspan="4" class="p-4 text-center text-slate-400 text-xs">No transactions marked non-registration.</td></tr>`;
   }
 
   cachedMatched = data.matched || [];
   filterMatchedRows();
+}
+
+// Mark/unmark a statement credit as not belonging to any registration. The
+// server refuses to mark one that's currently linked (unlink it first), and
+// once marked it's excluded from every "candidate credit" picker -- both
+// enforced server-side, this just surfaces whatever it says.
+async function markNonRegistration(id, value) {
+  const data = await (await fetch(`/api/admin/bank-statement/${encodeURIComponent(id)}/non-registration`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not update this transaction.');
+  showToast(value ? 'Marked as non-registration.' : 'Unmarked.', 'success');
+  await loadReconciliation();
 }
 
 // The matched list, cached so the search box can filter it without refetching.

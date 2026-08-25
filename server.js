@@ -697,6 +697,7 @@ async function recordAudit({ req, entityType, entityId, action, oldValue, newVal
 // but never appear in General Logs.
 const GENERAL_LOG_ENTITY_TYPES = [
   'program_option', 'fee_config', 'fee_category', 'discount_code', 'group_rule', 'general_settings',
+  'bank_statement_transaction',
   'settings', // legacy: pre-rename NOTIFICATION_TOGGLE rows only
 ];
 
@@ -1182,6 +1183,17 @@ db.serialize(() => {
     )
   `);
   db.run('CREATE INDEX IF NOT EXISTS idx_stmt_ref ON bank_statement_transactions(extracted_ref)');
+  // Additive migration for statement tables created before non-registration
+  // marking existed (e.g. bank charges, interest credit, an unrelated
+  // transfer -- a real credit in the statement that will never belong to a
+  // registration, so it shouldn't keep sitting in "unmatched" waiting for a
+  // match that's never coming).
+  db.all('PRAGMA table_info(bank_statement_transactions)', (err, cols) => {
+    if (err) return console.error('Schema check failed:', err.message);
+    if (!cols.map((c) => c.name).includes('is_non_registration')) {
+      db.run('ALTER TABLE bank_statement_transactions ADD COLUMN is_non_registration INTEGER NOT NULL DEFAULT 0');
+    }
+  });
 
   // Individual payment transactions against a registration. Historically a
   // registration carried a SINGLE inline payment (paid_amount/utr_number/
@@ -3358,7 +3370,7 @@ app.get('/api/registrations/:id/candidate-transactions', requireRole('SUPER_ADMI
     const targetAmount = reg.paid_amount != null ? reg.paid_amount : reg.expected_amount;
     const rows = await dbAll(
       `SELECT * FROM bank_statement_transactions
-        WHERE credit IS NOT NULL AND credit > 0
+        WHERE credit IS NOT NULL AND credit > 0 AND is_non_registration = 0
           AND id NOT IN (SELECT bank_txn_id FROM registrations WHERE bank_txn_id IS NOT NULL)
         ORDER BY ABS(COALESCE(credit, 0) - ?) ASC, post_date DESC
         LIMIT 50`,
@@ -3377,8 +3389,11 @@ app.put('/api/registrations/:id/link-transaction', requireRole('SUPER_ADMIN', 'F
     const { transactionId } = req.body;
     const reg = await dbGet('SELECT id, bank_txn_id FROM registrations WHERE id = ?', [req.params.id]);
     if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
-    const txn = await dbGet('SELECT id FROM bank_statement_transactions WHERE id = ?', [transactionId]);
+    const txn = await dbGet('SELECT id, is_non_registration FROM bank_statement_transactions WHERE id = ?', [transactionId]);
     if (!txn) return res.status(404).json({ success: false, error: 'Statement transaction not found.' });
+    if (txn.is_non_registration) {
+      return res.status(400).json({ success: false, error: 'This transaction is marked as non-registration and cannot be linked to a registration.' });
+    }
     const usedBy = await dbGet('SELECT id, registration_number FROM registrations WHERE bank_txn_id = ? AND id != ?', [transactionId, reg.id]);
     if (usedBy) {
       return res.status(409).json({ success: false, error: `That transaction is already linked to registration ${usedBy.registration_number || usedBy.id}.` });
@@ -3429,7 +3444,7 @@ app.get('/api/payment-transactions/:txnId/candidates', requireRole('SUPER_ADMIN'
     if (!txn) return res.status(404).json({ success: false, error: 'Payment transaction not found.' });
     const rows = await dbAll(
       `SELECT * FROM bank_statement_transactions
-        WHERE credit IS NOT NULL AND credit > 0
+        WHERE credit IS NOT NULL AND credit > 0 AND is_non_registration = 0
           AND id NOT IN ${USED_BANK_TXN_SUBQUERY}
         ORDER BY ABS(COALESCE(credit, 0) - ?) ASC, post_date DESC
         LIMIT 50`,
@@ -3454,8 +3469,11 @@ app.put('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FIN
     if (txn.txn_status === 'REJECTED') {
       return res.status(400).json({ success: false, error: 'This payment was rejected and cannot be linked.' });
     }
-    const bank = await dbGet('SELECT id FROM bank_statement_transactions WHERE id = ?', [bankTxnId]);
+    const bank = await dbGet('SELECT id, is_non_registration FROM bank_statement_transactions WHERE id = ?', [bankTxnId]);
     if (!bank) return res.status(404).json({ success: false, error: 'Statement transaction not found.' });
+    if (bank.is_non_registration) {
+      return res.status(400).json({ success: false, error: 'This transaction is marked as non-registration and cannot be linked to a payment.' });
+    }
 
     const usedByTxn = await dbGet('SELECT id FROM payment_transactions WHERE bank_txn_id = ? AND id != ?', [bankTxnId, txn.id]);
     const usedByReg = await dbGet('SELECT registration_number FROM registrations WHERE bank_txn_id = ? AND id != ?', [bankTxnId, txn.registration_id]);
@@ -4843,7 +4861,7 @@ async function autoLinkTransactions() {
 
   const credits = await dbAll(
     `SELECT id, extracted_ref FROM bank_statement_transactions
-      WHERE credit IS NOT NULL AND credit > 0 AND extracted_ref IS NOT NULL
+      WHERE credit IS NOT NULL AND credit > 0 AND extracted_ref IS NOT NULL AND is_non_registration = 0
         AND id NOT IN ${USED_BANK_TXN_SUBQUERY}`);
   const byRef = new Map();
   credits.forEach((t) => byRef.set(digitsOnly(t.extracted_ref), t.id));
@@ -4944,6 +4962,40 @@ app.get('/api/admin/bank-statement', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
   }
 });
 
+// Mark/unmark a statement credit as not belonging to any registration (bank
+// charges, interest, an unrelated transfer) -- pulls it out of "Bank Credits
+// Not Matched to a Registration" into its own list, and makes it ineligible
+// to link to a registration/payment going forward (see the is_non_registration
+// checks in the link endpoints and candidate pickers below/above). Refuses to
+// mark a credit that's currently linked -- unlink it first, so a credit is
+// never simultaneously "belongs to registration X" and "belongs to no one."
+app.put('/api/admin/bank-statement/:id/non-registration', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const value = !!req.body.value;
+    const txn = await dbGet('SELECT id, is_non_registration FROM bank_statement_transactions WHERE id = ?', [req.params.id]);
+    if (!txn) return res.status(404).json({ success: false, error: 'Statement transaction not found.' });
+
+    if (value) {
+      const linkedTxn = await dbGet('SELECT id FROM payment_transactions WHERE bank_txn_id = ?', [req.params.id]);
+      const linkedReg = await dbGet('SELECT id FROM registrations WHERE bank_txn_id = ?', [req.params.id]);
+      if (linkedTxn || linkedReg) {
+        return res.status(400).json({ success: false, error: 'This transaction is currently linked to a registration. Unlink it first.' });
+      }
+    }
+
+    await dbRun('UPDATE bank_statement_transactions SET is_non_registration = ? WHERE id = ?', [value ? 1 : 0, req.params.id]);
+    await recordAudit({
+      req, entityType: 'bank_statement_transaction', entityId: req.params.id,
+      action: 'BANK_TXN_NON_REGISTRATION_UPDATE',
+      oldValue: txn.is_non_registration ? 'Non-registration' : 'Registration',
+      newValue: value ? 'Non-registration' : 'Registration',
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Reconcile registrations' payment references against imported statement
 // credits. A registration matches when a statement credit row's extracted
 // reference equals its UTR/transaction number (digits-only comparison, so
@@ -4993,8 +5045,14 @@ app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINAN
 
     const matched = [];
     const unmatchedCredits = [];
+    const nonRegistrationCredits = [];
     const matchedRegIds = new Set();
     for (const t of txns) {
+      // Marked non-registration (bank charges, interest, an unrelated
+      // transfer) -- pulled out before matching runs at all, so it can never
+      // land in either matched or unmatched no matter what its reference
+      // happens to look like.
+      if (t.is_non_registration) { nonRegistrationCredits.push(t); continue; }
       const link = linkByCredit.get(t.id);
       let reg = null;
       let txnAmount = null;
@@ -5019,12 +5077,14 @@ app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINAN
       matched,
       unmatched,
       unmatchedCredits,
+      nonRegistrationCredits,
       summary: {
         registrations: allRegs.filter((r) => r.bank_status !== 'REJECTED').length,
         matched: matched.length,
         amountMismatches: matched.filter((m) => !m.amountOk).length,
         unmatched: unmatched.length,
         unmatchedCredits: unmatchedCredits.length,
+        nonRegistrationCredits: nonRegistrationCredits.length,
         credits: txns.length,
       },
     });
