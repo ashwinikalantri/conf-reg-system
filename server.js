@@ -4977,6 +4977,20 @@ app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINAN
     const linkByCredit = new Map();
     links.forEach((l) => { if (!linkByCredit.has(l.bank_txn_id)) linkByCredit.set(l.bank_txn_id, l); });
 
+    // registrations.utr_number is never cleared on unlink (unlinking only
+    // touches payment_transactions.bank_txn_id -- see DELETE .../link), so
+    // without this guard the UTR fallback below would immediately re-match a
+    // credit an admin just deliberately unlinked, as long as its statement
+    // reference still happens to equal that registration's own UTR digits.
+    // The fallback exists for registrations that predate per-transaction
+    // linking and have no ledger row to link at all; once seeded (every
+    // registration gets one on submit, and a boot-time backfill covers
+    // anything older -- see backfillPaymentTransactionsOnBoot), a
+    // registration always has a ledger to explicitly link/unlink instead,
+    // so the fallback should defer to that rather than override it.
+    const regIdsWithTxnRows = new Set(
+      (await dbAll('SELECT DISTINCT registration_id FROM payment_transactions')).map((r) => r.registration_id));
+
     const matched = [];
     const unmatchedCredits = [];
     const matchedRegIds = new Set();
@@ -4985,7 +4999,10 @@ app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINAN
       let reg = null;
       let txnAmount = null;
       if (link) { reg = regById.get(link.registration_id); txnAmount = link.amount; }
-      else if (t.extracted_ref) { reg = regByUtr.get(digits(t.extracted_ref)); }
+      else if (t.extracted_ref) {
+        const candidate = regByUtr.get(digits(t.extracted_ref));
+        if (candidate && !regIdsWithTxnRows.has(candidate.id)) reg = candidate;
+      }
       if (!reg) { unmatchedCredits.push(t); continue; }
       matchedRegIds.add(reg.id);
       const claimedAmount = txnAmount != null ? txnAmount : (reg.paid_amount != null ? reg.paid_amount : reg.expected_amount);
