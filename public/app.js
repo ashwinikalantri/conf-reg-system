@@ -2037,9 +2037,18 @@ async function renderBackendPayments() {
   const needsDecision = allRegs.filter(r => r.bank_status === 'PENDING' && !isBalanceDue(r));
   const flagged = allRegs.filter(r => r.is_flagged);
   const totalCleared = verified.reduce((sum, r) => sum + (Number(r.verified_total) || 0), 0);
+  // Same "what's actually still owed" math as the balancePill in
+  // paymentRowHtml: the verified total if there is one, else whatever's
+  // been claimed so far (category-changed, not yet verified).
+  const totalBalanceDue = partialAwaiting.reduce((sum, r) => {
+    const paidSoFar = Number(r.verified_total) > 0 ? Number(r.verified_total) : (Number(r.paid_amount) || 0);
+    return sum + Math.max(0, Number(r.expected_amount) - paidSoFar);
+  }, 0);
   setText('metric-total-amount', `₹${inr(totalCleared)}`);
   setText('metric-verified-count', verified.length);
   setText('metric-pending-count', needsDecision.length);
+  setText('metric-balance-count', partialAwaiting.length);
+  setText('metric-balance-amount', `₹${inr(totalBalanceDue)} outstanding`);
   setText('metric-flagged-count', flagged.length);
   setText('badge-pending-payments', needsDecision.length);
 
