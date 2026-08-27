@@ -20,7 +20,6 @@ const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 const fetch = require('node-fetch');
 const multer = require('multer');
 const XLSX = require('xlsx');
-const pdfParse = require('pdf-parse'); // abstract-conversion tool only, see splitAbstractText
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -417,48 +416,6 @@ function sanitizeAbstractHtml(v) {
 // Word count from the PLAIN text, so formatting tags never inflate it.
 function plainTextWordCount(html) {
   return String(html || '').replace(/<[^>]+>/g, ' ').trim().split(/\s+/).filter(Boolean).length;
-}
-
-// Best-effort split of a legacy PDF abstract's raw extracted text into the
-// five structured sections, for the admin conversion tool
-// (GET/POST /api/admin/abstracts/:id/{extract,convert}). This is a heuristic,
-// not a parser -- verified against the 5 real abstracts on file: it got 4/5
-// Aim sections and 2/5 Keywords sections right, correctly reported "not
-// found" for the genuine gaps (one PDF simply has no Aim section at all),
-// and initially mis-split one Methods section by matching the word
-// "methods" mid-sentence in the Background paragraph before the real
-// header ("Pharmacological methods can provide pain relief...") -- fixed by
-// requiring a header to be either at the start of its own line/paragraph or
-// immediately followed by punctuation, not just present as a bare word
-// anywhere. This is exactly why the conversion tool shows the raw extracted
-// text alongside the guess and requires an explicit admin commit per
-// abstract rather than writing anything automatically.
-const ABSTRACT_HEADER_PATTERNS = [
-  { key: 'background', re: 'background' },
-  { key: 'aim', re: 'aim(?:\\s+statement)?' },
-  { key: 'methods', re: 'methods?' },
-  { key: 'results', re: 'results?' },
-  { key: 'conclusion', re: 'conclusions?' },
-  { key: 'keywords', re: 'keywords?' },
-];
-function splitAbstractText(text) {
-  const matches = [];
-  for (const { key, re } of ABSTRACT_HEADER_PATTERNS) {
-    const global = new RegExp(`(?:^|\\n)\\s*(${re})\\s*[:.\\-]*\\s*|\\b(${re})\\s*[:.\\-]+\\s*`, 'gi');
-    let m;
-    while ((m = global.exec(text))) matches.push({ key, index: m.index, end: m.index + m[0].length });
-  }
-  matches.sort((a, b) => a.index - b.index);
-  const seen = new Set();
-  const ordered = matches.filter((m) => (seen.has(m.key) ? false : (seen.add(m.key), true)));
-
-  const sections = {};
-  for (let i = 0; i < ordered.length; i++) {
-    const cur = ordered[i];
-    const next = ordered[i + 1];
-    sections[cur.key] = text.slice(cur.end, next ? next.index : text.length).trim().replace(/\s+/g, ' ');
-  }
-  return sections;
 }
 
 // Format a rupee amount with Indian digit grouping (e.g. 100000 -> 1,00,000):
@@ -1007,20 +964,22 @@ db.serialize(() => {
     )
   `);
 
-  // Additive migration for databases created before the review workflow and
-  // before PDF uploads (abstract_file holds the stored PDF filename).
+  // Additive migration for databases created before the review workflow
+  // existed.
   db.all('PRAGMA table_info(abstracts)', async (err, cols) => {
     if (err) return console.error('Schema check failed:', err.message);
     const names = cols.map((c) => c.name);
     if (!names.includes('status')) db.run("ALTER TABLE abstracts ADD COLUMN status TEXT DEFAULT 'UNDER_REVIEW'");
-    if (!names.includes('abstract_file')) db.run('ALTER TABLE abstracts ADD COLUMN abstract_file TEXT');
     if (!names.includes('allocation')) db.run('ALTER TABLE abstracts ADD COLUMN allocation TEXT'); // ORAL | POSTER
-    // Structured submission: one column per section instead of a single PDF
-    // upload. abstract_file (and the unused legacy `text` column) stay for
-    // existing rows still awaiting conversion -- see the admin PDF-conversion
-    // tool. Each of these five holds sanitizeAbstractHtml() output (escaped
-    // text with only <b>/<i>/<sup>/<sub> restored); word_count is computed
-    // from their combined plain text (see plainTextWordCount) at submit time.
+    // Structured submission: one column per section. abstract_file (the old
+    // PDF-upload column) and the never-used legacy `text` column are gone
+    // from the app's own writes -- PDF upload/serving/conversion was
+    // removed once every abstract had been migrated to this format -- but
+    // an existing database keeps whatever value is already in those
+    // columns (harmless leftover, same as `text` always was). Each of
+    // these five holds sanitizeAbstractHtml() output (escaped text with
+    // only <b>/<i>/<sup>/<sub> restored); word_count is computed from
+    // their combined plain text (see plainTextWordCount) at submit time.
     if (!names.includes('background')) db.run('ALTER TABLE abstracts ADD COLUMN background TEXT');
     if (!names.includes('aim')) db.run('ALTER TABLE abstracts ADD COLUMN aim TEXT');
     if (!names.includes('methods')) db.run('ALTER TABLE abstracts ADD COLUMN methods TEXT');
@@ -3008,110 +2967,12 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
 app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
   try {
     const row = await dbGet(
-      `SELECT id, format, title, status, allocation, abstract_file,
+      `SELECT id, format, title, status, allocation,
               background, aim, methods, results, conclusion, keywords, word_count
          FROM abstracts WHERE phone_number = ?`,
       [req.session.phone]
     );
     res.json({ abstract: row || null });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Serve an abstract PDF to a reviewer/super admin or the submitting author.
-app.get('/api/abstracts/:id/file', requireAuth, async (req, res, next) => {
-  try {
-    const row = await dbGet('SELECT phone_number, abstract_file FROM abstracts WHERE id = ?', [req.params.id]);
-    if (!row || !row.abstract_file) {
-      return res.status(404).json({ success: false, error: 'Abstract file not found.' });
-    }
-    const isReviewer = req.session.role === 'SUPER_ADMIN' || roleGrants(req.session.role).includes('ACADEMIC_REVIEWER');
-    if (!isReviewer && req.session.phone !== row.phone_number) {
-      return res.status(403).json({ success: false, error: 'You do not have permission to view this abstract.' });
-    }
-    res.set('Cache-Control', 'private, no-store');
-    res.type('application/pdf');
-    res.sendFile(path.join(UPLOAD_DIR, path.basename(row.abstract_file)), (err) => {
-      if (err && !res.headersSent) res.status(404).json({ success: false, error: 'Abstract file not found.' });
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// One-time conversion tool for the abstracts submitted before structured
-// fields existed (see the abstracts schema migration): extracts the PDF's
-// text and a best-effort section split (splitAbstractText), but writes
-// nothing -- the admin reviews/corrects the guess against the raw text and
-// explicitly commits per abstract via POST .../convert below. SUPER_ADMIN
-// only, matching the other one-time/high-stakes admin tools in this app.
-app.get('/api/admin/abstracts/:id/extract', requireRole('SUPER_ADMIN'), async (req, res, next) => {
-  try {
-    const row = await dbGet('SELECT id, abstract_file, background FROM abstracts WHERE id = ?', [req.params.id]);
-    if (!row) return res.status(404).json({ success: false, error: 'Abstract not found.' });
-    if (!row.abstract_file) return res.status(400).json({ success: false, error: 'This abstract has no PDF to convert.' });
-
-    const buffer = await readStoredUpload(row.abstract_file);
-    if (!buffer) return res.status(404).json({ success: false, error: 'The PDF file is missing from disk.' });
-
-    let rawText;
-    try {
-      rawText = (await pdfParse(buffer)).text || '';
-    } catch (err) {
-      return res.status(422).json({ success: false, error: `Could not extract text from this PDF: ${err.message}` });
-    }
-    const guess = splitAbstractText(rawText);
-    res.json({
-      rawText,
-      alreadyConverted: !!row.background,
-      sections: {
-        background: guess.background || '', aim: guess.aim || '', methods: guess.methods || '',
-        results: guess.results || '', conclusion: guess.conclusion || '', keywords: guess.keywords || '',
-      },
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Commits the admin-reviewed (and possibly corrected) sections to the
-// database -- the only place this tool actually writes. Same validation as
-// a normal delegate submission (all 5 sections required, 400-word cap,
-// sanitized the same way) so a converted abstract is indistinguishable from
-// one submitted through the structured form. abstract_file is deliberately
-// left in place afterward as a reference (see the "view original" link on
-// the reviewer desk), not cleared.
-app.post('/api/admin/abstracts/:id/convert', requireRole('SUPER_ADMIN'), async (req, res, next) => {
-  try {
-    const existing = await dbGet('SELECT id FROM abstracts WHERE id = ?', [req.params.id]);
-    if (!existing) return res.status(404).json({ success: false, error: 'Abstract not found.' });
-
-    const sections = {};
-    for (const key of ABSTRACT_SECTIONS) {
-      const raw = req.body[key];
-      if (!raw || !plainTextWordCount(raw)) {
-        return res.status(400).json({ success: false, error: `${ABSTRACT_SECTION_LABELS[key]} is required.` });
-      }
-      sections[key] = sanitizeAbstractHtml(raw);
-    }
-    const keywords = String(req.body.keywords || '').trim();
-    if (!keywords) return res.status(400).json({ success: false, error: 'At least one keyword is required.' });
-
-    const wordCount = ABSTRACT_SECTIONS.reduce((sum, key) => sum + plainTextWordCount(sections[key]), 0);
-    if (wordCount > ABSTRACT_MAX_WORDS) {
-      return res.status(400).json({ success: false, error: `This abstract is ${wordCount} words; the limit is ${ABSTRACT_MAX_WORDS}.` });
-    }
-
-    await dbRun(
-      `UPDATE abstracts SET background = ?, aim = ?, methods = ?, results = ?, conclusion = ?, keywords = ?, word_count = ? WHERE id = ?`,
-      [sections.background, sections.aim, sections.methods, sections.results, sections.conclusion, keywords, wordCount, req.params.id]
-    );
-    await recordAudit({
-      req, entityType: 'abstract', entityId: req.params.id,
-      action: 'ABSTRACT_PDF_CONVERTED', oldValue: null, newValue: `Converted to structured format (${wordCount} words)`,
-    });
-    res.json({ success: true });
   } catch (err) {
     next(err);
   }

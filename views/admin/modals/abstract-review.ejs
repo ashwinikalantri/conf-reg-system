@@ -1,0 +1,20 @@
+  <!-- MODAL: REVIEW ABSTRACT -->
+  <!-- Reviewer desk cards only show Title/Author/Format (see
+       abstractCardHeader); clicking "Review Abstract" opens this modal with
+       the full structured content (see abstractSectionsHtml) and the
+       Approve/Reject/Reset actions -- data-id is set dynamically on
+       #abstract-review-modal-actions by openAbstractReview(). -->
+  <div id="modal-abstract-review" class="hidden fixed inset-0 bg-slate-900/70 flex justify-center items-center p-4 z-50">
+    <div class="bg-white max-w-2xl w-full rounded-2xl p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+      <button onclick="closeModal('modal-abstract-review')" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
+      <h3 id="abstract-review-modal-title" class="text-lg font-bold text-slate-800 mb-1 pr-8">Abstract</h3>
+
+      <div id="abstract-review-modal-body"></div>
+
+      <div id="abstract-review-modal-actions" class="flex flex-wrap gap-2 mt-4 pt-3 border-t border-slate-100">
+        <button class="abstract-status-btn px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs" data-status="ACCEPTED">Approve</button>
+        <button class="abstract-status-btn px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg text-xs" data-status="REJECTED">Reject</button>
+        <button class="abstract-status-btn px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg text-xs" data-status="UNDER_REVIEW">Reset</button>
+      </div>
+    </div>
+  </div>

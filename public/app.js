@@ -668,24 +668,18 @@ let cachedOwnAbstract = null;
 // conclusion already went through sanitizeAbstractHtml() server-side (a
 // four-tag allowlist -- see there), so this renders them directly rather
 // than through esc(), which would double-escape and show literal "&lt;b&gt;"
-// instead of actual bold text. A pre-conversion legacy row (see the PDF
-// conversion tool) has abstract_file instead of structured sections -- shown
-// as a plain link to the same authed file route the reviewer desk uses.
+// instead of actual bold text.
 function toggleAbstractPreview() {
   const box = document.getElementById('abstract-preview-box');
   if (!box || !cachedOwnAbstract) return;
   if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
   const abs = cachedOwnAbstract;
-  if (abs.background) {
-    const section = (label, html) => html ? `<div><p class="font-bold text-slate-700">${esc(label)}</p><p class="whitespace-pre-wrap">${html}</p></div>` : '';
-    box.innerHTML = [
-      section('Background', abs.background), section('Aim', abs.aim), section('Methods', abs.methods),
-      section('Results', abs.results), section('Conclusion', abs.conclusion),
-      abs.keywords ? `<div><p class="font-bold text-slate-700">Keywords</p><p>${esc(abs.keywords)}</p></div>` : '',
-    ].join('');
-  } else if (abs.abstract_file) {
-    box.innerHTML = `<a href="/api/abstracts/${encodeURIComponent(abs.id)}/file" target="_blank" rel="noopener" class="text-indigo-600 hover:underline font-semibold">View submitted PDF →</a>`;
-  }
+  const section = (label, html) => html ? `<div><p class="font-bold text-slate-700">${esc(label)}</p><p class="whitespace-pre-wrap">${html}</p></div>` : '';
+  box.innerHTML = [
+    section('Background', abs.background), section('Aim', abs.aim), section('Methods', abs.methods),
+    section('Results', abs.results), section('Conclusion', abs.conclusion),
+    abs.keywords ? `<div><p class="font-bold text-slate-700">Keywords</p><p>${esc(abs.keywords)}</p></div>` : '',
+  ].join('');
   box.classList.remove('hidden');
 }
 
@@ -1347,15 +1341,6 @@ async function handleAbstractSubmit(e) {
 function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
 function closeModal(id) {
   document.getElementById(id).classList.add('hidden');
-  // Stop the PDF viewer from continuing to load/render in the background
-  // once its modal is closed, and avoid a stale flash of the previous file
-  // the next time it opens.
-  if (id === 'modal-abstract-pdf') {
-    const frame = document.getElementById('abstract-pdf-modal-frame');
-    if (frame) frame.src = '';
-    const actions = document.getElementById('abstract-pdf-modal-actions');
-    if (actions) { actions.classList.add('hidden'); actions.classList.remove('flex'); }
-  }
 }
 
 // In-page confirmation dialog. Native confirm() is unreliable — browsers
@@ -1594,15 +1579,15 @@ function setupAdminDelegation() {
     });
   });
 
-  // Approve/Reject/Reset inside the PDF viewer modal -- id comes from the
-  // container's data-id (set by openAbstractPdf), not the button itself.
-  const abstractPdfActions = document.getElementById('abstract-pdf-modal-actions');
-  if (abstractPdfActions) {
-    abstractPdfActions.addEventListener('click', (e) => {
+  // Approve/Reject/Reset inside the abstract review modal -- id comes from
+  // the container's data-id (set by openAbstractReview), not the button itself.
+  const abstractReviewActions = document.getElementById('abstract-review-modal-actions');
+  if (abstractReviewActions) {
+    abstractReviewActions.addEventListener('click', (e) => {
       const btn = e.target.closest('.abstract-status-btn');
       if (!btn) return;
-      updateAbstractStatus(abstractPdfActions.dataset.id, btn.dataset.status);
-      closeModal('modal-abstract-pdf');
+      updateAbstractStatus(abstractReviewActions.dataset.id, btn.dataset.status);
+      closeModal('modal-abstract-review');
     });
   }
 
@@ -4685,22 +4670,15 @@ function abstractCardHeader(a) {
         </div>
       </div>
       <div class="mt-3">
-        ${a.background
-          ? abstractSectionsHtml(a)
-          : a.abstract_file
-            ? `<button type="button" onclick="openAbstractPdf(${esc(a.id)}, '${esc(a.title.replace(/'/g, "\\'"))}')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs">Review PDF (not yet converted)</button>`
-              + (isSuperAdminViewer() ? ` <button type="button" onclick="openAbstractConvert(${esc(a.id)}, '${esc(a.title.replace(/'/g, "\\'"))}')" class="px-3 py-1.5 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg text-xs">Convert to Structured Format</button>` : '')
-            : a.text
-              ? `<p class="text-sm text-slate-600 whitespace-pre-wrap">${esc(a.text)}</p>`
-              : `<span class="text-xs text-slate-400">No submission</span>`
-        }
+        <button type="button" onclick="openAbstractReview(${esc(a.id)})" class="px-3 py-1.5 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg text-xs">Review Abstract</button>
       </div>`;
 }
 
-// Inline structured read for a reviewer -- no download, no separate modal.
-// Fields already went through sanitizeAbstractHtml() server-side (a
-// four-tag allowlist), so rendered directly rather than through esc(),
-// which would double-escape and show literal "&lt;b&gt;" instead of bold.
+// Full structured read, shown inside the review modal (see
+// openAbstractReview). Fields already went through sanitizeAbstractHtml()
+// server-side (a four-tag allowlist), so rendered directly rather than
+// through esc(), which would double-escape and show literal "&lt;b&gt;"
+// instead of bold.
 function abstractSectionsHtml(a) {
   const section = (label, html) => html ? `<div class="mb-2"><p class="text-[10px] font-bold text-slate-500 uppercase tracking-wide">${esc(label)}</p><p class="text-sm text-slate-700 whitespace-pre-wrap">${html}</p></div>` : '';
   return `<div class="border-t border-slate-100 pt-3">
@@ -4710,96 +4688,27 @@ function abstractSectionsHtml(a) {
     ${section('Results', a.results)}
     ${section('Conclusion', a.conclusion)}
     ${a.keywords ? `<p class="text-[11px] text-slate-500"><span class="font-bold">Keywords:</span> ${esc(a.keywords)}</p>` : ''}
-    <p class="text-[10px] text-slate-400 mt-1">${a.word_count ? esc(a.word_count) + ' words' : ''}${a.word_count && a.abstract_file ? ' · ' : ''}${a.abstract_file ? `<button type="button" onclick="openAbstractPdf(${esc(a.id)}, '${esc(a.title.replace(/'/g, "\\'"))}')" class="text-indigo-600 hover:underline font-semibold">Converted from PDF — view original</button>` : ''}</p>
+    <p class="text-[10px] text-slate-400 mt-1">${a.word_count ? esc(a.word_count) + ' words' : ''}</p>
   </div>`;
 }
 
-// Show an abstract's PDF in an inline modal instead of opening/downloading it
-// in a new tab. Approve/Reject/Reset live in the modal footer (rather than
-// on the card) for abstracts that have a file, so a reviewer decides while
-// actually looking at the PDF; the data-id is set here so the delegated
-// click handler on #abstract-pdf-modal-actions knows which abstract to act on.
-function openAbstractPdf(id, title) {
-  const frame = document.getElementById('abstract-pdf-modal-frame');
-  const titleEl = document.getElementById('abstract-pdf-modal-title');
-  const actions = document.getElementById('abstract-pdf-modal-actions');
-  if (!frame) return;
-  frame.src = `/api/abstracts/${encodeURIComponent(id)}/file`;
-  if (titleEl) titleEl.innerText = title || 'Abstract PDF';
-  if (actions) {
-    actions.dataset.id = id;
-    actions.classList.remove('hidden');
-    actions.classList.add('flex');
-  }
-  openModal('modal-abstract-pdf');
-}
+// Cards on the reviewer desk only show Title/Author/Format -- the full
+// abstract (see abstractSectionsHtml) and the Approve/Reject/Reset actions
+// live in this modal instead. abstractsCache is populated by the most
+// recent renderBackendAbstracts() fetch so this can look the row up by id
+// without a second round-trip.
+let abstractsCache = [];
 
-// PDF-to-structured conversion tool (SUPER_ADMIN only -- see the button's
-// own isSuperAdminViewer() gate above; the server independently enforces
-// this too). Fetches the raw extracted text + a best-effort auto-split
-// (GET .../extract, writes nothing) and pre-fills the five section fields
-// with the guess for the admin to check against the raw text and correct.
-const ABSTRACT_CONVERT_SECTION_IDS = ['abstract-convert-background', 'abstract-convert-aim', 'abstract-convert-methods', 'abstract-convert-results', 'abstract-convert-conclusion'];
-let abstractConvertTargetId = null;
-
-async function openAbstractConvert(id, title) {
-  abstractConvertTargetId = id;
-  const titleEl = document.getElementById('abstract-convert-title');
-  if (titleEl) titleEl.innerText = title ? `Convert: ${title}` : 'Convert Abstract';
-  for (const convId of ABSTRACT_CONVERT_SECTION_IDS) { const el = document.getElementById(convId); if (el) el.value = ''; }
-  const kw = document.getElementById('abstract-convert-keywords'); if (kw) kw.value = '';
-  const rawBox = document.getElementById('abstract-convert-rawtext');
-  if (rawBox) rawBox.textContent = 'Extracting…';
-  openModal('modal-abstract-convert');
-
-  const data = await (await fetch(`/api/admin/abstracts/${encodeURIComponent(id)}/extract`)).json();
-  if (!data.rawText && data.error) {
-    if (rawBox) rawBox.textContent = '';
-    showToast(data.error || 'Could not extract this PDF.');
-    return;
-  }
-  if (rawBox) rawBox.textContent = data.rawText || '(no text extracted)';
-  const s = data.sections || {};
-  document.getElementById('abstract-convert-background').value = s.background || '';
-  document.getElementById('abstract-convert-aim').value = s.aim || '';
-  document.getElementById('abstract-convert-methods').value = s.methods || '';
-  document.getElementById('abstract-convert-results').value = s.results || '';
-  document.getElementById('abstract-convert-conclusion').value = s.conclusion || '';
-  document.getElementById('abstract-convert-keywords').value = s.keywords || '';
-  updateAbstractConvertWordCount();
-}
-
-function updateAbstractConvertWordCount() {
-  let total = 0;
-  for (const id of ABSTRACT_CONVERT_SECTION_IDS) {
-    const el = document.getElementById(id);
-    if (el) total += abstractWordCount(el.value);
-  }
-  const counter = document.getElementById('abstract-convert-wordcount');
-  if (counter) {
-    counter.textContent = `${total} / ${ABSTRACT_MAX_WORDS} words`;
-    counter.className = total > ABSTRACT_MAX_WORDS ? 'text-xs font-bold text-rose-600' : 'text-xs font-semibold text-slate-500';
-  }
-  const btn = document.getElementById('abstract-convert-commit-btn');
-  if (btn) btn.disabled = total > ABSTRACT_MAX_WORDS || total === 0;
-  return total;
-}
-
-async function submitAbstractConvert() {
-  if (!abstractConvertTargetId) return;
-  if (updateAbstractConvertWordCount() > ABSTRACT_MAX_WORDS) return showToast(`Over the ${ABSTRACT_MAX_WORDS}-word limit.`);
-  const payload = { keywords: document.getElementById('abstract-convert-keywords').value };
-  for (const id of ABSTRACT_CONVERT_SECTION_IDS) {
-    payload[id.replace('abstract-convert-', '')] = document.getElementById(id).value;
-  }
-  if (!(await showConfirm('Commit this converted abstract to the database? This replaces the reviewer view for this abstract with the structured version (the original PDF stays available for reference).'))) return;
-  const data = await (await fetch(`/api/admin/abstracts/${encodeURIComponent(abstractConvertTargetId)}/convert`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-  })).json();
-  if (!data.success) return showToast(data.error || 'Could not commit this conversion.');
-  showToast('Abstract converted.', 'success');
-  closeModal('modal-abstract-convert');
-  renderBackendAbstracts();
+function openAbstractReview(id) {
+  const a = abstractsCache.find((x) => String(x.id) === String(id));
+  if (!a) return;
+  const titleEl = document.getElementById('abstract-review-modal-title');
+  if (titleEl) titleEl.innerText = a.title || 'Abstract';
+  const body = document.getElementById('abstract-review-modal-body');
+  if (body) body.innerHTML = abstractSectionsHtml(a);
+  const actions = document.getElementById('abstract-review-modal-actions');
+  if (actions) actions.dataset.id = a.id;
+  openModal('modal-abstract-review');
 }
 
 async function renderBackendAbstracts() {
@@ -4816,6 +4725,7 @@ async function renderBackendAbstracts() {
 
   const data = await res.json();
   const abstracts = data.abstracts || [];
+  abstractsCache = abstracts;
   const underReview = abstracts.filter(a => (a.status || 'UNDER_REVIEW') === 'UNDER_REVIEW');
   setText('badge-pending-abstracts', underReview.length);
 
@@ -4825,20 +4735,11 @@ async function renderBackendAbstracts() {
     return;
   }
 
-  // Step 1: Approval -- accept/reject/reset. A legacy not-yet-converted PDF
-  // row (see the abstract conversion tool) still makes that decision from
-  // inside the PDF viewer modal instead (see openAbstractPdf), since there's
-  // nothing structured to show inline yet; every structured abstract reads
-  // right on the card (see abstractSectionsHtml), buttons included.
+  // Step 1: Approval -- accept/reject/reset happens inside the review modal
+  // (see openAbstractReview), not on the card itself.
   approvalBox.innerHTML = abstracts.map(a => `
     <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
       ${abstractCardHeader(a)}
-      ${a.abstract_file && !a.background ? '' : `
-      <div class="flex flex-wrap gap-2 mt-4">
-        <button class="abstract-status-btn px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-status="ACCEPTED">Approve</button>
-        <button class="abstract-status-btn px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-status="REJECTED">Reject</button>
-        <button class="abstract-status-btn px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-status="UNDER_REVIEW">Reset</button>
-      </div>`}
     </div>
   `).join('');
 
