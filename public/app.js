@@ -4688,8 +4688,8 @@ function abstractCardHeader(a) {
         ${a.background
           ? abstractSectionsHtml(a)
           : a.abstract_file
-            ? `<button type="button" onclick="openAbstractPdf(${esc(a.id)}, '${esc(a.title).replace(/'/g, "\\'")}')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs">Review PDF (not yet converted)</button>`
-              + (isSuperAdminViewer() ? ` <button type="button" onclick="openAbstractConvert(${esc(a.id)}, '${esc(a.title).replace(/'/g, "\\'")}')" class="px-3 py-1.5 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg text-xs">Convert to Structured Format</button>` : '')
+            ? `<button type="button" onclick="openAbstractPdf(${esc(a.id)}, '${esc(a.title.replace(/'/g, "\\'"))}')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs">Review PDF (not yet converted)</button>`
+              + (isSuperAdminViewer() ? ` <button type="button" onclick="openAbstractConvert(${esc(a.id)}, '${esc(a.title.replace(/'/g, "\\'"))}')" class="px-3 py-1.5 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg text-xs">Convert to Structured Format</button>` : '')
             : a.text
               ? `<p class="text-sm text-slate-600 whitespace-pre-wrap">${esc(a.text)}</p>`
               : `<span class="text-xs text-slate-400">No submission</span>`
@@ -4710,7 +4710,7 @@ function abstractSectionsHtml(a) {
     ${section('Results', a.results)}
     ${section('Conclusion', a.conclusion)}
     ${a.keywords ? `<p class="text-[11px] text-slate-500"><span class="font-bold">Keywords:</span> ${esc(a.keywords)}</p>` : ''}
-    <p class="text-[10px] text-slate-400 mt-1">${a.word_count ? esc(a.word_count) + ' words' : ''}${a.word_count && a.abstract_file ? ' · ' : ''}${a.abstract_file ? `<button type="button" onclick="openAbstractPdf(${esc(a.id)}, '${esc(a.title).replace(/'/g, "\\'")}')" class="text-indigo-600 hover:underline font-semibold">Converted from PDF — view original</button>` : ''}</p>
+    <p class="text-[10px] text-slate-400 mt-1">${a.word_count ? esc(a.word_count) + ' words' : ''}${a.word_count && a.abstract_file ? ' · ' : ''}${a.abstract_file ? `<button type="button" onclick="openAbstractPdf(${esc(a.id)}, '${esc(a.title.replace(/'/g, "\\'"))}')" class="text-indigo-600 hover:underline font-semibold">Converted from PDF — view original</button>` : ''}</p>
   </div>`;
 }
 
