@@ -622,8 +622,11 @@ async function loadAbstractStatus() {
     ACCEPTED: ['Accepted ✓', 'bg-emerald-100 text-emerald-700'],
     REJECTED: ['Not Accepted', 'bg-rose-100 text-rose-700'],
   };
+  const previewToggle = document.getElementById('abstract-preview-toggle');
+  const previewBox = document.getElementById('abstract-preview-box');
   try {
     const abs = (await (await fetch('/api/abstracts/me')).json()).abstract;
+    cachedOwnAbstract = abs;
     if (abs) {
       let [label, cls] = STYLES[abs.status] || ['Submitted', 'bg-slate-100 text-slate-600'];
       if (abs.status === 'ACCEPTED' && abs.allocation) {
@@ -646,12 +649,44 @@ async function loadAbstractStatus() {
           desc.innerText = 'Your abstract has been submitted and is under review. It cannot be changed.';
         }
       }
+      if (previewToggle) previewToggle.classList.remove('hidden');
+      if (previewBox) previewBox.classList.add('hidden'); // collapsed by default each load
     } else {
       tag.className = 'text-xs bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-full';
       tag.innerText = 'Not Submitted';
       if (btn) { btn.innerText = 'Submit Abstract'; btn.disabled = false; btn.classList.remove('opacity-60', 'cursor-not-allowed'); }
+      if (previewToggle) previewToggle.classList.add('hidden');
+      if (previewBox) previewBox.classList.add('hidden');
     }
   } catch (e) { /* leave as-is */ }
+}
+
+// Cached so the preview toggle doesn't need a second round trip.
+let cachedOwnAbstract = null;
+
+// Read-only structured preview. abs.background/aim/methods/results/
+// conclusion already went through sanitizeAbstractHtml() server-side (a
+// four-tag allowlist -- see there), so this renders them directly rather
+// than through esc(), which would double-escape and show literal "&lt;b&gt;"
+// instead of actual bold text. A pre-conversion legacy row (see the PDF
+// conversion tool) has abstract_file instead of structured sections -- shown
+// as a plain link to the same authed file route the reviewer desk uses.
+function toggleAbstractPreview() {
+  const box = document.getElementById('abstract-preview-box');
+  if (!box || !cachedOwnAbstract) return;
+  if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+  const abs = cachedOwnAbstract;
+  if (abs.abstract_file) {
+    box.innerHTML = `<a href="/api/abstracts/${encodeURIComponent(abs.id)}/file" target="_blank" rel="noopener" class="text-indigo-600 hover:underline font-semibold">View submitted PDF →</a>`;
+  } else {
+    const section = (label, html) => html ? `<div><p class="font-bold text-slate-700">${esc(label)}</p><p class="whitespace-pre-wrap">${html}</p></div>` : '';
+    box.innerHTML = [
+      section('Background', abs.background), section('Aim', abs.aim), section('Methods', abs.methods),
+      section('Results', abs.results), section('Conclusion', abs.conclusion),
+      abs.keywords ? `<div><p class="font-bold text-slate-700">Keywords</p><p>${esc(abs.keywords)}</p></div>` : '',
+    ].join('');
+  }
+  box.classList.remove('hidden');
 }
 
 // Applied promo code for the current payment form: { code, discountAmount,
@@ -1231,39 +1266,82 @@ async function submitCorrection(e) {
   }
 }
 
+// Sections use a plain <textarea> (not contenteditable -- far more
+// consistent across browsers) so a formatting button just splices literal
+// "<b>...</b>"-style text into the value at the cursor/selection. The server
+// re-escapes everything and restores only these same four tags
+// (sanitizeAbstractHtml), so this is exactly the markup that survives.
+const ABSTRACT_SECTION_IDS = ['abstract-background', 'abstract-aim', 'abstract-methods', 'abstract-results', 'abstract-conclusion'];
+const ABSTRACT_MAX_WORDS = 400;
+
+function wrapAbstractSelection(id, tag) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  const before = el.value.slice(0, start);
+  const selected = el.value.slice(start, end);
+  const after = el.value.slice(end);
+  const open = `<${tag}>`;
+  const close = `</${tag}>`;
+  el.value = `${before}${open}${selected}${close}${after}`;
+  el.focus();
+  // No selection: drop the cursor between the tags so typing continues
+  // inside them. Had a selection: land after the closing tag.
+  const cursor = selected ? start + open.length + selected.length + close.length : start + open.length;
+  el.setSelectionRange(cursor, cursor);
+  updateAbstractWordCount();
+}
+
+// Mirrors the server's plainTextWordCount() exactly -- strip tags, count
+// whitespace-separated tokens -- so the live counter never disagrees with
+// what actually gets enforced on submit.
+function abstractWordCount(html) {
+  return String(html || '').replace(/<[^>]+>/g, ' ').trim().split(/\s+/).filter(Boolean).length;
+}
+
+function updateAbstractWordCount() {
+  let total = 0;
+  for (const id of ABSTRACT_SECTION_IDS) {
+    const el = document.getElementById(id);
+    if (el) total += abstractWordCount(el.value);
+  }
+  const counter = document.getElementById('abstract-total-wordcount');
+  if (counter) {
+    counter.textContent = `${total} / ${ABSTRACT_MAX_WORDS} words`;
+    counter.className = total > ABSTRACT_MAX_WORDS ? 'text-xs font-bold text-rose-600' : 'text-xs font-semibold text-slate-500';
+  }
+  const submitBtn = document.getElementById('abstract-submit-btn');
+  if (submitBtn) submitBtn.disabled = total > ABSTRACT_MAX_WORDS || total === 0;
+  return total;
+}
+
 async function handleAbstractSubmit(e) {
   e.preventDefault();
-  const file = document.getElementById('abstract-pdf').files[0];
-  if (!file) return showToast('Please attach your abstract PDF.');
-  if (file.type !== 'application/pdf') return showToast('The abstract must be a PDF file.');
+  if (updateAbstractWordCount() > ABSTRACT_MAX_WORDS) return showToast(`Your abstract is over the ${ABSTRACT_MAX_WORDS}-word limit.`);
 
-  const reader = new FileReader();
-  reader.onload = async function (event) {
-    const payload = {
-      format: document.getElementById('abstract-format').value,
-      title: document.getElementById('abstract-title').value,
-      pdf: event.target.result
-    };
-    try {
-      const res = await fetch('/api/abstracts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (data.success) {
-        showToast('Abstract submitted for review!', 'success');
-        document.getElementById('abstract-pdf').value = '';
-        closeModal('modal-abstract');
-        loadDashboard();
-      } else {
-        showToast(data.error || 'Submission failed.');
-      }
-    } catch (err) {
-      showToast(`Submission error: ${err.message}`);
+  const payload = { format: document.getElementById('abstract-format').value, title: document.getElementById('abstract-title').value, keywords: document.getElementById('abstract-keywords').value };
+  for (const id of ABSTRACT_SECTION_IDS) {
+    payload[id.replace('abstract-', '')] = document.getElementById(id).value;
+  }
+
+  try {
+    const res = await fetch('/api/abstracts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Abstract submitted for review!', 'success');
+      closeModal('modal-abstract');
+      loadDashboard();
+    } else {
+      showToast(data.error || 'Submission failed.');
     }
-  };
-  reader.readAsDataURL(file);
+  } catch (err) {
+    showToast(`Submission error: ${err.message}`);
+  }
 }
 
 function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
@@ -4608,12 +4686,31 @@ function abstractCardHeader(a) {
       </div>
       <div class="mt-3">
         ${a.abstract_file
-          ? `<button type="button" onclick="openAbstractPdf(${esc(a.id)}, '${esc(a.title).replace(/'/g, "\\'")}')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs">Review</button>`
-          : a.text
-            ? `<p class="text-sm text-slate-600 whitespace-pre-wrap">${esc(a.text)}</p>`
-            : `<span class="text-xs text-slate-400">No file</span>`
+          ? `<button type="button" onclick="openAbstractPdf(${esc(a.id)}, '${esc(a.title).replace(/'/g, "\\'")}')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs">Review PDF (not yet converted)</button>`
+          : a.background
+            ? abstractSectionsHtml(a)
+            : a.text
+              ? `<p class="text-sm text-slate-600 whitespace-pre-wrap">${esc(a.text)}</p>`
+              : `<span class="text-xs text-slate-400">No submission</span>`
         }
       </div>`;
+}
+
+// Inline structured read for a reviewer -- no download, no separate modal.
+// Fields already went through sanitizeAbstractHtml() server-side (a
+// four-tag allowlist), so rendered directly rather than through esc(),
+// which would double-escape and show literal "&lt;b&gt;" instead of bold.
+function abstractSectionsHtml(a) {
+  const section = (label, html) => html ? `<div class="mb-2"><p class="text-[10px] font-bold text-slate-500 uppercase tracking-wide">${esc(label)}</p><p class="text-sm text-slate-700 whitespace-pre-wrap">${html}</p></div>` : '';
+  return `<div class="border-t border-slate-100 pt-3">
+    ${section('Background', a.background)}
+    ${section('Aim', a.aim)}
+    ${section('Methods', a.methods)}
+    ${section('Results', a.results)}
+    ${section('Conclusion', a.conclusion)}
+    ${a.keywords ? `<p class="text-[11px] text-slate-500"><span class="font-bold">Keywords:</span> ${esc(a.keywords)}</p>` : ''}
+    ${a.word_count ? `<p class="text-[10px] text-slate-400 mt-1">${esc(a.word_count)} words</p>` : ''}
+  </div>`;
 }
 
 // Show an abstract's PDF in an inline modal instead of opening/downloading it
@@ -4659,10 +4756,11 @@ async function renderBackendAbstracts() {
     return;
   }
 
-  // Step 1: Approval -- accept/reject/reset. Abstracts with a PDF make that
-  // decision from inside the PDF viewer modal instead (see openAbstractPdf),
-  // so a reviewer decides while actually looking at the file; text-only
-  // abstracts have no PDF to view, so they keep the buttons on the card.
+  // Step 1: Approval -- accept/reject/reset. A legacy not-yet-converted PDF
+  // row (see the abstract conversion tool) still makes that decision from
+  // inside the PDF viewer modal instead (see openAbstractPdf), since there's
+  // nothing structured to show inline yet; every structured abstract reads
+  // right on the card (see abstractSectionsHtml), buttons included.
   approvalBox.innerHTML = abstracts.map(a => `
     <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
       ${abstractCardHeader(a)}

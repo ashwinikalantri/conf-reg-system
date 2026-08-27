@@ -85,6 +85,8 @@
           </div>
           <h3 class="text-xl font-bold text-slate-800 mt-1">Submit Abstract</h3>
           <p id="abstract-desc" class="text-sm text-slate-600 mt-2">Submit papers or posters under Healthcare Quality &amp; Patient Safety. One abstract per delegate; it cannot be changed once submitted.</p>
+          <button type="button" id="abstract-preview-toggle" onclick="toggleAbstractPreview()" class="hidden text-xs text-indigo-600 hover:underline font-semibold mt-2">View my submission</button>
+          <div id="abstract-preview-box" class="hidden mt-2 p-3 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 space-y-2"></div>
         </div>
         <button id="abstract-action-btn" onclick="openModal('modal-abstract')" class="mt-6 w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow-md">Submit Abstract</button>
       </div>

@@ -394,6 +394,30 @@ function escapeHtml(v) {
     .replace(/'/g, '&#39;');
 }
 
+// Abstract section fields allow a small formatting toolbar (bold, italic,
+// superscript, subscript -- enough for scientific notation like p<0.05,
+// 10⁻³, cm²) without exposing raw HTML input to a non-technical delegate.
+// Escape everything first (neutralizes any real markup/script the delegate
+// typed or pasted), then selectively restore exactly these four tags, which
+// only the toolbar itself ever inserts. Newlines are left alone -- rendered
+// with white-space:pre-wrap wherever an abstract is shown, matching how the
+// rest of this app already handles preserved line breaks, rather than
+// converting to <br> here.
+const ABSTRACT_ALLOWED_TAGS = ['b', 'i', 'sup', 'sub'];
+function sanitizeAbstractHtml(v) {
+  let s = escapeHtml(v);
+  for (const tag of ABSTRACT_ALLOWED_TAGS) {
+    s = s.replace(new RegExp(`&lt;${tag}&gt;`, 'g'), `<${tag}>`)
+         .replace(new RegExp(`&lt;/${tag}&gt;`, 'g'), `</${tag}>`);
+  }
+  return s;
+}
+
+// Word count from the PLAIN text, so formatting tags never inflate it.
+function plainTextWordCount(html) {
+  return String(html || '').replace(/<[^>]+>/g, ' ').trim().split(/\s+/).filter(Boolean).length;
+}
+
 // Format a rupee amount with Indian digit grouping (e.g. 100000 -> 1,00,000):
 // last three digits grouped, then every two digits. Done manually because
 // toLocaleString('en-IN') falls back to Western grouping on this Node build
@@ -961,6 +985,18 @@ db.serialize(() => {
     if (!names.includes('status')) db.run("ALTER TABLE abstracts ADD COLUMN status TEXT DEFAULT 'UNDER_REVIEW'");
     if (!names.includes('abstract_file')) db.run('ALTER TABLE abstracts ADD COLUMN abstract_file TEXT');
     if (!names.includes('allocation')) db.run('ALTER TABLE abstracts ADD COLUMN allocation TEXT'); // ORAL | POSTER
+    // Structured submission: one column per section instead of a single PDF
+    // upload. abstract_file (and the unused legacy `text` column) stay for
+    // existing rows still awaiting conversion -- see the admin PDF-conversion
+    // tool. Each of these five holds sanitizeAbstractHtml() output (escaped
+    // text with only <b>/<i>/<sup>/<sub> restored); word_count is computed
+    // from their combined plain text (see plainTextWordCount) at submit time.
+    if (!names.includes('background')) db.run('ALTER TABLE abstracts ADD COLUMN background TEXT');
+    if (!names.includes('aim')) db.run('ALTER TABLE abstracts ADD COLUMN aim TEXT');
+    if (!names.includes('methods')) db.run('ALTER TABLE abstracts ADD COLUMN methods TEXT');
+    if (!names.includes('results')) db.run('ALTER TABLE abstracts ADD COLUMN results TEXT');
+    if (!names.includes('conclusion')) db.run('ALTER TABLE abstracts ADD COLUMN conclusion TEXT');
+    if (!names.includes('keywords')) db.run('ALTER TABLE abstracts ADD COLUMN keywords TEXT');
 
     // Enforce one abstract per author: drop duplicates (keep the latest) BEFORE
     // creating the unique index. Sequenced so the index can't fail on dupes.
@@ -2869,21 +2905,43 @@ app.get('/api/registrations/:id/id-card', requireAuth, async (req, res, next) =>
   }
 });
 
-// Submit an abstract under the caller's own identity.
+// Submit an abstract under the caller's own identity. Structured sections
+// (not a PDF upload) -- see sanitizeAbstractHtml/plainTextWordCount above,
+// and the ABSTRACT_MAX_WORDS cap.
 const ABSTRACT_FORMATS = ['Oral Paper', 'Poster Presentation'];
+const ABSTRACT_SECTIONS = ['background', 'aim', 'methods', 'results', 'conclusion'];
+const ABSTRACT_SECTION_LABELS = { background: 'Background', aim: 'Aim', methods: 'Methods', results: 'Results', conclusion: 'Conclusion' };
+const ABSTRACT_MAX_WORDS = 400;
 
 app.post('/api/abstracts', requireAuth, async (req, res, next) => {
   try {
-    const { format, title, pdf } = req.body;
+    const { format, title } = req.body;
     if (!title || !String(title).trim()) {
       return res.status(400).json({ success: false, error: 'Abstract title is required.' });
     }
     if (!ABSTRACT_FORMATS.includes(format)) {
       return res.status(400).json({ success: false, error: 'Please choose a valid presentation format.' });
     }
-    const decoded = decodePdf(pdf);
-    if (decoded.error) {
-      return res.status(400).json({ success: false, error: decoded.error });
+
+    const sections = {};
+    for (const key of ABSTRACT_SECTIONS) {
+      const raw = req.body[key];
+      if (!raw || !plainTextWordCount(raw)) {
+        return res.status(400).json({ success: false, error: `${ABSTRACT_SECTION_LABELS[key]} is required.` });
+      }
+      sections[key] = sanitizeAbstractHtml(raw);
+    }
+    const keywords = String(req.body.keywords || '').trim();
+    if (!keywords) {
+      return res.status(400).json({ success: false, error: 'At least one keyword is required.' });
+    }
+
+    // Word count is server-authoritative -- the client's live counter is a
+    // convenience, not the actual gate. Keywords aren't prose, so they're
+    // not counted toward the cap.
+    const wordCount = ABSTRACT_SECTIONS.reduce((sum, key) => sum + plainTextWordCount(sections[key]), 0);
+    if (wordCount > ABSTRACT_MAX_WORDS) {
+      return res.status(400).json({ success: false, error: `Your abstract is ${wordCount} words; the limit is ${ABSTRACT_MAX_WORDS}.` });
     }
 
     // One abstract per author, and it is locked once submitted.
@@ -2892,11 +2950,14 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
       return res.status(409).json({ success: false, error: 'You have already submitted an abstract; it cannot be changed.' });
     }
 
-    const filename = await writeUploadBuffer(decoded.buffer, decoded.ext);
     const cleanTitle = String(title).trim();
     await dbRun(
-      "INSERT INTO abstracts (phone_number, author_name, format, title, abstract_file, status) VALUES (?, ?, ?, ?, ?, 'UNDER_REVIEW')",
-      [req.session.phone, req.session.name, format, cleanTitle, filename]
+      `INSERT INTO abstracts
+        (phone_number, author_name, format, title, background, aim, methods, results, conclusion, keywords, word_count, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNDER_REVIEW')`,
+      [req.session.phone, req.session.name, format, cleanTitle,
+       sections.background, sections.aim, sections.methods, sections.results, sections.conclusion,
+       keywords, wordCount]
     );
 
     // Acknowledge receipt; acceptance is communicated after committee review.
@@ -2917,7 +2978,9 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
 app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
   try {
     const row = await dbGet(
-      'SELECT id, format, title, status, allocation FROM abstracts WHERE phone_number = ?',
+      `SELECT id, format, title, status, allocation, abstract_file,
+              background, aim, methods, results, conclusion, keywords, word_count
+         FROM abstracts WHERE phone_number = ?`,
       [req.session.phone]
     );
     res.json({ abstract: row || null });
