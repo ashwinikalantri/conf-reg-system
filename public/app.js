@@ -1310,11 +1310,68 @@ function updateAbstractWordCount() {
   return total;
 }
 
+function toggleAbstractGuidelines() {
+  const body = document.getElementById('abstract-guidelines-body');
+  const chevron = document.getElementById('abstract-guidelines-chevron');
+  if (!body) return;
+  const collapsed = body.classList.toggle('hidden');
+  if (chevron) chevron.textContent = collapsed ? '▸' : '▾';
+}
+
+// Keywords are entered one at a time (Enter to add) and rendered as pills
+// rather than a single free-text field; abstractKeywords is the source of
+// truth and the pills are just its rendering.
+let abstractKeywords = [];
+
+function renderAbstractKeywordPills() {
+  const box = document.getElementById('abstract-keywords-pills');
+  if (!box) return;
+  box.innerHTML = abstractKeywords.map((kw, i) => `
+    <span class="inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 bg-indigo-100 text-indigo-800 text-xs font-semibold rounded-full">
+      ${esc(kw)}
+      <button type="button" onclick="removeAbstractKeyword(${i})" class="text-indigo-500 hover:text-indigo-800 leading-none">✕</button>
+    </span>
+  `).join('');
+}
+
+function addAbstractKeywordFromInput() {
+  const input = document.getElementById('abstract-keywords-input');
+  if (!input) return;
+  const kw = input.value.trim();
+  if (!kw) return;
+  if (!abstractKeywords.some((k) => k.toLowerCase() === kw.toLowerCase())) {
+    abstractKeywords.push(kw);
+    renderAbstractKeywordPills();
+  }
+  input.value = '';
+}
+
+function handleAbstractKeywordKeydown(e) {
+  if (e.key !== 'Enter' && e.key !== ',') return;
+  e.preventDefault();
+  addAbstractKeywordFromInput();
+}
+
+function removeAbstractKeyword(index) {
+  abstractKeywords.splice(index, 1);
+  renderAbstractKeywordPills();
+}
+
+function resetAbstractKeywords() {
+  abstractKeywords = [];
+  renderAbstractKeywordPills();
+  const input = document.getElementById('abstract-keywords-input');
+  if (input) input.value = '';
+}
+
 async function handleAbstractSubmit(e) {
   e.preventDefault();
   if (updateAbstractWordCount() > ABSTRACT_MAX_WORDS) return showToast(`Your abstract is over the ${ABSTRACT_MAX_WORDS}-word limit.`);
+  addAbstractKeywordFromInput(); // catch a keyword left in the box, unsubmitted
+  if (!abstractKeywords.length) return showToast('Add at least one keyword.');
 
-  const payload = { format: document.getElementById('abstract-format').value, title: document.getElementById('abstract-title').value, keywords: document.getElementById('abstract-keywords').value };
+  const formatEl = document.querySelector('input[name="abstract-format"]:checked');
+  const payload = { format: formatEl ? formatEl.value : '', title: document.getElementById('abstract-title').value, keywords: abstractKeywords.join(', ') };
   for (const id of ABSTRACT_SECTION_IDS) {
     payload[id.replace('abstract-', '')] = document.getElementById(id).value;
   }
@@ -1338,7 +1395,10 @@ async function handleAbstractSubmit(e) {
   }
 }
 
-function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+function openModal(id) {
+  document.getElementById(id).classList.remove('hidden');
+  if (id === 'modal-abstract') resetAbstractKeywords();
+}
 function closeModal(id) {
   document.getElementById(id).classList.add('hidden');
 }

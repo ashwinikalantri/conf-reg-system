@@ -4,10 +4,15 @@
       <button onclick="closeModal('modal-abstract')" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
       <h3 class="text-xl font-bold text-slate-800 mb-2">Abstract Submission</h3>
 
-      <!-- Submission guidelines (from the conference site) -->
-      <div class="bg-indigo-50/60 border border-indigo-100 rounded-xl p-4 mb-4 text-xs text-slate-700 leading-relaxed">
-        <p class="font-bold text-indigo-800 mb-1">Submission Guidelines</p>
-        <ul class="list-disc list-inside space-y-1">
+      <!-- Submission guidelines (from the conference site) -- starts
+           collapsed so the form itself is the first thing a returning
+           delegate sees; toggleAbstractGuidelines() just flips .hidden. -->
+      <div class="bg-indigo-50/60 border border-indigo-100 rounded-xl mb-4 text-xs text-slate-700 leading-relaxed">
+        <button type="button" onclick="toggleAbstractGuidelines()" class="w-full flex items-center justify-between p-4 text-left">
+          <span class="font-bold text-indigo-800">Submission Guidelines</span>
+          <span id="abstract-guidelines-chevron" class="text-indigo-400 transition-transform">▸</span>
+        </button>
+        <ul id="abstract-guidelines-body" class="hidden list-disc list-inside space-y-1 px-4 pb-4">
           <li>Only registered delegates may submit papers or posters.</li>
           <li>Topic must relate to <b>Healthcare Quality &amp; Patient Safety</b>.</li>
           <li>Submit a <b>structured abstract</b> (Background, Aim, Methods, Results, Conclusion), maximum <b>400 words</b> total.</li>
@@ -19,17 +24,17 @@
       </div>
 
       <form onsubmit="handleAbstractSubmit(event)" class="space-y-4">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label class="block text-sm font-medium text-slate-700">Presentation Format</label>
-            <select id="abstract-format" required class="w-full mt-1 p-2.5 border rounded-lg outline-none">
-              <option value="Oral Paper">Oral Paper</option>
-              <option value="Poster Presentation">Poster Presentation</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-slate-700">Keywords <span class="text-xs text-slate-500">(comma-separated)</span></label>
-            <input type="text" id="abstract-keywords" required placeholder="e.g. patient safety, QI, maternal health" class="w-full mt-1 p-2.5 border rounded-lg outline-none text-sm">
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Presentation Preference</label>
+          <div class="flex gap-4 mt-1.5">
+            <label class="flex items-center gap-1.5 text-sm text-slate-700">
+              <input type="radio" name="abstract-format" value="Oral Paper" checked class="accent-indigo-600">
+              Oral Paper
+            </label>
+            <label class="flex items-center gap-1.5 text-sm text-slate-700">
+              <input type="radio" name="abstract-format" value="Poster Presentation" class="accent-indigo-600">
+              Poster Presentation
+            </label>
           </div>
         </div>
 
@@ -97,6 +102,12 @@
             <button type="button" onclick="wrapAbstractSelection('abstract-conclusion','sub')" title="Subscript" class="w-7 h-7 text-xs border border-slate-300 rounded hover:bg-slate-50">x₂</button>
           </div>
           <textarea id="abstract-conclusion" required rows="2" oninput="updateAbstractWordCount()" class="w-full p-2.5 border rounded-lg outline-none text-sm"></textarea>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Keywords</label>
+          <div id="abstract-keywords-pills" class="flex flex-wrap gap-1.5 mt-1.5 empty:hidden"></div>
+          <input type="text" id="abstract-keywords-input" placeholder="Type a keyword and press Enter" onkeydown="handleAbstractKeywordKeydown(event)" class="w-full mt-1.5 p-2.5 border rounded-lg outline-none text-sm">
         </div>
 
         <div class="flex items-center justify-between">
