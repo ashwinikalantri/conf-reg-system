@@ -2163,6 +2163,7 @@ function openReviewModal(id) {
   // (renderReviewPaymentProgress); the old registration-level renderReviewTxnLink
   // is superseded and no longer called.
   renderReviewPaymentProgress(p);
+  renderReviewRefunds(p);
   renderReviewCategoryLock(p);
   openModal('modal-review');
 }
@@ -2198,6 +2199,68 @@ function renderReviewPaymentProgress(p) {
   const pending = txns.filter((t) => t.txn_status === 'PENDING');
   reviewGate.linked = txns.length === 0 ? !!p.bank_txn_id : pending.length === 0;
   updateReviewAcceptGate();
+}
+
+// Excess this delegate paid (see getPaymentSummary's overpaid, netted off
+// verifiedTotal once refunded) plus the history of what's already been
+// recorded as sent back. Bookkeeping only -- recording a refund here never
+// moves money; it's the admin telling the app what already happened
+// elsewhere. Shown whenever there's currently outstanding excess or any
+// refund has ever been recorded, so the history stays visible even after
+// the excess is fully refunded.
+function renderReviewRefunds(p) {
+  const wrap = document.getElementById('review-refund-section');
+  if (!wrap) return;
+  const overpaid = Number(p.overpaid) || 0;
+  const refunds = p.refunds || [];
+  wrap.classList.toggle('hidden', overpaid <= 0 && refunds.length === 0);
+  if (overpaid <= 0 && refunds.length === 0) return;
+
+  const excessLine = document.getElementById('review-refund-excess-line');
+  if (excessLine) {
+    excessLine.innerHTML = overpaid > 0
+      ? `<span class="font-bold text-amber-700">₹${inr(overpaid)} excess still outstanding</span>
+         <div class="flex items-center gap-1 mt-1">
+           <input type="number" min="0.01" max="${esc(overpaid)}" step="0.01" value="${esc(overpaid)}" id="review-refund-amount" class="w-24 p-1 border rounded text-[10px]">
+           <input type="text" placeholder="Reference / note (optional)" id="review-refund-note" class="flex-1 min-w-0 p-1 border rounded text-[10px]">
+           <button type="button" onclick="recordRefund()" class="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded text-[10px]">Record Refund</button>
+         </div>`
+      : `<span class="text-emerald-700 font-semibold">✓ No outstanding excess</span>`;
+  }
+
+  const historyBox = document.getElementById('review-refund-history');
+  if (historyBox) {
+    historyBox.innerHTML = refunds.length ? refunds.map((r) => `
+      <div class="flex items-center justify-between gap-2 py-1 text-[10px] border-t border-slate-100">
+        <span class="text-slate-600">${esc(fmtAuditTime(r.refunded_at))} · ₹${inr(esc(r.amount))}${r.reference_note ? ` · ${esc(r.reference_note)}` : ''} <span class="text-slate-400">(${esc(r.refunded_by || '—')})</span></span>
+        <button type="button" onclick="deleteRefund(${esc(r.id)})" class="shrink-0 text-rose-600 hover:underline font-semibold">Undo</button>
+      </div>`).join('') : '';
+  }
+}
+
+async function recordRefund() {
+  const amountInput = document.getElementById('review-refund-amount');
+  const noteInput = document.getElementById('review-refund-note');
+  const amount = amountInput ? Number(amountInput.value) : 0;
+  if (!Number.isFinite(amount) || amount <= 0) return showToast('Enter a valid refund amount.');
+  if (!(await showConfirm(`Record a ₹${inr(amount)} refund for this registration? This only logs that it happened -- it doesn't send any money.`))) return;
+  const data = await (await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/refund`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ amount, note: noteInput ? noteInput.value.trim() : '' }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not record this refund.');
+  showToast('Refund recorded.', 'success');
+  await renderBackendPayments();
+  openReviewModal(reviewTargetId);
+}
+
+async function deleteRefund(refundId) {
+  if (!(await showConfirm('Undo this refund record?'))) return;
+  const data = await (await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/refund/${encodeURIComponent(refundId)}`, { method: 'DELETE' })).json();
+  if (!data.success) return showToast(data.error || 'Could not undo this refund.');
+  showToast('Refund record removed.', 'success');
+  await renderBackendPayments();
+  openReviewModal(reviewTargetId);
 }
 
 // One transaction row in the reconciliation ledger: amount + status on top,
@@ -3201,14 +3264,15 @@ const ACTIVITY_ACTION_LABELS = {
   DISCOUNT_CODE_CREATE: 'Created', DISCOUNT_CODE_UPDATE: 'Updated', DISCOUNT_CODE_DELETE: 'Deleted', DISCOUNT_CODE_USED: 'Used', DISCOUNT_CODE_EMAILED: 'Emailed',
   GROUP_RULE_SET: 'Created', GROUP_RULE_UPDATE: 'Updated', GROUP_RULE_DELETE: 'Deleted',
   GENERAL_SETTINGS_UPDATE: 'Updated', BANK_TXN_NON_REGISTRATION_UPDATE: 'Non-Reg Marking',
+  PAYMENT_REFUNDED: 'Refunded', PAYMENT_REFUND_DELETED: 'Refund Deleted',
 };
 function activityActionPill(action) {
   const label = ACTIVITY_ACTION_LABELS[action] || action;
   let tone = 'muted';
   if (action === 'BANK_STATUS_CHANGE') tone = 'info';
-  else if (action === 'STUDENT_ID_VERIFICATION' || action === 'BANK_TXN_LINK' || action === 'PAYMENT_ADMIN_ADDED' || action === 'PROGRAM_OPTION_CREATE' || action === 'FEE_CATEGORY_CREATE'
+  else if (action === 'STUDENT_ID_VERIFICATION' || action === 'BANK_TXN_LINK' || action === 'PAYMENT_ADMIN_ADDED' || action === 'PAYMENT_REFUNDED' || action === 'PROGRAM_OPTION_CREATE' || action === 'FEE_CATEGORY_CREATE'
     || action === 'DISCOUNT_CODE_CREATE' || action === 'DISCOUNT_CODE_USED' || action === 'GROUP_RULE_SET') tone = 'ok';
-  else if (action === 'ADMIN_UNENROLL' || action === 'BANK_TXN_UNLINK' || action.endsWith('_DELETE')) tone = 'bad';
+  else if (action === 'ADMIN_UNENROLL' || action === 'BANK_TXN_UNLINK' || action === 'PAYMENT_REFUND_DELETED' || action.endsWith('_DELETE')) tone = 'bad';
   else if (action.includes('CORRECTION') || action.endsWith('_UPDATE')) tone = 'warn';
   return activityPill(label, tone);
 }

@@ -50,6 +50,15 @@
             <div id="review-admin-add-payment-box" class="hidden mt-2 divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-40 overflow-y-auto"></div>
           </div>
 
+          <!-- Excess this delegate paid, and the refund record (bookkeeping
+               only -- see recordRefund). Hidden unless there's currently
+               outstanding excess or a refund has ever been recorded. -->
+          <div id="review-refund-section" class="hidden bg-amber-50 border border-amber-200 rounded-lg p-3 text-[11px]">
+            <span class="text-slate-500 font-semibold uppercase tracking-wider text-[10px]">Excess &amp; Refunds</span>
+            <div id="review-refund-excess-line" class="mt-1"></div>
+            <div id="review-refund-history" class="mt-1"></div>
+          </div>
+
           <!-- Category lock: set the correct delegate category and lock it so
                the delegate can't change it; the fee recalculates. -->
           <div class="border border-slate-200 rounded-lg p-3">

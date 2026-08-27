@@ -1249,6 +1249,25 @@ db.serialize(() => {
     }
   });
 
+  // Bookkeeping record of money sent back to a delegate who paid more than
+  // their fee (e.g. two genuine transactions linked to one registration --
+  // see the relaxed over-crediting guard above). This app has never moved
+  // money in either direction; a row here means "we sent this back
+  // manually and I'm recording it," not a trigger to transfer anything.
+  // getPaymentSummary() nets this off verifiedTotal so a refunded
+  // registration doesn't sit there looking permanently overpaid.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS payment_refunds (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      registration_id INTEGER NOT NULL,
+      amount REAL NOT NULL,
+      reference_note TEXT,
+      refunded_by TEXT,
+      refunded_at INTEGER NOT NULL
+    )
+  `);
+  db.run('CREATE INDEX IF NOT EXISTS idx_payment_refunds_reg ON payment_refunds(registration_id)');
+
   // Additive migrations: server-computed fee, OCR check results, registration
   // number, and the chosen program-option ids (for capacity accounting).
   db.all('PRAGMA table_info(registrations)', (err, cols) => {
@@ -1489,15 +1508,30 @@ async function getPaymentSummary(registrationId, expectedAmount) {
   const verifiedTotal = txns
     .filter((t) => t.txn_status === 'VERIFIED')
     .reduce((sum, t) => sum + (t.verified_amount != null ? t.verified_amount : (t.amount || 0)), 0);
+  const refunds = await dbAll(
+    'SELECT * FROM payment_refunds WHERE registration_id = ? ORDER BY refunded_at ASC, id ASC',
+    [registrationId]);
+  const refundedTotal = refunds.reduce((sum, r) => sum + (r.amount || 0), 0);
+  // What's actually still credited to this registration once recorded
+  // refunds are netted out -- refundedTotal is 0 for every registration
+  // until a refund is actually recorded, so this is verifiedTotal unchanged
+  // for all existing data.
+  const netVerifiedTotal = verifiedTotal - refundedTotal;
   const fee = expectedAmount || 0;
-  const remaining = Math.max(0, fee - verifiedTotal);
+  const remaining = Math.max(0, fee - netVerifiedTotal);
   return {
     txns,
+    refunds,
     verifiedTotal,
+    refundedTotal,
+    netVerifiedTotal,
+    // How much is still sitting as unrefunded excess right now -- what a
+    // "Record Refund" action defaults to.
+    overpaid: Math.max(0, netVerifiedTotal - fee),
     remaining,
     fee,
-    fullyPaid: fee > 0 && verifiedTotal >= fee,
-    hasPartial: verifiedTotal > 0 && verifiedTotal < fee,
+    fullyPaid: fee > 0 && netVerifiedTotal >= fee,
+    hasPartial: netVerifiedTotal > 0 && netVerifiedTotal < fee,
   };
 }
 
@@ -2971,16 +3005,29 @@ app.get('/api/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async
     const txnsByReg = {};
     for (const t of allTxns) (txnsByReg[t.registration_id] ||= []).push(t);
 
+    // Same batched-fetch-then-group approach as transactions above, for
+    // recorded refunds (see payment_refunds / getPaymentSummary).
+    const allRefunds = await dbAll(
+      'SELECT * FROM payment_refunds ORDER BY refunded_at ASC, id ASC');
+    const refundsByReg = {};
+    for (const r of allRefunds) (refundsByReg[r.registration_id] ||= []).push(r);
+
     const enriched = (rows || []).map((r) => {
       const txns = txnsByReg[r.id] || [];
       const verifiedTotal = txns
         .filter((t) => t.txn_status === 'VERIFIED')
         .reduce((s, t) => s + (t.verified_amount != null ? t.verified_amount : (t.amount || 0)), 0);
+      const refunds = refundsByReg[r.id] || [];
+      const refundedTotal = refunds.reduce((s, x) => s + (x.amount || 0), 0);
+      const netVerifiedTotal = verifiedTotal - refundedTotal;
       const fee = r.expected_amount || 0;
       const row = withDelegateSalutation(r);
       row.transactions = txns;
       row.verified_total = verifiedTotal;
-      row.remaining = Math.max(0, fee - verifiedTotal);
+      row.refunds = refunds;
+      row.refunded_total = refundedTotal;
+      row.remaining = Math.max(0, fee - netVerifiedTotal);
+      row.overpaid = Math.max(0, netVerifiedTotal - fee);
       row.pending_txn_count = txns.filter((t) => t.txn_status === 'PENDING').length;
       return row;
     });
@@ -3656,6 +3703,64 @@ app.post('/api/registrations/:id/admin-add-payment', requireRole('SUPER_ADMIN', 
     if (err.code === 'SQLITE_CONSTRAINT') {
       return res.status(409).json({ success: false, error: 'That bank transaction is already linked to another payment.' });
     }
+    next(err);
+  }
+});
+
+// Record that excess a delegate paid (see getPaymentSummary's overpaid) was
+// sent back to them. Bookkeeping only -- this app has never moved money in
+// either direction, it verifies bank statements; a row here means "we sent
+// this back manually and I'm recording it," not a trigger to transfer
+// anything. Nets off verifiedTotal in getPaymentSummary going forward, so a
+// refunded registration doesn't sit there looking permanently overpaid.
+// Allows a partial refund (amount less than the full outstanding excess) --
+// the rest stays recorded as still-outstanding excess for a later refund.
+app.post('/api/registrations/:id/refund', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const reg = await dbGet('SELECT id, expected_amount FROM registrations WHERE id = ?', [req.params.id]);
+    if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
+    const amount = Number(req.body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ success: false, error: 'Enter a valid refund amount.' });
+    }
+    const note = req.body.note ? String(req.body.note).trim().slice(0, 300) : null;
+
+    const summary = await getPaymentSummary(reg.id, reg.expected_amount);
+    if (amount > summary.overpaid + 0.5) {
+      return res.status(400).json({
+        success: false,
+        error: `Only ₹${inr(summary.overpaid)} is currently outstanding as excess for this registration.`,
+      });
+    }
+
+    const now = Date.now();
+    const result = await dbRun(
+      'INSERT INTO payment_refunds (registration_id, amount, reference_note, refunded_by, refunded_at) VALUES (?, ?, ?, ?, ?)',
+      [reg.id, amount, note, req.session.name || req.session.phone, now]
+    );
+    await recordAudit({
+      req, entityType: 'registration', entityId: req.params.id,
+      action: 'PAYMENT_REFUNDED', oldValue: null,
+      newValue: `refund#${result.lastID} ₹${inr(amount)}${note ? ` — ${note}` : ''}`,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Undo a refund record, e.g. it was logged in error or for the wrong amount.
+app.delete('/api/registrations/:id/refund/:refundId', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const refund = await dbGet('SELECT id, amount, reference_note FROM payment_refunds WHERE id = ? AND registration_id = ?', [req.params.refundId, req.params.id]);
+    if (!refund) return res.status(404).json({ success: false, error: 'Refund record not found.' });
+    await dbRun('DELETE FROM payment_refunds WHERE id = ?', [refund.id]);
+    await recordAudit({
+      req, entityType: 'registration', entityId: req.params.id,
+      action: 'PAYMENT_REFUND_DELETED', oldValue: `refund#${refund.id} ₹${inr(refund.amount)}${refund.reference_note ? ` — ${refund.reference_note}` : ''}`, newValue: null,
+    });
+    res.json({ success: true });
+  } catch (err) {
     next(err);
   }
 });
