@@ -2983,18 +2983,23 @@ app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
 // Finance reconciliation: view all registrations, each annotated with the
 // most recent audit entry (who last changed its status, and when).
 // Delegate geographic distribution for the approval page's overview map:
-// per-district counts split into registered (has a registrations row) vs
-// signed-up-only. Keyed on district; the client maps districts to coords.
+// counts split into registered (has a registrations row) vs signed-up-only.
+//
+// Grouped by PIN code as well as district name, because the client resolves a
+// delegate to a map polygon by district name first and falls back to the PIN
+// code's coordinates when that name isn't in the shapefile (see
+// renderDelegateMap). A blank district is no longer filtered out here -- the
+// PIN code alone is enough to place those delegates.
 app.get('/api/admin/delegate-locations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
     const rows = await dbAll(`
-      SELECT LOWER(TRIM(u.district)) AS district, TRIM(u.state) AS state,
+      SELECT TRIM(u.pincode) AS pincode, LOWER(TRIM(u.district)) AS district, TRIM(u.state) AS state,
         SUM(CASE WHEN r.phone_number IS NOT NULL THEN 1 ELSE 0 END) AS registered,
         SUM(CASE WHEN r.phone_number IS NULL THEN 1 ELSE 0 END) AS signedup
       FROM users u
       LEFT JOIN registrations r ON r.phone_number = u.phone_number
-      WHERE u.pincode IS NOT NULL AND u.pincode != '' AND u.district IS NOT NULL AND TRIM(u.district) != ''
-      GROUP BY LOWER(TRIM(u.district))`);
+      WHERE u.pincode IS NOT NULL AND TRIM(u.pincode) != ''
+      GROUP BY TRIM(u.pincode), LOWER(TRIM(u.district))`);
     res.json({ locations: rows || [] });
   } catch (err) {
     next(err);

@@ -2035,7 +2035,6 @@ async function renderBackendPayments() {
   // higher fee than paid) live in their own section, not the worklist.
   const partialAwaiting = allRegs.filter(isBalanceDue);
   const needsDecision = allRegs.filter(r => r.bank_status === 'PENDING' && !isBalanceDue(r));
-  const flagged = allRegs.filter(r => r.is_flagged);
   const totalCleared = verified.reduce((sum, r) => sum + (Number(r.verified_total) || 0), 0);
   // Same "what's actually still owed" math as the balancePill in
   // paymentRowHtml: the verified total if there is one, else whatever's
@@ -2049,7 +2048,6 @@ async function renderBackendPayments() {
   setText('metric-pending-count', needsDecision.length);
   setText('metric-balance-count', partialAwaiting.length);
   setText('metric-balance-amount', `₹${inr(totalBalanceDue)} outstanding`);
-  setText('metric-flagged-count', flagged.length);
   setText('badge-pending-payments', needsDecision.length);
 
   tbody.innerHTML = needsDecision.map(paymentRowHtml).join('');
@@ -2091,8 +2089,25 @@ async function renderBackendPayments() {
 // nowhere to collide: every district gets exactly its own area, no matter
 // how tightly packed its neighbors are.
 
-// A few of our district names differ from the shapefile's official spelling
-// (github.com/abhatia08/india_shp_2020, dtname field) -- map ours to theirs.
+// Delegates are placed on the map by district NAME first, falling back to the
+// PIN code's coordinates (see resolveDelegateDistrict). Name-first, not
+// coordinates-first, because the two data sources fail in opposite ways:
+//
+//  - The district name comes from India Post (see fetchAddressDetails), which
+//    is accurate but spells some districts differently from the shapefile
+//    ("Tuticorin" vs "Thoothukkudi"), and is occasionally blank. A name we
+//    can't match means the delegate silently vanishes from the map.
+//  - The PIN code coordinates (public/data/india-pincodes.json, from GeoNames)
+//    always resolve to *some* polygon, but are only approximate: spot-checking
+//    against real delegate data found 411033 (Pune) carrying an office point
+//    ~180km away in Beed, and Koramangala (560034) plotting ~33km north into
+//    Bengaluru Rural. Trusting them first would silently move delegates to the
+//    wrong district -- worse than dropping them.
+//
+// So coordinates are only consulted when the name fails, and only when the
+// polygon they land in is in the state the delegate gave -- a wrong-district
+// guess within the right state is a tolerable approximation for a fallback,
+// but a wrong-state one is a data error worth surfacing as unmapped instead.
 const DISTRICT_NAME_ALIASES = {
   'ahmed nagar': 'ahmadnagar',
   'gondia': 'gondiya',
@@ -2121,7 +2136,7 @@ async function renderDelegateMap() {
   if (!host || typeof d3 === 'undefined' || typeof topojson === 'undefined') return;
   delegateMapRendered = true;
 
-  const [locRes, topo] = await Promise.all([
+  const [locRes, topo, pinFile] = await Promise.all([
     fetch('/api/admin/delegate-locations'),
     // Self-hosted district-level topology (public/data/india-districts.topo.json)
     // rather than an external CDN -- built from the official Survey of India
@@ -2129,28 +2144,86 @@ async function renderDelegateMap() {
     // Jammu & Kashmir and Ladakh as separate states) and doesn't depend on a
     // third party staying up. dtname/stname are the only properties kept.
     d3.json('/data/india-districts.topo.json').catch(() => null),
+    // PIN code -> [lat, lon], for the coordinate fallback. Optional: if it
+    // fails to load, name matching still works exactly as it did before.
+    d3.json('/data/india-pincodes.json').catch(() => null),
   ]);
   if (!locRes.ok || !topo) { delegateMapRendered = false; setText('delegate-map-summary', 'Could not load the map.'); return; }
   const locations = (await locRes.json()).locations || [];
 
+  const feat = topojson.feature(topo, topo.objects.in_district);
+  const pinCoords = (pinFile && pinFile.pincodes) || {};
+
+  // Bounding box per district, so the point-in-polygon fallback can skip the
+  // ~729 features it obviously isn't in instead of walking every ring.
+  const featBoxes = feat.features.map((f) => ({ f, bbox: d3.geoBounds(f) }));
+
   const byKey = new Map();
   let totalReg = 0, totalSign = 0;
-  const resolvedKeys = new Set();
+  const unmatched = [];
   locations.forEach((loc) => {
-    let d = String(loc.district || '').toLowerCase().trim();
-    d = DISTRICT_NAME_ALIASES[d] || d;
     totalReg += loc.registered; totalSign += loc.signedup;
-    const prev = byKey.get(d) || { registered: 0, signedup: 0, rawName: loc.district };
-    byKey.set(d, { registered: prev.registered + loc.registered, signedup: prev.signedup + loc.signedup, rawName: prev.rawName });
-    resolvedKeys.add(d);
+    const hit = resolveDelegateDistrict(loc, feat, featBoxes, pinCoords);
+    if (!hit) {
+      const label = String(loc.district || '').trim() || `PIN ${loc.pincode}`;
+      if (!unmatched.includes(label)) unmatched.push(label);
+      return;
+    }
+    const prev = byKey.get(hit.key) || { registered: 0, signedup: 0, rawName: hit.rawName };
+    byKey.set(hit.key, { registered: prev.registered + loc.registered, signedup: prev.signedup + loc.signedup, rawName: prev.rawName });
   });
 
-  const feat = topojson.feature(topo, topo.objects.in_district);
-  const topoKeys = new Set(feat.features.map((f) => String(f.properties.dtname || '').toLowerCase().trim()));
-  const unmatched = [...resolvedKeys].filter((k) => !topoKeys.has(k));
-
-  delegateMapData = { feat, byKey, totalReg, totalSign, districtCount: locations.length, unmatched };
+  delegateMapData = { feat, byKey, totalReg, totalSign, districtCount: byKey.size, unmatched };
   drawDelegateMap();
+}
+
+// Deliberately loose: this only has to catch a coordinate landing in a wholly
+// different state, so it tolerates the two sources spelling the same state
+// differently. India Post writes "Chattisgarh" where the shapefile writes
+// "CHHATTISGARH", uses the post-rename spellings the shapefile predates
+// (Orissa/Odisha, Pondicherry/Puducherry, Uttaranchal/Uttarakhand), and the
+// shapefile truncates some names outright ("DADRA & NAGAR HAVE") -- hence the
+// prefix comparison rather than equality. A blank on either side passes,
+// since a missing state can't contradict anything.
+const STATE_SYNONYMS = { orissa: 'odisha', pondicherry: 'puducherry', uttaranchal: 'uttarakhand', chattisgarh: 'chhattisgarh', nctofdelhi: 'delhi' };
+function normalizeStateName(v) {
+  const s = String(v == null ? '' : v).toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]/g, '');
+  return STATE_SYNONYMS[s] || s;
+}
+function sameState(a, b) {
+  const x = normalizeStateName(a), y = normalizeStateName(b);
+  if (!x || !y) return true;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.length >= 4 && long.startsWith(short);
+}
+
+// Place one grouped location row on a map polygon. Returns {key, rawName} for
+// the district it belongs to, or null if neither the name nor the PIN code
+// could place it (reported as "unmapped" in the map summary rather than being
+// silently dropped). See the DISTRICT_NAME_ALIASES comment for why the name is
+// tried first and the coordinates only as a guarded fallback.
+function resolveDelegateDistrict(loc, feat, featBoxes, pinCoords) {
+  const rawName = String(loc.district || '').trim();
+  const named = rawName.toLowerCase();
+  const key = DISTRICT_NAME_ALIASES[named] || named;
+  if (key && feat.features.some((f) => String(f.properties.dtname || '').toLowerCase().trim() === key)) {
+    return { key, rawName };
+  }
+
+  const coord = pinCoords[String(loc.pincode || '').trim()];
+  if (!coord) return null;
+  const pt = [coord[1], coord[0]]; // stored [lat, lon]; geoContains wants [lon, lat]
+  for (const { f, bbox } of featBoxes) {
+    // geoBounds returns [[west, south], [east, north]].
+    if (pt[0] < bbox[0][0] || pt[0] > bbox[1][0] || pt[1] < bbox[0][1] || pt[1] > bbox[1][1]) continue;
+    if (!d3.geoContains(f, pt)) continue;
+    // State guard: an approximate coordinate landing in a neighbouring
+    // district is an acceptable fallback, but landing in a different state
+    // means the coordinate is simply wrong -- leave it unmapped instead.
+    if (!sameState(loc.state, f.properties.stname)) return null;
+    return { key: String(f.properties.dtname || '').toLowerCase().trim(), rawName: rawName || f.properties.dtname };
+  }
+  return null;
 }
 
 // Redraw with the currently selected metric, from cached data -- no refetch.
