@@ -3481,21 +3481,23 @@ app.put('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FIN
       return res.status(409).json({ success: false, error: 'That bank transaction is already linked to another payment.' });
     }
 
-    // Linking acknowledges the payment at its own claimed amount, so it must
-    // not push the registration's cumulative verified total past the fee
-    // actually due -- catches the exact bug found with Divya Selokar
-    // (a duplicate resubmission transaction wrongly linked to a second, real
-    // credit, over-crediting her registration and stranding someone else's
-    // payment). Skipped for a registration with no fee on record.
+    // Linking acknowledges the payment at its own claimed amount. This used to
+    // hard-block once the registration's cumulative verified total would pass
+    // the fee due (the bug that guard caught: a duplicate resubmission
+    // transaction wrongly linked to a second, real credit, over-crediting a
+    // registration and stranding someone else's payment -- see Divya
+    // Selokar). Deliberately no longer a hard block: two genuine transactions
+    // legitimately linked to one delegate can leave them overpaid, and that's
+    // fine now -- the excess is tracked for the refund feature (not yet
+    // built) rather than refused outright. The audit trail still records
+    // when a link creates an overpayment, so it's visible without a UI yet.
     const reg = await dbGet('SELECT expected_amount FROM registrations WHERE id = ?', [txn.registration_id]);
+    let overpayNote = '';
     if (reg && reg.expected_amount > 0) {
       const summary = await getPaymentSummary(txn.registration_id, reg.expected_amount);
       const wouldBeTotal = summary.verifiedTotal + (txn.amount || 0);
       if (wouldBeTotal > reg.expected_amount + 0.5) {
-        return res.status(400).json({
-          success: false,
-          error: `Linking this payment (₹${inr(txn.amount)}) would bring the total acknowledged to ₹${inr(wouldBeTotal)}, which is more than the ₹${inr(reg.expected_amount)} fee due. Check whether this credit really belongs to this registration.`,
-        });
+        overpayNote = ` — ₹${inr(wouldBeTotal - reg.expected_amount)} over the ₹${inr(reg.expected_amount)} fee due (pending refund)`;
       }
     }
 
@@ -3508,7 +3510,7 @@ app.put('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FIN
       [bankTxnId, req.session.name || req.session.phone, Date.now(), txn.id]);
     await recordAudit({
       req, entityType: 'registration', entityId: String(txn.registration_id),
-      action: 'BANK_TXN_LINK', oldValue: txn.bank_txn_id, newValue: `txn#${txn.id} → bank#${bankTxnId} (₹${inr(txn.amount)} acknowledged)`,
+      action: 'BANK_TXN_LINK', oldValue: txn.bank_txn_id, newValue: `txn#${txn.id} → bank#${bankTxnId} (₹${inr(txn.amount)} acknowledged)${overpayNote}`,
     });
     res.json({ success: true });
   } catch (err) {
@@ -3548,17 +3550,19 @@ app.post('/api/registrations/:id/admin-add-payment', requireRole('SUPER_ADMIN', 
       return res.status(409).json({ success: false, error: 'That bank transaction is already linked to another payment.' });
     }
 
-    // Same over-crediting guard as the regular link endpoint (see the Divya
-    // Selokar comment there): don't let this push the registration's
-    // cumulative acknowledged total past the fee actually due.
+    // No longer a hard block when this would push the registration's
+    // cumulative acknowledged total past its fee due -- two genuine credits
+    // legitimately belonging to one delegate can leave them overpaid, and
+    // that's fine now; the excess is tracked for the refund feature (not yet
+    // built) instead of being refused outright. Still noted in the audit
+    // trail so it's visible without a UI yet. See the same change on the
+    // regular link endpoint above.
+    let overpayNote = '';
     if (reg.expected_amount > 0) {
       const summary = await getPaymentSummary(reg.id, reg.expected_amount);
       const wouldBeTotal = summary.verifiedTotal + bank.credit;
       if (wouldBeTotal > reg.expected_amount + 0.5) {
-        return res.status(400).json({
-          success: false,
-          error: `Adding this credit (₹${inr(bank.credit)}) would bring the total acknowledged to ₹${inr(wouldBeTotal)}, which is more than the ₹${inr(reg.expected_amount)} fee due. Check whether this credit really belongs to this registration.`,
-        });
+        overpayNote = ` — ₹${inr(wouldBeTotal - reg.expected_amount)} over the ₹${inr(reg.expected_amount)} fee due (pending refund)`;
       }
     }
 
@@ -3572,7 +3576,7 @@ app.post('/api/registrations/:id/admin-add-payment', requireRole('SUPER_ADMIN', 
     await recordAudit({
       req, entityType: 'registration', entityId: req.params.id,
       action: 'PAYMENT_ADMIN_ADDED', oldValue: null,
-      newValue: `txn#${result.lastID} ← bank#${bankTxnId} (₹${inr(bank.credit)} added by admin, no prior claim)`,
+      newValue: `txn#${result.lastID} ← bank#${bankTxnId} (₹${inr(bank.credit)} added by admin, no prior claim)${overpayNote}`,
     });
     res.json({ success: true });
   } catch (err) {
