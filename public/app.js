@@ -4978,12 +4978,24 @@ function switchBackendTab(tab) {
   if (window.location.hash.slice(1) !== tab) {
     history.replaceState(null, '', `#${tab}`);
   }
-  if (tab === 'groupdiscount') renderGroupsMonitor();
-  // General settings was only ever fetched once at initial page load, so
-  // switching away and back showed stale data (or none, for a non-super-admin
-  // who becomes one without a reload) until a full page refresh -- refetch it
-  // fresh on every visit, same as the groupdiscount/statement tabs already do.
+  // Every section was only ever fetched once at initial page load, so
+  // switching away and back (or another admin changing something in the
+  // meantime) showed stale data until a full page refresh. Refetch whatever
+  // the tab being switched to actually shows, every time it's switched to --
+  // each render function already no-ops if its container isn't in the DOM
+  // or the API 403s for this role, so it's safe to call regardless of the
+  // viewer's role.
+  if (tab === 'payments') { renderBackendPayments(); renderDelegateMap(); }
+  if (tab === 'abstracts') renderBackendAbstracts();
+  if (tab === 'reports') loadReportWorkshopOptions();
+  if (tab === 'workshops' || tab === 'qi') renderBackendPrograms();
+  if (tab === 'fees') renderBackendFees();
+  if (tab === 'discount') renderDiscountCodes();
+  if (tab === 'groupdiscount') { renderGroupRules(); renderGroupsMonitor(); }
   if (tab === 'general') renderGeneralSettings();
+  if (tab === 'activity') renderBackendActivity();
+  if (tab === 'users') loadBackendUsers();
+  if (tab === 'reminders') { renderBackendReminders(isSuperAdminViewer()); renderBackendBalanceDueReminders(isSuperAdminViewer()); }
   [...MAIN_TABS, ...SETTINGS_TABS].forEach(t => {
     const section = document.getElementById(`section-${t}`);
     if (section) section.classList.toggle('hidden', t !== tab);
