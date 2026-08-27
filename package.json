@@ -16,6 +16,7 @@
     "jimp": "^1.6.1",
     "multer": "^2.2.0",
     "node-fetch": "^2.7.0",
+    "pdf-parse": "^1.1.1",
     "sqlite3": "^5.0.2",
     "tesseract.js": "^7.0.0",
     "xlsx": "^0.18.5"
