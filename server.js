@@ -1232,9 +1232,22 @@ db.serialize(() => {
     )
   `);
   db.run('CREATE INDEX IF NOT EXISTS idx_paytxn_reg ON payment_transactions(registration_id)');
-  // A given bank-statement row can back at most one payment transaction.
-  // NULLs are distinct in SQLite UNIQUE indexes, so unlinked rows never collide.
-  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_paytxn_bank_txn_id ON payment_transactions(bank_txn_id)');
+  // Used to be UNIQUE (a bank credit could back at most one payment
+  // transaction). One credit can now be split across several delegates --
+  // see allocatedForBankTxn() -- so the constraint moved from the schema
+  // into application-level checks at link time (sum of allocations <= the
+  // credit's own amount). Migrate an existing UNIQUE index down to a plain
+  // one; a fresh install just gets the plain index directly.
+  db.get("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_paytxn_bank_txn_id'", (err, row) => {
+    if (err) return console.error('Schema check failed:', err.message);
+    if (row && /UNIQUE/i.test(row.sql || '')) {
+      db.run('DROP INDEX idx_paytxn_bank_txn_id', () => {
+        db.run('CREATE INDEX IF NOT EXISTS idx_paytxn_bank_txn_id ON payment_transactions(bank_txn_id)');
+      });
+    } else if (!row) {
+      db.run('CREATE INDEX IF NOT EXISTS idx_paytxn_bank_txn_id ON payment_transactions(bank_txn_id)');
+    }
+  });
 
   // Additive migrations: server-computed fee, OCR check results, registration
   // number, and the chosen program-option ids (for capacity accounting).
@@ -1486,6 +1499,29 @@ async function getPaymentSummary(registrationId, expectedAmount) {
     fullyPaid: fee > 0 && verifiedTotal >= fee,
     hasPartial: verifiedTotal > 0 && verifiedTotal < fee,
   };
+}
+
+// How much of one bank statement credit is already spoken for -- the cap a
+// new allocation (regular link, admin-add-payment, or a future split) must
+// stay under. optExcludeTxnId lets re-linking the same payment_transactions
+// row not double-count its own prior allocation.
+//
+// The legacy registration-level link (registrations.bank_txn_id) never
+// tracked a partial amount -- it was always all-or-nothing -- so any
+// registration still using it treats the whole credit as allocated rather
+// than trying to retrofit an amount onto data that never recorded one.
+async function allocatedForBankTxn(bankTxnId, optExcludeTxnId) {
+  const legacy = await dbGet('SELECT id, credit FROM bank_statement_transactions WHERE id = ?', [bankTxnId]);
+  if (!legacy) return { allocated: 0, credit: 0, remaining: 0 };
+  const legacyUser = await dbGet('SELECT id FROM registrations WHERE bank_txn_id = ?', [bankTxnId]);
+  if (legacyUser) return { allocated: legacy.credit, credit: legacy.credit, remaining: 0 };
+
+  const rows = await dbAll(
+    `SELECT verified_amount, amount FROM payment_transactions
+      WHERE bank_txn_id = ? AND txn_status = 'VERIFIED' AND id != ?`,
+    [bankTxnId, optExcludeTxnId || -1]);
+  const allocated = rows.reduce((sum, r) => sum + (r.verified_amount != null ? r.verified_amount : (r.amount || 0)), 0);
+  return { allocated, credit: legacy.credit, remaining: Math.max(0, legacy.credit - allocated) };
 }
 
 // One-time migration: move any base64 screenshots still stored in the DB out
@@ -3368,14 +3404,22 @@ app.get('/api/registrations/:id/candidate-transactions', requireRole('SUPER_ADMI
     const reg = await dbGet('SELECT id, paid_amount, expected_amount FROM registrations WHERE id = ?', [req.params.id]);
     if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
     const targetAmount = reg.paid_amount != null ? reg.paid_amount : reg.expected_amount;
-    const rows = await dbAll(
+    // A credit with SOME of its amount already spoken for still shows here
+    // (with how much is left) rather than disappearing entirely -- see
+    // allocatedForBankTxn(). Scans in closest-amount order and stops once 50
+    // have any remaining amount, same cap as before.
+    const raw = await dbAll(
       `SELECT * FROM bank_statement_transactions
         WHERE credit IS NOT NULL AND credit > 0 AND is_non_registration = 0
-          AND id NOT IN (SELECT bank_txn_id FROM registrations WHERE bank_txn_id IS NOT NULL)
-        ORDER BY ABS(COALESCE(credit, 0) - ?) ASC, post_date DESC
-        LIMIT 50`,
+        ORDER BY ABS(COALESCE(credit, 0) - ?) ASC, post_date DESC`,
       [targetAmount || 0]
     );
+    const rows = [];
+    for (const t of raw) {
+      const { remaining } = await allocatedForBankTxn(t.id);
+      if (remaining > 0) rows.push({ ...t, remaining });
+      if (rows.length >= 50) break;
+    }
     res.json({ transactions: rows });
   } catch (err) {
     next(err);
@@ -3383,7 +3427,11 @@ app.get('/api/registrations/:id/candidate-transactions', requireRole('SUPER_ADMI
 });
 
 // Manually link a registration to a specific statement transaction (e.g. an
-// IMPS/NEFT credit that can't be auto-matched by reference number).
+// IMPS/NEFT credit that can't be auto-matched by reference number). Legacy
+// mechanism (registrations.bank_txn_id) -- it never tracked a partial
+// amount, so unlike the per-transaction endpoints below it can't take part
+// in a split; any existing allocation at all (even partial, via the current
+// per-transaction mechanism) blocks it.
 app.put('/api/registrations/:id/link-transaction', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
     const { transactionId } = req.body;
@@ -3394,9 +3442,9 @@ app.put('/api/registrations/:id/link-transaction', requireRole('SUPER_ADMIN', 'F
     if (txn.is_non_registration) {
       return res.status(400).json({ success: false, error: 'This transaction is marked as non-registration and cannot be linked to a registration.' });
     }
-    const usedBy = await dbGet('SELECT id, registration_number FROM registrations WHERE bank_txn_id = ? AND id != ?', [transactionId, reg.id]);
-    if (usedBy) {
-      return res.status(409).json({ success: false, error: `That transaction is already linked to registration ${usedBy.registration_number || usedBy.id}.` });
+    const { allocated } = await allocatedForBankTxn(transactionId);
+    if (allocated > 0) {
+      return res.status(409).json({ success: false, error: 'That transaction already has an allocation and cannot be linked this way.' });
     }
     await dbRun('UPDATE registrations SET bank_txn_id = ? WHERE id = ?', [transactionId, reg.id]);
     await recordAudit({
@@ -3442,13 +3490,19 @@ app.get('/api/payment-transactions/:txnId/candidates', requireRole('SUPER_ADMIN'
   try {
     const txn = await dbGet('SELECT id, amount FROM payment_transactions WHERE id = ?', [req.params.txnId]);
     if (!txn) return res.status(404).json({ success: false, error: 'Payment transaction not found.' });
-    const rows = await dbAll(
+    // Same "still has remaining room" listing as the registration-level
+    // picker above, not a flat used/unused split -- see allocatedForBankTxn().
+    const raw = await dbAll(
       `SELECT * FROM bank_statement_transactions
         WHERE credit IS NOT NULL AND credit > 0 AND is_non_registration = 0
-          AND id NOT IN ${USED_BANK_TXN_SUBQUERY}
-        ORDER BY ABS(COALESCE(credit, 0) - ?) ASC, post_date DESC
-        LIMIT 50`,
+        ORDER BY ABS(COALESCE(credit, 0) - ?) ASC, post_date DESC`,
       [txn.amount || 0]);
+    const rows = [];
+    for (const t of raw) {
+      const { remaining } = await allocatedForBankTxn(t.id, txn.id);
+      if (remaining > 0) rows.push({ ...t, remaining });
+      if (rows.length >= 50) break;
+    }
     res.json({ transactions: rows });
   } catch (err) {
     next(err);
@@ -3475,10 +3529,17 @@ app.put('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FIN
       return res.status(400).json({ success: false, error: 'This transaction is marked as non-registration and cannot be linked to a payment.' });
     }
 
-    const usedByTxn = await dbGet('SELECT id FROM payment_transactions WHERE bank_txn_id = ? AND id != ?', [bankTxnId, txn.id]);
-    const usedByReg = await dbGet('SELECT registration_number FROM registrations WHERE bank_txn_id = ? AND id != ?', [bankTxnId, txn.registration_id]);
-    if (usedByTxn || usedByReg) {
-      return res.status(409).json({ success: false, error: 'That bank transaction is already linked to another payment.' });
+    // One credit can now back several payment_transactions (see
+    // allocatedForBankTxn) -- the cap is "this claim fits in what's left",
+    // not "nobody else has touched this credit at all".
+    const { remaining } = await allocatedForBankTxn(bankTxnId, txn.id);
+    if ((txn.amount || 0) > remaining + 0.5) {
+      return res.status(409).json({
+        success: false,
+        error: remaining > 0
+          ? `Only ₹${inr(remaining)} of that bank transaction is still unallocated (this payment claims ₹${inr(txn.amount)}).`
+          : 'That bank transaction is already fully allocated to other payments.',
+      });
     }
 
     // Linking acknowledges the payment at its own claimed amount. This used to
@@ -3544,10 +3605,22 @@ app.post('/api/registrations/:id/admin-add-payment', requireRole('SUPER_ADMIN', 
       return res.status(400).json({ success: false, error: 'This transaction is marked as non-registration and cannot be linked to a payment.' });
     }
 
-    const usedByTxn = await dbGet('SELECT id FROM payment_transactions WHERE bank_txn_id = ?', [bankTxnId]);
-    const usedByReg = await dbGet('SELECT registration_number FROM registrations WHERE bank_txn_id = ?', [bankTxnId]);
-    if (usedByTxn || usedByReg) {
-      return res.status(409).json({ success: false, error: 'That bank transaction is already linked to another payment.' });
+    // One credit can now back several payment_transactions -- see
+    // allocatedForBankTxn(). `amount` lets the admin claim only part of a
+    // credit for this delegate (splitting the rest to others); omitted, it
+    // defaults to whatever's still unallocated, so attaching a wholly free
+    // credit to one delegate (the common case) needs no extra input, exactly
+    // as before.
+    const { remaining } = await allocatedForBankTxn(bankTxnId);
+    if (remaining <= 0) {
+      return res.status(409).json({ success: false, error: 'That bank transaction is already fully allocated to other payments.' });
+    }
+    const amount = req.body.amount !== undefined ? Number(req.body.amount) : remaining;
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ success: false, error: 'Enter a valid amount.' });
+    }
+    if (amount > remaining + 0.5) {
+      return res.status(409).json({ success: false, error: `Only ₹${inr(remaining)} of that bank transaction is still unallocated.` });
     }
 
     // No longer a hard block when this would push the registration's
@@ -3560,7 +3633,7 @@ app.post('/api/registrations/:id/admin-add-payment', requireRole('SUPER_ADMIN', 
     let overpayNote = '';
     if (reg.expected_amount > 0) {
       const summary = await getPaymentSummary(reg.id, reg.expected_amount);
-      const wouldBeTotal = summary.verifiedTotal + bank.credit;
+      const wouldBeTotal = summary.verifiedTotal + amount;
       if (wouldBeTotal > reg.expected_amount + 0.5) {
         overpayNote = ` — ₹${inr(wouldBeTotal - reg.expected_amount)} over the ₹${inr(reg.expected_amount)} fee due (pending refund)`;
       }
@@ -3571,12 +3644,12 @@ app.post('/api/registrations/:id/admin-add-payment', requireRole('SUPER_ADMIN', 
       `INSERT INTO payment_transactions
         (registration_id, phone_number, amount, verified_amount, utr_number, payment_mode, txn_status, bank_txn_id, submitted_at, reviewed_by, reviewed_at)
        VALUES (?, ?, ?, ?, ?, 'NEFT_RTGS', 'VERIFIED', ?, ?, ?, ?)`,
-      [reg.id, reg.phone_number, bank.credit, bank.credit, bank.extracted_ref || null, bankTxnId, now, req.session.name || req.session.phone, now]
+      [reg.id, reg.phone_number, amount, amount, bank.extracted_ref || null, bankTxnId, now, req.session.name || req.session.phone, now]
     );
     await recordAudit({
       req, entityType: 'registration', entityId: req.params.id,
       action: 'PAYMENT_ADMIN_ADDED', oldValue: null,
-      newValue: `txn#${result.lastID} ← bank#${bankTxnId} (₹${inr(bank.credit)} added by admin, no prior claim)${overpayNote}`,
+      newValue: `txn#${result.lastID} ← bank#${bankTxnId} (₹${inr(amount)} of ₹${inr(bank.credit)} credit added by admin, no prior claim)${overpayNote}`,
     });
     res.json({ success: true });
   } catch (err) {
@@ -5091,11 +5164,19 @@ app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINAN
     const regByUtr = new Map();
     allRegs.forEach((r) => { if (r.bank_status !== 'REJECTED') regByUtr.set(digits(r.utr_number), r); });
 
-    // Which registration each credit is linked to (first payment wins if two
-    // ever pointed at the same credit; the UNIQUE index makes that impossible).
-    const links = await dbAll("SELECT registration_id, bank_txn_id, amount FROM payment_transactions WHERE bank_txn_id IS NOT NULL ORDER BY id ASC");
-    const linkByCredit = new Map();
-    links.forEach((l) => { if (!linkByCredit.has(l.bank_txn_id)) linkByCredit.set(l.bank_txn_id, l); });
+    // Which registration(s) each credit is linked to -- a list per credit,
+    // not a single value, since one credit can now be split across several
+    // delegates (see allocatedForBankTxn). Only VERIFIED rows count as an
+    // actual allocation; a PENDING claim that happens to carry a bank_txn_id
+    // shouldn't (it never should in practice, but this keeps the two
+    // concepts -- "linked" and "verified" -- from silently diverging here).
+    const links = await dbAll(
+      "SELECT registration_id, bank_txn_id, verified_amount, amount FROM payment_transactions WHERE bank_txn_id IS NOT NULL AND txn_status = 'VERIFIED' ORDER BY id ASC");
+    const linksByCredit = new Map();
+    links.forEach((l) => {
+      if (!linksByCredit.has(l.bank_txn_id)) linksByCredit.set(l.bank_txn_id, []);
+      linksByCredit.get(l.bank_txn_id).push(l);
+    });
 
     // registrations.utr_number is never cleared on unlink (unlinking only
     // touches payment_transactions.bank_txn_id -- see DELETE .../link), so
@@ -5121,19 +5202,38 @@ app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINAN
       // land in either matched or unmatched no matter what its reference
       // happens to look like.
       if (t.is_non_registration) { nonRegistrationCredits.push(t); continue; }
-      const link = linkByCredit.get(t.id);
+      const creditLinks = linksByCredit.get(t.id);
+      if (creditLinks && creditLinks.length) {
+        // Split credits: one matched row per delegate it's linked to, not
+        // just the first (that used to be the case when this only ever
+        // tracked a single link per credit -- a second allocation on the
+        // same credit would silently vanish from this whole view). amountOk
+        // now describes the CREDIT as a whole -- is it fully and exactly
+        // accounted for across every delegate it's split between, no
+        // leftover, no double-count -- rather than one delegate's claim
+        // against the full credit, which stopped being a meaningful
+        // comparison once a credit can legitimately back more than one
+        // registration at less than its full amount each.
+        const totalLinked = creditLinks.reduce((sum, l) => sum + (l.amount || 0), 0);
+        const amountOk = Math.abs(Number(t.credit) - totalLinked) < 0.5;
+        for (const link of creditLinks) {
+          const reg = regById.get(link.registration_id);
+          if (!reg) continue; // linked to a registration with no UTR on file -- shouldn't happen, skip defensively
+          matchedRegIds.add(reg.id);
+          matched.push({ ...reg, transaction: t, amountOk, linkedAmount: link.amount });
+        }
+        continue;
+      }
       let reg = null;
-      let txnAmount = null;
-      if (link) { reg = regById.get(link.registration_id); txnAmount = link.amount; }
-      else if (t.extracted_ref) {
+      if (t.extracted_ref) {
         const candidate = regByUtr.get(digits(t.extracted_ref));
         if (candidate && !regIdsWithTxnRows.has(candidate.id)) reg = candidate;
       }
       if (!reg) { unmatchedCredits.push(t); continue; }
       matchedRegIds.add(reg.id);
-      const claimedAmount = txnAmount != null ? txnAmount : (reg.paid_amount != null ? reg.paid_amount : reg.expected_amount);
+      const claimedAmount = reg.paid_amount != null ? reg.paid_amount : reg.expected_amount;
       const amountOk = claimedAmount == null || Number(t.credit) === Number(claimedAmount);
-      matched.push({ ...reg, transaction: t, amountOk });
+      matched.push({ ...reg, transaction: t, amountOk, linkedAmount: t.credit });
     }
 
     // Registrations (non-rejected, with a reference) that didn't match any credit.

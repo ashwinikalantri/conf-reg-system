@@ -2240,9 +2240,13 @@ async function toggleTxnCandidates(txnId) {
   const res = await fetch(`/api/payment-transactions/${encodeURIComponent(txnId)}/candidates`);
   if (!res.ok) { box.innerHTML = '<p class="text-[10px] text-rose-600 p-2">Could not load candidates.</p>'; return; }
   const rows = (await res.json()).transactions || [];
+  // A credit with less than its full credit still unallocated (partially
+  // claimed by someone else already) shows "₹X of ₹Y available" so the
+  // admin can see at a glance whether this payment's own amount will fit --
+  // the server is still the actual gate at link time.
   box.innerHTML = rows.length ? rows.map((c) => `
     <div class="flex items-center justify-between gap-2 p-2 text-[10px]">
-      <div class="min-w-0"><p class="font-semibold text-slate-700">${esc(c.post_date)} · ₹${inr(esc(c.credit))}</p><p class="text-slate-500 truncate">${esc(c.description)}</p></div>
+      <div class="min-w-0"><p class="font-semibold text-slate-700">${esc(c.post_date)} · ₹${inr(esc(c.remaining))}${c.remaining !== c.credit ? ` of ₹${inr(esc(c.credit))}` : ''} available</p><p class="text-slate-500 truncate">${esc(c.description)}</p></div>
       <button type="button" class="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded" onclick="linkTxnToBank(${esc(txnId)}, ${esc(c.id)})">Link</button>
     </div>`).join('') : '<p class="text-[10px] text-slate-400 p-2">No unused credits in the statement yet.</p>';
 }
@@ -2279,17 +2283,28 @@ async function toggleAdminAddPayment() {
   const res = await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/candidate-transactions`);
   if (!res.ok) { box.innerHTML = '<p class="text-[10px] text-rose-600 p-2">Could not load candidates.</p>'; return; }
   const rows = (await res.json()).transactions || [];
+  // A credit can now be split across delegates, so "remaining" (not the
+  // credit's full amount) is what's actually available here -- pre-filled
+  // into an editable amount input, since taking only part of a credit for
+  // this registration (leaving the rest for someone else) is the whole point.
   box.innerHTML = rows.length ? rows.map((c) => `
     <div class="flex items-center justify-between gap-2 p-2 text-[10px]">
-      <div class="min-w-0"><p class="font-semibold text-slate-700">${esc(c.post_date)} · ₹${inr(esc(c.credit))}</p><p class="text-slate-500 truncate">${esc(c.description)}</p></div>
-      <button type="button" class="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded" onclick="adminAddPayment(${esc(c.id)}, ${esc(c.credit)})">Add ₹${inr(esc(c.credit))}</button>
+      <div class="min-w-0"><p class="font-semibold text-slate-700">${esc(c.post_date)} · ₹${inr(esc(c.remaining))}${c.remaining !== c.credit ? ` of ₹${inr(esc(c.credit))}` : ''} available</p><p class="text-slate-500 truncate">${esc(c.description)}</p></div>
+      <div class="flex items-center gap-1 shrink-0">
+        <input type="number" min="0.01" max="${esc(c.remaining)}" step="0.01" value="${esc(c.remaining)}" id="admin-add-amount-${esc(c.id)}" class="w-20 p-1 border rounded text-[10px]">
+        <button type="button" class="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded" onclick="adminAddPayment(${esc(c.id)}, ${esc(c.remaining)})">Add</button>
+      </div>
     </div>`).join('') : '<p class="text-[10px] text-slate-400 p-2">No unused credits in the statement yet.</p>';
 }
 
-async function adminAddPayment(bankTxnId, credit) {
-  if (!(await showConfirm(`Add this ₹${inr(credit)} bank credit as a verified payment for this registration? This is for a payment the delegate never submitted a claim for.`))) return;
+async function adminAddPayment(bankTxnId, maxRemaining) {
+  const input = document.getElementById(`admin-add-amount-${bankTxnId}`);
+  const amount = input ? Number(input.value) : maxRemaining;
+  if (!Number.isFinite(amount) || amount <= 0) return showToast('Enter a valid amount.');
+  if (amount > maxRemaining + 0.5) return showToast(`Only ₹${inr(maxRemaining)} of this credit is available.`);
+  if (!(await showConfirm(`Add ₹${inr(amount)} of this bank credit as a verified payment for this registration? This is for a payment the delegate never submitted a claim for.`))) return;
   const data = await (await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/admin-add-payment`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bankTxnId }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bankTxnId, amount }),
   })).json();
   if (!data.success) return showToast(data.error || 'Could not add this payment.');
   showToast('Payment added.', 'success');
@@ -4917,6 +4932,15 @@ let cachedMatched = [];
 function matchedRowHtml(m, serial) {
   const rejectedTag = m.bank_status === 'REJECTED'
     ? ' <span class="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5">rejected</span>' : '';
+  // linkedAmount is what THIS delegate's own portion of the credit is -- the
+  // full credit amount unless it's split across more than one registration.
+  // amountOk now describes the credit as a whole (fully & exactly
+  // allocated, no leftover, no double-count), not "does this delegate's
+  // claim match the credit" -- that comparison stopped making sense once a
+  // credit can legitimately back more than one registration at less than
+  // its full amount each.
+  const isSplit = Number(m.linkedAmount) !== Number(m.transaction.credit);
+  const amountLine = isSplit ? `₹${inr(esc(m.linkedAmount))} of ₹${inr(esc(m.transaction.credit))}` : `₹${inr(esc(m.transaction.credit))}`;
   return `
       <tr class="${m.bank_status === 'REJECTED' ? 'bg-rose-50/40' : (m.amountOk ? '' : 'bg-rose-50/50')}">
         <td class="p-3 block sm:hidden">
@@ -4926,12 +4950,12 @@ function matchedRowHtml(m, serial) {
               <p class="text-[11px] font-mono text-slate-400 truncate">${esc(m.registration_number || '—')} · ${esc(m.utr_number)}</p>
             </div>
             <div class="text-right shrink-0">
-              <p class="font-semibold text-slate-700">₹${inr(esc(m.transaction.credit))}</p>
+              <p class="font-semibold text-slate-700">${amountLine}</p>
               <p class="text-[10px] text-slate-400">${esc(m.transaction.post_date)}</p>
             </div>
           </div>
           ${m.transaction.description ? `<p class="text-[11px] text-slate-500 mt-1 truncate">${esc(m.transaction.description)}</p>` : ''}
-          ${m.amountOk ? '' : `<p class="text-[11px] text-rose-600 font-bold mt-1">≠ claimed ₹${inr(esc(m.paid_amount != null ? m.paid_amount : m.expected_amount))}</p>`}
+          ${m.amountOk ? '' : `<p class="text-[11px] text-rose-600 font-bold mt-1">⚠ credit not fully/exactly allocated</p>`}
         </td>
         <td class="p-3 text-slate-400 hidden sm:table-cell">${serial}</td>
         <td class="p-3 font-mono text-xs hidden sm:table-cell">${esc(m.registration_number || '—')}</td>
@@ -4939,7 +4963,7 @@ function matchedRowHtml(m, serial) {
         <td class="p-3 font-mono text-xs hidden sm:table-cell">${esc(m.utr_number)}</td>
         <td class="p-3 hidden sm:table-cell">${esc(m.transaction.post_date)}</td>
         <td class="p-3 text-xs text-slate-500 hidden sm:table-cell max-w-[240px] truncate" title="${esc(m.transaction.description || '')}">${esc(m.transaction.description || '—')}</td>
-        <td class="p-3 hidden sm:table-cell">₹${inr(esc(m.transaction.credit))}${m.amountOk ? '' : ` <span class="text-rose-600 font-bold">≠ claimed ₹${inr(esc(m.paid_amount != null ? m.paid_amount : m.expected_amount))}</span>`}</td>
+        <td class="p-3 hidden sm:table-cell">${amountLine}${m.amountOk ? '' : ` <span class="text-rose-600 font-bold">⚠ not fully/exactly allocated</span>`}</td>
       </tr>`;
 }
 
