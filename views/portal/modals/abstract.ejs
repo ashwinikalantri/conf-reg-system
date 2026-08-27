@@ -1,38 +1,46 @@
   <!-- MODAL 2: ABSTRACT SUBMISSION -->
-  <div id="modal-abstract" class="hidden fixed inset-0 bg-slate-900/60 flex justify-center items-center p-4 z-50">
-    <div class="bg-white max-w-2xl w-full rounded-2xl p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
-      <button onclick="closeModal('modal-abstract')" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
-      <h3 class="text-xl font-bold text-slate-800 mb-2">Abstract Submission</h3>
+  <!-- Header + guidelines stay fixed; the form scrolls independently in the
+       middle; the word-count progress bar and submit button stay pinned to
+       the bottom (via the button's form="abstract-form" attribute) so a
+       delegate always sees where they stand and can submit without
+       scrolling back down through five sections. -->
+  <div id="modal-abstract" class="hidden fixed inset-0 bg-slate-900/60 flex justify-center items-center p-2 sm:p-4 z-50">
+    <div class="bg-white max-w-2xl w-full rounded-2xl shadow-2xl relative max-h-[95vh] sm:max-h-[90vh] flex flex-col">
+      <button onclick="closeModal('modal-abstract')" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold z-10">✕</button>
 
-      <!-- Submission guidelines (from the conference site) -- starts
-           collapsed so the form itself is the first thing a returning
-           delegate sees; toggleAbstractGuidelines() just flips .hidden. -->
-      <div class="bg-indigo-50/60 border border-indigo-100 rounded-xl mb-4 text-xs text-slate-700 leading-relaxed">
-        <button type="button" onclick="toggleAbstractGuidelines()" class="w-full flex items-center justify-between p-4 text-left">
-          <span class="font-bold text-indigo-800">Submission Guidelines</span>
-          <span id="abstract-guidelines-chevron" class="text-indigo-400 transition-transform">▸</span>
-        </button>
-        <ul id="abstract-guidelines-body" class="hidden list-disc list-inside space-y-1 px-4 pb-4">
-          <li>Only registered delegates may submit papers or posters.</li>
-          <li>Topic must relate to <b>Healthcare Quality &amp; Patient Safety</b>.</li>
-          <li>Submit a <b>structured abstract</b> (Background, Aim, Methods, Results, Conclusion), maximum <b>400 words</b> total.</li>
-          <li>Accepted for <b>Oral</b> (5 min + 2 min discussion) or <b>Poster</b> presentation.</li>
-          <li>Reviewed by an expert scientific committee; decisions are final.</li>
-          <li>Top 5 papers are selected for the Award Paper Session (NQOCN Gold Medal).</li>
-          <li>Presentations: <b id="conf-presentations-date">22 November 2026</b>; time &amp; venue communicated in advance.</li>
-        </ul>
+      <div class="p-5 sm:p-6 pb-0 shrink-0">
+        <h3 class="text-xl font-bold text-slate-800 mb-2 pr-8">Abstract Submission</h3>
+
+        <!-- Submission guidelines (from the conference site) -- starts
+             collapsed so the form itself is the first thing a returning
+             delegate sees; toggleAbstractGuidelines() just flips .hidden. -->
+        <div class="bg-indigo-50/60 border border-indigo-100 rounded-xl text-xs text-slate-700 leading-relaxed">
+          <button type="button" onclick="toggleAbstractGuidelines()" class="w-full flex items-center justify-between p-3.5 text-left">
+            <span class="font-bold text-indigo-800">Submission Guidelines</span>
+            <span id="abstract-guidelines-chevron" class="text-indigo-400 transition-transform">▸</span>
+          </button>
+          <ul id="abstract-guidelines-body" class="hidden list-disc list-inside space-y-1 px-4 pb-4">
+            <li>Only registered delegates may submit papers or posters.</li>
+            <li>Topic must relate to <b>Healthcare Quality &amp; Patient Safety</b>.</li>
+            <li>Submit a <b>structured abstract</b> (Background, Aim, Methods, Results, Conclusion), maximum <b>400 words</b> total.</li>
+            <li>Accepted for <b>Oral</b> (5 min + 2 min discussion) or <b>Poster</b> presentation.</li>
+            <li>Reviewed by an expert scientific committee; decisions are final.</li>
+            <li>Top 5 papers are selected for the Award Paper Session (NQOCN Gold Medal).</li>
+            <li>Presentations: <b id="conf-presentations-date">22 November 2026</b>; time &amp; venue communicated in advance.</li>
+          </ul>
+        </div>
       </div>
 
-      <form onsubmit="handleAbstractSubmit(event)" class="space-y-4">
+      <form id="abstract-form" onsubmit="handleAbstractSubmit(event)" class="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-4">
         <div>
           <label class="block text-sm font-medium text-slate-700">Presentation Preference</label>
-          <div class="flex gap-4 mt-1.5">
+          <div class="flex flex-wrap gap-4 mt-1.5">
             <label class="flex items-center gap-1.5 text-sm text-slate-700">
-              <input type="radio" name="abstract-format" value="Oral Paper" checked class="accent-indigo-600">
+              <input type="radio" name="abstract-format" value="Oral Paper" checked class="accent-indigo-600 w-4 h-4">
               Oral Paper
             </label>
             <label class="flex items-center gap-1.5 text-sm text-slate-700">
-              <input type="radio" name="abstract-format" value="Poster Presentation" class="accent-indigo-600">
+              <input type="radio" name="abstract-format" value="Poster Presentation" class="accent-indigo-600 w-4 h-4">
               Poster Presentation
             </label>
           </div>
@@ -40,81 +48,120 @@
 
         <div>
           <label class="block text-sm font-medium text-slate-700">Abstract Title</label>
-          <input type="text" id="abstract-title" required class="w-full mt-1 p-2.5 border rounded-lg outline-none">
+          <input type="text" id="abstract-title" required placeholder="A concise, specific title for your work" class="w-full mt-1 p-2.5 border border-slate-200 rounded-lg outline-none text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition">
         </div>
 
-        <!-- Five structured sections. Each has its own small formatting
+        <!-- Five structured sections, each numbered and in its own card with
+             a live per-section word count. Each has a small formatting
              toolbar (Bold/Italic/Superscript/Subscript -- covers scientific
              notation like p<0.05, 10⁻³, cm² -- see wrapAbstractSelection())
              rather than free-form HTML input; the server re-sanitizes to the
              same four tags regardless, so this is convenience, not the
-             actual security boundary. -->
-        <div>
-          <label class="block text-sm font-medium text-slate-700">Background</label>
-          <div class="flex gap-1 mt-1 mb-1">
-            <button type="button" onclick="wrapAbstractSelection('abstract-background','b')" title="Bold" class="w-7 h-7 text-xs font-bold border border-slate-300 rounded hover:bg-slate-50">B</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-background','i')" title="Italic" class="w-7 h-7 text-xs italic border border-slate-300 rounded hover:bg-slate-50">I</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-background','sup')" title="Superscript" class="w-7 h-7 text-xs border border-slate-300 rounded hover:bg-slate-50">x²</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-background','sub')" title="Subscript" class="w-7 h-7 text-xs border border-slate-300 rounded hover:bg-slate-50">x₂</button>
+             actual security boundary. Textareas auto-grow with content
+             (autoResizeTextarea) instead of scrolling inside a fixed box. -->
+        <div class="border border-slate-200 rounded-xl p-3.5">
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="flex items-center gap-2 text-sm font-semibold text-slate-800">
+              <span class="w-5 h-5 shrink-0 flex items-center justify-center rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-bold">1</span>
+              Background
+            </label>
+            <span id="abstract-background-count" class="text-[11px] text-slate-400 font-medium">0 words</span>
           </div>
-          <textarea id="abstract-background" required rows="3" oninput="updateAbstractWordCount()" class="w-full p-2.5 border rounded-lg outline-none text-sm"></textarea>
+          <div class="flex gap-1 mb-1.5">
+            <button type="button" onclick="wrapAbstractSelection('abstract-background','b')" title="Bold" class="w-8 h-8 text-xs font-bold border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">B</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-background','i')" title="Italic" class="w-8 h-8 text-xs italic border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">I</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-background','sup')" title="Superscript" class="w-8 h-8 text-xs border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">x²</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-background','sub')" title="Subscript" class="w-8 h-8 text-xs border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">x₂</button>
+          </div>
+          <textarea id="abstract-background" required rows="3" placeholder="Why this matters -- the problem, context, or gap being addressed" oninput="updateAbstractWordCount(); autoResizeTextarea(this)" class="w-full p-2.5 border border-slate-200 rounded-lg outline-none text-sm resize-none overflow-hidden focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"></textarea>
         </div>
 
-        <div>
-          <label class="block text-sm font-medium text-slate-700">Aim</label>
-          <div class="flex gap-1 mt-1 mb-1">
-            <button type="button" onclick="wrapAbstractSelection('abstract-aim','b')" title="Bold" class="w-7 h-7 text-xs font-bold border border-slate-300 rounded hover:bg-slate-50">B</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-aim','i')" title="Italic" class="w-7 h-7 text-xs italic border border-slate-300 rounded hover:bg-slate-50">I</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-aim','sup')" title="Superscript" class="w-7 h-7 text-xs border border-slate-300 rounded hover:bg-slate-50">x²</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-aim','sub')" title="Subscript" class="w-7 h-7 text-xs border border-slate-300 rounded hover:bg-slate-50">x₂</button>
+        <div class="border border-slate-200 rounded-xl p-3.5">
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="flex items-center gap-2 text-sm font-semibold text-slate-800">
+              <span class="w-5 h-5 shrink-0 flex items-center justify-center rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-bold">2</span>
+              Aim
+            </label>
+            <span id="abstract-aim-count" class="text-[11px] text-slate-400 font-medium">0 words</span>
           </div>
-          <textarea id="abstract-aim" required rows="2" oninput="updateAbstractWordCount()" class="w-full p-2.5 border rounded-lg outline-none text-sm"></textarea>
+          <div class="flex gap-1 mb-1.5">
+            <button type="button" onclick="wrapAbstractSelection('abstract-aim','b')" title="Bold" class="w-8 h-8 text-xs font-bold border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">B</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-aim','i')" title="Italic" class="w-8 h-8 text-xs italic border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">I</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-aim','sup')" title="Superscript" class="w-8 h-8 text-xs border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">x²</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-aim','sub')" title="Subscript" class="w-8 h-8 text-xs border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">x₂</button>
+          </div>
+          <textarea id="abstract-aim" required rows="2" placeholder="What this work set out to achieve" oninput="updateAbstractWordCount(); autoResizeTextarea(this)" class="w-full p-2.5 border border-slate-200 rounded-lg outline-none text-sm resize-none overflow-hidden focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"></textarea>
         </div>
 
-        <div>
-          <label class="block text-sm font-medium text-slate-700">Methods</label>
-          <div class="flex gap-1 mt-1 mb-1">
-            <button type="button" onclick="wrapAbstractSelection('abstract-methods','b')" title="Bold" class="w-7 h-7 text-xs font-bold border border-slate-300 rounded hover:bg-slate-50">B</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-methods','i')" title="Italic" class="w-7 h-7 text-xs italic border border-slate-300 rounded hover:bg-slate-50">I</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-methods','sup')" title="Superscript" class="w-7 h-7 text-xs border border-slate-300 rounded hover:bg-slate-50">x²</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-methods','sub')" title="Subscript" class="w-7 h-7 text-xs border border-slate-300 rounded hover:bg-slate-50">x₂</button>
+        <div class="border border-slate-200 rounded-xl p-3.5">
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="flex items-center gap-2 text-sm font-semibold text-slate-800">
+              <span class="w-5 h-5 shrink-0 flex items-center justify-center rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-bold">3</span>
+              Methods
+            </label>
+            <span id="abstract-methods-count" class="text-[11px] text-slate-400 font-medium">0 words</span>
           </div>
-          <textarea id="abstract-methods" required rows="3" oninput="updateAbstractWordCount()" class="w-full p-2.5 border rounded-lg outline-none text-sm"></textarea>
+          <div class="flex gap-1 mb-1.5">
+            <button type="button" onclick="wrapAbstractSelection('abstract-methods','b')" title="Bold" class="w-8 h-8 text-xs font-bold border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">B</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-methods','i')" title="Italic" class="w-8 h-8 text-xs italic border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">I</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-methods','sup')" title="Superscript" class="w-8 h-8 text-xs border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">x²</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-methods','sub')" title="Subscript" class="w-8 h-8 text-xs border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">x₂</button>
+          </div>
+          <textarea id="abstract-methods" required rows="3" placeholder="Design, setting, participants, intervention, and how it was measured" oninput="updateAbstractWordCount(); autoResizeTextarea(this)" class="w-full p-2.5 border border-slate-200 rounded-lg outline-none text-sm resize-none overflow-hidden focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"></textarea>
         </div>
 
-        <div>
-          <label class="block text-sm font-medium text-slate-700">Results</label>
-          <div class="flex gap-1 mt-1 mb-1">
-            <button type="button" onclick="wrapAbstractSelection('abstract-results','b')" title="Bold" class="w-7 h-7 text-xs font-bold border border-slate-300 rounded hover:bg-slate-50">B</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-results','i')" title="Italic" class="w-7 h-7 text-xs italic border border-slate-300 rounded hover:bg-slate-50">I</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-results','sup')" title="Superscript" class="w-7 h-7 text-xs border border-slate-300 rounded hover:bg-slate-50">x²</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-results','sub')" title="Subscript" class="w-7 h-7 text-xs border border-slate-300 rounded hover:bg-slate-50">x₂</button>
+        <div class="border border-slate-200 rounded-xl p-3.5">
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="flex items-center gap-2 text-sm font-semibold text-slate-800">
+              <span class="w-5 h-5 shrink-0 flex items-center justify-center rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-bold">4</span>
+              Results
+            </label>
+            <span id="abstract-results-count" class="text-[11px] text-slate-400 font-medium">0 words</span>
           </div>
-          <textarea id="abstract-results" required rows="3" oninput="updateAbstractWordCount()" class="w-full p-2.5 border rounded-lg outline-none text-sm"></textarea>
+          <div class="flex gap-1 mb-1.5">
+            <button type="button" onclick="wrapAbstractSelection('abstract-results','b')" title="Bold" class="w-8 h-8 text-xs font-bold border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">B</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-results','i')" title="Italic" class="w-8 h-8 text-xs italic border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">I</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-results','sup')" title="Superscript" class="w-8 h-8 text-xs border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">x²</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-results','sub')" title="Subscript" class="w-8 h-8 text-xs border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">x₂</button>
+          </div>
+          <textarea id="abstract-results" required rows="3" placeholder="Key findings, with numbers where relevant" oninput="updateAbstractWordCount(); autoResizeTextarea(this)" class="w-full p-2.5 border border-slate-200 rounded-lg outline-none text-sm resize-none overflow-hidden focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"></textarea>
         </div>
 
-        <div>
-          <label class="block text-sm font-medium text-slate-700">Conclusion</label>
-          <div class="flex gap-1 mt-1 mb-1">
-            <button type="button" onclick="wrapAbstractSelection('abstract-conclusion','b')" title="Bold" class="w-7 h-7 text-xs font-bold border border-slate-300 rounded hover:bg-slate-50">B</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-conclusion','i')" title="Italic" class="w-7 h-7 text-xs italic border border-slate-300 rounded hover:bg-slate-50">I</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-conclusion','sup')" title="Superscript" class="w-7 h-7 text-xs border border-slate-300 rounded hover:bg-slate-50">x²</button>
-            <button type="button" onclick="wrapAbstractSelection('abstract-conclusion','sub')" title="Subscript" class="w-7 h-7 text-xs border border-slate-300 rounded hover:bg-slate-50">x₂</button>
+        <div class="border border-slate-200 rounded-xl p-3.5">
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="flex items-center gap-2 text-sm font-semibold text-slate-800">
+              <span class="w-5 h-5 shrink-0 flex items-center justify-center rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-bold">5</span>
+              Conclusion
+            </label>
+            <span id="abstract-conclusion-count" class="text-[11px] text-slate-400 font-medium">0 words</span>
           </div>
-          <textarea id="abstract-conclusion" required rows="2" oninput="updateAbstractWordCount()" class="w-full p-2.5 border rounded-lg outline-none text-sm"></textarea>
+          <div class="flex gap-1 mb-1.5">
+            <button type="button" onclick="wrapAbstractSelection('abstract-conclusion','b')" title="Bold" class="w-8 h-8 text-xs font-bold border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">B</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-conclusion','i')" title="Italic" class="w-8 h-8 text-xs italic border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">I</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-conclusion','sup')" title="Superscript" class="w-8 h-8 text-xs border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">x²</button>
+            <button type="button" onclick="wrapAbstractSelection('abstract-conclusion','sub')" title="Subscript" class="w-8 h-8 text-xs border border-slate-200 rounded-lg hover:bg-slate-50 active:bg-slate-100">x₂</button>
+          </div>
+          <textarea id="abstract-conclusion" required rows="2" placeholder="What this means and its implication for practice" oninput="updateAbstractWordCount(); autoResizeTextarea(this)" class="w-full p-2.5 border border-slate-200 rounded-lg outline-none text-sm resize-none overflow-hidden focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"></textarea>
         </div>
 
         <div>
           <label class="block text-sm font-medium text-slate-700">Keywords</label>
           <div id="abstract-keywords-pills" class="flex flex-wrap gap-1.5 mt-1.5 empty:hidden"></div>
-          <input type="text" id="abstract-keywords-input" placeholder="Type a keyword and press Enter" onkeydown="handleAbstractKeywordKeydown(event)" class="w-full mt-1.5 p-2.5 border rounded-lg outline-none text-sm">
+          <input type="text" id="abstract-keywords-input" placeholder="Type a keyword and press Enter" onkeydown="handleAbstractKeywordKeydown(event)" class="w-full mt-1.5 p-2.5 border border-slate-200 rounded-lg outline-none text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition">
         </div>
+      </form>
 
-        <div class="flex items-center justify-between">
+      <div class="p-4 sm:p-5 border-t border-slate-100 shrink-0">
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="text-xs font-semibold text-slate-500">Total length</span>
           <span id="abstract-total-wordcount" class="text-xs font-semibold text-slate-500">0 / 400 words</span>
         </div>
-
-        <button type="submit" id="abstract-submit-btn" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed">Submit Abstract for Review</button>
-      </form>
+        <div class="h-1.5 bg-slate-100 rounded-full overflow-hidden mb-3">
+          <div id="abstract-wordcount-bar" class="h-full bg-emerald-500 transition-all duration-200" style="width:0%"></div>
+        </div>
+        <button type="submit" form="abstract-form" id="abstract-submit-btn" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+          <span id="abstract-submit-label">Submit Abstract for Review</span>
+        </button>
+      </div>
     </div>
   </div>

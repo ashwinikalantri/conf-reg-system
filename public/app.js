@@ -1294,16 +1294,32 @@ function abstractWordCount(html) {
   return String(html || '').replace(/<[^>]+>/g, ' ').trim().split(/\s+/).filter(Boolean).length;
 }
 
+// Textareas grow with their content instead of scrolling inside a fixed
+// box -- reset to auto first so shrinking (e.g. after deleting text) is
+// picked up too, not just growth.
+function autoResizeTextarea(el) {
+  el.style.height = 'auto';
+  el.style.height = `${el.scrollHeight}px`;
+}
+
 function updateAbstractWordCount() {
   let total = 0;
   for (const id of ABSTRACT_SECTION_IDS) {
     const el = document.getElementById(id);
-    if (el) total += abstractWordCount(el.value);
+    const count = el ? abstractWordCount(el.value) : 0;
+    total += count;
+    const label = document.getElementById(`${id}-count`);
+    if (label) label.textContent = `${count} word${count === 1 ? '' : 's'}`;
   }
   const counter = document.getElementById('abstract-total-wordcount');
   if (counter) {
     counter.textContent = `${total} / ${ABSTRACT_MAX_WORDS} words`;
     counter.className = total > ABSTRACT_MAX_WORDS ? 'text-xs font-bold text-rose-600' : 'text-xs font-semibold text-slate-500';
+  }
+  const bar = document.getElementById('abstract-wordcount-bar');
+  if (bar) {
+    bar.style.width = `${Math.min(100, (total / ABSTRACT_MAX_WORDS) * 100)}%`;
+    bar.className = 'h-full transition-all duration-200 ' + (total > ABSTRACT_MAX_WORDS ? 'bg-rose-500' : total > ABSTRACT_MAX_WORDS * 0.85 ? 'bg-amber-500' : 'bg-emerald-500');
   }
   const submitBtn = document.getElementById('abstract-submit-btn');
   if (submitBtn) submitBtn.disabled = total > ABSTRACT_MAX_WORDS || total === 0;
@@ -1364,17 +1380,35 @@ function resetAbstractKeywords() {
   if (input) input.value = '';
 }
 
+// Briefly rings an input red to draw the eye to it alongside the toast,
+// for validation that isn't covered by the browser's native required check
+// (e.g. "at least one keyword", which has no single required field).
+function flashInvalid(el) {
+  if (!el) return;
+  el.classList.add('ring-2', 'ring-rose-400', 'border-rose-400');
+  el.focus();
+  setTimeout(() => el.classList.remove('ring-2', 'ring-rose-400', 'border-rose-400'), 1500);
+}
+
 async function handleAbstractSubmit(e) {
   e.preventDefault();
   if (updateAbstractWordCount() > ABSTRACT_MAX_WORDS) return showToast(`Your abstract is over the ${ABSTRACT_MAX_WORDS}-word limit.`);
   addAbstractKeywordFromInput(); // catch a keyword left in the box, unsubmitted
-  if (!abstractKeywords.length) return showToast('Add at least one keyword.');
+  if (!abstractKeywords.length) {
+    flashInvalid(document.getElementById('abstract-keywords-input'));
+    return showToast('Add at least one keyword.');
+  }
 
   const formatEl = document.querySelector('input[name="abstract-format"]:checked');
   const payload = { format: formatEl ? formatEl.value : '', title: document.getElementById('abstract-title').value, keywords: abstractKeywords.join(', ') };
   for (const id of ABSTRACT_SECTION_IDS) {
     payload[id.replace('abstract-', '')] = document.getElementById(id).value;
   }
+
+  const submitBtn = document.getElementById('abstract-submit-btn');
+  const submitLabel = document.getElementById('abstract-submit-label');
+  if (submitBtn) submitBtn.disabled = true;
+  if (submitLabel) submitLabel.textContent = 'Submitting…';
 
   try {
     const res = await fetch('/api/abstracts', {
@@ -1392,6 +1426,9 @@ async function handleAbstractSubmit(e) {
     }
   } catch (err) {
     showToast(`Submission error: ${err.message}`);
+  } finally {
+    if (submitLabel) submitLabel.textContent = 'Submit Abstract for Review';
+    if (submitBtn) submitBtn.disabled = updateAbstractWordCount() > ABSTRACT_MAX_WORDS;
   }
 }
 
