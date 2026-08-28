@@ -1,13 +1,13 @@
 # Conference Registration Portal & RBAC Admin
 
-A self-hosted registration portal for a conference: phone+OTP delegate
-signup, payment collection with OCR-assisted verification, workshop/QI-style
-program tracks with capacity limits, abstract submission and review, discount
-codes, and a role-based admin panel with a full audit trail. Built for one
-event (this deployment currently runs the *International Conference on
-Healthcare Quality & Patient Safety 2026* / NQOCN 2026 at MGIMS Sevagram),
-but the conference's identity, fee structure, and program tracks are all
-admin-editable rather than hardcoded — see **Settings → General** below.
+A self-hosted registration portal for a conference: phone+OTP (or password)
+delegate signup, payment collection with OCR-assisted verification,
+workshop/QI-style program tracks with capacity limits, abstract submission and
+review, discount codes, and a role-based admin panel with a full audit trail.
+The conference's identity (name, acronym, dates, location), fee structure, and
+program tracks have no built-in defaults — they're configured once, for
+whichever event you're running, through the **first-run setup wizard** (see
+below) and remain admin-editable afterward from **Settings → General**.
 
 Which categories require a student ID upload is admin-editable per category
 (Settings → Fees) rather than hardcoded, but the automated OCR check behind
@@ -23,54 +23,66 @@ ID verification below for what that means for a non-healthcare deployment.
    npm install
    ```
 
-3. Before the first start, set `SETUP_TOKEN` in `.env` to a value of your
-   choosing (see **First-Run Setup** below) — this is how you'll prove
-   authority to create the first admin account once the server is up.
-
-4. Start the server:
+3. Start the server:
 
    ```bash
    npm start
    ```
 
-5. Delegate portal: <http://localhost:3000>
+4. Visit <http://localhost:3000> — with no admin account yet, you'll land on
+   (or be redirected to) the first-run setup wizard at `/setup`.
+
+   Delegate portal: <http://localhost:3000>
    Admin panel: <http://localhost:3000/admin>
    First-run setup: <http://localhost:3000/setup>
 
-`conference.db` (SQLite) is created automatically on first run, seeded with a
-starter set of fee categories and program options — but **no admin account**,
-so visit `/setup` next (see below) to create one and configure the basics.
+`conference.db` (SQLite) is created automatically on first run, with **no
+admin account and no fee categories, workshops, or conference details** —
+all of that is configured through the setup wizard described next.
 
 ## First-Run Setup
 
 A brand-new `conference.db` has zero admin users, and every account-creation
 route already requires being one — a deadlock with no way in through the app
-itself. `/setup` breaks that deadlock exactly once, gated on `SETUP_TOKEN` (an
-operator-chosen secret in `.env`, checked with a constant-time comparison)
-rather than OTP, since a fresh deploy may not have SMS configured yet either.
-Knowing the token is proof of server/file access — the same trust boundary
-every other secret in this app already relies on.
+itself. `/setup` breaks that deadlock exactly once: it's reachable with no
+token or credential of any kind, but only while `isSetupModeActive()` holds —
+no admin-role user exists yet **and** `schema_meta.setup_completed` is unset.
+There's no risk window to gate with a secret, because the very first thing
+the wizard does is create that admin account, and the moment it does the
+route is permanently and irreversibly closed (see below) — anyone reaching
+the server before that has, by definition, arrived before any real data or
+configuration exists to protect.
 
-The wizard creates the Super Admin account (name, phone, email — no OTP) and
-logs straight in, then walks through Conference Details, UPI, SMS, and Email
-one screen at a time, each skippable and finishable later from **Settings →
-General**, which already covers the same fields. Creating the admin account
-irreversibly disables `/setup` (`schema_meta.setup_completed`) the instant it
-succeeds — not deferred to the end of the wizard — so a stale `SETUP_TOKEN`
-left in `.env` afterward can't be used to create a second admin later, even
-if the original account is deleted. Recovering a fully locked-out deployment
-(every admin account gone) is a manual database operation, same as it always
-was — `/setup` deliberately does not reopen for that.
+The wizard walks through, one screen at a time, each skippable and
+finishable later from the admin panel:
 
-If `SETUP_TOKEN` isn't set, `/setup` simply 404s, same as any unknown route —
-existing deployments (which already have an admin) are entirely unaffected by
-any of this regardless of whether `SETUP_TOKEN` is set.
+1. **Admin account** — name, phone, email, and an optional password (no OTP
+   needed here, since there's no admin session yet to authenticate against).
+2. **Conference Details** — name, acronym, dates, location, registration
+   number prefix.
+3. **Delegate Categories & Fees** — add one or more fee categories with
+   their early/regular/late/spot pricing and the phase cutoff dates.
+4. **Workshops** — add workshop / QI-track options with capacities.
+5. **UPI & Bank Transfer** — the conference's UPI VPA/payee name and bank
+   transfer details shown to delegates as a payment option.
+6. **SMS** and **Email** — provider credentials, both optional at this stage.
 
-**Known limitation:** the auto-seeded fee categories, workshop/QI options,
-and a few other defaults (UPI ID, SMS DLT sender/template IDs) are hardcoded
-to this specific conference, not generic placeholders — a new deployment
-inherits NQOCN's specifics until edited via Settings → Fees / Workshops / QI
-or the setup wizard's UPI step.
+Every step reuses the same admin endpoints Settings → General / Fees /
+Workshops already use (`PUT /api/admin/general-settings`,
+`POST /api/admin/fees/categories`, `POST /api/admin/program-options`, etc.) —
+so anything set here can be edited or added to later exactly the same way,
+and skipping a step just means doing it from the admin panel afterward.
+
+Creating the admin account irreversibly disables `/setup`
+(`schema_meta.setup_completed`) the instant it succeeds — not deferred to the
+end of the wizard — so deleting the only admin account later does not
+silently reopen account creation to the public internet. Recovering a fully
+locked-out deployment (every admin account gone) is a manual database
+operation, same as it always was — `/setup` deliberately does not reopen for
+that.
+
+Existing deployments (which already have an admin) are entirely unaffected —
+`/setup` 404s for them just like any unknown route.
 
 ## Docker
 
@@ -78,12 +90,9 @@ or the setup wizard's UPI step.
 # 1. Build and start (defaults to host port 3000; override with HOST_PORT=...)
 docker compose up -d --build
 
-# 2. Seed SETUP_TOKEN so /setup activates (see First-Run Setup above) --
-#    dotenv only loads .env at boot, so a restart is needed to pick it up.
-docker compose exec app sh -c "echo 'SETUP_TOKEN=choose-something-long' >> .env"
-docker compose restart
-
-# 3. Visit http://localhost:3000/setup and create the first Super Admin.
+# 2. Visit http://localhost:3000/setup and create the first Super Admin --
+#    see First-Run Setup above. No token or extra .env step is needed; a
+#    fresh container has no admin account, so /setup is open by default.
 ```
 
 Everything the app writes to at runtime — `.env` (the admin panel writes
@@ -152,9 +161,11 @@ to require editing code and redeploying:
   stops login OTPs).
 - **Email** — From address, From name, AWS region, and the AWS Access Key ID
   / Secret Access Key, plus the on/off switch.
-- **UPI** — the conference's UPI ID (VPA) and payee name shown on the payment
-  QR code; the delegate form and the server's OCR screenshot check both read
-  this live, so they can never drift apart.
+- **UPI & Bank Transfer** — the conference's UPI ID (VPA) and payee name
+  shown on the payment QR code (the delegate form and the server's OCR
+  screenshot check both read this live, so they can never drift apart), plus
+  the bank account name/number, IFSC, and branch shown as the NEFT/RTGS
+  fallback on the payment and top-up modals.
 - **Notifications** — the daily-digest recipient list (see below). Picked by
   searching name or phone over the Users table rather than typing raw
   numbers; only the phone number is actually persisted.
@@ -182,21 +193,20 @@ otherwise inject an unrelated new line into `.env`.
 pending-approval registrations) is a standalone process independent of the
 running server, and re-reads `schema_meta` on every run for the conference
 name, email from-address/name/region, and the digest recipient list, so it
-stays in sync with changes made on this page. Its default recipient list —
-used only if nothing has ever been saved from Settings → General →
-Notifications — comes from `DIGEST_RECIPIENT_PHONES` (comma-separated
-10-digit numbers) or, failing that, a coded-in default of three phone
-numbers from
-this deployment's finance/admin team. Recipients are matched by phone number
-against Users & Roles (not stored as email addresses), so the list keeps
-working if someone's email changes.
+stays in sync with changes made on this page. Its recipient list — used only
+if nothing has ever been saved from Settings → General → Notifications —
+comes from `DIGEST_RECIPIENT_PHONES` (comma-separated 10-digit numbers) and
+is otherwise empty by default; there's no coded-in fallback list. Recipients
+are matched by phone number against Users & Roles (not stored as email
+addresses), so the list keeps working if someone's email changes.
 
 ## Authentication & sessions
 
-Login is phone + OTP. On success the server issues a server-side session
-and sets an `httpOnly`, `SameSite=Lax` cookie (`COOKIE_NAME`, default
-`nqocn_sid`, 12-hour life).
-Only a hash of the session token and of the OTP is stored in the database.
+Login is phone + OTP, or phone + password as an alternative — available to
+every account type, delegate and admin alike. On success the server issues a
+server-side session and sets an `httpOnly`, `SameSite=Lax` cookie
+(`COOKIE_NAME`, default `nqocn_sid`, 12-hour life). Only a hash of the
+session token and of the OTP is stored in the database.
 
 - OTP is a random 6-digit code, valid for 5 minutes, single-use, capped at
   5 wrong attempts, with a 30-second resend throttle per number.
@@ -205,6 +215,27 @@ Only a hash of the session token and of the OTP is stored in the database.
   (`devOtp`) so you can log in during development. Set `NODE_ENV=production`
   (or `OTP_ECHO=false`) to stop returning it — but then a working SMS gateway
   is required, or nobody can log in.
+
+### Password login
+
+A password is purely an alternative login method, never a substitute for
+proving phone ownership: **OTP is still required at registration**
+regardless of whether a password is also set (`POST /api/auth/register`
+always calls `consumeOtp()`). Once registered, a delegate or admin can set a
+password (`POST /api/auth/set-password`, self-service, no current password
+required — being logged in already is the proof) and from then on log in
+with either OTP or `POST /api/auth/login-password`. Passwords are hashed
+with scrypt (random 16-byte salt per password) and compared in constant
+time; the login-password endpoint is rate-limited in-memory (5 attempts, 15
+minute lockout per phone number) separately from the DB-backed OTP attempt
+counter. An admin can also set an initial password for a staff account at
+creation time (`POST /api/users`).
+
+A delegate who logs in via OTP without a password set yet is prompted (once
+per browser session, dismissible) to set one from the dashboard — see the
+🔑 button there. The same button is not present in the admin panel; admin/
+staff passwords are set at account creation or via `set-password` while
+already logged in, not nudged.
 
 ### Roles (enforced server-side)
 
@@ -316,6 +347,8 @@ Both toggling and message edits are written to the audit log
 | ------------------------------------- | ------------------------------- |
 | `POST /api/otp/request`               | Public (throttled)              |
 | `POST /api/auth/register` / `login`   | Public (OTP-gated)              |
+| `POST /api/auth/login-password`       | Public (rate-limited per phone) |
+| `POST /api/auth/set-password`         | Authenticated (self-service)    |
 | `GET  /api/auth/me`                   | Authenticated                   |
 | `POST /api/auth/logout`               | Authenticated                   |
 | `POST /api/registrations`             | Authenticated (own record)      |
@@ -385,9 +418,10 @@ access to fetch it.
 
 Each registration is assigned a stable unique number at submission: the
 prefix set in Settings → General → Conference Details → Registration Number
-Prefix (default `NQOCN2026`, letters/numbers only), plus a 4+-digit
+Prefix (letters/numbers only, no built-in default — set during first-run
+setup or Settings → General), plus a 4+-digit
 zero-padded sequence shared by every registration regardless of prefix
-(`assignUserRegNumber()` in `server.js`) — e.g. `NQOCN20261188`. Changing the
+(`assignUserRegNumber()` in `server.js`) — e.g. `CONF20261188`. Changing the
 prefix only affects registrations created after the change; existing numbers
 are never rewritten, so a deployment that retargets mid-event ends up with
 old- and new-prefix numbers coexisting, by design. The number, the
@@ -504,13 +538,21 @@ crash.
   Settings → General. This matches how every other secret in this app is
   already handled, but is worth knowing if you're evaluating this for an
   environment that requires a managed secrets store.
+- The OTP SMS message text itself (`sendOtpSms()` in `server.js`) is a fixed
+  English string, not admin-editable. This is deliberate, not an oversight:
+  India's DLT regulations require the sent text to match a template
+  registered in advance with the telecom provider, so freely rewording it
+  risks silently breaking OTP delivery in a way that's hard to diagnose
+  without a real DLT rejection. A deployment using a different registered
+  template needs to edit that string in code to match it.
 - The session cookie name, the daily-digest recipient list, the
   registration-number prefix, and which categories require a student ID are
   all admin-configurable — see Authentication & sessions, Settings →
   General, Registration number & receipt, and Student ID verification
   above. Conference name/acronym/dates/location, fee structure, program
-  tracks, discount codes, SMS/Email provider config, and the UPI payment ID
-  are all admin-editable too, without a code change.
+  tracks, discount codes, SMS/Email provider config, and the UPI/bank
+  payment details are all admin-editable too, without a code change, and
+  none of them have a built-in default — see First-Run Setup above.
 - The student-ID OCR check itself is still limited to a fixed
   nursing/medical × UG/PG vocabulary (`detectIdAttributes()` in
   `server.js`) — any category can require an ID and be matched against one
