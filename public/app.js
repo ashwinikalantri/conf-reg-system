@@ -2139,6 +2139,15 @@ function paymentRowHtml(p) {
   const reviseHint = categoryChangedShortfall
     ? `<span class="text-[10px] text-orange-700 font-semibold bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5">⚠ Category changed — revise</span>`
     : '';
+  // Verified payments (net of any already-recorded refund) exceed what was
+  // owed -- surfaced here so it's visible while scanning the list, not only
+  // after opening Review (see getPaymentSummary's overpaid / the refund
+  // section inside the review modal, where it's actually recorded as
+  // refunded).
+  const overpaidAmt = Number(p.overpaid) || 0;
+  const overpaidPill = overpaidAmt > 0
+    ? `<span class="text-[10px] text-amber-700 font-semibold bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">💰 ₹${inr(overpaidAmt)} excess paid</span>`
+    : '';
   // Link status is now per transaction: show "linked" only when every pending
   // payment has its own bank credit linked. Verified/rejected rows (no pending
   // transactions) don't show the pill.
@@ -2168,7 +2177,7 @@ function paymentRowHtml(p) {
         </div>
         <div class="flex flex-wrap items-center gap-1.5 mt-2">
           ${p.is_flagged ? `<span class="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">⚠️ Flagged</span>` : ''}
-          ${statusPill}${reviseHint}${balancePill}${rejectionNote}${linkedPill}${idPill}
+          ${statusPill}${reviseHint}${balancePill}${overpaidPill}${rejectionNote}${linkedPill}${idPill}
         </div>
         <div class="mt-3">${reviewBtn}</div>
       </td>
@@ -2185,6 +2194,7 @@ function paymentRowHtml(p) {
         ${statusPill}
         ${reviseHint ? `<br>${reviseHint}` : ''}
         ${balancePill ? `<br>${balancePill}` : ''}
+        ${overpaidPill ? `<br>${overpaidPill}` : ''}
         ${rejectionNote ? `<br>${rejectionNote}` : ''}
         <br>${linkedPill}
         ${idPill ? `<br>${idPill}` : ''}
