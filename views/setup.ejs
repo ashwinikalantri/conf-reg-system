@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>First-Run Setup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 font-sans min-h-screen flex flex-col justify-center items-center p-4">
+
+  <div class="w-full max-w-lg">
+    <div class="text-center mb-6">
+      <h1 class="text-2xl font-bold text-slate-800">First-Run Setup</h1>
+      <p class="text-sm text-slate-500 mt-1">Step <span id="step-num">1</span> of 5 — everything past the first step can be skipped and finished later in Settings → General.</p>
+    </div>
+
+    <div id="toast" class="hidden mb-4 text-sm font-semibold text-center rounded-lg p-3"></div>
+
+    <!-- STEP 1: Create Super Admin -->
+    <div id="step-admin" class="bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-4">
+      <h2 class="text-lg font-bold text-slate-800">Create the Super Admin account</h2>
+      <p class="text-xs text-slate-500">Enter the setup token (SETUP_TOKEN in the server's .env), plus the first administrator's details. This is the only step that can't be skipped or done later.</p>
+      <div>
+        <label class="block text-xs font-semibold text-slate-700 mb-1">Setup Token</label>
+        <input id="su-token" type="password" required autocomplete="off" class="w-full p-2.5 border rounded-lg text-sm font-mono outline-none">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-700 mb-1">Full Name</label>
+        <input id="su-name" required class="w-full p-2.5 border rounded-lg text-sm outline-none">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-700 mb-1">Mobile Number</label>
+        <input id="su-phone" required maxlength="10" placeholder="10-digit mobile number" class="w-full p-2.5 border rounded-lg text-sm outline-none">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-700 mb-1">Email <span class="text-slate-400 font-normal">(optional)</span></label>
+        <input id="su-email" type="email" class="w-full p-2.5 border rounded-lg text-sm outline-none">
+      </div>
+      <button onclick="createAdmin()" id="su-create-btn" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg disabled:opacity-50">Create Account &amp; Continue</button>
+    </div>
+
+    <!-- STEP 2: Conference Details -->
+    <div id="step-conference" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
+      <h2 class="text-lg font-bold text-slate-800">Conference Details</h2>
+      <p class="text-xs text-slate-500">Shown across confirmation emails, reports, and printable pages. Pre-filled with whatever this deployment currently has set — edit anything you need to.</p>
+      <div><label class="block text-xs font-semibold text-slate-700 mb-1">Full Name</label><input id="su-conf-name" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">Acronym</label><input id="su-conf-acronym" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">Location</label><input id="su-conf-location" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">Start Date</label><input id="su-conf-startdate" type="date" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">End Date</label><input id="su-conf-enddate" type="date" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+      </div>
+      <div><label class="block text-xs font-semibold text-slate-700 mb-1">Registration Number Prefix</label><input id="su-conf-regprefix" placeholder="e.g. NQOCN2026" class="w-full p-2.5 border rounded-lg text-sm outline-none font-mono"></div>
+      <div class="flex gap-2 pt-2">
+        <button onclick="skipStep('conference')" class="flex-1 py-2.5 border border-slate-300 text-slate-600 font-semibold rounded-lg text-sm">Skip for now</button>
+        <button onclick="saveStep('conference')" class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm">Save &amp; Continue</button>
+      </div>
+    </div>
+
+    <!-- STEP 3: UPI -->
+    <div id="step-upi" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
+      <h2 class="text-lg font-bold text-slate-800">UPI Payment</h2>
+      <p class="text-xs text-slate-500">Used to generate the payment QR code delegates scan to pay.</p>
+      <div><label class="block text-xs font-semibold text-slate-700 mb-1">UPI ID (VPA)</label><input id="su-upi-id" placeholder="name@bank" class="w-full p-2.5 border rounded-lg text-sm outline-none font-mono"></div>
+      <div><label class="block text-xs font-semibold text-slate-700 mb-1">Payee Name</label><input id="su-upi-payeename" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+      <div class="flex gap-2 pt-2">
+        <button onclick="skipStep('upi')" class="flex-1 py-2.5 border border-slate-300 text-slate-600 font-semibold rounded-lg text-sm">Skip for now</button>
+        <button onclick="saveStep('upi')" class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm">Save &amp; Continue</button>
+      </div>
+    </div>
+
+    <!-- STEP 4: SMS -->
+    <div id="step-sms" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
+      <h2 class="text-lg font-bold text-slate-800">SMS (OTP delivery)</h2>
+      <p class="text-xs text-slate-500">Without an API key, delegate/staff login still works via the on-screen OTP echo outside production — real SMS just won't send until this is filled in, from here or later.</p>
+      <div>
+        <label class="block text-xs font-semibold text-slate-700 mb-1">API Key <span id="su-sms-apikey-hint" class="font-normal text-slate-400"></span></label>
+        <input id="su-sms-apikey" type="password" autocomplete="new-password" placeholder="Leave blank to configure later" class="w-full p-2.5 border rounded-lg text-sm outline-none font-mono">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">Sender ID</label><input id="su-sms-sender" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">Gateway URL</label><input id="su-sms-url" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+      </div>
+      <div class="grid grid-cols-3 gap-3">
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">DLT Entity ID</label><input id="su-sms-entityid" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">DLT Template ID</label><input id="su-sms-templateid" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">DLT Header ID</label><input id="su-sms-headerid" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+      </div>
+      <div class="flex gap-2 pt-2">
+        <button onclick="skipStep('sms')" class="flex-1 py-2.5 border border-slate-300 text-slate-600 font-semibold rounded-lg text-sm">Skip for now</button>
+        <button onclick="saveStep('sms')" class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm">Save &amp; Continue</button>
+      </div>
+    </div>
+
+    <!-- STEP 5: Email -->
+    <div id="step-email" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
+      <h2 class="text-lg font-bold text-slate-800">Email (AWS SES)</h2>
+      <p class="text-xs text-slate-500">Confirmation, reminder, and receipt emails won't send until this is configured, from here or later.</p>
+      <div><label class="block text-xs font-semibold text-slate-700 mb-1">From address</label><input id="su-email-from" type="email" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+      <div><label class="block text-xs font-semibold text-slate-700 mb-1">From name</label><input id="su-email-fromname" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+      <div><label class="block text-xs font-semibold text-slate-700 mb-1">AWS Region</label><input id="su-email-region" placeholder="ap-south-1" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">AWS Access Key ID <span id="su-email-accesskey-hint" class="font-normal text-slate-400"></span></label>
+          <input id="su-email-accesskey" type="password" autocomplete="new-password" placeholder="Leave blank to configure later" class="w-full p-2.5 border rounded-lg text-sm outline-none font-mono">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">AWS Secret Access Key <span id="su-email-secretkey-hint" class="font-normal text-slate-400"></span></label>
+          <input id="su-email-secretkey" type="password" autocomplete="new-password" placeholder="Leave blank to configure later" class="w-full p-2.5 border rounded-lg text-sm outline-none font-mono">
+        </div>
+      </div>
+      <div class="flex gap-2 pt-2">
+        <button onclick="skipStep('email')" class="flex-1 py-2.5 border border-slate-300 text-slate-600 font-semibold rounded-lg text-sm">Skip</button>
+        <button onclick="saveStep('email')" class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm">Save &amp; Finish</button>
+      </div>
+    </div>
+
+    <!-- DONE -->
+    <div id="step-done" class="hidden bg-white rounded-2xl p-6 shadow-md border border-emerald-200 text-center space-y-4">
+      <div class="text-4xl">🎉</div>
+      <h2 class="text-lg font-bold text-slate-800">Setup complete</h2>
+      <p class="text-sm text-slate-500">You're signed in as the Super Admin. Anything you skipped can be filled in anytime from Settings → General.</p>
+      <a href="/admin" class="block w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg">Go to Admin Panel</a>
+    </div>
+  </div>
+
+  <script>
+    // A standalone page, deliberately not sharing public/app.js -- this runs
+    // exactly once per deployment and has no need for the whole admin/
+    // delegate bundle's helpers, globals, or event wiring.
+    const STEPS = ['admin', 'conference', 'upi', 'sms', 'email', 'done'];
+
+    function showToast(msg, isError) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = 'mb-4 text-sm font-semibold text-center rounded-lg p-3 ' +
+        (isError ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200');
+    }
+
+    function goToStep(name) {
+      STEPS.forEach((s) => document.getElementById('step-' + s).classList.toggle('hidden', s !== name));
+      const idx = STEPS.indexOf(name);
+      const numEl = document.getElementById('step-num');
+      if (numEl && idx >= 0 && idx < STEPS.length - 1) numEl.textContent = idx + 1;
+    }
+
+    function nextAfter(name) {
+      goToStep(STEPS[STEPS.indexOf(name) + 1] || 'done');
+    }
+
+    function skipStep(name) {
+      nextAfter(name);
+    }
+
+    async function createAdmin() {
+      const btn = document.getElementById('su-create-btn');
+      const token = document.getElementById('su-token').value.trim();
+      const name = document.getElementById('su-name').value.trim();
+      const phone = document.getElementById('su-phone').value.trim();
+      const email = document.getElementById('su-email').value.trim();
+      if (!token) return showToast('Enter the setup token.', true);
+      if (!name) return showToast("Enter the administrator's name.", true);
+      if (!/^\d{10}$/.test(phone)) return showToast('Enter a valid 10-digit mobile number.', true);
+
+      btn.disabled = true;
+      btn.textContent = 'Creating…';
+      try {
+        const res = await fetch('/api/setup/create-admin', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, name, phone, email }),
+        });
+        const data = await res.json();
+        if (!data.success) { showToast(data.error || 'Could not create the account.', true); return; }
+        showToast('Super Admin account created.', false);
+        await loadCurrentDefaults();
+        nextAfter('admin');
+      } catch (e) {
+        showToast('Network error: ' + e.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Create Account & Continue';
+      }
+    }
+
+    // Pre-fills the remaining steps with whatever this deployment currently
+    // has in effect (its coded-in defaults if nothing's been configured
+    // yet) using the exact same endpoint Settings -> General itself reads --
+    // so "Save & Continue" without touching anything is a harmless no-op
+    // instead of tripping a required-field error, and an operator can see
+    // (and overwrite) the actual values rather than guessing at blank boxes.
+    async function loadCurrentDefaults() {
+      const res = await fetch('/api/admin/general-settings');
+      if (!res.ok) return;
+      const data = await res.json();
+      const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+      setVal('su-conf-name', data.conference.name);
+      setVal('su-conf-acronym', data.conference.acronym);
+      setVal('su-conf-location', data.conference.location);
+      setVal('su-conf-startdate', data.conference.startDate);
+      setVal('su-conf-enddate', data.conference.endDate);
+      setVal('su-conf-regprefix', data.conference.regPrefix);
+      setVal('su-upi-id', data.upi.id);
+      setVal('su-upi-payeename', data.upi.payeeName);
+      setVal('su-sms-sender', data.sms.sender);
+      setVal('su-sms-url', data.sms.url);
+      setVal('su-sms-entityid', data.sms.entityId);
+      setVal('su-sms-templateid', data.sms.templateId);
+      setVal('su-sms-headerid', data.sms.headerId);
+      const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+      setText('su-sms-apikey-hint', data.sms.hasApiKey ? '(already configured)' : '(not set)');
+      setVal('su-email-from', data.email.from);
+      setVal('su-email-fromname', data.email.fromName);
+      setVal('su-email-region', data.email.region);
+      setText('su-email-accesskey-hint', data.email.accessKeyMasked ? `(current: ${data.email.accessKeyMasked})` : '(not set)');
+      setText('su-email-secretkey-hint', data.email.hasSecretKey ? '(already configured)' : '(not set)');
+    }
+
+    async function saveGroup(group, body) {
+      const res = await fetch('/api/admin/general-settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [group]: body }),
+      });
+      return res.json();
+    }
+
+    async function saveStep(name) {
+      let body;
+      if (name === 'conference') {
+        body = {
+          name: document.getElementById('su-conf-name').value,
+          acronym: document.getElementById('su-conf-acronym').value,
+          location: document.getElementById('su-conf-location').value,
+          startDate: document.getElementById('su-conf-startdate').value,
+          endDate: document.getElementById('su-conf-enddate').value,
+          regPrefix: document.getElementById('su-conf-regprefix').value,
+        };
+      } else if (name === 'upi') {
+        body = {
+          id: document.getElementById('su-upi-id').value,
+          payeeName: document.getElementById('su-upi-payeename').value,
+        };
+      } else if (name === 'sms') {
+        body = {
+          sender: document.getElementById('su-sms-sender').value,
+          url: document.getElementById('su-sms-url').value,
+          entityId: document.getElementById('su-sms-entityid').value,
+          templateId: document.getElementById('su-sms-templateid').value,
+          headerId: document.getElementById('su-sms-headerid').value,
+        };
+        const apiKey = document.getElementById('su-sms-apikey').value.trim();
+        if (apiKey) body.apiKey = apiKey;
+      } else if (name === 'email') {
+        body = {
+          from: document.getElementById('su-email-from').value,
+          fromName: document.getElementById('su-email-fromname').value,
+          region: document.getElementById('su-email-region').value,
+        };
+        const accessKey = document.getElementById('su-email-accesskey').value.trim();
+        const secretKey = document.getElementById('su-email-secretkey').value.trim();
+        if (accessKey) body.awsAccessKeyId = accessKey;
+        if (secretKey) body.awsSecretAccessKey = secretKey;
+      } else {
+        return;
+      }
+      const data = await saveGroup(name, body);
+      if (!data.success) { showToast(data.error || 'Could not save.', true); return; }
+      showToast('Saved.', false);
+      nextAfter(name);
+    }
+
+    goToStep('admin');
+  </script>
+</body>
+</html>

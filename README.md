@@ -23,17 +23,54 @@ ID verification below for what that means for a non-healthcare deployment.
    npm install
    ```
 
-3. Start the server:
+3. Before the first start, set `SETUP_TOKEN` in `.env` to a value of your
+   choosing (see **First-Run Setup** below) — this is how you'll prove
+   authority to create the first admin account once the server is up.
+
+4. Start the server:
 
    ```bash
    npm start
    ```
 
-4. Delegate portal: <http://localhost:3000>
+5. Delegate portal: <http://localhost:3000>
    Admin panel: <http://localhost:3000/admin>
+   First-run setup: <http://localhost:3000/setup>
 
-`conference.db` (SQLite) is created automatically on first run, seeded with
-one `SUPER_ADMIN` and a starter set of fee categories and program options.
+`conference.db` (SQLite) is created automatically on first run, seeded with a
+starter set of fee categories and program options — but **no admin account**,
+so visit `/setup` next (see below) to create one and configure the basics.
+
+## First-Run Setup
+
+A brand-new `conference.db` has zero admin users, and every account-creation
+route already requires being one — a deadlock with no way in through the app
+itself. `/setup` breaks that deadlock exactly once, gated on `SETUP_TOKEN` (an
+operator-chosen secret in `.env`, checked with a constant-time comparison)
+rather than OTP, since a fresh deploy may not have SMS configured yet either.
+Knowing the token is proof of server/file access — the same trust boundary
+every other secret in this app already relies on.
+
+The wizard creates the Super Admin account (name, phone, email — no OTP) and
+logs straight in, then walks through Conference Details, UPI, SMS, and Email
+one screen at a time, each skippable and finishable later from **Settings →
+General**, which already covers the same fields. Creating the admin account
+irreversibly disables `/setup` (`schema_meta.setup_completed`) the instant it
+succeeds — not deferred to the end of the wizard — so a stale `SETUP_TOKEN`
+left in `.env` afterward can't be used to create a second admin later, even
+if the original account is deleted. Recovering a fully locked-out deployment
+(every admin account gone) is a manual database operation, same as it always
+was — `/setup` deliberately does not reopen for that.
+
+If `SETUP_TOKEN` isn't set, `/setup` simply 404s, same as any unknown route —
+existing deployments (which already have an admin) are entirely unaffected by
+any of this regardless of whether `SETUP_TOKEN` is set.
+
+**Known limitation:** the auto-seeded fee categories, workshop/QI options,
+and a few other defaults (UPI ID, SMS DLT sender/template IDs) are hardcoded
+to this specific conference, not generic placeholders — a new deployment
+inherits NQOCN's specifics until edited via Settings → Fees / Workshops / QI
+or the setup wizard's UPI step.
 
 ## SMS OTP (Vynttra)
 

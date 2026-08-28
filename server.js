@@ -106,6 +106,47 @@ function roleGrants(role) {
   return [role, ...(ROLE_IMPLIES[role] || [])];
 }
 
+// --- FIRST-RUN SETUP ------------------------------------------------------
+// A brand-new deployment has zero admin users and no code path to create one:
+// every account-creation route already requires being SUPER_ADMIN or
+// OPERATIONS. GET /setup and its two POST routes below break that deadlock
+// exactly once, gated on SETUP_TOKEN (an operator-chosen secret set in .env
+// before first boot -- there's no OTP/SMS dependency here on purpose, since a
+// fresh deploy may not have SMS configured yet either; knowing the token is
+// proof of server/file access, the same trust boundary every other secret in
+// this app already relies on).
+//
+// isSetupModeActive() is checked on every relevant request, not just at
+// boot, and is permanently and irreversibly false the moment either
+// condition below stops holding:
+//   - schema_meta.setup_completed is set the instant the first admin account
+//     is created (see POST /api/setup/create-admin) -- this is deliberate
+//     defense-in-depth: SETUP_TOKEN is a static operator-chosen value with no
+//     built-in expiry, so without this flag, deleting the only admin account
+//     later would silently reopen account creation to anyone who still has
+//     that token (a stale value in shell history, a deploy script, etc.).
+//   - SETUP_TOKEN must be set in the environment at all -- if it's blank or
+//     absent, setup mode never activates, full stop.
+async function isSetupModeActive() {
+  if (!process.env.SETUP_TOKEN) return false;
+  const completed = await dbGet("SELECT value FROM schema_meta WHERE key = 'setup_completed'").catch(() => null);
+  if (completed) return false;
+  const admin = await dbGet(
+    `SELECT 1 FROM users WHERE role IN (${ADMIN_ROLES.map(() => '?').join(',')}) LIMIT 1`, ADMIN_ROLES
+  ).catch(() => null);
+  return !admin;
+}
+
+// Constant-time compare so a wrong guess can't be narrowed down by response
+// timing. Length-checked first since timingSafeEqual throws on a mismatched
+// buffer length rather than just returning false.
+function safeTokenEquals(a, b) {
+  const bufA = Buffer.from(String(a || ''));
+  const bufB = Buffer.from(String(b || ''));
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 // Admin-editable from Settings → General (see GENERAL_SETTINGS_KEYS below),
 // persisted in schema_meta. name/acronym/dates/location are display-only text
 // used across confirmation emails, reports, and printable pages -- nothing
@@ -1764,6 +1805,11 @@ const MAINTENANCE_OPEN_PATHS = new Set([
   '/api/auth/logout',
   '/api/maintenance',
   '/api/conference',
+  // Same reasoning as the auth trio above: on the vanishingly unlikely fresh
+  // instance where maintenance mode is somehow already on with zero admins,
+  // blocking this would lock the deployment out permanently -- there'd be no
+  // admin account able to turn maintenance back off either.
+  '/api/setup/create-admin',
 ]);
 
 // Server-side enforcement of maintenance mode. Mounted after loadSession (so
@@ -1813,6 +1859,26 @@ app.use(maintenanceGate);
 // notice before anyone has a session. Never returns anything sensitive.
 app.get('/api/maintenance', (req, res) => {
   res.json({ enabled: maintenance.enabled, message: maintenance.message });
+});
+
+// First-run setup wizard. Reachable in two states: before the first admin
+// exists (token-gated, see isSetupModeActive), and by an already-logged-in
+// Super Admin -- the latter matters because the wizard's later steps
+// (conference/UPI/SMS/Email) run AFTER account creation, on the same page;
+// without this, reloading mid-wizard would 404 the moment the admin account
+// (created in step 1) makes isSetupModeActive() go false. Harmless to leave
+// reachable afterward too -- every later step just calls the same
+// already-SUPER_ADMIN-gated general-settings endpoint Settings itself uses.
+// Anonymous + setup-inactive gets a plain 404, no signal about which of
+// "completed" / "never configured" / "never reachable" is true.
+app.get('/setup', async (req, res, next) => {
+  try {
+    const alreadyAdmin = req.session && req.session.role === 'SUPER_ADMIN';
+    if (!alreadyAdmin && !(await isSetupModeActive())) return res.status(404).send('Not found');
+    res.render('setup');
+  } catch (err) {
+    next(err);
+  }
 });
 
 // Delegate portal. Assembled from partials the same way as /admin; no
@@ -1918,6 +1984,55 @@ app.post('/api/otp/request', async (req, res, next) => {
     if (OTP_ECHO && !smsWillSend) payload.devOtp = otp;
     res.json(payload);
   } catch (err) {
+    next(err);
+  }
+});
+
+// Create the very first admin account and log straight in. See
+// isSetupModeActive() -- unreachable once an admin already exists, once
+// SETUP_TOKEN isn't set, or once setup has ever been completed. No OTP: the
+// token itself is the proof of authority for this one action.
+app.post('/api/setup/create-admin', async (req, res, next) => {
+  try {
+    if (!(await isSetupModeActive())) return res.status(404).json({ success: false, error: 'Setup is not available.' });
+
+    const { token, name, phone, email } = req.body;
+    if (!safeTokenEquals(token, process.env.SETUP_TOKEN)) {
+      return res.status(403).json({ success: false, error: 'Incorrect setup token.' });
+    }
+    if (!phone || !/^\d{10}$/.test(phone)) {
+      return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+    }
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ success: false, error: 'Full name is required.' });
+    }
+    const emailVal = email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim()) ? String(email).trim() : null;
+    if (email && !emailVal) {
+      return res.status(400).json({ success: false, error: 'Please enter a valid email address.' });
+    }
+
+    const nameVal = titleCase(String(name).trim());
+    await dbRun(
+      'INSERT INTO users (phone_number, full_name, email, role, created_at) VALUES (?, ?, ?, ?, ?)',
+      [phone, nameVal, emailVal, 'SUPER_ADMIN', Date.now()]
+    );
+    // Set the very moment the account exists, not deferred to the wizard's
+    // last step -- the remaining steps (conference/UPI/SMS/Email) are just
+    // convenience UI over the already-authenticated general-settings
+    // endpoint below, not part of the security boundary this flag protects.
+    await dbRun(
+      "INSERT INTO schema_meta (key, value) VALUES ('setup_completed', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      [String(Date.now())]
+    );
+    await writeAuditRow('general_settings', 'general', 'SETUP_ADMIN_CREATED', null,
+      `First-run setup created Super Admin "${nameVal}" (${phone})`, phone, nameVal, 'SUPER_ADMIN').catch(() => {});
+
+    await startSession(phone, 'SUPER_ADMIN', res);
+    res.json({ success: true });
+  } catch (err) {
+    if (err.code === 'SQLITE_CONSTRAINT') {
+      return res.status(409).json({ success: false, error: 'A user with that phone number already exists. Use a different number.' });
+    }
     next(err);
   }
 });
