@@ -513,10 +513,12 @@ function verifyPassword(plain, stored) {
 // not needed for anything client-side, and offers nothing but attack
 // surface sitting in a JS variable / dev-tools network tab. Every response
 // that sends a full `SELECT *`-shaped user row runs it through this first.
+// hasPassword is derived here (rather than left for the client to guess)
+// so the dashboard can prompt an OTP-only delegate to set one.
 function omitPasswordHash(user) {
   if (!user) return user;
   const { password_hash, ...rest } = user;
-  return rest;
+  return { ...rest, hasPassword: !!password_hash };
 }
 
 // Escape a value for safe interpolation into server-rendered HTML.

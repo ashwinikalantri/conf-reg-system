@@ -407,6 +407,7 @@ async function handleLogin(e) {
     // whose every API call is going to come back 503.
     if (await shouldShowMaintenance(currentDelegate)) return navigateTo('maintenance-page');
     loadDashboard();
+    promptSetPasswordIfMissing();
   } else if (data.notRegistered) {
     // New number — switch to sign-up, carrying the phone and (still-valid) OTP.
     toggleAuth('register');
@@ -1527,6 +1528,9 @@ function openModal(id) {
 }
 function closeModal(id) {
   document.getElementById(id).classList.add('hidden');
+  // Dismissing the set-password nudge (via the X, not by saving a password)
+  // shouldn't bring it back for the rest of this browser session.
+  if (id === 'modal-set-password') sessionStorage.setItem('setPasswordPromptDismissed', '1');
 }
 
 // In-page confirmation dialog. Native confirm() is unreliable — browsers
@@ -1603,6 +1607,17 @@ async function submitReject() {
   renderBackendPayments();
 }
 
+// Nudges a delegate who just logged in via OTP to set a password, so future
+// logins don't require waiting on an SMS. Only fires for delegates without
+// one already -- hasPassword comes from the server (see omitPasswordHash in
+// server.js), never guessed client-side. Skippable via the modal's own close
+// button; not shown again this session once dismissed or set.
+function promptSetPasswordIfMissing() {
+  if (!currentDelegate || currentDelegate.role !== 'DELEGATE' || currentDelegate.hasPassword) return;
+  if (sessionStorage.getItem('setPasswordPromptDismissed')) return;
+  openModal('modal-set-password');
+}
+
 // Shared by the delegate dashboard and the admin panel -- both include the
 // same modal (see views/portal/modals/set-password.ejs) and call the same
 // endpoint, since a password is just an alternative login method available
@@ -1620,6 +1635,10 @@ async function submitSetPassword(e) {
     if (!data.success) return showToast(data.error || 'Could not save.');
     showToast('Password saved.', 'success');
     document.getElementById('set-password-value').value = '';
+    if (currentDelegate) {
+      currentDelegate.hasPassword = true;
+      persistDelegate(currentDelegate);
+    }
     closeModal('modal-set-password');
   } finally {
     btn.disabled = false;
