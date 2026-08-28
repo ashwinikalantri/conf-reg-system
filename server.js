@@ -255,12 +255,18 @@ const smsEnabled = () => !!SMS.apiKey && !!SMS.url && !!SMS.sender;
 // loaded at boot by loadNotificationToggles). These gate sending ON TOP of the
 // env-based capability (smsEnabled() / emailEnabled()) -- turning a channel off
 // stops all outgoing messages on it without touching credentials.
-const notifyToggle = { sms: true, email: true };
+// digest is a separate switch from email -- delegate-facing verification/
+// rejection/abstract emails can stay on while the daily internal digest
+// (scripts/daily-digest.js, cron-run and independent of this process) is
+// turned off, or vice versa.
+const notifyToggle = { sms: true, email: true, digest: true };
 async function loadNotificationToggles() {
   const s = await dbGet("SELECT value FROM schema_meta WHERE key = 'notify_sms_enabled'").catch(() => null);
   const e = await dbGet("SELECT value FROM schema_meta WHERE key = 'notify_email_enabled'").catch(() => null);
+  const d = await dbGet("SELECT value FROM schema_meta WHERE key = 'notify_digest_enabled'").catch(() => null);
   if (s) notifyToggle.sms = s.value !== '0';
   if (e) notifyToggle.email = e.value !== '0';
+  if (d) notifyToggle.digest = d.value !== '0';
 }
 
 // Maintenance mode: closes the portal to everyone except SUPER_ADMIN, so the
@@ -286,6 +292,7 @@ const GENERAL_SETTINGS_KEYS = {
   sms_template_id: ['SMS', 'templateId'], sms_header_id: ['SMS', 'headerId'], sms_type: ['SMS', 'type'],
   email_from: ['EMAIL', 'from'], email_from_name: ['EMAIL', 'fromName'], email_region: ['EMAIL', 'region'],
   email_digest_recipients: ['EMAIL', 'digestRecipients'],
+  email_digest_send_time: ['EMAIL', 'digestSendTime'],
   upi_id: ['UPI', 'id'], upi_payee_name: ['UPI', 'payeeName'],
   bank_account_name: ['BANK', 'accountName'], bank_account_number: ['BANK', 'accountNumber'],
   bank_ifsc: ['BANK', 'ifsc'], bank_branch: ['BANK', 'branch'],
@@ -388,6 +395,11 @@ const EMAIL = {
   fromName: process.env.SES_FROM_NAME || '',
   region: (process.env.AWS_REGION || '').trim(),
   digestRecipients: process.env.DIGEST_RECIPIENT_PHONES || '',
+  // HH:MM, 24-hour, IST -- read by scripts/daily-digest.js (which cron now
+  // invokes every 15 minutes rather than at one fixed hour, so this can
+  // actually take effect without editing crontab -- see that script's
+  // shouldSendNow()), not consumed by this process itself.
+  digestSendTime: process.env.DIGEST_SEND_TIME || '09:00',
 };
 const awsCredsPresent = () => !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
 const emailEnabled = () => awsCredsPresent() && !!EMAIL.region && !!EMAIL.from;
@@ -5434,6 +5446,7 @@ app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
         // boolean, never any real bytes.
         accessKeyMasked: maskSecret(process.env.AWS_ACCESS_KEY_ID), hasSecretKey: !!process.env.AWS_SECRET_ACCESS_KEY,
         from: EMAIL.from, fromName: EMAIL.fromName, region: EMAIL.region, digestRecipients: EMAIL.digestRecipients,
+        digestEnabled: notifyToggle.digest, digestSendTime: EMAIL.digestSendTime,
       },
       upi: { id: UPI.id, payeeName: UPI.payeeName },
       bank: { accountName: BANK.accountName, accountNumber: BANK.accountNumber, ifsc: BANK.ifsc, branch: BANK.branch },
@@ -5470,7 +5483,7 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
     // surfacing rather than silently ignoring.
     for (const [group, target, labels] of [
       [sms, SMS, { sender: 'Sender ID', url: 'Gateway URL', entityId: 'DLT Entity ID', templateId: 'DLT Template ID', headerId: 'DLT Header ID', type: 'Message Type' }],
-      [email, EMAIL, { from: 'From address', fromName: 'From name', region: 'AWS Region' }],
+      [email, EMAIL, { from: 'From address', fromName: 'From name', region: 'AWS Region', digestSendTime: 'Digest Send Time' }],
       [upi, UPI, { id: 'UPI ID', payeeName: 'Payee Name' }],
       [conference, CONFERENCE, { name: 'Conference Name', regPrefix: 'Registration Number Prefix' }], // acronym/dates/location are optional and may be cleared
     ]) {
@@ -5492,6 +5505,9 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
       if (parts.some((p) => !/^\d{10}$/.test(p))) {
         return res.status(400).json({ success: false, error: 'Digest recipients must be a comma-separated list of 10-digit mobile numbers.' });
       }
+    }
+    if (email && email.digestSendTime !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(email.digestSendTime).trim())) {
+      return res.status(400).json({ success: false, error: 'Digest send time must be in HH:MM (24-hour) format.' });
     }
 
     // Registration prefix is concatenated directly in front of a zero-padded
@@ -5580,7 +5596,7 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
     }
 
     await applyFields(sms, SMS, { sender: 'sms_sender', url: 'sms_url', entityId: 'sms_entity_id', templateId: 'sms_template_id', headerId: 'sms_header_id', type: 'sms_type' });
-    await applyFields(email, EMAIL, { from: 'email_from', fromName: 'email_from_name', region: 'email_region', digestRecipients: 'email_digest_recipients' },
+    await applyFields(email, EMAIL, { from: 'email_from', fromName: 'email_from_name', region: 'email_region', digestRecipients: 'email_digest_recipients', digestSendTime: 'email_digest_send_time' },
       new Set(['digestRecipients']));
     await applyFields(upi, UPI, { id: 'upi_id', payeeName: 'upi_payee_name' });
     // Bank transfer is a fallback alongside UPI, not a required channel on
@@ -5634,6 +5650,11 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
         notifyToggle.email = !!notify.email;
         await setKV('notify_email_enabled', notifyToggle.email ? '1' : '0');
         changes.push(`Email ${notifyToggle.email ? 'on' : 'off'}`);
+      }
+      if (notify.digest !== undefined) {
+        notifyToggle.digest = !!notify.digest;
+        await setKV('notify_digest_enabled', notifyToggle.digest ? '1' : '0');
+        changes.push(`Daily digest ${notifyToggle.digest ? 'on' : 'off'}`);
       }
     }
 
@@ -5710,7 +5731,7 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
     if (changes.length) {
       await recordAudit({ req, entityType: 'general_settings', entityId: 'general', action: 'GENERAL_SETTINGS_UPDATE', oldValue: null, newValue: changes.join('; ') });
     }
-    res.json({ success: true, sms: notifyToggle.sms, email: notifyToggle.email, maintenance: maintenance.enabled, restartRequired });
+    res.json({ success: true, sms: notifyToggle.sms, email: notifyToggle.email, digest: notifyToggle.digest, maintenance: maintenance.enabled, restartRequired });
   } catch (err) {
     next(err);
   }

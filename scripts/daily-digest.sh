@@ -3,6 +3,14 @@
 # outcome. See scripts/backup.sh for why PATH is set explicitly -- cron's
 # minimal default PATH doesn't include /usr/local/bin (and, here, not
 # /usr/bin/docker's compose plugin path either).
+#
+# Scheduled every 15 minutes (*/15 * * * *), not once at a fixed hour --
+# daily-digest.js's own shouldSendNow() is what actually decides whether to
+# send on each invocation, checking the send time configured in Settings ->
+# General -> Notifications (schema_meta.email_digest_send_time) against a
+# last-sent marker file, so an admin can change the time from the app
+# without anyone needing to touch this crontab entry again. See that
+# function for the full reasoning.
 set -euo pipefail
 export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 

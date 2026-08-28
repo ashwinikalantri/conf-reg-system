@@ -1,9 +1,14 @@
 #!/usr/bin/env node
-// Daily 9am email to the finance/admin team: how many registrations are
-// pending approval (with a preview list) and how many are paid & verified
-// so far. Runs standalone (via cron), not through the Express app, the same
-// way backup.sh talks to the DB directly rather than going through PM2 --
-// keeps this independent of whether the app process is healthy.
+// Daily email to the finance/admin team, at whatever time is configured in
+// Settings -> General -> Notifications (default 09:00 IST): how many
+// registrations are pending approval (with a preview list), paid &
+// verified, and on a partial payment so far, plus how many abstracts have
+// been submitted and reviewed. Runs standalone (via cron, every 15 minutes
+// -- see daily-digest.sh and shouldSendNow() below for how a once-a-day
+// send comes out of a script invoked that often), not through the Express
+// app, the same way backup.sh talks to the DB directly rather than going
+// through PM2 -- keeps this independent of whether the app process is
+// healthy.
 'use strict';
 
 const path = require('path');
@@ -46,10 +51,20 @@ let EMAIL_FROM_NAME = process.env.SES_FROM_NAME || 'NQOCN 2026';
 let EMAIL_REGION = (process.env.AWS_REGION || '').trim();
 let EMAIL_FROM_FORMATTED = EMAIL_FROM ? `"${EMAIL_FROM_NAME.replace(/"/g, '')}" <${EMAIL_FROM}>` : EMAIL_FROM;
 
+// Both admin-editable from Settings -> General -> Notifications (see
+// notifyToggle.digest / EMAIL.digestSendTime in server.js). This script is
+// invoked frequently by cron (not just once at a fixed hour -- see
+// scripts/daily-digest.sh) so that a configured send time can actually take
+// effect without editing crontab; DIGEST_SEND_TIME + the last-sent marker
+// file below are what turn "runs every 15 minutes" into "sends once a day,
+// at or after the configured time."
+let DIGEST_ENABLED = true;
+let DIGEST_SEND_TIME = process.env.DIGEST_SEND_TIME || '09:00';
+
 // Pulls the same schema_meta keys server.js's loadGeneralSettings() applies,
 // and re-derives the two values computed from them.
 async function resyncFromSchemaMeta(db) {
-  const keys = ['conference_name', 'conference_acronym', 'conference_location', 'email_from', 'email_from_name', 'email_region', 'email_digest_recipients'];
+  const keys = ['conference_name', 'conference_acronym', 'conference_location', 'email_from', 'email_from_name', 'email_region', 'email_digest_recipients', 'notify_digest_enabled', 'email_digest_send_time'];
   const rows = await dbAll(db, `SELECT key, value FROM schema_meta WHERE key IN (${keys.map(() => '?').join(',')})`, keys);
   const byKey = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   if (byKey.conference_name) CONFERENCE_NAME = byKey.conference_name;
@@ -61,7 +76,39 @@ async function resyncFromSchemaMeta(db) {
   if (byKey.email_digest_recipients !== undefined) {
     RECIPIENT_PHONES = byKey.email_digest_recipients.split(',').map((p) => p.trim()).filter(Boolean);
   }
+  if (byKey.notify_digest_enabled !== undefined) DIGEST_ENABLED = byKey.notify_digest_enabled !== '0';
+  if (byKey.email_digest_send_time) DIGEST_SEND_TIME = byKey.email_digest_send_time;
   EMAIL_FROM_FORMATTED = EMAIL_FROM ? `"${EMAIL_FROM_NAME.replace(/"/g, '')}" <${EMAIL_FROM}>` : EMAIL_FROM;
+}
+
+// Marker file (not the DB -- this script deliberately keeps its connection
+// read-only, see main()) recording the last calendar date (Asia/Kolkata) a
+// digest actually sent. Lives on the /data volume, same as conference.db
+// itself, so it survives an image rebuild or container recreation -- a
+// counter that reset on every deploy would just re-send the digest the next
+// time cron happened to fire after a redeploy.
+const LAST_SENT_MARKER = '/data/.digest-last-sent';
+
+function todayIST() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // en-CA -> YYYY-MM-DD
+}
+function nowHHMMIST() {
+  return new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+// True the first time this runs on-or-after DIGEST_SEND_TIME on a given
+// calendar day -- cron fires this every 15 minutes (see daily-digest.sh),
+// so without this gate a configurable send time would either never fire
+// (cron's own fixed schedule no longer matches it) or fire dozens of times
+// a day (once per cron tick past the target time).
+function shouldSendNow() {
+  const today = todayIST();
+  let lastSent = null;
+  try { lastSent = require('fs').readFileSync(LAST_SENT_MARKER, 'utf8').trim(); } catch (e) { /* never sent */ }
+  if (lastSent === today) return false;
+  return nowHHMMIST() >= DIGEST_SEND_TIME;
+}
+function recordSentToday() {
+  require('fs').writeFileSync(LAST_SENT_MARKER, todayIST());
 }
 
 // Recipients are looked up by phone number (stable identifier) rather than
@@ -127,7 +174,7 @@ const emailWrap = (title, bodyHtml) =>
      </div>
    </div>`;
 
-function buildDigestHtml(pending, pendingCount, verifiedCount, dateLabel) {
+function buildDigestHtml(pending, pendingCount, verifiedCount, partialCount, abstractsSubmitted, abstractsReviewed, dateLabel) {
   const rows = pending.slice(0, MAX_ROWS_SHOWN).map((r) => `
     <tr style="border-bottom:1px solid #f1f5f9">
       <td style="padding:.4rem .3rem;font-family:monospace">${escapeHtml(r.registration_number)}</td>
@@ -140,16 +187,19 @@ function buildDigestHtml(pending, pendingCount, verifiedCount, dateLabel) {
     ? `<tr><td colspan="5" style="padding:.5rem .3rem;color:#94a3b8;font-style:italic">…and ${pending.length - MAX_ROWS_SHOWN} more</td></tr>`
     : '';
 
+  const tile = (n, label, bg, border, color) =>
+    `<div style="flex:1;min-width:110px;background:${bg};border:1px solid ${border};border-radius:10px;padding:.85rem 1rem">
+       <div style="font-size:1.5rem;font-weight:700;color:${color}">${n}</div>
+       <div style="font-size:.72rem;color:${color};font-weight:600">${label}</div>
+     </div>`;
+
   const body = `
-    <div style="display:flex;gap:12px;margin:0 0 1.25rem">
-      <div style="flex:1;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:.85rem 1rem">
-        <div style="font-size:1.5rem;font-weight:700;color:#92400e">${pendingCount}</div>
-        <div style="font-size:.72rem;color:#92400e;font-weight:600">Pending Approval</div>
-      </div>
-      <div style="flex:1;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:.85rem 1rem">
-        <div style="font-size:1.5rem;font-weight:700;color:#065f46">${verifiedCount}</div>
-        <div style="font-size:.72rem;color:#065f46;font-weight:600">Paid &amp; Verified</div>
-      </div>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;margin:0 0 1.25rem">
+      ${tile(pendingCount, 'Pending Approval', '#fffbeb', '#fde68a', '#92400e')}
+      ${tile(partialCount, 'Partial Payment', '#fff7ed', '#fed7aa', '#9a3412')}
+      ${tile(verifiedCount, 'Paid &amp; Verified', '#ecfdf5', '#a7f3d0', '#065f46')}
+      ${tile(abstractsSubmitted, 'Abstracts Submitted', '#eff6ff', '#bfdbfe', '#1e40af')}
+      ${tile(abstractsReviewed, 'Abstracts Reviewed', '#f5f3ff', '#ddd6fe', '#5b21b6')}
     </div>
     ${pending.length ? `
     <p style="font-size:.85rem;margin:0 0 .5rem;font-weight:600;color:#334155">Registrations awaiting approval</p>
@@ -173,9 +223,19 @@ function buildDigestHtml(pending, pendingCount, verifiedCount, dateLabel) {
 }
 
 async function main() {
+  const force = process.argv.includes('--force'); // manual test run: bypass the enabled/time gates below
   const db = new sqlite3.Database(path.join(APP_DIR, 'conference.db'), sqlite3.OPEN_READONLY);
   try {
     await resyncFromSchemaMeta(db);
+
+    if (!force && !DIGEST_ENABLED) {
+      console.log('Daily digest is turned off in Settings -> General -> Notifications; skipping.');
+      return;
+    }
+    if (!force && !shouldSendNow()) {
+      console.log(`Not yet ${DIGEST_SEND_TIME} IST (or already sent today); skipping this run.`);
+      return;
+    }
 
     const pending = await dbAll(db,
       `SELECT registration_number, delegate_name,
@@ -183,12 +243,18 @@ async function main() {
               category_label, expected_amount, is_flagged, submitted_at
          FROM registrations WHERE bank_status = 'PENDING' ORDER BY submitted_at ASC`);
     const verified = await dbGet(db, `SELECT COUNT(*) AS n FROM registrations WHERE bank_status = 'BANK_VERIFIED'`);
+    const partial = await dbGet(db, `SELECT COUNT(*) AS n FROM registrations WHERE bank_status = 'PARTIAL_PAYMENT'`);
+    // UNDER_REVIEW is the default status every abstract starts in (see
+    // POST /api/abstracts) -- "reviewed" is everything an academic reviewer
+    // has since moved to ACCEPTED or REJECTED.
+    const abstractsTotal = await dbGet(db, `SELECT COUNT(*) AS n FROM abstracts`);
+    const abstractsReviewed = await dbGet(db, `SELECT COUNT(*) AS n FROM abstracts WHERE status != 'UNDER_REVIEW'`);
     const recipients = await dbAll(db,
       `SELECT email, full_name FROM users WHERE phone_number IN (${RECIPIENT_PHONES.map(() => '?').join(',')}) AND email IS NOT NULL AND email != ''`,
       RECIPIENT_PHONES);
 
     const dateLabel = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
-    const html = buildDigestHtml(pending, pending.length, verified.n, dateLabel);
+    const html = buildDigestHtml(pending, pending.length, verified.n, partial.n, abstractsTotal.n, abstractsReviewed.n, dateLabel);
     const subject = `Daily Registration Summary — ${dateLabel}`;
 
     if (!EMAIL_FROM || !process.env.AWS_ACCESS_KEY_ID || !EMAIL_REGION) {
@@ -213,7 +279,11 @@ async function main() {
         console.error(`Failed to send to ${r.email}:`, err.message);
       }
     }
-    console.log(`Digest: ${pending.length} pending, ${verified.n} verified.`);
+    console.log(`Digest: ${pending.length} pending, ${verified.n} verified, ${partial.n} partial, ${abstractsTotal.n} abstracts submitted (${abstractsReviewed.n} reviewed).`);
+    // Marks today as done regardless of --force, so a forced test run
+    // doesn't leave the next natural cron tick to send a duplicate later
+    // the same day.
+    recordSentToday();
   } finally {
     db.close();
   }

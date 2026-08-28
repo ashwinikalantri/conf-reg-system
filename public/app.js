@@ -4419,10 +4419,13 @@ async function renderGeneralSettings() {
 
   const smsToggle = document.getElementById('notify-sms-toggle');
   const emailToggle = document.getElementById('notify-email-toggle');
+  const digestToggle = document.getElementById('notify-digest-toggle');
   if (smsToggle) { smsToggle.checked = !!data.sms.enabled; smsToggle.disabled = !data.sms.available; }
   if (emailToggle) { emailToggle.checked = !!data.email.enabled; emailToggle.disabled = !data.email.available; }
+  if (digestToggle) digestToggle.checked = !!data.email.digestEnabled;
   setText('notify-sms-state', data.sms.available ? (data.sms.enabled ? '· on' : '· off') : '· not configured');
   setText('notify-email-state', data.email.available ? (data.email.enabled ? '· on' : '· off') : '· not configured');
+  setText('notify-digest-state', data.email.digestEnabled ? '· on' : '· off');
   const maintToggle = document.getElementById('maintenance-toggle');
   if (maintToggle) maintToggle.checked = !!(data.maintenance && data.maintenance.enabled);
   setText('maintenance-state', data.maintenance && data.maintenance.enabled ? '· ON' : '· off');
@@ -4445,6 +4448,7 @@ async function renderGeneralSettings() {
   setVal('gs-email-fromname', data.email.fromName);
   setVal('gs-email-region', data.email.region);
   loadDigestRecipients(data.email.digestRecipients);
+  setVal('gs-digest-sendtime', data.email.digestSendTime);
   setVal('gs-upi-id', data.upi.id);
   setVal('gs-upi-payeename', data.upi.payeeName);
   if (data.bank) {
@@ -4517,7 +4521,8 @@ async function setGeneralToggle(channel, enabled) {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notify: { [channel]: enabled } }),
   })).json();
   if (!data.success) { showToast(data.error || 'Could not update.'); renderGeneralSettings(); return; }
-  showToast(`${channel === 'sms' ? 'SMS' : 'Email'} turned ${enabled ? 'on' : 'off'}.`, 'info');
+  const CHANNEL_LABELS = { sms: 'SMS', email: 'Email', digest: 'Daily digest' };
+  showToast(`${CHANNEL_LABELS[channel] || channel} turned ${enabled ? 'on' : 'off'}.`, 'info');
   renderGeneralSettings();
 }
 
@@ -4574,7 +4579,10 @@ async function saveGeneralSettings(e, group) {
   } else if (group === 'notifications') {
     // Digest recipients are still persisted as email.digestRecipients server-side
     // (same schema_meta key as before) -- only the admin UI moved to its own card.
-    body = { email: { digestRecipients: gsDigestRecipients.map((r) => r.phone).join(',') } };
+    body = { email: {
+      digestRecipients: gsDigestRecipients.map((r) => r.phone).join(','),
+      digestSendTime: document.getElementById('gs-digest-sendtime').value,
+    } };
   } else if (group === 'otherEnv') {
     body = { otherEnv: {
       portalUrl: document.getElementById('gs-env-portalurl').value,

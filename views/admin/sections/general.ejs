@@ -132,9 +132,20 @@
 
       <!-- Notifications -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-        <h3 class="text-lg font-bold text-slate-800 mb-1">🔔 Notifications</h3>
-        <p class="text-xs text-slate-500 mb-3">Who receives automated summaries — separate from the SMS/Email channel setup above.</p>
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-1">
+          <h3 class="text-lg font-bold text-slate-800">🔔 Notifications</h3>
+          <label class="flex items-center gap-2 cursor-pointer shrink-0">
+            <input type="checkbox" id="notify-digest-toggle" onchange="setGeneralToggle('digest', this.checked)" class="w-5 h-5">
+            <span class="text-sm font-semibold text-slate-700">Daily Digest <span id="notify-digest-state" class="text-xs font-normal text-slate-400"></span></span>
+          </label>
+        </div>
+        <p class="text-xs text-slate-500 mb-3">Who receives automated summaries, and when — separate from the SMS/Email channel setup above. Turning the toggle off stops the daily digest entirely without affecting delegate-facing emails (verification, rejection, abstract).</p>
         <form onsubmit="saveGeneralSettings(event, 'notifications')" class="space-y-2">
+          <div>
+            <label class="block text-[10px] font-semibold text-slate-600 mb-1">Daily Digest Send Time <span class="font-normal text-slate-400">(IST, 24-hour)</span></label>
+            <input id="gs-digest-sendtime" type="time" class="w-40 h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+            <p class="text-[10px] text-slate-400 mt-1">The digest script (cron) checks every 15 minutes and sends once it's past this time each day.</p>
+          </div>
           <div>
             <label class="block text-[10px] font-semibold text-slate-600 mb-1">Daily Digest Recipients</label>
             <p class="text-[10px] text-slate-400 mb-2">Gets the daily pending-approvals summary email (scripts/daily-digest.js). Search and pick by name or phone — matched by phone number under the hood, so it keeps working if someone's email changes.</p>

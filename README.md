@@ -176,9 +176,12 @@ to require editing code and redeploying:
   screenshot check both read this live, so they can never drift apart), plus
   the bank account name/number, IFSC, and branch shown as the NEFT/RTGS
   fallback on the payment and top-up modals.
-- **Notifications** — the daily-digest recipient list (see below). Picked by
-  searching name or phone over the Users table rather than typing raw
-  numbers; only the phone number is actually persisted.
+- **Notifications** — an on/off switch for the daily digest (independent of
+  the Email channel toggle above, which also gates delegate-facing
+  verification/rejection/abstract emails), the time of day it's sent, and
+  its recipient list (see below). Recipients are picked by searching name or
+  phone over the Users table rather than typing raw numbers; only the phone
+  number is actually persisted.
 - **Maintenance Mode** — close the portal to everyone except super admins,
   with an editable notice. See Maintenance mode below.
 - **Other Environment Variables** — a read-only reference showing every other
@@ -199,16 +202,29 @@ characters) — no secret bytes are ever sent to or rendered in the admin UI.
 Credential fields reject a value containing a line break, since one could
 otherwise inject an unrelated new line into `.env`.
 
-`scripts/daily-digest.js` (an optional cron-run daily summary email listing
-pending-approval registrations) is a standalone process independent of the
-running server, and re-reads `schema_meta` on every run for the conference
-name, email from-address/name/region, and the digest recipient list, so it
-stays in sync with changes made on this page. Its recipient list — used only
-if nothing has ever been saved from Settings → General → Notifications —
-comes from `DIGEST_RECIPIENT_PHONES` (comma-separated 10-digit numbers) and
-is otherwise empty by default; there's no coded-in fallback list. Recipients
+`scripts/daily-digest.js` (an optional cron-run daily summary email covering
+pending-approval, partial-payment, and verified registration counts plus
+abstract submission/review counts) is a standalone process independent of
+the running server, and re-reads `schema_meta` on every run for the
+conference name, email from-address/name/region, the on/off switch, the
+send time, and the digest recipient list, so it stays in sync with changes
+made on this page. Its recipient list — used only if nothing has ever been
+saved from Settings → General → Notifications — comes from
+`DIGEST_RECIPIENT_PHONES` (comma-separated 10-digit numbers) and is
+otherwise empty by default; there's no coded-in fallback list. Recipients
 are matched by phone number against Users & Roles (not stored as email
 addresses), so the list keeps working if someone's email changes.
+
+Cron invokes this script every 15 minutes (not once at a fixed hour); the
+script itself decides whether to actually send, by comparing the current
+time against the configured send time and a last-sent marker file
+(`/data/.digest-last-sent`, alongside `conference.db` on the same persistent
+volume) that ensures it only sends once per calendar day. That's what lets
+the send time be changed from Settings → General without anyone needing to
+edit crontab. Turning the digest off there makes every invocation a no-op
+immediately. Run `node scripts/daily-digest.js --force` to send one
+immediately regardless of the on/off switch or the configured time — useful
+for testing a config change.
 
 ## Authentication & sessions
 
