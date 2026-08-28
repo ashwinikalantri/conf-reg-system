@@ -99,16 +99,20 @@
     <!-- STEP 4: Workshops -->
     <div id="step-workshops" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
       <h2 class="text-lg font-bold text-slate-800">Workshops &amp; QI Practices</h2>
-      <p class="text-xs text-slate-500">Optional capacity-limited tracks a delegate can enroll in alongside their main registration. Each one is added immediately, same as categories above.</p>
+      <p class="text-xs text-slate-500">Optional capacity-limited tracks a delegate can enroll in alongside their main registration, grouped so a delegate picks at most one per group (e.g. one Workshop, one QI Practice). Each one is added immediately, same as categories above. Beyond these two, further groups (and whether a group is required, or allows more than one choice) can be added anytime from Settings → Program Groups.</p>
 
-      <div id="workshops-list" class="space-y-1.5 empty:hidden"></div>
+      <div id="workshops-list" class="space-y-3 empty:hidden"></div>
 
       <div class="border-t pt-3 space-y-2">
         <input id="su-ws-name" placeholder="Name, e.g. Introduction to Quality Improvement" class="w-full p-2 border rounded-lg text-xs outline-none">
-        <div class="flex gap-3 items-center">
-          <label class="flex items-center gap-1.5 text-xs text-slate-700"><input type="radio" name="su-ws-type" value="WORKSHOP" checked class="accent-indigo-600">Workshop</label>
-          <label class="flex items-center gap-1.5 text-xs text-slate-700"><input type="radio" name="su-ws-type" value="QI" class="accent-indigo-600">QI Practice</label>
-          <input id="su-ws-capacity" type="number" min="0" value="50" class="w-24 p-2 border rounded-lg text-xs outline-none ml-auto" title="Capacity">
+        <div class="flex gap-2 items-center">
+          <input id="su-ws-group" list="su-ws-group-options" placeholder="Group (e.g. Workshops)" value="Workshops" class="flex-1 p-2 border rounded-lg text-xs outline-none">
+          <datalist id="su-ws-group-options">
+            <option value="Workshops"></option>
+            <option value="QI Practices"></option>
+          </datalist>
+          <input id="su-ws-capacity" type="number" min="0" value="50" class="w-20 p-2 border rounded-lg text-xs outline-none" title="Capacity">
+          <input id="su-ws-fee" type="number" min="0" step="0.01" value="0" class="w-20 p-2 border rounded-lg text-xs outline-none" title="Fee (₹)">
         </div>
         <button type="button" onclick="addWorkshop()" id="su-ws-add-btn" class="w-full py-2 border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg text-xs">+ Add</button>
       </div>
@@ -431,31 +435,59 @@
     }
 
     // --- Workshops & QI Practices (same immediate add/remove pattern) ---
+    // Groups are found-or-created by name as options are added -- "Workshops"
+    // and "QI Practices" are the two suggested here, but typing any other
+    // name creates a new group the same way (further configuration --
+    // required, allow more than one choice -- happens later from Settings →
+    // Program Groups).
     async function loadWorkshops() {
-      const res = await fetch('/api/admin/program-options');
+      const res = await fetch('/api/admin/program-groups');
       if (!res.ok) return;
       const data = await res.json();
+      const groups = (data.groups || []).filter((g) => g.options.length);
       const list = document.getElementById('workshops-list');
-      list.innerHTML = (data.options || []).map((o) => `
-        <div class="flex items-center justify-between gap-2 text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-          <span><b>${escapeHtml(o.name)}</b> <span class="text-slate-400">(${o.type === 'QI' ? 'QI Practice' : 'Workshop'}, capacity ${o.capacity})</span></span>
-          <button type="button" onclick="removeWorkshop(${o.id})" class="text-rose-500 hover:text-rose-700 font-bold shrink-0">✕</button>
+      list.innerHTML = groups.map((g) => `
+        <div>
+          <p class="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">${escapeHtml(g.name)}</p>
+          ${g.options.map((o) => `
+          <div class="flex items-center justify-between gap-2 text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 mb-1">
+            <span><b>${escapeHtml(o.name)}</b> <span class="text-slate-400">(capacity ${o.capacity}${Number(o.fee) > 0 ? `, +₹${o.fee}` : ''})</span></span>
+            <button type="button" onclick="removeWorkshop(${o.id})" class="text-rose-500 hover:text-rose-700 font-bold shrink-0">✕</button>
+          </div>`).join('')}
         </div>`).join('');
+    }
+
+    async function findOrCreateGroup(name) {
+      const res = await fetch('/api/admin/program-groups');
+      const groups = res.ok ? ((await res.json()).groups || []) : [];
+      const existing = groups.find((g) => g.name.trim().toLowerCase() === name.trim().toLowerCase());
+      if (existing) return { id: existing.id };
+      const createRes = await fetch('/api/admin/program-groups', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, required: false, maxSelect: 1 }),
+      });
+      const data = await createRes.json();
+      if (!data.success) return { error: data.error || 'Could not create group.' };
+      return { id: data.id };
     }
 
     async function addWorkshop() {
       const btn = document.getElementById('su-ws-add-btn');
       const name = document.getElementById('su-ws-name').value.trim();
-      const type = document.querySelector('input[name="su-ws-type"]:checked').value;
+      const groupName = document.getElementById('su-ws-group').value.trim();
       const capacity = document.getElementById('su-ws-capacity').value;
+      const fee = document.getElementById('su-ws-fee').value;
       if (!name) return showToast('Enter a name.', true);
+      if (!groupName) return showToast('Enter a group name.', true);
       if (capacity === '' || Number(capacity) < 0 || !Number.isInteger(Number(capacity))) return showToast('Capacity must be a non-negative whole number.', true);
 
       btn.disabled = true;
       try {
+        const group = await findOrCreateGroup(groupName);
+        if (group.error) { showToast(group.error, true); return; }
         const res = await fetch('/api/admin/program-options', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type, name, capacity: Number(capacity) }),
+          body: JSON.stringify({ groupId: group.id, name, capacity: Number(capacity), fee: Number(fee) || 0 }),
         });
         const data = await res.json();
         if (!data.success) { showToast(data.error || 'Could not add.', true); return; }

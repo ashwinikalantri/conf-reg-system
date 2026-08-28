@@ -58,10 +58,9 @@
               <p class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Registration Number</p>
               <p id="reg-number-display" class="text-lg font-extrabold font-mono text-emerald-800 mt-0.5">—</p>
             </div>
-            <div class="text-xs space-y-1 border-t border-emerald-100 pt-2">
-              <div><span class="text-slate-500">Workshop:</span> <span id="conf-workshop" class="font-semibold text-slate-800"></span></div>
-              <div><span class="text-slate-500">QI Practice:</span> <span id="conf-qi" class="font-semibold text-slate-800"></span></div>
-            </div>
+            <!-- One line per chosen program option, across every group --
+                 populated by loadDashboard() in app.js from reg.selections. -->
+            <div id="conf-selections" class="text-xs space-y-1 border-t border-emerald-100 pt-2"></div>
             <button onclick="window.open('/api/registrations/me/receipt','_blank')" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-lg shadow-sm">
               View / Download Receipt
             </button>

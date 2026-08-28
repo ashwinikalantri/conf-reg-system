@@ -855,41 +855,115 @@ async function recordLogin(phone, name, role) {
   await writeAuditRow('login', phone, 'LOGIN', null, null, phone, name, role).catch((err) => console.error('Login log failed:', err.message));
 }
 
-// Fetch program options annotated with live enrollment counts. A slot is held
-// by any non-rejected registration referencing the option -- except faculty,
-// who are attached to the option (so they show on its roster/report) but
-// don't occupy a capacity slot.
+// Fetch program options (across every group) annotated with live enrollment
+// counts, from registration_options -- the generalized join table that
+// replaced the old fixed workshop_option_id/qi_option_id columns (see
+// migrateProgramGroupsOnBoot). A slot is held by any non-rejected
+// registration referencing the option -- except faculty, who are attached to
+// the option (so they show on its roster/report) but don't occupy a
+// capacity slot.
 function fetchProgramOptions({ activeOnly } = {}) {
   return dbAll(`
-    SELECT o.id, o.type, o.name, o.capacity, o.active,
-      (SELECT COUNT(*) FROM registrations r
-         WHERE r.bank_status != 'REJECTED'
-           AND ((o.type = 'WORKSHOP' AND r.workshop_option_id = o.id AND r.workshop_is_faculty = 0)
-             OR (o.type = 'QI' AND r.qi_option_id = o.id AND r.qi_is_faculty = 0))) AS enrolled,
-      (SELECT COUNT(*) FROM registrations r
-         WHERE r.bank_status != 'REJECTED'
-           AND ((o.type = 'WORKSHOP' AND r.workshop_option_id = o.id AND r.workshop_is_faculty = 1)
-             OR (o.type = 'QI' AND r.qi_option_id = o.id AND r.qi_is_faculty = 1))) AS faculty_count
+    SELECT o.id, o.group_id, o.name, o.capacity, o.active, o.fee,
+      (SELECT COUNT(*) FROM registration_options ro
+         JOIN registrations r ON r.id = ro.registration_id
+         WHERE ro.option_id = o.id AND ro.is_faculty = 0 AND r.bank_status != 'REJECTED') AS enrolled,
+      (SELECT COUNT(*) FROM registration_options ro
+         JOIN registrations r ON r.id = ro.registration_id
+         WHERE ro.option_id = o.id AND ro.is_faculty = 1 AND r.bank_status != 'REJECTED') AS faculty_count
     FROM program_options o
     ${activeOnly ? 'WHERE o.active = 1' : ''}
-    ORDER BY o.type, o.id`);
+    ORDER BY o.group_id, o.id`);
 }
 
-// Validate a chosen option and confirm it still has room. `ownRegId` is the
-// caller's existing registration (excluded from the count on re-submission).
-async function resolveOption(id, type, ownRegId) {
-  const opt = await dbGet('SELECT * FROM program_options WHERE id = ? AND type = ? AND active = 1', [id, type]);
-  const label = type === 'WORKSHOP' ? 'workshop' : 'QI practice';
-  if (!opt) return { error: `Please choose an available ${label}.` };
+// Groups with their options nested, in sort order -- the shape the delegate
+// form, admin Program Groups section, and setup wizard all build their UI
+// from.
+async function fetchProgramGroups({ activeOnly } = {}) {
+  const [groups, options] = await Promise.all([
+    dbAll(`SELECT * FROM program_groups ${activeOnly ? 'WHERE active = 1' : ''} ORDER BY sort_order, id`),
+    fetchProgramOptions({ activeOnly }),
+  ]);
+  return groups.map((g) => ({ ...g, options: options.filter((o) => o.group_id === g.id) }));
+}
 
-  const col = type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
-  const facultyCol = type === 'WORKSHOP' ? 'workshop_is_faculty' : 'qi_is_faculty';
+// Validate one chosen option and confirm it still has room. `ownRegId` is
+// the caller's existing registration (excluded from the count on
+// re-submission). Group membership (one-per-group vs. max_select, required
+// groups) is enforced by the caller across the full set of selections --
+// this only checks the single option in isolation.
+async function resolveOption(id, ownRegId) {
+  const opt = await dbGet('SELECT * FROM program_options WHERE id = ? AND active = 1', [id]);
+  if (!opt) return { error: 'Please choose an available option.' };
+
   const { n } = await dbGet(
-    `SELECT COUNT(*) AS n FROM registrations WHERE ${col} = ? AND bank_status != 'REJECTED' AND id != ? AND ${facultyCol} = 0`,
+    `SELECT COUNT(*) AS n FROM registration_options ro
+       JOIN registrations r ON r.id = ro.registration_id
+       WHERE ro.option_id = ? AND ro.is_faculty = 0 AND r.bank_status != 'REJECTED' AND r.id != ?`,
     [id, ownRegId == null ? -1 : ownRegId]
   );
-  if (n >= opt.capacity) return { error: `"${opt.name}" is full. Please choose another ${label}.` };
+  if (n >= opt.capacity) return { error: `"${opt.name}" is full. Please choose another option.` };
   return { opt };
+}
+
+// Validate a full set of chosen option ids against every active group's
+// required/max_select rules, and against each option's own capacity.
+// Returns { error } on the first problem found, or { selections } -- an
+// array of { groupId, optionId } ready to write to registration_options.
+async function resolveSelections(optionIds, ownRegId) {
+  const ids = [...new Set((optionIds || []).map((v) => Number(v)).filter(Number.isInteger))];
+  const groups = await fetchProgramGroups({ activeOnly: true });
+  const optionById = new Map(groups.flatMap((g) => g.options.map((o) => [o.id, o])));
+
+  for (const id of ids) {
+    if (!optionById.has(id)) return { error: 'One of the selected options is no longer available.' };
+  }
+
+  const selections = [];
+  for (const group of groups) {
+    const chosen = ids.filter((id) => optionById.get(id).group_id === group.id);
+    if (group.required && chosen.length === 0) {
+      return { error: `Please choose an option under "${group.name}".` };
+    }
+    if (chosen.length > group.max_select) {
+      return { error: `You can choose at most ${group.max_select} option(s) under "${group.name}".` };
+    }
+    for (const id of chosen) {
+      const resolved = await resolveOption(id, ownRegId);
+      if (resolved.error) return { error: resolved.error };
+      selections.push({ groupId: group.id, optionId: id, opt: resolved.opt });
+    }
+  }
+  return { selections };
+}
+
+// Replace a registration's chosen options wholesale (self-service submission
+// is never faculty -- that flag is only ever set by an admin, via the
+// enroll/faculty endpoints below, and would otherwise be silently reset on
+// every resubmission anyway since a delegate can't set it themselves).
+async function saveRegistrationSelections(registrationId, selections) {
+  await dbRun('DELETE FROM registration_options WHERE registration_id = ?', [registrationId]);
+  for (const s of selections) {
+    await dbRun(
+      'INSERT INTO registration_options (registration_id, group_id, option_id, is_faculty) VALUES (?, ?, ?, 0)',
+      [registrationId, s.groupId, s.optionId]
+    );
+  }
+}
+
+// A registration's chosen options, joined with their group/option names --
+// what the dashboard, receipt, and admin user-detail panel all display.
+// Ordered by group sort_order so it reads the same way everywhere.
+async function fetchRegistrationSelections(registrationId) {
+  return dbAll(
+    `SELECT g.id AS group_id, g.name AS group_name, o.id AS option_id, o.name AS option_name, ro.is_faculty
+       FROM registration_options ro
+       JOIN program_options o ON o.id = ro.option_id
+       JOIN program_groups g ON g.id = ro.group_id
+       WHERE ro.registration_id = ?
+       ORDER BY g.sort_order, g.id, o.name`,
+    [registrationId]
+  );
 }
 
 // Which pricing phase is in effect today, from the configured cutoff dates.
@@ -1201,15 +1275,65 @@ db.serialize(() => {
   `);
 
   // Master of enrollable programs (workshops and QI practice tracks) with a
-  // per-option participant cap. Admin-editable.
+  // per-option participant cap. Admin-editable. `type` is legacy (used to be
+  // the only grouping mechanism, hardcoded to 'WORKSHOP' | 'QI' -- see
+  // program_groups below, which replaced it) -- kept NOT NULL so old rows
+  // stay readable, but nothing new reads it; group_id is the real grouping
+  // key going forward, added below as an additive column.
   db.run(`
     CREATE TABLE IF NOT EXISTS program_options (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      type TEXT NOT NULL,          -- 'WORKSHOP' | 'QI'
+      type TEXT NOT NULL,
       name TEXT NOT NULL,
       capacity INTEGER NOT NULL DEFAULT 50,
       active INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL
+    )
+  `);
+
+  // Named, admin-configurable groups of program options (e.g. "Workshops",
+  // "QI Practices", or any further group a conference wants) -- see the
+  // migration below for how the two that used to be hardcoded (WORKSHOP/QI)
+  // became rows here. `required` gates registration submission (see
+  // POST /api/registrations); `max_select` bounds how many options within
+  // the group one delegate may choose (1 today for both migrated groups,
+  // but configurable per group so a future group can allow more).
+  db.run(`
+    CREATE TABLE IF NOT EXISTS program_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT,
+      required INTEGER NOT NULL DEFAULT 0,
+      max_select INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.run('ALTER TABLE program_options ADD COLUMN group_id INTEGER', () => {});
+  // Per-option fee, added on top of the delegate's category fee when they
+  // choose it (see resolveSelections/POST /api/registrations) -- e.g. a
+  // paid pre-conference workshop alongside a free main registration.
+  // Defaults to 0 so every existing option (and a fresh install's) costs
+  // nothing until an admin sets otherwise.
+  db.run('ALTER TABLE program_options ADD COLUMN fee REAL NOT NULL DEFAULT 0', () => {});
+
+  // A delegate's chosen options across every group -- the generalized
+  // replacement for the old fixed workshop_option_id/qi_option_id columns on
+  // registrations (still physically present there, frozen, as a rollback
+  // net -- see migrateProgramGroupsOnBoot). One row per (registration,
+  // option); the PK also doubles as "can't pick the same option twice".
+  // How many rows one registration may hold within a given group is
+  // max_select on program_groups, enforced in application code (POST
+  // /api/registrations), not by the schema, since SQLite can't express a
+  // per-group row-count constraint declaratively.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS registration_options (
+      registration_id INTEGER NOT NULL,
+      group_id INTEGER NOT NULL,
+      option_id INTEGER NOT NULL,
+      is_faculty INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (registration_id, option_id)
     )
   `);
 
@@ -1599,6 +1723,81 @@ async function retitleNamesOnBoot() {
   await retitle('abstracts', 'author_name', 'id');
 
   await dbRun("INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('titlecase_backfill_done', ?)", [String(Date.now())]);
+}
+
+// One-time-ever: migrate the old hardcoded WORKSHOP/QI program_options.type
+// pair into two rows in program_groups ("Workshops", "QI Practices" -- same
+// names delegates already know), point every existing option at its new
+// group_id, and copy every delegate's existing choice (from the frozen
+// workshop_option_id/qi_option_id/*_is_faculty columns on registrations)
+// into registration_options, the new join table everything reads from going
+// forward -- see fetchProgramGroups/resolveOption/POST /api/registrations.
+//
+// A fresh install has no typed program_options rows yet (the setup wizard
+// creates groups itself), so this is a no-op there -- it only matters for a
+// deployment upgrading from before groups existed. Guarded by a schema_meta
+// flag, same run-once-ever + pre-listen pattern as the backfills above (it
+// must finish before a live self-service submission could race it), and the
+// join-row inserts use INSERT OR IGNORE so a boot that dies partway through
+// (before the flag is set) safely re-runs to completion next start rather
+// than double-inserting.
+async function migrateProgramGroupsOnBoot() {
+  const already = await dbGet("SELECT value FROM schema_meta WHERE key = 'program_groups_migrated'");
+  if (already) return;
+
+  const typed = await dbAll("SELECT id, type FROM program_options WHERE group_id IS NULL AND type IN ('WORKSHOP','QI')");
+  if (typed.length) {
+    const groupIdFor = {};
+    for (const [type, name] of [['WORKSHOP', 'Workshops'], ['QI', 'QI Practices']]) {
+      if (!typed.some((o) => o.type === type)) continue;
+      let row = await dbGet('SELECT id FROM program_groups WHERE name = ?', [name]);
+      if (!row) {
+        const sortOrder = type === 'WORKSHOP' ? 1 : 2;
+        const result = await dbRun(
+          'INSERT INTO program_groups (name, description, required, max_select, sort_order, active, created_at) VALUES (?, NULL, 0, 1, ?, 1, ?)',
+          [name, sortOrder, Date.now()]
+        );
+        row = { id: result.lastID };
+      }
+      groupIdFor[type] = row.id;
+    }
+    for (const opt of typed) {
+      await dbRun('UPDATE program_options SET group_id = ? WHERE id = ?', [groupIdFor[opt.type], opt.id]);
+    }
+
+    const regs = await dbAll(
+      'SELECT id, workshop_option_id, qi_option_id, workshop_is_faculty, qi_is_faculty FROM registrations WHERE workshop_option_id IS NOT NULL OR qi_option_id IS NOT NULL'
+    );
+    for (const r of regs) {
+      if (r.workshop_option_id) {
+        await dbRun(
+          'INSERT OR IGNORE INTO registration_options (registration_id, group_id, option_id, is_faculty) VALUES (?, ?, ?, ?)',
+          [r.id, groupIdFor.WORKSHOP, r.workshop_option_id, r.workshop_is_faculty ? 1 : 0]
+        );
+      }
+      if (r.qi_option_id) {
+        await dbRun(
+          'INSERT OR IGNORE INTO registration_options (registration_id, group_id, option_id, is_faculty) VALUES (?, ?, ?, ?)',
+          [r.id, groupIdFor.QI, r.qi_option_id, r.qi_is_faculty ? 1 : 0]
+        );
+      }
+    }
+
+    // Verify before flagging done: a legacy selection must have produced
+    // exactly one registration_options row, or this boot doesn't mark the
+    // migration complete and will retry from scratch next start.
+    const expected = regs.reduce((n, r) => n + (r.workshop_option_id ? 1 : 0) + (r.qi_option_id ? 1 : 0), 0);
+    const { n: actual } = await dbGet(
+      `SELECT COUNT(*) AS n FROM registration_options WHERE registration_id IN (${regs.map(() => '?').join(',') || 'NULL'})`,
+      regs.map((r) => r.id)
+    );
+    if (actual < expected) {
+      console.error(`Program-groups migration incomplete (expected >= ${expected} join rows, found ${actual}) -- will retry next boot.`);
+      return;
+    }
+  }
+
+  await dbRun("INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('program_groups_migrated', ?)", [String(Date.now())]);
 }
 
 // One-time-ever: the signup form used to have no separate salutation field,
@@ -2324,7 +2523,7 @@ app.post('/api/auth/logout', async (req, res, next) => {
 // Submit / update the caller's own payment registration.
 app.post('/api/registrations', requireAuth, async (req, res, next) => {
   try {
-    const { categoryKey, workshopOptionId, qiOptionId, amount, utr, screenshot, idCard, acknowledged, paymentMode, discountCode } = req.body;
+    const { categoryKey, optionIds, amount, utr, screenshot, idCard, acknowledged, paymentMode, discountCode } = req.body;
     const mode = paymentMode === 'NEFT_RTGS' ? 'NEFT_RTGS' : 'UPI';
 
     const phone = req.session.phone; // never from the client
@@ -2346,6 +2545,15 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Invalid delegate category.' });
     }
     const categoryLabel = feeInfo.label;
+
+    // Validate the full set of chosen program options against every active
+    // group's required/max_select rules and each option's own capacity
+    // (before OCR so a full option or a missing required group fails fast).
+    // Resolved before the fee below so a paid option's fee can be added in.
+    const resolved = await resolveSelections(optionIds, ownRegId);
+    if (resolved.error) return res.status(400).json({ success: false, error: resolved.error });
+    const selections = resolved.selections;
+    const optionsFee = selections.reduce((sum, s) => sum + (Number(s.opt.fee) || 0), 0);
 
     // Discounts. Two possible sources, and the delegate gets the better one
     // (they don't stack): a promo code they entered, or a group discount if
@@ -2377,7 +2585,10 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     } else if (promoDiscount > 0) {
       discountAmount = promoDiscount; discountCodeApplied = promoCode;
     }
-    const expectedAmount = feeInfo.amount - discountAmount;
+    // Option fees (e.g. a paid pre-conference workshop) are added on top of
+    // the category fee after the discount, not discounted themselves -- a
+    // promo/group discount is validated against the category only.
+    const expectedAmount = feeInfo.amount - discountAmount + optionsFee;
     const isFree = expectedAmount <= 0;
 
     // Log a promo code as "used" only the first time this delegate applies it
@@ -2401,20 +2612,6 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
           ? 'Your registration is already confirmed; payment details cannot be changed.'
           : 'Your payment details have already been submitted and are locked pending verification. Contact the finance team if a correction is needed.',
       });
-    }
-
-    // Workshop and QI practice are optional. When chosen, validate the option
-    // and enforce capacity (before OCR so a full option fails fast); when left
-    // blank, record no selection.
-    let ws = { opt: null };
-    if (workshopOptionId) {
-      ws = await resolveOption(workshopOptionId, 'WORKSHOP', ownRegId);
-      if (ws.error) return res.status(400).json({ success: false, error: ws.error });
-    }
-    let qi = { opt: null };
-    if (qiOptionId) {
-      qi = await resolveOption(qiOptionId, 'QI', ownRegId);
-      if (qi.error) return res.status(400).json({ success: false, error: qi.error });
     }
 
     // Student categories must upload an ID card, checked against the category
@@ -2444,16 +2641,12 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 
       await dbRun(
         `INSERT INTO registrations
-          (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, workshop_option_id, qi_option_id, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, NULL, ?, NULL, NULL, NULL, ?, 0, 'BANK_VERIFIED', NULL, NULL, NULL, ?, ?, ?)
+          (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount)
+          VALUES (?, ?, ?, ?, 0, 0, NULL, NULL, ?, NULL, NULL, NULL, ?, 0, 'BANK_VERIFIED', NULL, NULL, NULL, ?, ?, ?)
           ON CONFLICT(phone_number) DO UPDATE SET
             delegate_name = excluded.delegate_name,
             category_key = excluded.category_key,
             category_label = excluded.category_label,
-            workshop = excluded.workshop,
-            qi_exposure = excluded.qi_exposure,
-            workshop_option_id = excluded.workshop_option_id,
-            qi_option_id = excluded.qi_option_id,
             expected_amount = 0,
             paid_amount = 0,
             utr_number = NULL,
@@ -2471,9 +2664,11 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
             submitted_at = excluded.submitted_at,
             discount_code = excluded.discount_code,
             discount_amount = excluded.discount_amount`,
-        [phone, name, effectiveCategoryKey, categoryLabel, ws.opt ? ws.opt.name : null, qi.opt ? qi.opt.name : null, ws.opt ? ws.opt.id : null, qi.opt ? qi.opt.id : null,
+        [phone, name, effectiveCategoryKey, categoryLabel,
           idFilename, idMatch, Date.now(), discountCodeApplied, discountAmount]
       );
+      const regRow = await dbGet('SELECT id FROM registrations WHERE phone_number = ?', [phone]);
+      await saveRegistrationSelections(regRow.id, selections);
 
       if (prev && prev.screenshot) await deleteScreenshotFile(prev.screenshot);
       if (prev && prev.id_card && prev.id_card !== idFilename) await deleteScreenshotFile(prev.id_card);
@@ -2529,16 +2724,12 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 
     const result = await dbRun(
       `INSERT INTO registrations
-        (phone_number, delegate_name, category_key, category_label, workshop, qi_exposure, workshop_option_id, qi_option_id, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL, ?, ?, ?, ?)
+        (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL, ?, ?, ?, ?)
         ON CONFLICT(phone_number) DO UPDATE SET
           delegate_name = excluded.delegate_name,
           category_key = excluded.category_key,
           category_label = excluded.category_label,
-          workshop = excluded.workshop,
-          qi_exposure = excluded.qi_exposure,
-          workshop_option_id = excluded.workshop_option_id,
-          qi_option_id = excluded.qi_option_id,
           expected_amount = excluded.expected_amount,
           paid_amount = excluded.paid_amount,
           utr_number = excluded.utr_number,
@@ -2556,7 +2747,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
           submitted_at = excluded.submitted_at,
           discount_code = excluded.discount_code,
           discount_amount = excluded.discount_amount`,
-      [phone, name, effectiveCategoryKey, categoryLabel, ws.opt ? ws.opt.name : null, qi.opt ? qi.opt.name : null, ws.opt ? ws.opt.id : null, qi.opt ? qi.opt.id : null,
+      [phone, name, effectiveCategoryKey, categoryLabel,
         expectedAmount, paidAmount, utr, filename, idFilename,
         checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, idMatch, flagged, mode, Date.now(), discountCodeApplied, discountAmount]
     );
@@ -2572,6 +2763,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     // result.lastID isn't reliable -- look the id up by phone.
     const regRow = await dbGet('SELECT id FROM registrations WHERE phone_number = ?', [phone]);
     const registrationId = regRow ? regRow.id : result.lastID;
+    await saveRegistrationSelections(registrationId, selections);
 
     // Record this submission in the payment_transactions ledger as a new
     // PENDING transaction. A resubmission only happens after a rejection (the
@@ -2782,8 +2974,8 @@ const DELEGATE_SALUTATION_COLUMN =
 // exists on users (registration_number, phone_number) -- the admin list query
 // LEFT JOINs users, which would otherwise make those ambiguous.
 const REGISTRATION_PUBLIC_COLUMNS =
-  `registrations.id, registrations.registration_number, registrations.phone_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, category_key, category_label, workshop,
-   qi_exposure, expected_amount, paid_amount, utr_number, is_flagged, bank_status,
+  `registrations.id, registrations.registration_number, registrations.phone_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, category_key, category_label,
+   expected_amount, paid_amount, utr_number, is_flagged, bank_status,
    ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, rejection_reason, rejection_note,
    payment_mode, submitted_at, id_verified, id_verified_by, id_verified_at, category_locked,
    (screenshot IS NOT NULL AND screenshot != '') AS has_screenshot,
@@ -2819,23 +3011,27 @@ app.get('/api/registrations/me', requireAuth, async (req, res, next) => {
     reg.verified_total = summary.verifiedTotal;
     reg.remaining = summary.remaining;
     reg.pending_txn_count = summary.txns.filter((t) => t.txn_status === 'PENDING').length;
+    reg.selections = await fetchRegistrationSelections(row.id);
     res.json({ registration: reg });
   } catch (err) {
     next(err);
   }
 });
 
-// Active program options with remaining capacity, for the payment form.
+// Active program groups (with their options and remaining capacity), for
+// the payment form -- an arbitrary, admin-configured list rather than a
+// fixed workshop/QI pair.
 app.get('/api/program-options', requireAuth, async (req, res, next) => {
   try {
-    const rows = await fetchProgramOptions({ activeOnly: true });
-    const shape = (o) => {
-      const remaining = Math.max(0, o.capacity - o.enrolled);
-      return { id: o.id, name: o.name, capacity: o.capacity, remaining, full: remaining <= 0 };
-    };
+    const groups = await fetchProgramGroups({ activeOnly: true });
     res.json({
-      workshops: rows.filter((o) => o.type === 'WORKSHOP').map(shape),
-      qiPractices: rows.filter((o) => o.type === 'QI').map(shape),
+      groups: groups.map((g) => ({
+        id: g.id, name: g.name, description: g.description, required: !!g.required, maxSelect: g.max_select,
+        options: g.options.map((o) => {
+          const remaining = Math.max(0, o.capacity - o.enrolled);
+          return { id: o.id, name: o.name, capacity: o.capacity, remaining, full: remaining <= 0, fee: Number(o.fee) || 0 };
+        }),
+      })),
     });
   } catch (err) {
     next(err);
@@ -3107,6 +3303,7 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
 
     const row = (label, value) =>
       `<tr><td class="k">${escapeHtml(label)}</td><td class="v">${escapeHtml(value)}</td></tr>`;
+    const selections = await fetchRegistrationSelections(reg.id);
 
     res.set('Cache-Control', 'private, no-store');
     res.type('html').send(`<!doctype html>
@@ -3158,8 +3355,7 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
         ${row('Institution', user ? user.institution : '')}
         ${row('Mobile', '+91 ' + reg.phone_number)}
         ${row('Category', reg.category_label)}
-        ${row('Workshop', reg.workshop)}
-        ${row('QI Exposure', reg.qi_exposure)}
+        ${selections.map((s) => row(s.group_name, s.option_name)).join('')}
         ${row('Amount Paid', '₹' + inr(reg.expected_amount != null ? reg.expected_amount : reg.paid_amount))}
         ${row('UTR / Txn Ref', reg.utr_number)}
         ${row('Verified On', verifiedOn)}
@@ -4179,38 +4375,55 @@ app.get('/api/registrations/:id/audit', requireRole('SUPER_ADMIN', 'FINANCE_ADMI
 app.get('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res, next) => {
   try {
     const rows = await dbAll(
-      `SELECT users.*, r.bank_status AS registration_status,
-         r.workshop_option_id, r.workshop, r.qi_option_id, r.qi_exposure
+      `SELECT users.*, r.id AS registration_id, r.bank_status AS registration_status
          FROM users
          LEFT JOIN registrations r ON r.phone_number = users.phone_number`);
-    res.json({ users: (rows || []).map(omitPasswordHash) });
+    // One batched query for every registration's chosen options, rather than
+    // one join per group -- works the same regardless of how many groups
+    // exist. Grouped in JS by registration_id below.
+    const selRows = await dbAll(
+      `SELECT ro.registration_id, g.name AS group_name, o.name AS option_name
+         FROM registration_options ro
+         JOIN program_options o ON o.id = ro.option_id
+         JOIN program_groups g ON g.id = ro.group_id
+         ORDER BY g.sort_order, g.id, o.name`);
+    const selByReg = new Map();
+    for (const s of selRows) {
+      if (!selByReg.has(s.registration_id)) selByReg.set(s.registration_id, []);
+      selByReg.get(s.registration_id).push(`${s.group_name}: ${s.option_name}`);
+    }
+    const shaped = (rows || []).map((u) => ({
+      ...u,
+      program_selections: u.registration_id ? (selByReg.get(u.registration_id) || []) : [],
+    }));
+    res.json({ users: shaped.map(omitPasswordHash) });
   } catch (err) {
     next(err);
   }
 });
 
 // Full profile for the Users side-panel: demography, contact, registration +
-// payment ledger, workshop/QI enrollment, and a best-effort signup date.
+// payment ledger, program-group enrollment, and a best-effort signup date.
 app.get('/api/users/:phone/detail', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res, next) => {
   try {
     const phone = req.params.phone;
     const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
     if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
 
-    const reg = await dbGet(
-      `SELECT r.*, ws.name AS workshop_name, qi.name AS qi_name
-         FROM registrations r
-         LEFT JOIN program_options ws ON ws.id = r.workshop_option_id
-         LEFT JOIN program_options qi ON qi.id = r.qi_option_id
-        WHERE r.phone_number = ?`, [phone]);
+    const reg = await dbGet('SELECT * FROM registrations WHERE phone_number = ?', [phone]);
 
     let payment = null;
-    if (reg) payment = await getPaymentSummary(reg.id, reg.expected_amount);
+    let selections = [];
+    if (reg) {
+      payment = await getPaymentSummary(reg.id, reg.expected_amount);
+      selections = await fetchRegistrationSelections(reg.id);
+    }
 
     res.json({
       success: true,
       user: omitPasswordHash(user),
       registration: reg || null,
+      selections,
       payment,
       signup_at: user.created_at || null,
     });
@@ -4552,17 +4765,110 @@ app.post('/api/admin/reminders/balance-due/send', requireRole('SUPER_ADMIN'), as
   }
 });
 
-// --- PROGRAM OPTIONS ADMIN (workshops & QI practices) -------------------
+// --- PROGRAM GROUPS ADMIN (Workshops, QI Practices, or any further group) --
 
-function validProgramInput({ type, name, capacity }, { partial } = {}) {
-  if (!partial || type !== undefined) {
-    if (type !== 'WORKSHOP' && type !== 'QI') return 'Type must be WORKSHOP or QI.';
+function validGroupInput({ name, required, maxSelect }, { partial } = {}) {
+  if (!partial || name !== undefined) {
+    if (!name || !String(name).trim()) return 'Group name is required.';
+  }
+  if (maxSelect !== undefined) {
+    if (!Number.isInteger(maxSelect) || maxSelect < 1) return 'Max selections must be a positive integer.';
+  }
+  return null;
+}
+
+app.get('/api/admin/program-groups', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    res.json({ groups: await fetchProgramGroups({ activeOnly: false }) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/admin/program-groups', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const { name, description, required, maxSelect, sortOrder } = req.body;
+    const bad = validGroupInput({ name, maxSelect: maxSelect !== undefined ? Number(maxSelect) : 1 });
+    if (bad) return res.status(400).json({ success: false, error: bad });
+    const result = await dbRun(
+      'INSERT INTO program_groups (name, description, required, max_select, sort_order, active, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)',
+      [String(name).trim(), description ? String(description).trim() : null, required ? 1 : 0, maxSelect !== undefined ? Number(maxSelect) : 1, Number(sortOrder) || 0, Date.now()]
+    );
+    await recordAudit({
+      req, entityType: 'program_group', entityId: result.lastID,
+      action: 'PROGRAM_GROUP_CREATE', oldValue: null, newValue: String(name).trim(),
+    });
+    res.json({ success: true, id: result.lastID });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/admin/program-groups/:id', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const { name, description, required, maxSelect, sortOrder, active } = req.body;
+    const bad = validGroupInput({ name, maxSelect: maxSelect !== undefined ? Number(maxSelect) : undefined }, { partial: true });
+    if (bad) return res.status(400).json({ success: false, error: bad });
+
+    const existing = await dbGet('SELECT * FROM program_groups WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ success: false, error: 'Group not found.' });
+
+    const updated = {
+      name: name !== undefined ? String(name).trim() : existing.name,
+      description: description !== undefined ? (description ? String(description).trim() : null) : existing.description,
+      required: required !== undefined ? (required ? 1 : 0) : existing.required,
+      max_select: maxSelect !== undefined ? Number(maxSelect) : existing.max_select,
+      sort_order: sortOrder !== undefined ? Number(sortOrder) : existing.sort_order,
+      active: active !== undefined ? (active ? 1 : 0) : existing.active,
+    };
+    await dbRun(
+      'UPDATE program_groups SET name = ?, description = ?, required = ?, max_select = ?, sort_order = ?, active = ? WHERE id = ?',
+      [updated.name, updated.description, updated.required, updated.max_select, updated.sort_order, updated.active, req.params.id]
+    );
+    await recordAudit({
+      req, entityType: 'program_group', entityId: req.params.id,
+      action: 'PROGRAM_GROUP_UPDATE', oldValue: existing.name, newValue: updated.name,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Delete a group, but only if it has no options left in it (remove those
+// first -- each option's own delete is already refused while anyone is
+// enrolled, so this transitively can't orphan a delegate's selection).
+app.delete('/api/admin/program-groups/:id', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const group = await dbGet('SELECT * FROM program_groups WHERE id = ?', [req.params.id]);
+    if (!group) return res.status(404).json({ success: false, error: 'Group not found.' });
+    const { n } = await dbGet('SELECT COUNT(*) AS n FROM program_options WHERE group_id = ?', [req.params.id]);
+    if (n > 0) return res.status(409).json({ success: false, error: `This group still has ${n} option(s) in it. Remove them first.` });
+    await dbRun('DELETE FROM program_groups WHERE id = ?', [req.params.id]);
+    await recordAudit({
+      req, entityType: 'program_group', entityId: req.params.id,
+      action: 'PROGRAM_GROUP_DELETE', oldValue: group.name, newValue: null,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- PROGRAM OPTIONS ADMIN (options within a group) ----------------------
+
+function validProgramInput({ groupId, name, capacity, fee }, { partial } = {}) {
+  if (!partial || groupId !== undefined) {
+    if (!Number.isInteger(groupId)) return 'A program group is required.';
   }
   if (!partial || name !== undefined) {
     if (!name || !String(name).trim()) return 'Name is required.';
   }
   if (!partial || capacity !== undefined) {
     if (!Number.isInteger(capacity) || capacity < 0) return 'Capacity must be a non-negative integer.';
+  }
+  if (fee !== undefined) {
+    if (!Number.isFinite(fee) || fee < 0) return 'Fee must be a non-negative amount.';
   }
   return null;
 }
@@ -4578,16 +4884,23 @@ app.get('/api/admin/program-options', requireRole('SUPER_ADMIN'), async (req, re
 
 app.post('/api/admin/program-options', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
-    const { type, name, capacity } = req.body;
-    const bad = validProgramInput({ type, name, capacity });
+    const groupId = Number(req.body.groupId);
+    const { name, capacity } = req.body;
+    const fee = req.body.fee !== undefined ? Number(req.body.fee) : 0;
+    const bad = validProgramInput({ groupId, name, capacity, fee });
     if (bad) return res.status(400).json({ success: false, error: bad });
+    const group = await dbGet('SELECT id, name FROM program_groups WHERE id = ?', [groupId]);
+    if (!group) return res.status(400).json({ success: false, error: 'Program group not found.' });
+    // `type` is legacy (see program_options table comment) -- kept NOT NULL
+    // for old rows' sake, so new rows just carry the group name into it;
+    // nothing reads it going forward.
     const result = await dbRun(
-      'INSERT INTO program_options (type, name, capacity, active, created_at) VALUES (?, ?, ?, 1, ?)',
-      [type, String(name).trim(), capacity, Date.now()]
+      'INSERT INTO program_options (type, group_id, name, capacity, fee, active, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)',
+      [group.name, groupId, String(name).trim(), capacity, fee, Date.now()]
     );
     await recordAudit({
       req, entityType: 'program_option', entityId: result.lastID,
-      action: 'PROGRAM_OPTION_CREATE', oldValue: null, newValue: `${type}: ${String(name).trim()} (capacity ${capacity})`,
+      action: 'PROGRAM_OPTION_CREATE', oldValue: null, newValue: `${group.name}: ${String(name).trim()} (capacity ${capacity}, fee ₹${fee})`,
     });
     res.json({ success: true, id: result.lastID });
   } catch (err) {
@@ -4598,7 +4911,8 @@ app.post('/api/admin/program-options', requireRole('SUPER_ADMIN'), async (req, r
 app.put('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
     const { name, capacity, active } = req.body;
-    const bad = validProgramInput({ name, capacity }, { partial: true });
+    const fee = req.body.fee !== undefined ? Number(req.body.fee) : undefined;
+    const bad = validProgramInput({ name, capacity, fee }, { partial: true });
     if (bad) return res.status(400).json({ success: false, error: bad });
 
     const existing = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
@@ -4607,17 +4921,18 @@ app.put('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (req
     const updated = {
       name: name !== undefined ? String(name).trim() : existing.name,
       capacity: capacity !== undefined ? capacity : existing.capacity,
+      fee: fee !== undefined ? fee : existing.fee,
       active: active !== undefined ? (active ? 1 : 0) : existing.active,
     };
     await dbRun(
-      'UPDATE program_options SET name = ?, capacity = ?, active = ? WHERE id = ?',
-      [updated.name, updated.capacity, updated.active, req.params.id]
+      'UPDATE program_options SET name = ?, capacity = ?, fee = ?, active = ? WHERE id = ?',
+      [updated.name, updated.capacity, updated.fee, updated.active, req.params.id]
     );
     await recordAudit({
       req, entityType: 'program_option', entityId: req.params.id,
       action: 'PROGRAM_OPTION_UPDATE',
-      oldValue: `${existing.name} (capacity ${existing.capacity}, ${existing.active ? 'active' : 'inactive'})`,
-      newValue: `${updated.name} (capacity ${updated.capacity}, ${updated.active ? 'active' : 'inactive'})`,
+      oldValue: `${existing.name} (capacity ${existing.capacity}, fee ₹${existing.fee}, ${existing.active ? 'active' : 'inactive'})`,
+      newValue: `${updated.name} (capacity ${updated.capacity}, fee ₹${updated.fee}, ${updated.active ? 'active' : 'inactive'})`,
     });
     res.json({ success: true });
   } catch (err) {
@@ -4631,9 +4946,10 @@ app.delete('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (
     const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
     if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
 
-    const col = opt.type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
     const used = await dbGet(
-      `SELECT COUNT(*) AS n FROM registrations WHERE ${col} = ? AND bank_status != 'REJECTED'`,
+      `SELECT COUNT(*) AS n FROM registration_options ro
+         JOIN registrations r ON r.id = ro.registration_id
+         WHERE ro.option_id = ? AND r.bank_status != 'REJECTED'`,
       [opt.id]
     );
     if (used.n > 0) {
@@ -4642,7 +4958,7 @@ app.delete('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (
     await dbRun('DELETE FROM program_options WHERE id = ?', [req.params.id]);
     await recordAudit({
       req, entityType: 'program_option', entityId: req.params.id,
-      action: 'PROGRAM_OPTION_DELETE', oldValue: `${opt.type}: ${opt.name}`, newValue: null,
+      action: 'PROGRAM_OPTION_DELETE', oldValue: opt.name, newValue: null,
     });
     res.json({ success: true });
   } catch (err) {
@@ -4650,17 +4966,17 @@ app.delete('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (
   }
 });
 
-// List delegates currently enrolled in one workshop/QI option (manual roster
-// view, alongside the capacity count already shown in the list).
+// List delegates currently enrolled in one option (manual roster view,
+// alongside the capacity count already shown in the list).
 app.get('/api/admin/program-options/:id/enrolled', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
     const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
     if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
-    const col = opt.type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
-    const facultyCol = opt.type === 'WORKSHOP' ? 'workshop_is_faculty' : 'qi_is_faculty';
     const rows = await dbAll(
-      `SELECT id, phone_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registration_number, bank_status, ${facultyCol} AS is_faculty
-         FROM registrations WHERE ${col} = ? AND bank_status != 'REJECTED' ORDER BY ${facultyCol} DESC, delegate_name`,
+      `SELECT registrations.id, registrations.phone_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.registration_number, registrations.bank_status, ro.is_faculty
+         FROM registration_options ro
+         JOIN registrations ON registrations.id = ro.registration_id
+         WHERE ro.option_id = ? AND bank_status != 'REJECTED' ORDER BY ro.is_faculty DESC, delegate_name`,
       [opt.id]
     );
     res.json({ option: opt, enrolled: rows.map(withDelegateSalutation) });
@@ -4669,9 +4985,13 @@ app.get('/api/admin/program-options/:id/enrolled', requireRole('SUPER_ADMIN'), a
   }
 });
 
-// Manually enroll a delegate (by phone) into a workshop/QI option, bypassing
-// the normal self-service capacity check -- an admin override for edge cases
-// (a delegate who paid offline, a late add, correcting a mistaken choice).
+// Manually enroll a delegate (by phone) into an option, bypassing the normal
+// self-service capacity check -- an admin override for edge cases (a
+// delegate who paid offline, a late add, correcting a mistaken choice).
+// Replaces any existing choice the delegate has in the SAME group (a
+// delegate can only hold one option per group here too, regardless of that
+// group's max_select -- this endpoint is a single-slot override, not a bulk
+// selection tool); other groups are untouched.
 app.post('/api/admin/program-options/:id/enroll', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
     const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
@@ -4680,20 +5000,25 @@ app.post('/api/admin/program-options/:id/enroll', requireRole('SUPER_ADMIN'), as
     if (!/^\d{10}$/.test(phone)) {
       return res.status(400).json({ success: false, error: 'Invalid phone number.' });
     }
-    const reg = await dbGet('SELECT id, workshop_option_id, qi_option_id FROM registrations WHERE phone_number = ?', [phone]);
+    const reg = await dbGet('SELECT id FROM registrations WHERE phone_number = ?', [phone]);
     if (!reg) {
       return res.status(404).json({ success: false, error: 'This delegate has no payment registration yet -- they must register before being enrolled.' });
     }
-    const col = opt.type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
-    const nameCol = opt.type === 'WORKSHOP' ? 'workshop' : 'qi_exposure';
-    const facultyCol = opt.type === 'WORKSHOP' ? 'workshop_is_faculty' : 'qi_is_faculty';
-    // Reset the faculty flag on (re-)enroll: it belongs to a specific
-    // option assignment, so moving someone to a different workshop/QI
+    const prevOption = await dbGet(
+      'SELECT option_id FROM registration_options WHERE registration_id = ? AND group_id = ?',
+      [reg.id, opt.group_id]
+    );
+    // Reset the faculty flag on (re-)enroll: it belongs to a specific option
+    // assignment, so moving someone to a different option in this group
     // shouldn't silently carry their old faculty status over.
-    await dbRun(`UPDATE registrations SET ${col} = ?, ${nameCol} = ?, ${facultyCol} = 0 WHERE id = ?`, [opt.id, opt.name, reg.id]);
+    await dbRun('DELETE FROM registration_options WHERE registration_id = ? AND group_id = ?', [reg.id, opt.group_id]);
+    await dbRun(
+      'INSERT INTO registration_options (registration_id, group_id, option_id, is_faculty) VALUES (?, ?, ?, 0)',
+      [reg.id, opt.group_id, opt.id]
+    );
     await recordAudit({
       req, entityType: 'registration', entityId: reg.id,
-      action: 'ADMIN_ENROLL', oldValue: opt.type === 'WORKSHOP' ? reg.workshop_option_id : reg.qi_option_id, newValue: opt.id,
+      action: 'ADMIN_ENROLL', oldValue: prevOption ? prevOption.option_id : null, newValue: opt.id,
     });
     res.json({ success: true });
   } catch (err) {
@@ -4701,20 +5026,22 @@ app.post('/api/admin/program-options/:id/enroll', requireRole('SUPER_ADMIN'), as
   }
 });
 
-// Mark/unmark an enrolled delegate as faculty for this specific workshop/QI
-// option. Faculty stay attached to the option (visible on its roster and
-// report) but are excluded from the capacity count -- see
-// fetchProgramOptions().
+// Mark/unmark an enrolled delegate as faculty for this specific option.
+// Faculty stay attached to the option (visible on its roster and report)
+// but are excluded from the capacity count -- see fetchProgramOptions().
 app.put('/api/admin/program-options/:id/enrolled/:phone/faculty', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
     const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
     if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
-    const col = opt.type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
-    const facultyCol = opt.type === 'WORKSHOP' ? 'workshop_is_faculty' : 'qi_is_faculty';
-    const reg = await dbGet(`SELECT id FROM registrations WHERE phone_number = ? AND ${col} = ?`, [req.params.phone, opt.id]);
+    const reg = await dbGet(
+      `SELECT r.id FROM registrations r
+         JOIN registration_options ro ON ro.registration_id = r.id
+         WHERE r.phone_number = ? AND ro.option_id = ?`,
+      [req.params.phone, opt.id]
+    );
     if (!reg) return res.status(404).json({ success: false, error: 'This delegate is not enrolled in this option.' });
     const isFaculty = req.body.isFaculty ? 1 : 0;
-    await dbRun(`UPDATE registrations SET ${facultyCol} = ? WHERE id = ?`, [isFaculty, reg.id]);
+    await dbRun('UPDATE registration_options SET is_faculty = ? WHERE registration_id = ? AND option_id = ?', [isFaculty, reg.id, opt.id]);
     await recordAudit({
       req, entityType: 'registration', entityId: reg.id,
       action: 'ADMIN_SET_FACULTY', oldValue: opt.id, newValue: isFaculty ? 'FACULTY' : 'DELEGATE',
@@ -4725,18 +5052,20 @@ app.put('/api/admin/program-options/:id/enrolled/:phone/faculty', requireRole('S
   }
 });
 
-// Remove a delegate from a workshop/QI option's roster (clears their choice;
-// does not touch their registration otherwise).
+// Remove a delegate from an option's roster (clears their choice in that
+// group; does not touch their registration or other groups otherwise).
 app.delete('/api/admin/program-options/:id/enroll/:phone', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
     const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
     if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
-    const col = opt.type === 'WORKSHOP' ? 'workshop_option_id' : 'qi_option_id';
-    const nameCol = opt.type === 'WORKSHOP' ? 'workshop' : 'qi_exposure';
-    const facultyCol = opt.type === 'WORKSHOP' ? 'workshop_is_faculty' : 'qi_is_faculty';
-    const reg = await dbGet(`SELECT id FROM registrations WHERE phone_number = ? AND ${col} = ?`, [req.params.phone, opt.id]);
+    const reg = await dbGet(
+      `SELECT r.id FROM registrations r
+         JOIN registration_options ro ON ro.registration_id = r.id
+         WHERE r.phone_number = ? AND ro.option_id = ?`,
+      [req.params.phone, opt.id]
+    );
     if (!reg) return res.status(404).json({ success: false, error: 'This delegate is not enrolled in this option.' });
-    await dbRun(`UPDATE registrations SET ${col} = NULL, ${nameCol} = NULL, ${facultyCol} = 0 WHERE id = ?`, [reg.id]);
+    await dbRun('DELETE FROM registration_options WHERE registration_id = ? AND option_id = ?', [reg.id, opt.id]);
     await recordAudit({
       req, entityType: 'registration', entityId: reg.id,
       action: 'ADMIN_UNENROLL', oldValue: opt.id, newValue: null,
@@ -5856,9 +6185,10 @@ app.get('/api/admin/activity-log', requireRole('SUPER_ADMIN'), async (req, res, 
       ORDER BY a.id DESC`);
 
     // ADMIN_ENROLL/ADMIN_UNENROLL store a program_options.id in old/new_value
-    // -- resolve those to "Workshop: X" / "QI: Y" names for display.
-    const optionRows = await dbAll('SELECT id, name, type FROM program_options');
-    const optionName = new Map(optionRows.map((o) => [String(o.id), `${o.type === 'QI' ? 'QI: ' : 'Workshop: '}${o.name}`]));
+    // -- resolve those to "<Group>: <Option>" names for display.
+    const optionRows = await dbAll(
+      `SELECT o.id, o.name, g.name AS group_name FROM program_options o LEFT JOIN program_groups g ON g.id = o.group_id`);
+    const optionName = new Map(optionRows.map((o) => [String(o.id), `${o.group_name ? o.group_name + ': ' : ''}${o.name}`]));
     const resolveOption = (v) => (v != null && optionName.has(String(v))) ? optionName.get(String(v)) : v;
     regAudit.forEach((r) => {
       if (r.action === 'ADMIN_ENROLL' || r.action === 'ADMIN_UNENROLL') {
@@ -5953,45 +6283,61 @@ async function buildReport(type, opts = {}) {
     };
   }
   if (type === 'workshops') {
-    const options = (await fetchProgramOptions({ activeOnly: false }))
-      .filter((o) => !opts.optionId || String(o.id) === String(opts.optionId));
-    const regs = (await dbAll(
-      `SELECT workshop_option_id, qi_option_id, workshop_is_faculty, qi_is_faculty,
-         registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, phone_number, category_label, bank_status
-         FROM registrations WHERE bank_status != 'REJECTED'`)).map(withDelegateSalutation);
+    const groups = await fetchProgramGroups({ activeOnly: false });
+    const allOptions = groups.flatMap((g) => g.options.map((o) => ({ ...o, group_name: g.name })));
+    const options = allOptions.filter((o) => !opts.optionId || String(o.id) === String(opts.optionId));
     const columns = ['Reg No', 'Delegate', 'Mobile', 'Category', 'Status', 'Role'];
     // Faculty listed first within each section, ahead of the attendee list.
-    const rowsFor = (col, id, facultyCol) => regs.filter((r) => r[col] === id)
-      .sort((a, b) => (b[facultyCol] ? 1 : 0) - (a[facultyCol] ? 1 : 0))
-      .map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label,
-        BANK_STATUS_LABELS[r.bank_status] || r.bank_status, r[facultyCol] ? 'Faculty' : 'Delegate']);
-    const sections = [
-      ...options.filter((o) => o.type === 'WORKSHOP').map((o) => ({ name: `Workshop: ${o.name}`, columns, rows: rowsFor('workshop_option_id', o.id, 'workshop_is_faculty') })),
-      ...options.filter((o) => o.type === 'QI').map((o) => ({ name: `QI Practice: ${o.name}`, columns, rows: rowsFor('qi_option_id', o.id, 'qi_is_faculty') })),
-    ];
-    return { title: opts.optionId && options[0] ? `Registrations — ${options[0].name}` : 'Registrations per Workshop / QI Practice', sections };
+    const rowsFor = async (optionId) => {
+      const rows = (await dbAll(
+        `SELECT registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number, category_label, bank_status, ro.is_faculty
+           FROM registration_options ro
+           JOIN registrations ON registrations.id = ro.registration_id
+           WHERE ro.option_id = ? AND bank_status != 'REJECTED'
+           ORDER BY ro.is_faculty DESC, delegate_name`,
+        [optionId]
+      )).map(withDelegateSalutation);
+      return rows.map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label,
+        BANK_STATUS_LABELS[r.bank_status] || r.bank_status, r.is_faculty ? 'Faculty' : 'Delegate']);
+    };
+    const sections = [];
+    for (const o of options) {
+      sections.push({ name: `${o.group_name}: ${o.name}`, columns, rows: await rowsFor(o.id) });
+    }
+    return { title: opts.optionId && options[0] ? `Registrations — ${options[0].name}` : 'Registrations per Program Option', sections };
   }
   if (type === 'users') {
-    // Every column the users table actually has, plus the registration/
-    // workshop/QI snapshot already joined in for the Users tab (see
-    // GET /api/users) -- same source of truth, just exported wholesale
-    // instead of paginated in a table.
+    // Every column the users table actually has, plus the registration
+    // snapshot already joined in for the Users tab (see GET /api/users) --
+    // same source of truth, just exported wholesale instead of paginated in
+    // a table.
     const rows = await dbAll(`
-      SELECT users.*, r.bank_status AS registration_status, r.workshop, r.qi_exposure
+      SELECT users.*, r.id AS registration_id, r.bank_status AS registration_status
         FROM users
         LEFT JOIN registrations r ON r.phone_number = users.phone_number
        ORDER BY users.created_at ASC, users.full_name ASC`);
+    const selRows = await dbAll(
+      `SELECT ro.registration_id, g.name AS group_name, o.name AS option_name
+         FROM registration_options ro
+         JOIN program_options o ON o.id = ro.option_id
+         JOIN program_groups g ON g.id = ro.group_id
+         ORDER BY g.sort_order, g.id, o.name`);
+    const selByReg = new Map();
+    for (const s of selRows) {
+      const line = `${s.group_name}: ${s.option_name}`;
+      selByReg.set(s.registration_id, [...(selByReg.get(s.registration_id) || []), line]);
+    }
     const fmtDate = (ms) => ms ? new Date(Number(ms)).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '';
     return {
       title: 'All Users — Full Directory',
       sections: [{
         columns: ['Reg No', 'Salutation', 'Name', 'Mobile', 'Role', 'Age', 'Gender', 'Email',
           'Designation', 'Institution', 'Post Office', 'District', 'State', 'Pincode', 'Signed Up',
-          'Registration Status', 'Workshop', 'QI Practice'],
+          'Registration Status', 'Program Selections'],
         rows: rows.map((u) => [u.registration_number, u.salutation, u.full_name, u.phone_number, u.role,
           u.age, u.gender, u.email, u.designation, u.institution, u.post_office, u.district, u.state, u.pincode,
           fmtDate(u.created_at), u.registration_status ? (BANK_STATUS_LABELS[u.registration_status] || u.registration_status) : 'Not Registered',
-          u.workshop, u.qi_exposure]),
+          (selByReg.get(u.registration_id) || []).join('; ')]),
       }],
     };
   }
@@ -6071,8 +6417,9 @@ app.get('/api/admin/reports/workshops/options', requireAuth, async (req, res, ne
     if (!roleGrants(req.session.role).some((r) => REPORT_ROLES.workshops.includes(r))) {
       return res.status(403).json({ success: false, error: 'You do not have permission for this report.' });
     }
-    const options = await fetchProgramOptions({ activeOnly: false });
-    res.json({ options: options.map((o) => ({ id: o.id, type: o.type, name: o.name })) });
+    const groups = await fetchProgramGroups({ activeOnly: false });
+    const options = groups.flatMap((g) => g.options.map((o) => ({ id: o.id, groupName: g.name, name: o.name })));
+    res.json({ options });
   } catch (err) {
     next(err);
   }
@@ -6235,6 +6582,7 @@ app.use((err, req, res, next) => {
 registrationsMigrationReady.then(retitleNamesOnBoot)
   .catch((err) => console.error('Title-case backfill failed (continuing to start):', err.message))
   .then(() => splitSalutationsOnBoot().catch((err) => console.error('Salutation split failed (continuing to start):', err.message)))
+  .then(() => migrateProgramGroupsOnBoot().catch((err) => console.error('Program-groups migration failed (continuing to start):', err.message)))
   .then(() => backfillPaymentTransactionsOnBoot().catch((err) => console.error('Payment-transaction backfill failed (continuing to start):', err.message)))
   .then(() => autoLinkTransactions().catch((err) => console.error('Bank-transaction auto-link failed (continuing to start):', err.message)))
   .then(() => loadNotificationToggles().catch((err) => console.error('Notification-toggle load failed (continuing to start):', err.message)))

@@ -504,8 +504,13 @@ async function loadDashboard() {
   }
   if (verified) {
     document.getElementById('reg-number-display').innerText = reg.registration_number || '—';
-    document.getElementById('conf-workshop').innerText = reg.workshop || '—';
-    document.getElementById('conf-qi').innerText = reg.qi_exposure || '—';
+    const selBox = document.getElementById('conf-selections');
+    if (selBox) {
+      const selections = reg.selections || [];
+      selBox.innerHTML = selections.length
+        ? selections.map((s) => `<div><span class="text-slate-500">${esc(s.group_name)}:</span> <span class="font-semibold text-slate-800">${esc(s.option_name)}</span></div>`).join('')
+        : '';
+    }
   }
 
   if (!reg) {
@@ -839,7 +844,11 @@ function calculateFee() {
   // category changed, the applied discount is dropped (re-apply required).
   if (appliedPromo && appliedPromo.categoryKey !== catKey) clearAppliedPromo();
   const discount = (appliedPromo && appliedPromo.categoryKey === catKey) ? appliedPromo.discountAmount : 0;
-  const currentFee = Math.max(0, baseFee - discount);
+  // Chosen program options (e.g. a paid pre-conference workshop) add their
+  // own fee on top -- not discounted themselves, matching the server (see
+  // POST /api/registrations).
+  const optionsFee = sumSelectedOptionFees();
+  const currentFee = Math.max(0, baseFee - discount) + optionsFee;
 
   const baseLine = document.getElementById('fee-discount-line');
   const discLine = document.getElementById('fee-discount-amount-line');
@@ -850,13 +859,19 @@ function calculateFee() {
     if (baseLine) baseLine.classList.add('hidden');
     if (discLine) discLine.classList.add('hidden');
   }
+  const optionsLine = document.getElementById('fee-options-line');
+  if (optionsLine) {
+    optionsLine.classList.toggle('hidden', optionsFee <= 0);
+    if (optionsFee > 0) setText('fee-options-display', `+₹${inr(optionsFee)}`);
+  }
   document.getElementById('calculated-fee-display').innerText = `₹${inr(currentFee)}`;
   document.getElementById('entered-amount').value = currentFee;
 
   // A 100%-off discount brings the fee to ₹0 -- there's nothing to pay, so
   // hide the QR/bank-transfer block and the UTR/screenshot fields entirely
   // (and stop requiring them) rather than asking for payment proof of a
-  // payment that was never made.
+  // payment that was never made. An option fee keeps this from going free
+  // even if the category itself is fully discounted.
   const isFreeReg = currentFee <= 0;
   const methodBlocks = document.getElementById('payment-method-blocks');
   const freeNote = document.getElementById('free-registration-note');
@@ -912,28 +927,83 @@ function togglePaymentMode() {
   if (input) input.placeholder = isNeft ? 'Transaction reference no.' : '12-digit UTR No.';
 }
 
-// Populate a <select> from program-option data, showing remaining spots and
-// disabling full options.
-function fillOptionSelect(id, options, placeholder) {
-  const sel = document.getElementById(id);
-  if (!sel) return;
-  const current = sel.value;
-  sel.innerHTML = `<option value="">-- ${esc(placeholder)} --</option>` +
-    (options || []).map(o =>
-      `<option value="${o.id}" ${o.full ? 'disabled' : ''}>${esc(o.name)}${o.full ? ' — FULL' : ` (${o.remaining} left)`}</option>`
-    ).join('');
-  if (current) sel.value = current;
-}
+// Program groups (Workshops, QI Practices, or any further admin-defined
+// group -- see program_groups/program_options in server.js), with live
+// capacity, rendered into the payment form. A group with max_select <= 1
+// renders as a single <select> (the common case); a group configured to
+// allow more than one choice renders as a checkbox list instead.
+// option id -> fee, populated by loadProgramOptions(), so calculateFee() can
+// add a chosen option's fee to the total without a round-trip.
+let optionFeeById = {};
 
-// Load workshops and QI practices (with live capacity) into the payment form.
 async function loadProgramOptions() {
+  const box = document.getElementById('program-groups-container');
+  const section = document.getElementById('program-groups-section');
+  if (!box) return;
   try {
     const data = await (await fetch('/api/program-options')).json();
-    fillOptionSelect('payment-workshop', data.workshops, 'Choose 1 Workshop (optional)');
-    fillOptionSelect('payment-qi-exposure', data.qiPractices, 'Choose 1 QI Practice (optional)');
+    const groups = data.groups || [];
+    optionFeeById = {};
+    groups.forEach((g) => g.options.forEach((o) => { optionFeeById[o.id] = Number(o.fee) || 0; }));
+    if (section) section.classList.toggle('hidden', groups.length === 0);
+    const feeTag = (o) => o.fee > 0 ? ` — +₹${inr(o.fee)}` : '';
+    box.innerHTML = groups.map((g) => {
+      const label = `${esc(g.name)}${g.required ? ' <span class="text-rose-500">*</span>' : ' <span class="font-normal text-slate-400">(optional)</span>'}`;
+      if (g.maxSelect <= 1) {
+        return `<div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">${label}</label>
+          <select class="program-group-select w-full p-2.5 text-sm border rounded-lg bg-white outline-none" data-group-id="${g.id}" data-group-name="${esc(g.name)}" ${g.required ? 'data-required="1"' : ''} onchange="calculateFee()">
+            <option value="">-- Choose${g.required ? '' : ' (optional)'} --</option>
+            ${g.options.map((o) => `<option value="${o.id}" ${o.full ? 'disabled' : ''}>${esc(o.name)}${o.full ? ' — FULL' : ` (${o.remaining} left)`}${feeTag(o)}</option>`).join('')}
+          </select>
+        </div>`;
+      }
+      return `<div>
+        <label class="block text-xs font-semibold text-slate-700 mb-1">${label} <span class="font-normal text-slate-400">(choose up to ${g.maxSelect})</span></label>
+        <div class="space-y-1.5" data-group-id="${g.id}" data-group-name="${esc(g.name)}" ${g.required ? 'data-required="1"' : ''}>
+          ${g.options.map((o) => `<label class="flex items-center gap-2 text-sm ${o.full ? 'text-slate-400' : 'text-slate-700'}">
+            <input type="checkbox" class="program-group-checkbox" data-group-id="${g.id}" value="${o.id}" ${o.full ? 'disabled' : ''} onchange="calculateFee()">
+            ${esc(o.name)}${o.full ? ' — FULL' : ` (${o.remaining} left)`}${feeTag(o)}
+          </label>`).join('')}
+        </div>
+      </div>`;
+    }).join('') || '<p class="text-sm text-slate-400">No program options available.</p>';
   } catch (e) {
-    /* leave the placeholders in place if the fetch fails */
+    /* leave the section empty if the fetch fails */
   }
+}
+
+// Every option id the delegate currently has selected, across every group
+// (single-select <select>s and multi-select checkbox lists alike).
+function collectSelectedOptionIds() {
+  const ids = [];
+  document.querySelectorAll('#program-groups-container .program-group-select').forEach((sel) => {
+    if (sel.value) ids.push(Number(sel.value));
+  });
+  document.querySelectorAll('#program-groups-container .program-group-checkbox:checked').forEach((cb) => {
+    ids.push(Number(cb.value));
+  });
+  return ids;
+}
+
+// Sum of the fees on every currently-selected program option (e.g. a paid
+// pre-conference workshop) -- added to the category fee in calculateFee().
+function sumSelectedOptionFees() {
+  return collectSelectedOptionIds().reduce((sum, id) => sum + (optionFeeById[id] || 0), 0);
+}
+
+// Client-side nudge only -- required-group and max_select enforcement is
+// re-checked server-side (see resolveSelections in server.js) regardless.
+function validateProgramGroupSelections() {
+  for (const sel of document.querySelectorAll('#program-groups-container .program-group-select[data-required="1"]')) {
+    if (!sel.value) return `Please choose an option under "${sel.dataset.groupName}".`;
+  }
+  for (const wrap of document.querySelectorAll('#program-groups-container [data-required="1"]')) {
+    if (wrap.tagName !== 'DIV') continue;
+    const checked = wrap.querySelectorAll('.program-group-checkbox:checked').length;
+    if (checked === 0) return `Please choose an option under "${wrap.dataset.groupName}".`;
+  }
+  return null;
 }
 
 // Categories + current-phase fee, loaded from the fee master.
@@ -1088,6 +1158,9 @@ async function verifyAndSubmitPayment(e) {
   const idFile = document.getElementById('payment-id-card').files[0];
   if (isStudent && !idFile) return showToast('Please upload your student ID card for this category.');
 
+  const groupError = validateProgramGroupSelections();
+  if (groupError) return showToast(groupError);
+
   const submitBtn = document.getElementById('submit-payment-btn');
   const originalBtnText = submitBtn.innerText;
   submitBtn.innerText = isFreeReg ? 'Confirming...' : 'Checking uploads...';
@@ -1102,8 +1175,7 @@ async function verifyAndSubmitPayment(e) {
     // (amount / UPI ID / UTR) and, for students, the ID card.
     const basePayload = {
       categoryKey,
-      workshopOptionId: Number(document.getElementById('payment-workshop').value) || null,
-      qiOptionId: Number(document.getElementById('payment-qi-exposure').value) || null,
+      optionIds: collectSelectedOptionIds(),
       amount: parseFloat(document.getElementById('entered-amount').value),
       utr,
       screenshot,
@@ -1819,25 +1891,33 @@ function setupAdminDelegation() {
     });
   }
 
-  // Workshop and QI masters share the same program-row controls; wire the
-  // delegated click handler to both containers.
-  const programClickHandler = (box) => (e) => {
-    const save = e.target.closest('.prog-save');
-    if (save) {
-      const input = box.querySelector(`.prog-capacity[data-id="${save.dataset.id}"]`);
-      return saveProgramCapacity(save.dataset.id, parseInt(input.value, 10));
-    }
-    const toggle = e.target.closest('.prog-toggle');
-    if (toggle) return toggleProgram(toggle.dataset.id, toggle.dataset.active === '1' ? 0 : 1);
-    const del = e.target.closest('.prog-delete');
-    if (del) return deleteProgram(del.dataset.id);
-    const roster = e.target.closest('.prog-roster');
-    if (roster) return openRosterModal(roster.dataset.id, roster.dataset.type, roster.dataset.name);
-  };
-  ['workshops-container', 'qi-container'].forEach((id) => {
-    const box = document.getElementById(id);
-    if (box) box.addEventListener('click', programClickHandler(box));
-  });
+  // Every group's option rows, plus the group-level controls, live in one
+  // dynamically-rendered container -- see renderBackendPrograms().
+  const programsBox = document.getElementById('program-groups-admin-container');
+  if (programsBox) {
+    programsBox.addEventListener('click', (e) => {
+      const save = e.target.closest('.prog-save');
+      if (save) {
+        const capInput = programsBox.querySelector(`.prog-capacity[data-id="${save.dataset.id}"]`);
+        const feeInput = programsBox.querySelector(`.prog-fee[data-id="${save.dataset.id}"]`);
+        return saveProgramOption(save.dataset.id, parseInt(capInput.value, 10), parseFloat(feeInput.value) || 0);
+      }
+      const toggle = e.target.closest('.prog-toggle');
+      if (toggle) return toggleProgram(toggle.dataset.id, toggle.dataset.active === '1' ? 0 : 1);
+      const del = e.target.closest('.prog-delete');
+      if (del) return deleteProgram(del.dataset.id);
+      const roster = e.target.closest('.prog-roster');
+      if (roster) return openRosterModal(roster.dataset.id, roster.dataset.name);
+      const groupToggle = e.target.closest('.group-toggle');
+      if (groupToggle) return toggleProgramGroup(groupToggle.dataset.id, groupToggle.dataset.active === '1' ? 0 : 1);
+      const groupDelete = e.target.closest('.group-delete');
+      if (groupDelete) return deleteProgramGroup(groupDelete.dataset.id);
+    });
+    programsBox.addEventListener('submit', (e) => {
+      const form = e.target.closest('.add-option-form');
+      if (form) return handleAddProgramOption(e, form);
+    });
+  }
 
   const rosterList = document.getElementById('roster-list');
   if (rosterList) {
@@ -1939,7 +2019,7 @@ function applyRoleVisibility(role) {
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
   // Super-admin-only masters; Reminders + Group Discount also open to finance;
   // Users & Roles also opens to Operations (see isOperations above).
-  const superItems = ['workshops', 'qi', 'fees', 'general', 'discount', 'activity'];
+  const superItems = ['programs', 'fees', 'general', 'discount', 'activity'];
   const financeItems = ['reminders', 'groupdiscount'];
   superItems.forEach((key) => {
     const el = document.getElementById(`settings-item-${key}`);
@@ -2963,27 +3043,27 @@ const REG_STATUS_STYLES = {
 };
 
 // Cached so filtering/search re-renders instantly without a round-trip, and
-// so the workshop/QI <select>s below have the full option list to draw from.
+// so the program-change modal has the full group/option list to draw from.
 let cachedUsers = [];
-let cachedAdminProgramOptions = [];
+let cachedAdminProgramGroups = [];
 
 async function loadBackendUsers() {
-  const [usersRes, optsRes] = await Promise.all([
+  const [usersRes, groupsRes] = await Promise.all([
     fetch('/api/users'),
-    fetch('/api/admin/program-options'),
+    fetch('/api/admin/program-groups'),
   ]);
   cachedUsers = ((await usersRes.json()).users) || [];
-  cachedAdminProgramOptions = ((await optsRes.json()).options) || [];
+  cachedAdminProgramGroups = ((await groupsRes.json()).groups) || [];
   renderBackendUsers();
 }
 
-// Plain-text display of a delegate's current workshop/QI choice, plus a
-// "Change" button (verified registrations only -- nothing to enroll into
-// before payment is verified) that opens a confirm-before-save modal
-// instead of an inline <select>. An inline select sitting in a dense table
-// is an easy misclick/scroll-wheel-while-hovering away from silently
-// changing someone's enrollment; routing every change through an explicit
-// "Change" -> modal -> "Save" flow removes that.
+// A "Change"/"Add" button (verified registrations only -- nothing to enroll
+// into before payment is verified) opens a confirm-before-save modal instead
+// of an inline <select>. An inline select sitting in a dense table is an
+// easy misclick/scroll-wheel-while-hovering away from silently changing
+// someone's enrollment; routing every change through an explicit
+// "Change" -> modal -> "Save" flow removes that. See the Users detail panel
+// for where this is actually used.
 const ROLE_ICONS = {
   SUPER_ADMIN: '👑',
   FINANCE_ADMIN: '💰',
@@ -3009,15 +3089,6 @@ function roleMarkBW(role) {
   const glyph = ROLE_ICONS_BW[role];
   if (!glyph) return '';
   return `<span class="text-slate-400 mr-1" title="${esc(roleLabel(role))}">${glyph}</span>`;
-}
-
-function programDisplayCell(u, options, currentId, type) {
-  const current = options.find((o) => String(o.id) === String(currentId));
-  const label = type === 'WORKSHOP' ? 'Workshop' : 'QI Exposure';
-  const changeBtn = u.registration_status === 'BANK_VERIFIED'
-    ? `<button type="button" class="block text-[10px] text-indigo-600 hover:text-indigo-800 underline font-semibold mt-0.5" onclick="openProgramChangeModal('${esc(u.phone_number)}','${type}')">${current ? 'Change' : 'Add'} ${label}</button>`
-    : '';
-  return `<span class="text-xs ${current ? 'text-slate-700 font-semibold' : 'text-slate-400'}">${current ? esc(current.name) : '—'}</span>${changeBtn}`;
 }
 
 // Fills the Designation and Institute filter <select>s from the distinct
@@ -3090,18 +3161,23 @@ function renderBackendUsers() {
   `).join('') : `<tr><td colspan="6" class="p-8 text-center text-sm text-slate-400">No users match these filters.</td></tr>`;
 }
 
-// State for the shared workshop/QI change modal -- one modal, reused for
-// both program types and re-populated per delegate on open.
-let programChangeState = { phone: null, type: null, currentId: null };
+// State for the shared program-group change modal -- one modal, reused for
+// every group and re-populated per delegate/group on open. currentId comes
+// from userDetailSelections (the last-loaded Users detail panel response --
+// see openUserDetail), since the Users list itself no longer carries every
+// group's selection per row (there can be arbitrarily many groups).
+let programChangeState = { phone: null, groupId: null, currentId: null };
 
-function openProgramChangeModal(phone, type) {
+function openProgramChangeModal(phone, groupId) {
   const u = cachedUsers.find((x) => x.phone_number === phone);
-  if (!u) return;
-  const currentId = type === 'WORKSHOP' ? u.workshop_option_id : u.qi_option_id;
-  const options = cachedAdminProgramOptions.filter((o) => o.type === type);
-  programChangeState = { phone, type, currentId };
+  const group = cachedAdminProgramGroups.find((g) => String(g.id) === String(groupId));
+  if (!u || !group) return;
+  const current = userDetailSelections.find((s) => String(s.group_id) === String(groupId));
+  const currentId = current ? current.option_id : null;
+  const options = group.options;
+  programChangeState = { phone, groupId, currentId };
 
-  setText('program-change-title', type === 'WORKSHOP' ? 'Change Workshop' : 'Change QI Exposure');
+  setText('program-change-title', `Change ${group.name}`);
   setText('program-change-subtitle', [u.salutation, u.full_name].filter(Boolean).join(' '));
 
   // An inactive option only stays selectable if it's the delegate's current
@@ -3162,6 +3238,7 @@ async function updateRole(phone, role) {
 let userDetailPhone = null;
 let userDetailData = null;
 let userDetailEditing = false;
+let userDetailSelections = [];
 
 const ROLE_OPTIONS = [
   ['DELEGATE', 'Delegate'],
@@ -3194,6 +3271,7 @@ async function openUserDetail(phone) {
     return;
   }
   userDetailData = await res.json();
+  userDetailSelections = userDetailData.selections || [];
   renderUserDetail();
 }
 
@@ -3275,20 +3353,25 @@ function renderUserDetail() {
     }).join('');
   }
 
-  // Workshop / QI with change buttons (verified registrations only). Faculty
-  // status is set from that option's Roster (Settings → Workshop/QI Master),
-  // not editable here -- just shown for context.
+  // One line per active program group (Workshops, QI Practices, or any
+  // further group), with a Change/Add button (verified registrations only).
+  // Faculty status is set from that option's Roster (Settings → Program
+  // Groups), not editable here -- just shown for context.
   const canChange = reg && reg.bank_status === 'BANK_VERIFIED';
-  const progLine = (label, name, type, isFaculty) => `<div class="flex justify-between items-center gap-3 py-1">
-    <span class="text-slate-500">${esc(label)}</span>
+  const progLine = (group) => {
+    const sel = userDetailSelections.find((s) => String(s.group_id) === String(group.id));
+    return `<div class="flex justify-between items-center gap-3 py-1">
+    <span class="text-slate-500">${esc(group.name)}</span>
     <span class="text-right">
-      <span class="text-slate-800 font-medium">${name ? esc(name) : '—'}</span>
-      ${name && isFaculty ? '<span class="ml-1.5 text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide align-middle">Faculty</span>' : ''}
-      ${canChange ? `<button type="button" onclick="openProgramChangeModalFromDetail('${type}')" class="ml-2 text-[11px] text-indigo-600 hover:text-indigo-800 underline font-semibold">${name ? 'Change' : 'Add'}</button>` : ''}
+      <span class="text-slate-800 font-medium">${sel ? esc(sel.option_name) : '—'}</span>
+      ${sel && sel.is_faculty ? '<span class="ml-1.5 text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide align-middle">Faculty</span>' : ''}
+      ${canChange ? `<button type="button" onclick="openProgramChangeModalFromDetail(${group.id})" class="ml-2 text-[11px] text-indigo-600 hover:text-indigo-800 underline font-semibold">${sel ? 'Change' : 'Add'}</button>` : ''}
     </span>
   </div>`;
-  const programs = reg
-    ? progLine('Workshop', reg.workshop_name, 'WORKSHOP', Number(reg.workshop_is_faculty)) + progLine('QI Exposure', reg.qi_name, 'QI', Number(reg.qi_is_faculty))
+  };
+  const activeGroups = cachedAdminProgramGroups.filter((g) => g.active);
+  const programs = reg && activeGroups.length
+    ? activeGroups.map(progLine).join('')
     : `<p class="text-slate-400 py-1">No enrollment.</p>`;
 
   // Role setter. Mirrors the server's escalation boundary (see
@@ -3384,70 +3467,129 @@ async function saveUserDetailRole() {
   await openUserDetail(userDetailPhone);
 }
 
-// Bridges the detail panel to the shared workshop/QI change modal, which
-// reads from cachedUsers (already loaded for the Users table).
-function openProgramChangeModalFromDetail(type) {
-  if (userDetailPhone) openProgramChangeModal(userDetailPhone, type);
+// Bridges the detail panel to the shared program-group change modal, which
+// reads from cachedAdminProgramGroups and userDetailSelections (both already
+// loaded for the Users table / this panel).
+function openProgramChangeModalFromDetail(groupId) {
+  if (userDetailPhone) openProgramChangeModal(userDetailPhone, groupId);
 }
 
-// --- WORKSHOPS & QI PRACTICES (admin) ---
+// --- PROGRAM GROUPS (admin) ---
+// A group is a named bucket of mutually-related options (Workshops, QI
+// Practices, or any further group a conference defines -- see
+// program_groups/program_options in server.js). Rendered as one card per
+// group: its own settings, an "add option" form, and its option rows.
 async function renderBackendPrograms() {
-  const wsBox = document.getElementById('workshops-container');
-  const qiBox = document.getElementById('qi-container');
-  if (!wsBox && !qiBox) return;
-  const res = await fetch('/api/admin/program-options');
-  if (!res.ok) {
-    const msg = '<p class="text-sm text-slate-500 p-4">Unable to load programs.</p>';
-    if (wsBox) wsBox.innerHTML = msg;
-    if (qiBox) qiBox.innerHTML = msg;
-    return;
-  }
-  const options = (await res.json()).options || [];
-  setText('badge-program-count', options.length);
+  const box = document.getElementById('program-groups-admin-container');
+  if (!box) return;
+  const res = await fetch('/api/admin/program-groups');
+  if (!res.ok) { box.innerHTML = '<p class="text-sm text-slate-500 p-4">Unable to load program groups.</p>'; return; }
+  const groups = (await res.json()).groups || [];
+  setText('badge-program-count', groups.reduce((n, g) => n + g.options.length, 0));
 
-  const rowsHtml = (type) =>
-    options.filter(o => o.type === type).map(o => {
-      const remaining = Math.max(0, o.capacity - o.enrolled);
-      const facultyCount = Number(o.faculty_count) || 0;
-      return `
-      <div class="flex flex-wrap items-center gap-3 py-3 border-b border-slate-100 ${o.active ? '' : 'opacity-60'}">
-        <div class="flex-1 min-w-[180px]">
-          <p class="font-semibold text-sm text-slate-800">${esc(o.name)}</p>
-          <p class="text-[11px] text-slate-500">Enrolled ${Number(o.enrolled)} / ${Number(o.capacity)} · ${remaining} left${facultyCount ? ` · ${facultyCount} faculty` : ''}${o.active ? '' : ' · inactive'}</p>
+  const optionRow = (o) => {
+    const remaining = Math.max(0, o.capacity - o.enrolled);
+    const facultyCount = Number(o.faculty_count) || 0;
+    return `
+    <div class="flex flex-wrap items-center gap-3 py-3 border-b border-slate-100 ${o.active ? '' : 'opacity-60'}">
+      <div class="flex-1 min-w-[180px]">
+        <p class="font-semibold text-sm text-slate-800">${esc(o.name)}${Number(o.fee) > 0 ? ` <span class="text-[11px] font-normal text-indigo-600">+₹${inr(o.fee)}</span>` : ''}</p>
+        <p class="text-[11px] text-slate-500">Enrolled ${Number(o.enrolled)} / ${Number(o.capacity)} · ${remaining} left${facultyCount ? ` · ${facultyCount} faculty` : ''}${o.active ? '' : ' · inactive'}</p>
+      </div>
+      <input type="number" min="0" value="${esc(o.capacity)}" title="Capacity" class="prog-capacity w-20 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
+      <input type="number" min="0" step="0.01" value="${esc(o.fee)}" title="Fee (₹)" class="prog-fee w-24 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
+      <button class="prog-save px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Save</button>
+      <button class="prog-roster px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}" data-name="${esc(o.name)}">Roster</button>
+      <button class="prog-toggle px-3 py-1.5 ${o.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}" data-active="${o.active ? 1 : 0}">${o.active ? 'Deactivate' : 'Activate'}</button>
+      <button class="prog-delete px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Delete</button>
+    </div>`;
+  };
+
+  box.innerHTML = groups.map((g) => `
+    <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm mb-6 ${g.active ? '' : 'opacity-60'}">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div>
+          <h4 class="font-bold text-slate-800">${esc(g.name)}${g.active ? '' : ' <span class="text-[10px] font-normal text-slate-400">(inactive)</span>'}</h4>
+          <p class="text-[11px] text-slate-500">${g.required ? 'Required' : 'Optional'} · choose up to ${Number(g.max_select)}</p>
         </div>
-        <input type="number" min="0" value="${esc(o.capacity)}" class="prog-capacity w-20 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
-        <button class="prog-save px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Save</button>
-        <button class="prog-roster px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}" data-type="${esc(o.type)}" data-name="${esc(o.name)}">Roster</button>
-        <button class="prog-toggle px-3 py-1.5 ${o.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}" data-active="${o.active ? 1 : 0}">${o.active ? 'Deactivate' : 'Activate'}</button>
-        <button class="prog-delete px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Delete</button>
-      </div>`;
-    }).join('') || '<p class="text-sm text-slate-400 py-2">None yet.</p>';
-
-  const card = (rows) => `<div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">${rows}</div>`;
-  if (wsBox) wsBox.innerHTML = card(rowsHtml('WORKSHOP'));
-  if (qiBox) qiBox.innerHTML = card(rowsHtml('QI'));
+        <div class="flex gap-2">
+          <button class="group-toggle px-2.5 py-1.5 ${g.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(g.id)}" data-active="${g.active ? 1 : 0}">${g.active ? 'Deactivate' : 'Activate'}</button>
+          <button class="group-delete px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(g.id)}">Delete Group</button>
+        </div>
+      </div>
+      <form class="add-option-form flex flex-wrap items-end gap-2 mb-3 bg-slate-50 p-3 rounded-xl" data-group-id="${esc(g.id)}">
+        <div class="flex-1 min-w-[160px]">
+          <label class="block text-[11px] font-semibold text-slate-600 mb-1">Option name</label>
+          <input required class="new-option-name w-full p-2 border rounded-lg text-sm" placeholder="e.g. Workshop 1: ...">
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-600 mb-1">Capacity</label>
+          <input type="number" min="0" value="50" class="new-option-capacity w-24 p-2 border rounded-lg text-sm">
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-600 mb-1">Fee (₹)</label>
+          <input type="number" min="0" step="0.01" value="0" class="new-option-fee w-24 p-2 border rounded-lg text-sm">
+        </div>
+        <button type="submit" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">+ Add</button>
+      </form>
+      ${g.options.map(optionRow).join('') || '<p class="text-sm text-slate-400 py-2">No options yet.</p>'}
+    </div>
+  `).join('') || '<p class="text-sm text-slate-400 p-4">No program groups yet. Add one above.</p>';
 }
 
-async function handleAddProgram(e, type) {
+async function handleAddProgramGroup(e) {
   e.preventDefault();
-  const prefix = type === 'QI' ? 'qi' : 'workshop';
-  const nameInput = document.getElementById(`new-${prefix}-name`);
+  const nameInput = document.getElementById('new-group-name');
+  const requiredInput = document.getElementById('new-group-required');
+  const maxSelectInput = document.getElementById('new-group-max-select');
   const payload = {
-    type,
     name: nameInput.value,
-    capacity: parseInt(document.getElementById(`new-${prefix}-capacity`).value, 10),
+    required: !!(requiredInput && requiredInput.checked),
+    maxSelect: parseInt((maxSelectInput && maxSelectInput.value) || '1', 10) || 1,
+  };
+  const data = await (await fetch('/api/admin/program-groups', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not add group.');
+  nameInput.value = '';
+  if (requiredInput) requiredInput.checked = false;
+  if (maxSelectInput) maxSelectInput.value = '1';
+  renderBackendPrograms();
+}
+
+async function toggleProgramGroup(id, active) {
+  await fetch(`/api/admin/program-groups/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }),
+  });
+  renderBackendPrograms();
+}
+
+async function deleteProgramGroup(id) {
+  if (!(await showConfirm('Delete this group? All its options must already be removed. This cannot be undone.'))) return;
+  const data = await (await fetch(`/api/admin/program-groups/${encodeURIComponent(id)}`, { method: 'DELETE' })).json();
+  if (!data.success) showToast(data.error || 'Delete failed.');
+  renderBackendPrograms();
+}
+
+async function handleAddProgramOption(e, form) {
+  e.preventDefault();
+  const nameInput = form.querySelector('.new-option-name');
+  const payload = {
+    groupId: Number(form.dataset.groupId),
+    name: nameInput.value,
+    capacity: parseInt(form.querySelector('.new-option-capacity').value, 10),
+    fee: parseFloat(form.querySelector('.new-option-fee').value) || 0,
   };
   const data = await (await fetch('/api/admin/program-options', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   })).json();
   if (!data.success) return showToast(data.error || 'Could not add option.');
-  nameInput.value = '';
   renderBackendPrograms();
 }
 
-async function saveProgramCapacity(id, capacity) {
+async function saveProgramOption(id, capacity, fee) {
   const data = await (await fetch(`/api/admin/program-options/${encodeURIComponent(id)}`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ capacity }),
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ capacity, fee }),
   })).json();
   if (!data.success) showToast(data.error || 'Update failed.');
   renderBackendPrograms();
@@ -3467,11 +3609,11 @@ async function deleteProgram(id) {
   renderBackendPrograms();
 }
 
-// --- WORKSHOP / QI ROSTER (manual admin add/remove) ---
+// --- PROGRAM OPTION ROSTER (manual admin add/remove) ---
 let rosterOptionId = null;
 let rosterEnrolledPhones = new Set();
 
-async function openRosterModal(id, type, name) {
+async function openRosterModal(id, name) {
   rosterOptionId = id;
   setText('roster-title', `Roster — ${name}`);
   document.getElementById('roster-search').value = '';
@@ -4429,9 +4571,9 @@ async function loadReportWorkshopOptions() {
   const data = await res.json();
   const options = data.options || [];
   select.innerHTML = options.length
-    ? `<option value="">Select a workshop or QI practice…</option>` +
-      options.map((o) => `<option value="${esc(o.id)}">${o.type === 'QI' ? 'QI: ' : 'Workshop: '}${esc(o.name)}</option>`).join('')
-    : '<option value="">No workshops or QI practices set up yet</option>';
+    ? `<option value="">Select a program option…</option>` +
+      options.map((o) => `<option value="${esc(o.id)}">${esc(o.groupName)}: ${esc(o.name)}</option>`).join('')
+    : '<option value="">No program options set up yet</option>';
   select.onchange = () => {
     const enabled = !!select.value;
     ['report-workshop-view-btn', 'report-workshop-csv-btn', 'report-workshop-pdf-btn'].forEach((id) => {
@@ -5181,7 +5323,7 @@ document.addEventListener('click', (e) => {
 // Settings sub-menu tabs (each is now its own top-level <section>) vs. the
 // main nav-bar tabs. The Settings items highlight in the dropdown; the main
 // tabs highlight in the tab bar.
-const SETTINGS_TABS = ['workshops', 'qi', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'activity'];
+const SETTINGS_TABS = ['programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'activity'];
 const MAIN_TABS = ['payments', 'statement', 'abstracts', 'reports'];
 
 // Which tabs each role may open -- the single source of truth used both to
@@ -5194,7 +5336,7 @@ function allowedBackendTabs({ isSuper, isFinance, isReviewer, isOperations }) {
   if (isReviewer) allowed.push('abstracts');
   if (isFinance || isReviewer || isOperations) allowed.push('reports');
   if (isFinance) allowed.push('reminders', 'groupdiscount');
-  if (isSuper) allowed.push('workshops', 'qi', 'fees', 'general', 'discount', 'activity');
+  if (isSuper) allowed.push('programs', 'fees', 'general', 'discount', 'activity');
   if (isSuper || isOperations) allowed.push('users');
   return allowed;
 }
@@ -5220,7 +5362,7 @@ function switchBackendTab(tab) {
   if (tab === 'payments') { renderBackendPayments(); renderDelegateMap(); }
   if (tab === 'abstracts') renderBackendAbstracts();
   if (tab === 'reports') loadReportWorkshopOptions();
-  if (tab === 'workshops' || tab === 'qi') renderBackendPrograms();
+  if (tab === 'programs') renderBackendPrograms();
   if (tab === 'fees') renderBackendFees();
   if (tab === 'discount') renderDiscountCodes();
   if (tab === 'groupdiscount') { renderGroupRules(); renderGroupsMonitor(); }

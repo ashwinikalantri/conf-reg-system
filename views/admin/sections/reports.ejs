@@ -3,7 +3,7 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div id="report-delegates" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
           <h3 class="font-bold text-slate-800">Registered Delegates</h3>
-          <p class="text-xs text-slate-500 mt-1 mb-4">Demography &amp; institute details for verified delegates — no workshop/QI or fee data.</p>
+          <p class="text-xs text-slate-500 mt-1 mb-4">Demography &amp; institute details for verified delegates — no program-group or fee data.</p>
           <div class="flex flex-wrap gap-2">
             <button onclick="viewReport('delegates')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg">👁 View</button>
             <button onclick="downloadReport('delegates','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">⬇ Excel</button>
@@ -20,8 +20,8 @@
           </div>
         </div>
         <div id="report-workshops" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <h3 class="font-bold text-slate-800">Registrations by Workshop / QI Practice</h3>
-          <p class="text-xs text-slate-500 mt-1 mb-4">Pick one workshop or QI practice to view or download its roster.</p>
+          <h3 class="font-bold text-slate-800">Registrations by Program Option</h3>
+          <p class="text-xs text-slate-500 mt-1 mb-4">Pick one program option (from any group) to view or download its roster.</p>
           <select id="report-workshop-select" class="w-full p-2 border rounded-lg text-sm bg-white outline-none mb-3">
             <option value="">Loading options…</option>
           </select>

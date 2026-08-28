@@ -66,15 +66,19 @@ finishable later from the admin panel:
    number prefix.
 3. **Delegate Categories & Fees** — add one or more fee categories with
    their early/regular/late/spot pricing and the phase cutoff dates.
-4. **Workshops** — add workshop / QI-track options with capacities.
+4. **Workshops** — add workshop / QI-track options, grouped so a delegate
+   picks at most one per group (further groups, and finer settings like
+   "required" or "allow more than one," are configured afterward from
+   Settings → Program Groups — see below).
 5. **UPI & Bank Transfer** — the conference's UPI VPA/payee name and bank
    transfer details shown to delegates as a payment option.
 6. **SMS** and **Email** — provider credentials, both optional at this stage.
 
 Everything from Step 2 onward happens client-side against the same admin
-endpoints Settings → General / Fees / Workshops already use
+endpoints Settings → General / Fees / Program Groups already use
 (`PUT /api/admin/general-settings`, `POST /api/admin/fees/categories`,
-`POST /api/admin/program-options`, etc.) without another page load — so
+`POST /api/admin/program-groups`, `POST /api/admin/program-options`, etc.)
+without another page load — so
 anything set here can be edited or added to later exactly the same way, and
 skipping a step just means doing it from the admin panel afterward. Because
 Step 1 already flipped `setup_completed`, a refresh partway through drops
@@ -461,19 +465,46 @@ authoritative fee both come from the master via `GET /api/fees`; the admin
 verification below) whether a category requires a student ID upload.
 Deleting a category in use is refused (deactivate instead).
 
-## Workshops & QI practices (capacity-limited)
+## Program groups (capacity-limited, admin-defined)
 
-Workshops and QI practice tracks live in an admin-editable `program_options`
-master (type, name, capacity, active). A super admin manages them under the
-**Workshop Master** / **QI Practice Master** tabs (add, edit capacity,
-activate/deactivate, delete — delete is refused while anyone is enrolled).
-The delegate payment form is populated from `GET /api/program-options`,
-showing remaining spots and disabling full options. On submit the server
-records the chosen option ids and enforces capacity: a slot is held by any
-non-rejected registration, and a full option is rejected. An enrolled
-delegate can be marked **Faculty** for a specific option from its roster,
-which excludes them from the capacity count and labels them accordingly on
-reports.
+Optional tracks a delegate can enroll in alongside their main registration
+are organized into **groups** — a group is a named bucket a delegate picks
+from (e.g. "Workshops", "QI Practices"), and any number of groups can exist,
+each with its own options (`program_groups` / `program_options`, admin-
+editable). Per group, a super admin sets:
+
+- **Required or optional** — a required group blocks registration submission
+  until the delegate picks something in it.
+- **Max selections** — how many options within the group one delegate may
+  choose (1 by default, so "pick one" is the common case; set higher to
+  allow choosing more than one).
+- **Per-option fee** — optional, defaults to ₹0. When set, it's added on top
+  of the delegate's category fee (not itself discounted by a promo/group
+  discount code, which only apply to the category) — e.g. a paid
+  pre-conference workshop alongside a free main registration.
+
+Managed under **Settings → Program Groups** (add/rename/require/delete a
+group; within it, add options with a capacity and fee, edit, activate/
+deactivate, delete — delete is refused while anyone is enrolled, or while a
+group still has options in it). The delegate payment form is populated from
+`GET /api/program-options`, one control per active group (a `<select>` when
+it only allows one choice, checkboxes when it allows more), showing
+remaining spots, disabling full options, and totaling any option fees into
+the amount due. On submit the server re-validates every group's
+required/max-selections rule and each option's capacity — a slot is held by
+any non-rejected registration, and a full option is rejected — then records
+the choices in `registration_options` (one row per registration × option).
+An enrolled delegate can be marked **Faculty** for a specific option from
+its roster, which excludes them from the capacity count and labels them
+accordingly on reports.
+
+A deployment upgrading from before groups existed has this handled
+automatically: on first boot, the two program types that used to be
+hardcoded (workshops and QI practices) become two groups of that name, and
+every existing delegate's choice is carried over — see
+`migrateProgramGroupsOnBoot()` in `server.js`. Nothing needs to be redone by
+hand, and a fresh install just starts with no groups until the setup wizard
+or Settings → Program Groups creates some.
 
 ## Student ID verification
 
