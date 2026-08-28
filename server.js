@@ -68,6 +68,16 @@ const OTP_RESEND_MS = 30 * 1000;         // min gap between OTP requests
 const OTP_MAX_ATTEMPTS = 5;              // wrong tries before OTP is burned
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // sessions last 12 hours
 
+// Password login: a per-phone failed-attempt counter, in-memory rather than
+// a DB table -- unlike OTPs (which are already short-lived, DB-backed rows
+// with their own attempts column) a password is long-lived, so this only
+// needs to survive as long as the process does; a restart resetting it is
+// an acceptable trade for not needing a schema. Same shape of protection as
+// OTP_MAX_ATTEMPTS above: lock out after too many wrong guesses.
+const passwordLoginAttempts = new Map(); // phone -> { count, lockUntil }
+const PASSWORD_MAX_ATTEMPTS = 5;
+const PASSWORD_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+
 // Send the OTP back to the client when there is no real SMS gateway.
 // Defaults on outside production so the app is usable out of the box;
 // force it off with OTP_ECHO=false, or on with OTP_ECHO=true. `let`: also
@@ -109,42 +119,29 @@ function roleGrants(role) {
 // --- FIRST-RUN SETUP ------------------------------------------------------
 // A brand-new deployment has zero admin users and no code path to create one:
 // every account-creation route already requires being SUPER_ADMIN or
-// OPERATIONS. GET /setup and its two POST routes below break that deadlock
-// exactly once, gated on SETUP_TOKEN (an operator-chosen secret set in .env
-// before first boot -- there's no OTP/SMS dependency here on purpose, since a
-// fresh deploy may not have SMS configured yet either; knowing the token is
-// proof of server/file access, the same trust boundary every other secret in
-// this app already relies on).
+// OPERATIONS. GET /setup and its POST routes below break that deadlock
+// exactly once. No token gate: the only thing that makes this safe to leave
+// open is that it is IMPOSSIBLE to reach once a single admin account exists
+// (see isSetupModeActive below) -- a deployment is expected to be set up
+// immediately after it first comes up, before it is exposed to anyone else,
+// same trust window as e.g. an unconfigured database with no auth at all
+// briefly existing right after `docker compose up`.
 //
 // isSetupModeActive() is checked on every relevant request, not just at
 // boot, and is permanently and irreversibly false the moment either
 // condition below stops holding:
 //   - schema_meta.setup_completed is set the instant the first admin account
-//     is created (see POST /api/setup/create-admin) -- this is deliberate
-//     defense-in-depth: SETUP_TOKEN is a static operator-chosen value with no
-//     built-in expiry, so without this flag, deleting the only admin account
-//     later would silently reopen account creation to anyone who still has
-//     that token (a stale value in shell history, a deploy script, etc.).
-//   - SETUP_TOKEN must be set in the environment at all -- if it's blank or
-//     absent, setup mode never activates, full stop.
+//     is created (see POST /api/setup/create-admin) -- defense-in-depth so
+//     that deleting the only admin account later does not silently reopen
+//     account creation to the public internet.
+//   - an admin-role user already exists.
 async function isSetupModeActive() {
-  if (!process.env.SETUP_TOKEN) return false;
   const completed = await dbGet("SELECT value FROM schema_meta WHERE key = 'setup_completed'").catch(() => null);
   if (completed) return false;
   const admin = await dbGet(
     `SELECT 1 FROM users WHERE role IN (${ADMIN_ROLES.map(() => '?').join(',')}) LIMIT 1`, ADMIN_ROLES
   ).catch(() => null);
   return !admin;
-}
-
-// Constant-time compare so a wrong guess can't be narrowed down by response
-// timing. Length-checked first since timingSafeEqual throws on a mismatched
-// buffer length rather than just returning false.
-function safeTokenEquals(a, b) {
-  const bufA = Buffer.from(String(a || ''));
-  const bufB = Buffer.from(String(b || ''));
-  if (bufA.length !== bufB.length) return false;
-  return crypto.timingSafeEqual(bufA, bufB);
 }
 
 // Admin-editable from Settings → General (see GENERAL_SETTINGS_KEYS below),
@@ -154,13 +151,18 @@ function safeTokenEquals(a, b) {
 // check for it. regPrefix feeds assignUserRegNumber() below -- changing it
 // only affects registrations created from that point on; existing
 // registration numbers are never rewritten.
+//
+// Deliberately no defaults: this app is not tied to one specific conference,
+// so every field here starts blank and is meant to be filled in during
+// first-run setup (see GET /setup) rather than shipping a placeholder that
+// could go live un-noticed.
 const CONFERENCE = {
-  name: 'International Conference on Healthcare Quality & Patient Safety 2026',
-  acronym: 'NQOCN 2026',
-  startDate: '2026-11-21',
-  endDate: '2026-11-22',
-  location: 'MGIMS, Sevagram, Wardha',
-  regPrefix: 'NQOCN2026',
+  name: '',
+  acronym: '',
+  startDate: '',
+  endDate: '',
+  location: '',
+  regPrefix: '',
 };
 // `let`: admin-editable, applies immediately (read fresh wherever it's used).
 let PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
@@ -284,6 +286,8 @@ const GENERAL_SETTINGS_KEYS = {
   email_from: ['EMAIL', 'from'], email_from_name: ['EMAIL', 'fromName'], email_region: ['EMAIL', 'region'],
   email_digest_recipients: ['EMAIL', 'digestRecipients'],
   upi_id: ['UPI', 'id'], upi_payee_name: ['UPI', 'payeeName'],
+  bank_account_name: ['BANK', 'accountName'], bank_account_number: ['BANK', 'accountNumber'],
+  bank_ifsc: ['BANK', 'ifsc'], bank_branch: ['BANK', 'branch'],
   conference_name: ['CONFERENCE', 'name'], conference_acronym: ['CONFERENCE', 'acronym'],
   conference_start_date: ['CONFERENCE', 'startDate'], conference_end_date: ['CONFERENCE', 'endDate'],
   conference_location: ['CONFERENCE', 'location'], conference_reg_prefix: ['CONFERENCE', 'regPrefix'],
@@ -306,7 +310,7 @@ const RUNTIME_ENV_SETTERS = {
 async function loadGeneralSettings() {
   const keys = [...Object.keys(GENERAL_SETTINGS_KEYS), ...Object.keys(RUNTIME_ENV_SETTERS)];
   const rows = await dbAll(`SELECT key, value FROM schema_meta WHERE key IN (${keys.map(() => '?').join(',')})`, keys);
-  const targets = { SMS, EMAIL, UPI, CONFERENCE };
+  const targets = { SMS, EMAIL, UPI, BANK, CONFERENCE };
   for (const row of rows) {
     const dest = GENERAL_SETTINGS_KEYS[row.key];
     if (dest) { if (row.value) targets[dest[0]][dest[1]] = row.value; continue; }
@@ -380,15 +384,16 @@ async function sendOtpSms(phone, otp) {
 // working if someone updates their email address in Users & Roles.
 const EMAIL = {
   from: (process.env.SES_FROM || '').trim(),
-  fromName: process.env.SES_FROM_NAME || 'NQOCN 2026',
+  fromName: process.env.SES_FROM_NAME || '',
   region: (process.env.AWS_REGION || '').trim(),
-  digestRecipients: process.env.DIGEST_RECIPIENT_PHONES || '7440977777,7083170552,9167565576',
+  digestRecipients: process.env.DIGEST_RECIPIENT_PHONES || '',
 };
 const awsCredsPresent = () => !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
 const emailEnabled = () => awsCredsPresent() && !!EMAIL.region && !!EMAIL.from;
-// RFC 5322 "Display Name <address>" form -- without it SES sends with no
-// name, so inboxes show only the bare address instead of "NQOCN 2026".
-const emailFromFormatted = () => EMAIL.from ? `"${EMAIL.fromName.replace(/"/g, '')}" <${EMAIL.from}>` : EMAIL.from;
+// RFC 5322 "Display Name <address>" form -- without a name SES sends with
+// just the bare address, which is a legitimate look on its own, so an unset
+// fromName degrades to that rather than to an empty, oddly-quoted "" <addr>.
+const emailFromFormatted = () => (EMAIL.from && EMAIL.fromName) ? `"${EMAIL.fromName.replace(/"/g, '')}" <${EMAIL.from}>` : EMAIL.from;
 // Construct a fresh client on every credential/region change: a live client
 // caches its resolved credentials and is bound to its region, so mutating
 // EMAIL/process.env is not enough on its own (see the block comment above).
@@ -442,8 +447,20 @@ const emailWrap = (title, bodyHtml) =>
 // Settings → General, and served to the delegate payment form via /api/fees
 // so the QR code and the OCR check can never drift apart.
 const UPI = {
-  id: process.env.OFFICIAL_UPI_ID || 'abhishekraut@cbin',
-  payeeName: process.env.UPI_PAYEE_NAME || 'NQOCN 2026',
+  id: process.env.OFFICIAL_UPI_ID || '',
+  payeeName: process.env.UPI_PAYEE_NAME || '',
+};
+
+// Bank-transfer fallback shown alongside the UPI QR (the delegate payment
+// and balance-top-up modals both offer "pay by bank transfer instead").
+// Previously hardcoded straight into those two templates; now genuinely
+// admin-editable/setup-configurable like UPI, since a bank account is just
+// as conference-specific as a UPI ID.
+const BANK = {
+  accountName: process.env.BANK_ACCOUNT_NAME || '',
+  accountNumber: process.env.BANK_ACCOUNT_NUMBER || '',
+  ifsc: process.env.BANK_IFSC || '',
+  branch: process.env.BANK_BRANCH || '',
 };
 
 // Whether a category must upload a student ID card, and the discipline/level
@@ -461,6 +478,46 @@ async function studentCategoryInfo(categoryKey) {
 
 // --- CRYPTO / COOKIE HELPERS --------------------------------------------
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
+
+// Password hashing: scrypt (Node's own crypto, no new dependency) with a
+// random 16-byte salt per password. Stored as "scrypt$<saltHex>$<hashHex>"
+// so the salt travels with the hash and old rows stay verifiable even if the
+// derived-key length or scrypt parameters ever change (a new format prefix
+// would just live alongside this one, `hashPassword` need not touch old
+// rows retroactively).
+function hashPassword(plain) {
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(String(plain), salt, 64);
+  return `scrypt$${salt.toString('hex')}$${hash.toString('hex')}`;
+}
+
+// Constant-time compare so a wrong guess can't be narrowed down by response
+// timing. Used for both the password check below and (for the same reason)
+// anywhere else two secrets need comparing.
+function safeBufferEquals(a, b) {
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function verifyPassword(plain, stored) {
+  if (!stored) return false;
+  const parts = String(stored).split('$');
+  if (parts.length !== 3 || parts[0] !== 'scrypt') return false;
+  const salt = Buffer.from(parts[1], 'hex');
+  const expected = Buffer.from(parts[2], 'hex');
+  const actual = crypto.scryptSync(String(plain), salt, expected.length);
+  return safeBufferEquals(actual, expected);
+}
+
+// The scrypt hash itself never has any business reaching the browser -- it's
+// not needed for anything client-side, and offers nothing but attack
+// surface sitting in a JS variable / dev-tools network tab. Every response
+// that sends a full `SELECT *`-shaped user row runs it through this first.
+function omitPasswordHash(user) {
+  if (!user) return user;
+  const { password_hash, ...rest } = user;
+  return rest;
+}
 
 // Escape a value for safe interpolation into server-rendered HTML.
 function escapeHtml(v) {
@@ -1012,6 +1069,11 @@ db.serialize(() => {
    'ALTER TABLE users ADD COLUMN registration_number TEXT',
    'ALTER TABLE users ADD COLUMN salutation TEXT',
    'ALTER TABLE users ADD COLUMN created_at INTEGER',
+   // Optional password login (see hashPassword/verifyPassword above), an
+   // alternative to OTP for every account type. NULL until a user sets one;
+   // OTP still works either way, and registration still requires OTP to
+   // prove phone ownership regardless of whether a password is also set.
+   'ALTER TABLE users ADD COLUMN password_hash TEXT',
   ].forEach((sql) => db.run(sql, () => {}));
 
   // One-time backfill of created_at (account signup time) for rows predating
@@ -1495,61 +1557,16 @@ db.serialize(() => {
     });
   });
 
-  // Seed the program master on first run from the original fixed options.
-  db.get('SELECT COUNT(*) AS n FROM program_options', (err, r) => {
-    if (err || (r && r.n > 0)) return;
-    const now = Date.now();
-    const stmt = db.prepare('INSERT INTO program_options (type, name, capacity, active, created_at) VALUES (?, ?, ?, 1, ?)');
-    [
-      'POCQI Methodology for Healthcare Professionals',
-      'Quality Improvement Workshop for Undergraduates',
-      'The Art of Birthing: Learn, Empower and Birth',
-      'Psychology of Change',
-      'AI in Healthcare: Unlock the Potential',
-      'Workshops on Patient Safety & Infection Control Topics',
-      'Quality Improvement for enhancing Healthcare Professions Education',
-      'Leadership in Nursing care',
-      'Empathetic care for Quality Improvement',
-      'Quality Improvement Workshop for Primary Healthcare Providers',
-      'Improvement in Quality and safety through Simulation in Surgery',
-    ].forEach((name) => stmt.run('WORKSHOP', name, 50, now));
-    [
-      'Midwifery-led Care Units',
-      'Quality Improvement for Child Development',
-      'Quality Improvement for Community Health',
-      'Student Parliament for Quality Improvement',
-    ].forEach((name) => stmt.run('QI', name, 50, now));
-    stmt.finalize();
-    console.log('Seeded default workshop and QI practice options.');
-  });
-
-  // Seed the fee master on first run from the original hardcoded tiers. The
-  // spot (walk-in) fee defaults to a step above the late fee. Waits for
-  // feeCategoriesMigrationReady -- a fresh install seeds every one of
-  // spot_fee/requires_student_id/id_discipline/id_level immediately, and
-  // those columns don't exist until the migration above finishes.
-  feeCategoriesMigrationReady.then(() => {
-    db.get('SELECT COUNT(*) AS n FROM fee_categories', (err, r) => {
-      if (err || (r && r.n > 0)) return;
-      const stmt = db.prepare('INSERT INTO fee_categories (category_key, label, early_fee, regular_fee, late_fee, spot_fee, active, sort_order, requires_student_id, id_discipline, id_level) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)');
-      const seed = [
-        ['nursing_ug', 'Nursing Student UG', 500, 1000, 2000, 2500, 1, 'nursing', 'UG'],
-        ['nursing_pg', 'Nursing Student PG', 750, 1500, 2500, 3000, 1, 'nursing', 'PG'],
-        ['med_student', 'Medical Student UG', 1500, 2200, 3000, 3500, 1, 'medical', 'UG'],
-        ['nurse_cho', 'Nurse / Paramedical / CHO', 2000, 2800, 3500, 4000, 0, null, null],
-        ['pg_doctor', 'PG Student / Resident Doctor', 3000, 4000, 5000, 5500, 1, 'medical', 'PG'],
-        ['faculty_mo', 'Doctors / Faculty / NHM MO', 3000, 4000, 5000, 5500, 0, null, null],
-        ['chw', 'Frontline CHWs (ASHA/ANM/AWW)', 200, 200, 200, 200, 0, null, null],
-      ];
-      seed.forEach((s, i) => stmt.run(s[0], s[1], s[2], s[3], s[4], s[5], i, s[6], s[7], s[8]));
-      stmt.finalize();
-      console.log('Seeded default fee categories.');
-    });
-  });
-  // Four pricing phases: Early Bird till 31 Aug 2026, Regular till 30 Sep
-  // 2026, Late till 31 Oct 2026, Spot Registration after.
-  db.run("INSERT OR IGNORE INTO fee_config (id, early_until, regular_until, late_until) VALUES (1, '2026-08-31', '2026-09-30', '2026-10-31')");
-  db.run("UPDATE fee_config SET late_until = '2026-10-31' WHERE id = 1 AND (late_until IS NULL OR late_until = '')");
+  // No auto-seeded workshops, QI practices, or fee categories -- this app is
+  // not tied to one specific conference, so a fresh install starts with
+  // none of any of it and the first-run setup wizard (see GET /setup) walks
+  // the operator through adding their own, the same way it already does for
+  // Conference Details/UPI/SMS/Email. The row below is the one exception:
+  // fee_config's schema requires exactly one row (id INTEGER PRIMARY KEY
+  // CHECK (id = 1)), so an empty one with no dates is seeded rather than
+  // left missing -- currentPhase() already treats null *_until fields as
+  // "spot pricing", a safe default until the operator sets real phase dates.
+  db.run('INSERT OR IGNORE INTO fee_config (id, early_until, regular_until, late_until) VALUES (1, NULL, NULL, NULL)');
 });
 
 // One-time-ever backfill: normalise stored person names to Title Case. Guarded
@@ -1866,6 +1883,7 @@ function requireAuth(req, res, next) {
 const MAINTENANCE_OPEN_PATHS = new Set([
   '/api/otp/request',
   '/api/auth/login',
+  '/api/auth/login-password',
   '/api/auth/me',
   '/api/auth/logout',
   '/api/maintenance',
@@ -1927,15 +1945,16 @@ app.get('/api/maintenance', (req, res) => {
 });
 
 // First-run setup wizard. Reachable in two states: before the first admin
-// exists (token-gated, see isSetupModeActive), and by an already-logged-in
-// Super Admin -- the latter matters because the wizard's later steps
-// (conference/UPI/SMS/Email) run AFTER account creation, on the same page;
+// exists (see isSetupModeActive -- no token, no OTP; simply unreachable
+// once an admin exists), and by an already-logged-in Super Admin -- the
+// latter matters because the wizard's later steps (conference/categories/
+// workshops/UPI/SMS/Email) run AFTER account creation, on the same page;
 // without this, reloading mid-wizard would 404 the moment the admin account
 // (created in step 1) makes isSetupModeActive() go false. Harmless to leave
 // reachable afterward too -- every later step just calls the same
-// already-SUPER_ADMIN-gated general-settings endpoint Settings itself uses.
+// already-SUPER_ADMIN-gated endpoints Settings itself uses.
 // Anonymous + setup-inactive gets a plain 404, no signal about which of
-// "completed" / "never configured" / "never reachable" is true.
+// "completed" / "never reachable" is true.
 app.get('/setup', async (req, res, next) => {
   try {
     const alreadyAdmin = req.session && req.session.role === 'SUPER_ADMIN';
@@ -1946,10 +1965,12 @@ app.get('/setup', async (req, res, next) => {
   }
 });
 
-// Delegate portal. Assembled from partials the same way as /admin; no
-// server-rendered data, everything is still populated client-side by app.js.
+// Delegate portal. Assembled from partials the same way as /admin; almost no
+// server-rendered data (everything is still populated client-side by
+// app.js) -- the page <title> is the one exception, so the browser tab
+// shows something meaningful before the client-side fetch resolves.
 app.get('/', (req, res) => {
-  res.render('index');
+  res.render('index', { conferenceName: CONFERENCE.name });
 });
 
 // Admin panel lives outside the static root and is only served to a
@@ -2054,17 +2075,13 @@ app.post('/api/otp/request', async (req, res, next) => {
 });
 
 // Create the very first admin account and log straight in. See
-// isSetupModeActive() -- unreachable once an admin already exists, once
-// SETUP_TOKEN isn't set, or once setup has ever been completed. No OTP: the
-// token itself is the proof of authority for this one action.
+// isSetupModeActive() -- unreachable once an admin already exists or once
+// setup has ever been completed; that is the entire authorization check.
 app.post('/api/setup/create-admin', async (req, res, next) => {
   try {
     if (!(await isSetupModeActive())) return res.status(404).json({ success: false, error: 'Setup is not available.' });
 
-    const { token, name, phone, email } = req.body;
-    if (!safeTokenEquals(token, process.env.SETUP_TOKEN)) {
-      return res.status(403).json({ success: false, error: 'Incorrect setup token.' });
-    }
+    const { name, phone, email, password } = req.body;
     if (!phone || !/^\d{10}$/.test(phone)) {
       return res.status(400).json({ success: false, error: 'Invalid phone number.' });
     }
@@ -2075,11 +2092,15 @@ app.post('/api/setup/create-admin', async (req, res, next) => {
     if (email && !emailVal) {
       return res.status(400).json({ success: false, error: 'Please enter a valid email address.' });
     }
+    if (password && String(password).length < 8) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' });
+    }
 
     const nameVal = titleCase(String(name).trim());
+    const passwordHash = password ? hashPassword(String(password)) : null;
     await dbRun(
-      'INSERT INTO users (phone_number, full_name, email, role, created_at) VALUES (?, ?, ?, ?, ?)',
-      [phone, nameVal, emailVal, 'SUPER_ADMIN', Date.now()]
+      'INSERT INTO users (phone_number, full_name, email, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [phone, nameVal, emailVal, 'SUPER_ADMIN', passwordHash, Date.now()]
     );
     // Set the very moment the account exists, not deferred to the wizard's
     // last step -- the remaining steps (conference/UPI/SMS/Email) are just
@@ -2105,12 +2126,15 @@ app.post('/api/setup/create-admin', async (req, res, next) => {
 // Register (or update own profile) after OTP verification, then log in.
 app.post('/api/auth/register', async (req, res, next) => {
   try {
-    const { phone, otp, salutation, name, designation, institute, pincode, state, district, age, gender, email } = req.body;
+    const { phone, otp, salutation, name, designation, institute, pincode, state, district, age, gender, email, password } = req.body;
     if (!phone || !/^\d{10}$/.test(phone)) {
       return res.status(400).json({ success: false, error: 'Invalid phone number.' });
     }
     if (!name) {
       return res.status(400).json({ success: false, error: 'Full name is required.' });
+    }
+    if (password && String(password).length < 8) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' });
     }
     // Always normalise the name to Title Case, so "pratiksha vasantrao
     // meshram", "JOHN SMITH", or "pratiksha Vasantrao meshram" all become
@@ -2132,10 +2156,18 @@ app.post('/api/auth/register', async (req, res, next) => {
     if (!check.ok) return res.status(400).json({ success: false, error: check.error });
 
     // OTP proves control of this number, so upserting the caller's own
-    // record is safe. Role is never set from the request body.
+    // record is safe. Role is never set from the request body. Password is
+    // optional and independent of the OTP proof above -- registration (and
+    // re-registration, via this same upsert) always verifies the phone by
+    // OTP regardless of whether a password is also being set; a password
+    // is purely an alternative login method for next time, see
+    // POST /api/auth/login-password. COALESCE keeps any existing password
+    // on a re-registration call that didn't include one, rather than
+    // silently wiping it.
+    const passwordHash = password ? hashPassword(String(password)) : null;
     await dbRun(
-      `INSERT INTO users (phone_number, salutation, full_name, designation, institution, pincode, state, district, age, gender, email, role, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE', ?)
+      `INSERT INTO users (phone_number, salutation, full_name, designation, institution, pincode, state, district, age, gender, email, password_hash, role, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE', ?)
        ON CONFLICT(phone_number) DO UPDATE SET
          salutation = excluded.salutation,
          full_name = excluded.full_name,
@@ -2147,15 +2179,16 @@ app.post('/api/auth/register', async (req, res, next) => {
          age = excluded.age,
          gender = excluded.gender,
          email = excluded.email,
+         password_hash = COALESCE(excluded.password_hash, users.password_hash),
          created_at = COALESCE(users.created_at, excluded.created_at)`,
-      [phone, salutationVal, nameVal, designation, institute, pincode, state, district, ageNum, genderVal, emailVal, Date.now()]
+      [phone, salutationVal, nameVal, designation, institute, pincode, state, district, ageNum, genderVal, emailVal, passwordHash, Date.now()]
     );
 
     await assignUserRegNumber(phone); // ensure a registration number exists
     const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
     await startSession(phone, user.role, res);
     recordLogin(phone, user.full_name, user.role); // fire-and-forget
-    res.json({ success: true, user });
+    res.json({ success: true, user: omitPasswordHash(user) });
   } catch (err) {
     next(err);
   }
@@ -2179,7 +2212,67 @@ app.post('/api/auth/login', async (req, res, next) => {
 
     await startSession(phone, user.role, res);
     recordLogin(phone, user.full_name, user.role); // fire-and-forget
-    res.json({ success: true, user });
+    res.json({ success: true, user: omitPasswordHash(user) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Log in with a password instead of OTP -- an alternative for any account
+// that has one set (see hashPassword/verifyPassword and POST
+// /api/auth/set-password), never a requirement. Registration itself is
+// unaffected: a phone number is still only ever verified by OTP, at sign-up
+// time -- this endpoint only ever runs against an ALREADY-registered,
+// already-OTP-verified account.
+app.post('/api/auth/login-password', async (req, res, next) => {
+  try {
+    const { phone, password } = req.body;
+    if (!phone || !/^\d{10}$/.test(phone)) {
+      return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+    }
+    if (!password) {
+      return res.status(400).json({ success: false, error: 'Password is required.' });
+    }
+
+    const attempt = passwordLoginAttempts.get(phone);
+    if (attempt && attempt.lockUntil && Date.now() < attempt.lockUntil) {
+      const mins = Math.ceil((attempt.lockUntil - Date.now()) / 60000);
+      return res.status(429).json({ success: false, error: `Too many attempts. Try again in ${mins} minute(s), or use OTP instead.` });
+    }
+
+    const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
+    const ok = user && user.password_hash && verifyPassword(password, user.password_hash);
+    if (!ok) {
+      const count = (attempt ? attempt.count : 0) + 1;
+      const next = { count, lockUntil: count >= PASSWORD_MAX_ATTEMPTS ? Date.now() + PASSWORD_LOCKOUT_MS : null };
+      passwordLoginAttempts.set(phone, next);
+      // Same error either way -- an unregistered phone and a wrong password
+      // for a real one are indistinguishable from the outside, on purpose.
+      return res.status(401).json({ success: false, error: 'Incorrect phone number or password.' });
+    }
+    passwordLoginAttempts.delete(phone);
+
+    await startSession(phone, user.role, res);
+    recordLogin(phone, user.full_name, user.role); // fire-and-forget
+    res.json({ success: true, user: omitPasswordHash(user) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Set or change the CALLER's own password. Deliberately does not require the
+// current password: the session itself is already the proof of identity
+// (same trust level OTP login grants), so this is reachable whether the
+// caller signed in by OTP or by an existing password. Applies to every
+// account type -- delegate or staff -- since login-password does too.
+app.post('/api/auth/set-password', requireAuth, async (req, res, next) => {
+  try {
+    const { password } = req.body;
+    if (!password || String(password).length < 8) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' });
+    }
+    await dbRun('UPDATE users SET password_hash = ? WHERE phone_number = ?', [hashPassword(String(password)), req.session.phone]);
+    res.json({ success: true });
   } catch (err) {
     next(err);
   }
@@ -2189,7 +2282,7 @@ app.post('/api/auth/login', async (req, res, next) => {
 app.get('/api/auth/me', requireAuth, async (req, res, next) => {
   try {
     const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [req.session.phone]);
-    res.json({ success: true, user });
+    res.json({ success: true, user: omitPasswordHash(user) });
   } catch (err) {
     next(err);
   }
@@ -2765,6 +2858,7 @@ app.get('/api/fees', requireAuth, async (req, res, next) => {
         requiresStudentId: !!c.requires_student_id,
       })),
       upi: { id: UPI.id, payeeName: UPI.payeeName },
+      bank: { accountName: BANK.accountName, accountNumber: BANK.accountNumber, ifsc: BANK.ifsc, branch: BANK.branch },
     });
   } catch (err) {
     next(err);
@@ -4071,7 +4165,7 @@ app.get('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res,
          r.workshop_option_id, r.workshop, r.qi_option_id, r.qi_exposure
          FROM users
          LEFT JOIN registrations r ON r.phone_number = users.phone_number`);
-    res.json({ users: rows || [] });
+    res.json({ users: (rows || []).map(omitPasswordHash) });
   } catch (err) {
     next(err);
   }
@@ -4097,7 +4191,7 @@ app.get('/api/users/:phone/detail', requireRole('SUPER_ADMIN', 'OPERATIONS'), as
 
     res.json({
       success: true,
-      user,
+      user: omitPasswordHash(user),
       registration: reg || null,
       payment,
       signup_at: user.created_at || null,
@@ -4143,7 +4237,7 @@ app.put('/api/users/:phone', requireRole('SUPER_ADMIN'), async (req, res, next) 
 
 app.post('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res, next) => {
   try {
-    const { name, phone, designation, institute, role } = req.body;
+    const { name, phone, designation, institute, role, password } = req.body;
     if (!phone || !/^\d{10}$/.test(phone)) {
       return res.status(400).json({ success: false, error: 'Invalid phone number.' });
     }
@@ -4156,9 +4250,16 @@ app.post('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res
     if (role === 'SUPER_ADMIN' && req.session.role !== 'SUPER_ADMIN') {
       return res.status(403).json({ success: false, error: 'Only a Super Admin can grant Super Admin.' });
     }
+    if (password && String(password).length < 8) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' });
+    }
+    // Optional: gives the new staff member a password to log in with right
+    // away instead of waiting on their first OTP. Purely a convenience --
+    // they can set/change it themselves later via Set Password regardless.
+    const passwordHash = password ? hashPassword(String(password)) : null;
     await dbRun(
-      'INSERT INTO users (phone_number, full_name, designation, institution, role, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-      [phone, name, designation, institute, role, Date.now()]
+      'INSERT INTO users (phone_number, full_name, designation, institution, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [phone, name, designation, institute, role, passwordHash, Date.now()]
     );
     res.json({ success: true });
   } catch (err) {
@@ -4923,6 +5024,7 @@ app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
         from: EMAIL.from, fromName: EMAIL.fromName, region: EMAIL.region, digestRecipients: EMAIL.digestRecipients,
       },
       upi: { id: UPI.id, payeeName: UPI.payeeName },
+      bank: { accountName: BANK.accountName, accountNumber: BANK.accountNumber, ifsc: BANK.ifsc, branch: BANK.branch },
       conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym, startDate: CONFERENCE.startDate, endDate: CONFERENCE.endDate, location: CONFERENCE.location, regPrefix: CONFERENCE.regPrefix },
       maintenance: { enabled: maintenance.enabled, message: maintenance.message },
       otherEnvVars: await describeOtherEnvVars(),
@@ -4934,7 +5036,7 @@ app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
 
 app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
-    const { sms, email, upi, conference, notify, maintenance: maintenanceBody, otherEnv } = req.body || {};
+    const { sms, email, upi, bank, conference, notify, maintenance: maintenanceBody, otherEnv } = req.body || {};
 
     // Reject line breaks in the credential fields up front, before anything is
     // persisted, so a bad paste can't inject extra .env lines and a malformed
@@ -5047,6 +5149,11 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
     await applyFields(email, EMAIL, { from: 'email_from', fromName: 'email_from_name', region: 'email_region', digestRecipients: 'email_digest_recipients' },
       new Set(['digestRecipients']));
     await applyFields(upi, UPI, { id: 'upi_id', payeeName: 'upi_payee_name' });
+    // Bank transfer is a fallback alongside UPI, not a required channel on
+    // its own, so every field here may be cleared (unlike UPI's id/payeeName
+    // above, which are required once set).
+    await applyFields(bank, BANK, { accountName: 'bank_account_name', accountNumber: 'bank_account_number', ifsc: 'bank_ifsc', branch: 'bank_branch' },
+      new Set(['accountName', 'accountNumber', 'ifsc', 'branch']));
     await applyFields(conference, CONFERENCE,
       { name: 'conference_name', acronym: 'conference_acronym', startDate: 'conference_start_date', endDate: 'conference_end_date', location: 'conference_location', regPrefix: 'conference_reg_prefix' },
       new Set(['acronym', 'startDate', 'endDate', 'location']));

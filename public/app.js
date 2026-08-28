@@ -1,22 +1,27 @@
-// The conference's UPI ID and payee name, admin-editable from Settings →
-// General. Populated by loadFees() from /api/fees so the QR code and the
-// server's OCR check (which reads the same UPI object) can never drift apart.
-let OFFICIAL_UPI_ID = "abhishekraut@cbin";
-let OFFICIAL_UPI_PAYEE_NAME = "NQOCN 2026";
+// The conference's UPI ID, payee name, and bank-transfer fallback details,
+// all admin-editable from Settings → General / set during first-run setup.
+// Populated by loadFees() from /api/fees so the QR code and the server's OCR
+// check (which reads the same UPI object) can never drift apart. No
+// hardcoded fallback values -- blank until the server has something to send,
+// same as server.js's own UPI/BANK objects start blank.
+let OFFICIAL_UPI_ID = '';
+let OFFICIAL_UPI_PAYEE_NAME = '';
+let BANK_DETAILS = { accountName: '', accountNumber: '', ifsc: '', branch: '' };
 
 // Conference name/acronym/dates/location, admin-editable from Settings →
-// General. These fallback values match server.js's CONFERENCE defaults, used
-// only until loadConferenceInfo() resolves (or if the fetch fails). Every
-// page load calls it (see the DOMContentLoaded listener below) so the
-// landing page, admin header, and reminder composer default text all reflect
-// the current setting without a code change.
+// General / set during first-run setup. Blank until loadConferenceInfo()
+// resolves, matching server.js's own CONFERENCE object (also blank by
+// default -- see the comment there for why). Every page load calls it (see
+// the DOMContentLoaded listener below) so the landing page, admin header,
+// and reminder composer default text all reflect the current setting
+// without a code change.
 let conferenceInfo = {
-  name: 'International Conference on Healthcare Quality & Patient Safety 2026',
-  acronym: 'NQOCN 2026',
-  startDate: '2026-11-21',
-  endDate: '2026-11-22',
-  location: 'MGIMS, Sevagram, Wardha',
-  dateLabel: '21–22 Nov 2026',
+  name: '',
+  acronym: '',
+  startDate: '',
+  endDate: '',
+  location: '',
+  dateLabel: '',
 };
 
 async function loadConferenceInfo() {
@@ -51,16 +56,20 @@ function formatDMY(isoDate) {
 
 function applyConferenceInfoToDom() {
   const c = conferenceInfo;
-  document.title = document.title.includes('Admin') ? `${c.acronym} - Admin & Backend Portal` : c.name;
+  document.title = document.title.includes('Admin')
+    ? (c.acronym ? `${c.acronym} - Admin & Backend Portal` : 'Admin & Backend Portal')
+    : (c.name || 'Registration Portal');
 
   const nameEl = document.getElementById('conf-name-h1');
-  if (nameEl) nameEl.textContent = c.name + (nameEl.dataset.suffix || '');
+  if (nameEl) nameEl.textContent = (c.name || 'Registration Portal') + (nameEl.dataset.suffix || '');
 
+  // Hidden until there's something real to show -- rather than a stale
+  // placeholder sitting visible before first-run setup fills these in.
   const dateBadge = document.getElementById('conf-date-badge');
-  if (dateBadge && c.dateLabel) dateBadge.textContent = c.dateLabel;
+  if (dateBadge) { dateBadge.textContent = c.dateLabel || ''; dateBadge.classList.toggle('hidden', !c.dateLabel); }
 
   const locationLine = document.getElementById('conf-location-line');
-  if (locationLine && c.location) locationLine.textContent = c.location;
+  if (locationLine) { locationLine.textContent = c.location || ''; locationLine.classList.toggle('hidden', !c.location); }
 
   const presentDate = document.getElementById('conf-presentations-date');
   if (presentDate) presentDate.textContent = formatFullDate(c.endDate) || presentDate.textContent;
@@ -69,7 +78,7 @@ function applyConferenceInfoToDom() {
   // an admin could have opened the panel and started typing.
   const subjectInput = document.getElementById('reminder-subject');
   if (subjectInput && document.activeElement !== subjectInput) {
-    subjectInput.value = `Complete your registration for ${c.acronym}`;
+    subjectInput.value = c.acronym ? `Complete your registration for ${c.acronym}` : 'Complete your registration';
   }
 }
 
@@ -219,7 +228,7 @@ if (currentDelegate && document.getElementById('dashboard-page')) {
 function toggleAuth(view) {
   const regForm = document.getElementById('register-form');
   const loginForm = document.getElementById('login-form');
-  
+
   if (view === 'register') {
     regForm.classList.remove('hidden');
     loginForm.classList.add('hidden');
@@ -227,6 +236,23 @@ function toggleAuth(view) {
     loginForm.classList.remove('hidden');
     regForm.classList.add('hidden');
   }
+}
+
+// OTP vs password is a login-flow choice, not two different accounts --
+// every account can always fall back to OTP regardless of whether a
+// password is also set. handleLogin() below reads this to decide which
+// endpoint to call.
+let loginMode = 'otp';
+function setLoginMode(mode) {
+  loginMode = mode;
+  const isOtp = mode === 'otp';
+  document.getElementById('login-otp-mode').classList.toggle('hidden', !isOtp);
+  document.getElementById('login-password-mode').classList.toggle('hidden', isOtp);
+  const otpBtn = document.getElementById('login-mode-otp-btn');
+  const pwBtn = document.getElementById('login-mode-password-btn');
+  otpBtn.classList.toggle('bg-white', isOtp); otpBtn.classList.toggle('shadow-sm', isOtp); otpBtn.classList.toggle('text-indigo-700', isOtp); otpBtn.classList.toggle('text-slate-500', !isOtp);
+  pwBtn.classList.toggle('bg-white', !isOtp); pwBtn.classList.toggle('shadow-sm', !isOtp); pwBtn.classList.toggle('text-indigo-700', !isOtp); pwBtn.classList.toggle('text-slate-500', isOtp);
+  setText('login-submit-btn', isOtp ? 'Verify OTP & Login' : 'Login');
 }
 
 // --- PIN CODE API (India Post) ---
@@ -313,6 +339,12 @@ async function handleRegistration(e) {
     return;
   }
 
+  const password = document.getElementById('reg-password').value;
+  if (password && password.length < 8) {
+    showToast('Password must be at least 8 characters, or leave it blank.');
+    return;
+  }
+
   const payload = {
     phone,
     otp,
@@ -323,6 +355,7 @@ async function handleRegistration(e) {
     designation: document.getElementById('reg-designation').value,
     institute: document.getElementById('reg-institute').value,
     email,
+    password,
     pincode: document.getElementById('reg-pincode').value,
     state: document.getElementById('reg-state').value,
     district: document.getElementById('reg-district').value
@@ -351,8 +384,12 @@ async function handleRegistration(e) {
 
 async function handleLogin(e) {
   e.preventDefault();
+  if (loginMode === 'password') return handlePasswordLogin();
+
   const phone = document.getElementById('login-phone').value.trim();
   const otp = document.getElementById('login-otp').value.trim();
+  if (!/^\d{10}$/.test(phone)) return showToast('Enter a valid 10-digit mobile number.');
+  if (!otp) return showToast('Enter the OTP sent to your phone.');
 
   const res = await fetch('/api/auth/login', {
     method: 'POST',
@@ -381,6 +418,28 @@ async function handleLogin(e) {
   } else {
     showToast(data.error || "Login failed.");
   }
+}
+
+async function handlePasswordLogin() {
+  const phone = document.getElementById('login-password-phone').value.trim();
+  const password = document.getElementById('login-password').value;
+  if (!/^\d{10}$/.test(phone)) return showToast('Enter a valid 10-digit mobile number.');
+  if (!password) return showToast('Enter your password.');
+
+  const res = await fetch('/api/auth/login-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone, password }),
+  });
+  const data = await res.json();
+  if (!data.success) return showToast(data.error || 'Login failed.');
+
+  currentDelegate = data.user;
+  persistDelegate(currentDelegate);
+  const welcomeName = currentDelegate.full_name || currentDelegate.name;
+  showToast(`Welcome back, ${currentDelegate.salutation ? currentDelegate.salutation + ' ' : ''}${welcomeName}!`, 'success');
+  if (await shouldShowMaintenance(currentDelegate)) return navigateTo('maintenance-page');
+  loadDashboard();
 }
 
 // --- DELEGATE DASHBOARD & FEATURES ---
@@ -887,6 +946,15 @@ async function loadFees() {
     if (data.upi && data.upi.payeeName) {
       OFFICIAL_UPI_PAYEE_NAME = data.upi.payeeName;
       setText('upi-payee-label', OFFICIAL_UPI_PAYEE_NAME);
+    }
+    if (data.bank) {
+      BANK_DETAILS = data.bank;
+      ['registration', 'topup'].forEach((prefix) => {
+        setText(`${prefix}-bank-account-name`, BANK_DETAILS.accountName || '—');
+        setText(`${prefix}-bank-account-number`, BANK_DETAILS.accountNumber || '—');
+        setText(`${prefix}-bank-ifsc`, BANK_DETAILS.ifsc || '—');
+        setText(`${prefix}-bank-branch`, BANK_DETAILS.branch || '—');
+      });
     }
     const sel = document.getElementById('payment-category');
     if (sel) {
@@ -1533,6 +1601,29 @@ async function submitReject() {
   closeModal('modal-reject');
   closeModal('modal-review');
   renderBackendPayments();
+}
+
+// Shared by the delegate dashboard and the admin panel -- both include the
+// same modal (see views/portal/modals/set-password.ejs) and call the same
+// endpoint, since a password is just an alternative login method available
+// to every account type.
+async function submitSetPassword(e) {
+  e.preventDefault();
+  const password = document.getElementById('set-password-value').value;
+  if (password.length < 8) return showToast('Password must be at least 8 characters.');
+  const btn = document.getElementById('set-password-submit-btn');
+  btn.disabled = true;
+  try {
+    const data = await (await fetch('/api/auth/set-password', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }),
+    })).json();
+    if (!data.success) return showToast(data.error || 'Could not save.');
+    showToast('Password saved.', 'success');
+    document.getElementById('set-password-value').value = '';
+    closeModal('modal-set-password');
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function logout() {
@@ -5002,12 +5093,15 @@ function openCreateUserModal() {
 
 async function handleCreateUserSubmit(e) {
   e.preventDefault();
+  const password = document.getElementById('new-user-password').value;
+  if (password && password.length < 8) return showToast('Password must be at least 8 characters, or leave it blank.');
   const payload = {
     name: document.getElementById('new-user-name').value,
     phone: document.getElementById('new-user-phone').value,
     designation: document.getElementById('new-user-designation').value,
     institute: document.getElementById('new-user-institute').value,
-    role: document.getElementById('new-user-role').value
+    role: document.getElementById('new-user-role').value,
+    password,
   };
 
   await fetch('/api/users', {

@@ -87,7 +87,7 @@
                 <img id="upi-qr-image" src="" alt="Dynamic UPI QR Code" class="w-48 h-48 border-2 border-indigo-300 rounded-xl shadow-md p-1 bg-white">
               </div>
               <a id="upi-pay-link" href="#" class="inline-block px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg shadow-sm">Pay via UPI App</a>
-              <p class="text-[10px] text-slate-500">Pays <b id="upi-payee-label">NQOCN 2026</b> · reference is your registration number. On a phone, tap to open your UPI app.</p>
+              <p class="text-[10px] text-slate-500">Pays <b id="upi-payee-label"></b> · reference is your registration number. On a phone, tap to open your UPI app.</p>
               <p>
                 <button type="button" onclick="setPaymentMode('NEFT_RTGS')" class="text-xs text-indigo-600 hover:text-indigo-800 underline font-semibold">UPI not working? Pay by Bank Transfer instead</button>
               </p>
@@ -95,10 +95,10 @@
 
             <div id="neft-pay-block" class="hidden text-left bg-white border border-indigo-200 rounded-xl p-4 space-y-1 text-sm">
               <p class="text-xs text-slate-500 uppercase font-bold mb-2">Bank Transfer Details</p>
-              <p>Account Name: <b>NQoCN Conf 2026</b></p>
-              <p>Account No: <b>5975992001</b></p>
-              <p>IFSC Code: <b>CBIN0280697</b></p>
-              <p>Branch: <b>Sewagram</b></p>
+              <p>Account Name: <b id="registration-bank-account-name">—</b></p>
+              <p>Account No: <b id="registration-bank-account-number">—</b></p>
+              <p>IFSC Code: <b id="registration-bank-ifsc">—</b></p>
+              <p>Branch: <b id="registration-bank-branch">—</b></p>
               <p class="text-[10px] text-slate-500 pt-1">After transferring, enter the transaction/UTR number and upload a screenshot of the confirmation below.</p>
               <p class="text-center pt-2">
                 <button type="button" onclick="setPaymentMode('UPI')" class="text-xs text-indigo-600 hover:text-indigo-800 underline font-semibold">Pay by UPI instead</button>

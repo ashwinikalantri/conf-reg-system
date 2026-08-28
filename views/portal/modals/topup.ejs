@@ -23,10 +23,10 @@
 
       <div id="topup-neft-pay-block" class="hidden text-left bg-white border border-orange-200 rounded-xl p-4 space-y-1 text-sm mb-4">
         <p class="text-xs text-slate-500 uppercase font-bold mb-2">Bank Transfer Details</p>
-        <p>Account Name: <b>NQoCN Conf 2026</b></p>
-        <p>Account No: <b>5975992001</b></p>
-        <p>IFSC Code: <b>CBIN0280697</b></p>
-        <p>Branch: <b>Sewagram</b></p>
+        <p>Account Name: <b id="topup-bank-account-name">—</b></p>
+        <p>Account No: <b id="topup-bank-account-number">—</b></p>
+        <p>IFSC Code: <b id="topup-bank-ifsc">—</b></p>
+        <p>Branch: <b id="topup-bank-branch">—</b></p>
         <p class="text-[10px] text-slate-500 pt-1">After transferring, enter the transaction/UTR number and upload a screenshot of the confirmation below.</p>
         <p class="text-center pt-2">
           <button type="button" onclick="setTopupPaymentMode('UPI')" class="text-xs text-indigo-600 hover:text-indigo-800 underline font-semibold">Pay by UPI instead</button>

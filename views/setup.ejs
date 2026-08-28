@@ -11,7 +11,7 @@
   <div class="w-full max-w-lg">
     <div class="text-center mb-6">
       <h1 class="text-2xl font-bold text-slate-800">First-Run Setup</h1>
-      <p class="text-sm text-slate-500 mt-1">Step <span id="step-num">1</span> of 5 — everything past the first step can be skipped and finished later in Settings → General.</p>
+      <p class="text-sm text-slate-500 mt-1">Step <span id="step-num">1</span> of 7 — everything past the first step can be skipped and finished later in Settings → General.</p>
     </div>
 
     <div id="toast" class="hidden mb-4 text-sm font-semibold text-center rounded-lg p-3"></div>
@@ -19,11 +19,7 @@
     <!-- STEP 1: Create Super Admin -->
     <div id="step-admin" class="bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-4">
       <h2 class="text-lg font-bold text-slate-800">Create the Super Admin account</h2>
-      <p class="text-xs text-slate-500">Enter the setup token (SETUP_TOKEN in the server's .env), plus the first administrator's details. This is the only step that can't be skipped or done later.</p>
-      <div>
-        <label class="block text-xs font-semibold text-slate-700 mb-1">Setup Token</label>
-        <input id="su-token" type="password" required autocomplete="off" class="w-full p-2.5 border rounded-lg text-sm font-mono outline-none">
-      </div>
+      <p class="text-xs text-slate-500">This account's phone number is verified by OTP at first login, same as every delegate. This is the only step that can't be skipped or done later.</p>
       <div>
         <label class="block text-xs font-semibold text-slate-700 mb-1">Full Name</label>
         <input id="su-name" required class="w-full p-2.5 border rounded-lg text-sm outline-none">
@@ -36,45 +32,115 @@
         <label class="block text-xs font-semibold text-slate-700 mb-1">Email <span class="text-slate-400 font-normal">(optional)</span></label>
         <input id="su-email" type="email" class="w-full p-2.5 border rounded-lg text-sm outline-none">
       </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-700 mb-1">Password <span class="text-slate-400 font-normal">(optional, at least 8 characters)</span></label>
+        <input id="su-password" type="password" autocomplete="new-password" placeholder="Leave blank to sign in by OTP only" class="w-full p-2.5 border rounded-lg text-sm outline-none">
+        <p class="text-[10px] text-slate-400 mt-1">Lets you log in with a password instead of waiting for an SMS OTP every time. Can be set or changed later either way.</p>
+      </div>
       <button onclick="createAdmin()" id="su-create-btn" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg disabled:opacity-50">Create Account &amp; Continue</button>
     </div>
 
     <!-- STEP 2: Conference Details -->
     <div id="step-conference" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
       <h2 class="text-lg font-bold text-slate-800">Conference Details</h2>
-      <p class="text-xs text-slate-500">Shown across confirmation emails, reports, and printable pages. Pre-filled with whatever this deployment currently has set — edit anything you need to.</p>
-      <div><label class="block text-xs font-semibold text-slate-700 mb-1">Full Name</label><input id="su-conf-name" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+      <p class="text-xs text-slate-500">Shown across confirmation emails, reports, and printable pages.</p>
+      <div><label class="block text-xs font-semibold text-slate-700 mb-1">Full Name</label><input id="su-conf-name" placeholder="e.g. Annual Conference on Clinical Excellence 2027" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
       <div class="grid grid-cols-2 gap-3">
-        <div><label class="block text-xs font-semibold text-slate-700 mb-1">Acronym</label><input id="su-conf-acronym" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
-        <div><label class="block text-xs font-semibold text-slate-700 mb-1">Location</label><input id="su-conf-location" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">Acronym</label><input id="su-conf-acronym" placeholder="e.g. ACCE 2027" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">Location</label><input id="su-conf-location" placeholder="e.g. City, State" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="block text-xs font-semibold text-slate-700 mb-1">Start Date</label><input id="su-conf-startdate" type="date" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
         <div><label class="block text-xs font-semibold text-slate-700 mb-1">End Date</label><input id="su-conf-enddate" type="date" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
       </div>
-      <div><label class="block text-xs font-semibold text-slate-700 mb-1">Registration Number Prefix</label><input id="su-conf-regprefix" placeholder="e.g. NQOCN2026" class="w-full p-2.5 border rounded-lg text-sm outline-none font-mono"></div>
+      <div><label class="block text-xs font-semibold text-slate-700 mb-1">Registration Number Prefix</label><input id="su-conf-regprefix" placeholder="e.g. CONF2027" class="w-full p-2.5 border rounded-lg text-sm outline-none font-mono"></div>
       <div class="flex gap-2 pt-2">
         <button onclick="skipStep('conference')" class="flex-1 py-2.5 border border-slate-300 text-slate-600 font-semibold rounded-lg text-sm">Skip for now</button>
         <button onclick="saveStep('conference')" class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm">Save &amp; Continue</button>
       </div>
     </div>
 
-    <!-- STEP 3: UPI -->
+    <!-- STEP 3: Delegate Categories & Fees -->
+    <div id="step-categories" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
+      <h2 class="text-lg font-bold text-slate-800">Delegate Categories &amp; Fees</h2>
+      <p class="text-xs text-slate-500">Add each category delegates can register under and its fee at every pricing phase. Each one is added immediately — nothing to lose by skipping and adding more later from Settings → Fees.</p>
+
+      <div id="categories-list" class="space-y-1.5 empty:hidden"></div>
+
+      <div class="border-t pt-3 space-y-2">
+        <div class="grid grid-cols-2 gap-2">
+          <input id="su-cat-key" placeholder="key, e.g. general" pattern="[a-z0-9_]+" class="p-2 border rounded-lg text-xs font-mono outline-none">
+          <input id="su-cat-label" placeholder="Label, e.g. General Delegate" class="p-2 border rounded-lg text-xs outline-none">
+        </div>
+        <div class="grid grid-cols-4 gap-2">
+          <input id="su-cat-early" type="number" min="0" placeholder="Early ₹" class="p-2 border rounded-lg text-xs outline-none">
+          <input id="su-cat-regular" type="number" min="0" placeholder="Regular ₹" class="p-2 border rounded-lg text-xs outline-none">
+          <input id="su-cat-late" type="number" min="0" placeholder="Late ₹" class="p-2 border rounded-lg text-xs outline-none">
+          <input id="su-cat-spot" type="number" min="0" placeholder="Spot ₹" class="p-2 border rounded-lg text-xs outline-none">
+        </div>
+        <button type="button" onclick="addCategory()" id="su-cat-add-btn" class="w-full py-2 border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg text-xs">+ Add Category</button>
+      </div>
+
+      <div class="border-t pt-3 space-y-2">
+        <p class="text-[10px] font-semibold text-slate-600 uppercase">Pricing Phase Cutoffs <span class="font-normal text-slate-400 normal-case">(optional — no dates set means every category always charges its Spot fee)</span></p>
+        <div class="grid grid-cols-3 gap-2">
+          <div><label class="block text-[10px] text-slate-500 mb-1">Early ends</label><input id="su-phase-early" type="date" class="w-full p-2 border rounded-lg text-xs outline-none"></div>
+          <div><label class="block text-[10px] text-slate-500 mb-1">Regular ends</label><input id="su-phase-regular" type="date" class="w-full p-2 border rounded-lg text-xs outline-none"></div>
+          <div><label class="block text-[10px] text-slate-500 mb-1">Late ends</label><input id="su-phase-late" type="date" class="w-full p-2 border rounded-lg text-xs outline-none"></div>
+        </div>
+      </div>
+
+      <div class="flex gap-2 pt-2">
+        <button onclick="skipStep('categories')" class="flex-1 py-2.5 border border-slate-300 text-slate-600 font-semibold rounded-lg text-sm">Skip for now</button>
+        <button onclick="saveStep('categories')" class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm">Continue</button>
+      </div>
+    </div>
+
+    <!-- STEP 4: Workshops -->
+    <div id="step-workshops" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
+      <h2 class="text-lg font-bold text-slate-800">Workshops &amp; QI Practices</h2>
+      <p class="text-xs text-slate-500">Optional capacity-limited tracks a delegate can enroll in alongside their main registration. Each one is added immediately, same as categories above.</p>
+
+      <div id="workshops-list" class="space-y-1.5 empty:hidden"></div>
+
+      <div class="border-t pt-3 space-y-2">
+        <input id="su-ws-name" placeholder="Name, e.g. Introduction to Quality Improvement" class="w-full p-2 border rounded-lg text-xs outline-none">
+        <div class="flex gap-3 items-center">
+          <label class="flex items-center gap-1.5 text-xs text-slate-700"><input type="radio" name="su-ws-type" value="WORKSHOP" checked class="accent-indigo-600">Workshop</label>
+          <label class="flex items-center gap-1.5 text-xs text-slate-700"><input type="radio" name="su-ws-type" value="QI" class="accent-indigo-600">QI Practice</label>
+          <input id="su-ws-capacity" type="number" min="0" value="50" class="w-24 p-2 border rounded-lg text-xs outline-none ml-auto" title="Capacity">
+        </div>
+        <button type="button" onclick="addWorkshop()" id="su-ws-add-btn" class="w-full py-2 border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg text-xs">+ Add</button>
+      </div>
+
+      <div class="flex gap-2 pt-2">
+        <button onclick="skipStep('workshops')" class="flex-1 py-2.5 border border-slate-300 text-slate-600 font-semibold rounded-lg text-sm">Skip for now</button>
+        <button onclick="nextAfter('workshops')" class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm">Continue</button>
+      </div>
+    </div>
+
+    <!-- STEP 5: UPI + Bank Transfer -->
     <div id="step-upi" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
-      <h2 class="text-lg font-bold text-slate-800">UPI Payment</h2>
-      <p class="text-xs text-slate-500">Used to generate the payment QR code delegates scan to pay.</p>
+      <h2 class="text-lg font-bold text-slate-800">Payment</h2>
+      <p class="text-xs text-slate-500">UPI ID generates the QR code delegates scan to pay. Bank transfer is offered as a fallback when UPI doesn't work for someone — both optional here, either can be filled in later.</p>
       <div><label class="block text-xs font-semibold text-slate-700 mb-1">UPI ID (VPA)</label><input id="su-upi-id" placeholder="name@bank" class="w-full p-2.5 border rounded-lg text-sm outline-none font-mono"></div>
       <div><label class="block text-xs font-semibold text-slate-700 mb-1">Payee Name</label><input id="su-upi-payeename" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+      <div class="border-t pt-3 grid grid-cols-2 gap-3">
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">Bank Account Name</label><input id="su-bank-name" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">Account Number</label><input id="su-bank-number" class="w-full p-2.5 border rounded-lg text-sm outline-none font-mono"></div>
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">IFSC Code</label><input id="su-bank-ifsc" class="w-full p-2.5 border rounded-lg text-sm outline-none font-mono"></div>
+        <div><label class="block text-xs font-semibold text-slate-700 mb-1">Branch</label><input id="su-bank-branch" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
+      </div>
       <div class="flex gap-2 pt-2">
         <button onclick="skipStep('upi')" class="flex-1 py-2.5 border border-slate-300 text-slate-600 font-semibold rounded-lg text-sm">Skip for now</button>
         <button onclick="saveStep('upi')" class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm">Save &amp; Continue</button>
       </div>
     </div>
 
-    <!-- STEP 4: SMS -->
+    <!-- STEP 6: SMS -->
     <div id="step-sms" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
       <h2 class="text-lg font-bold text-slate-800">SMS (OTP delivery)</h2>
-      <p class="text-xs text-slate-500">Without an API key, delegate/staff login still works via the on-screen OTP echo outside production — real SMS just won't send until this is filled in, from here or later.</p>
+      <p class="text-xs text-slate-500">Without an API key, delegate/staff login still works via the on-screen OTP echo outside production, or via password if one is set. Real SMS just won't send until this is filled in, from here or later.</p>
       <div>
         <label class="block text-xs font-semibold text-slate-700 mb-1">API Key <span id="su-sms-apikey-hint" class="font-normal text-slate-400"></span></label>
         <input id="su-sms-apikey" type="password" autocomplete="new-password" placeholder="Leave blank to configure later" class="w-full p-2.5 border rounded-lg text-sm outline-none font-mono">
@@ -94,7 +160,7 @@
       </div>
     </div>
 
-    <!-- STEP 5: Email -->
+    <!-- STEP 7: Email -->
     <div id="step-email" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
       <h2 class="text-lg font-bold text-slate-800">Email (AWS SES)</h2>
       <p class="text-xs text-slate-500">Confirmation, reminder, and receipt emails won't send until this is configured, from here or later.</p>
@@ -121,7 +187,7 @@
     <div id="step-done" class="hidden bg-white rounded-2xl p-6 shadow-md border border-emerald-200 text-center space-y-4">
       <div class="text-4xl">🎉</div>
       <h2 class="text-lg font-bold text-slate-800">Setup complete</h2>
-      <p class="text-sm text-slate-500">You're signed in as the Super Admin. Anything you skipped can be filled in anytime from Settings → General.</p>
+      <p class="text-sm text-slate-500">You're signed in as the Super Admin. Anything you skipped can be filled in anytime from Settings → General, Fees, or Workshops.</p>
       <a href="/admin" class="block w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg">Go to Admin Panel</a>
     </div>
   </div>
@@ -130,7 +196,7 @@
     // A standalone page, deliberately not sharing public/app.js -- this runs
     // exactly once per deployment and has no need for the whole admin/
     // delegate bundle's helpers, globals, or event wiring.
-    const STEPS = ['admin', 'conference', 'upi', 'sms', 'email', 'done'];
+    const STEPS = ['admin', 'conference', 'categories', 'workshops', 'upi', 'sms', 'email', 'done'];
 
     function showToast(msg, isError) {
       const el = document.getElementById('toast');
@@ -144,6 +210,8 @@
       const idx = STEPS.indexOf(name);
       const numEl = document.getElementById('step-num');
       if (numEl && idx >= 0 && idx < STEPS.length - 1) numEl.textContent = idx + 1;
+      if (name === 'categories') loadCategories();
+      if (name === 'workshops') loadWorkshops();
     }
 
     function nextAfter(name) {
@@ -156,20 +224,20 @@
 
     async function createAdmin() {
       const btn = document.getElementById('su-create-btn');
-      const token = document.getElementById('su-token').value.trim();
       const name = document.getElementById('su-name').value.trim();
       const phone = document.getElementById('su-phone').value.trim();
       const email = document.getElementById('su-email').value.trim();
-      if (!token) return showToast('Enter the setup token.', true);
+      const password = document.getElementById('su-password').value;
       if (!name) return showToast("Enter the administrator's name.", true);
       if (!/^\d{10}$/.test(phone)) return showToast('Enter a valid 10-digit mobile number.', true);
+      if (password && password.length < 8) return showToast('Password must be at least 8 characters, or leave it blank.', true);
 
       btn.disabled = true;
       btn.textContent = 'Creating…';
       try {
         const res = await fetch('/api/setup/create-admin', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token, name, phone, email }),
+          body: JSON.stringify({ name, phone, email, password }),
         });
         const data = await res.json();
         if (!data.success) { showToast(data.error || 'Could not create the account.', true); return; }
@@ -185,11 +253,11 @@
     }
 
     // Pre-fills the remaining steps with whatever this deployment currently
-    // has in effect (its coded-in defaults if nothing's been configured
-    // yet) using the exact same endpoint Settings -> General itself reads --
-    // so "Save & Continue" without touching anything is a harmless no-op
-    // instead of tripping a required-field error, and an operator can see
-    // (and overwrite) the actual values rather than guessing at blank boxes.
+    // has in effect (blank, on a genuinely fresh install) using the exact
+    // same endpoint Settings -> General itself reads -- so "Save & Continue"
+    // without touching anything is a harmless no-op instead of tripping a
+    // required-field error, and an operator can see (and overwrite) the
+    // actual values rather than guessing at blank boxes.
     async function loadCurrentDefaults() {
       const res = await fetch('/api/admin/general-settings');
       if (!res.ok) return;
@@ -203,6 +271,10 @@
       setVal('su-conf-regprefix', data.conference.regPrefix);
       setVal('su-upi-id', data.upi.id);
       setVal('su-upi-payeename', data.upi.payeeName);
+      setVal('su-bank-name', data.bank.accountName);
+      setVal('su-bank-number', data.bank.accountNumber);
+      setVal('su-bank-ifsc', data.bank.ifsc);
+      setVal('su-bank-branch', data.bank.branch);
       setVal('su-sms-sender', data.sms.sender);
       setVal('su-sms-url', data.sms.url);
       setVal('su-sms-entityid', data.sms.entityId);
@@ -236,11 +308,38 @@
           endDate: document.getElementById('su-conf-enddate').value,
           regPrefix: document.getElementById('su-conf-regprefix').value,
         };
+        const data = await saveGroup(name, body);
+        if (!data.success) { showToast(data.error || 'Could not save.', true); return; }
+      } else if (name === 'categories') {
+        // Nothing to batch-save here -- each category was already persisted
+        // the moment "+ Add Category" was clicked. This step's own "Continue"
+        // only needs to save the pricing-phase cutoff dates, if any were set.
+        const early = document.getElementById('su-phase-early').value;
+        const regular = document.getElementById('su-phase-regular').value;
+        const late = document.getElementById('su-phase-late').value;
+        if (early || regular || late) {
+          const res = await fetch('/api/admin/fees/config', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ earlyUntil: early || null, regularUntil: regular || null, lateUntil: late || null }),
+          });
+          const data = await res.json();
+          if (!data.success) { showToast(data.error || 'Could not save the pricing dates.', true); return; }
+        }
       } else if (name === 'upi') {
         body = {
-          id: document.getElementById('su-upi-id').value,
-          payeeName: document.getElementById('su-upi-payeename').value,
+          upi: { id: document.getElementById('su-upi-id').value, payeeName: document.getElementById('su-upi-payeename').value },
+          bank: {
+            accountName: document.getElementById('su-bank-name').value,
+            accountNumber: document.getElementById('su-bank-number').value,
+            ifsc: document.getElementById('su-bank-ifsc').value,
+            branch: document.getElementById('su-bank-branch').value,
+          },
         };
+        const res = await fetch('/api/admin/general-settings', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!data.success) { showToast(data.error || 'Could not save.', true); return; }
       } else if (name === 'sms') {
         body = {
           sender: document.getElementById('su-sms-sender').value,
@@ -251,6 +350,8 @@
         };
         const apiKey = document.getElementById('su-sms-apikey').value.trim();
         if (apiKey) body.apiKey = apiKey;
+        const data = await saveGroup(name, body);
+        if (!data.success) { showToast(data.error || 'Could not save.', true); return; }
       } else if (name === 'email') {
         body = {
           from: document.getElementById('su-email-from').value,
@@ -261,13 +362,116 @@
         const secretKey = document.getElementById('su-email-secretkey').value.trim();
         if (accessKey) body.awsAccessKeyId = accessKey;
         if (secretKey) body.awsSecretAccessKey = secretKey;
+        const data = await saveGroup(name, body);
+        if (!data.success) { showToast(data.error || 'Could not save.', true); return; }
       } else {
         return;
       }
-      const data = await saveGroup(name, body);
-      if (!data.success) { showToast(data.error || 'Could not save.', true); return; }
       showToast('Saved.', false);
       nextAfter(name);
+    }
+
+    // --- Delegate Categories & Fees (each row is its own immediate POST/DELETE,
+    // not part of the batched saveStep('categories') above) ---
+    async function loadCategories() {
+      const res = await fetch('/api/admin/fees');
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = document.getElementById('categories-list');
+      list.innerHTML = (data.categories || []).map((c) => `
+        <div class="flex items-center justify-between gap-2 text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+          <span><b>${escapeHtml(c.label)}</b> <span class="text-slate-400 font-mono">${escapeHtml(c.category_key)}</span> — early ₹${c.early_fee}, regular ₹${c.regular_fee}, late ₹${c.late_fee}, spot ₹${c.spot_fee}</span>
+          <button type="button" onclick="removeCategory(${c.id})" class="text-rose-500 hover:text-rose-700 font-bold shrink-0">✕</button>
+        </div>`).join('');
+      const early = document.getElementById('su-phase-early');
+      if (early && !early.value) early.value = (data.config && data.config.early_until) || '';
+      const regular = document.getElementById('su-phase-regular');
+      if (regular && !regular.value) regular.value = (data.config && data.config.regular_until) || '';
+      const late = document.getElementById('su-phase-late');
+      if (late && !late.value) late.value = (data.config && data.config.late_until) || '';
+    }
+
+    function escapeHtml(v) {
+      return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    async function addCategory() {
+      const btn = document.getElementById('su-cat-add-btn');
+      const key = document.getElementById('su-cat-key').value.trim();
+      const label = document.getElementById('su-cat-label').value.trim();
+      const early = document.getElementById('su-cat-early').value;
+      const regular = document.getElementById('su-cat-regular').value;
+      const late = document.getElementById('su-cat-late').value;
+      const spot = document.getElementById('su-cat-spot').value;
+      if (!key || !/^[a-z0-9_]+$/.test(key)) return showToast('Category key must be lowercase letters, digits, or underscores.', true);
+      if (!label) return showToast('Enter a label for the category.', true);
+      if ([early, regular, late, spot].some((v) => v === '' || Number(v) < 0)) return showToast('Enter all four fees (0 or more).', true);
+
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/admin/fees/categories', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ categoryKey: key, label, earlyFee: Number(early), regularFee: Number(regular), lateFee: Number(late), spotFee: Number(spot) }),
+        });
+        const data = await res.json();
+        if (!data.success) { showToast(data.error || 'Could not add the category.', true); return; }
+        ['su-cat-key', 'su-cat-label', 'su-cat-early', 'su-cat-regular', 'su-cat-late', 'su-cat-spot'].forEach((id) => { document.getElementById(id).value = ''; });
+        await loadCategories();
+        showToast(`Added "${label}".`, false);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function removeCategory(id) {
+      const res = await fetch(`/api/admin/fees/categories/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!data.success) return showToast(data.error || 'Could not remove.', true);
+      await loadCategories();
+    }
+
+    // --- Workshops & QI Practices (same immediate add/remove pattern) ---
+    async function loadWorkshops() {
+      const res = await fetch('/api/admin/program-options');
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = document.getElementById('workshops-list');
+      list.innerHTML = (data.options || []).map((o) => `
+        <div class="flex items-center justify-between gap-2 text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+          <span><b>${escapeHtml(o.name)}</b> <span class="text-slate-400">(${o.type === 'QI' ? 'QI Practice' : 'Workshop'}, capacity ${o.capacity})</span></span>
+          <button type="button" onclick="removeWorkshop(${o.id})" class="text-rose-500 hover:text-rose-700 font-bold shrink-0">✕</button>
+        </div>`).join('');
+    }
+
+    async function addWorkshop() {
+      const btn = document.getElementById('su-ws-add-btn');
+      const name = document.getElementById('su-ws-name').value.trim();
+      const type = document.querySelector('input[name="su-ws-type"]:checked').value;
+      const capacity = document.getElementById('su-ws-capacity').value;
+      if (!name) return showToast('Enter a name.', true);
+      if (capacity === '' || Number(capacity) < 0 || !Number.isInteger(Number(capacity))) return showToast('Capacity must be a non-negative whole number.', true);
+
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/admin/program-options', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, name, capacity: Number(capacity) }),
+        });
+        const data = await res.json();
+        if (!data.success) { showToast(data.error || 'Could not add.', true); return; }
+        document.getElementById('su-ws-name').value = '';
+        await loadWorkshops();
+        showToast(`Added "${name}".`, false);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function removeWorkshop(id) {
+      const res = await fetch(`/api/admin/program-options/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!data.success) return showToast(data.error || 'Could not remove.', true);
+      await loadWorkshops();
     }
 
     goToStep('admin');
