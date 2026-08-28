@@ -66,10 +66,13 @@ finishable later from the admin panel:
    number prefix.
 3. **Delegate Categories & Fees** — add one or more fee categories with
    their early/regular/late/spot pricing and the phase cutoff dates.
-4. **Workshops** — add workshop / QI-track options, grouped so a delegate
-   picks at most one per group (further groups, and finer settings like
-   "required" or "allow more than one," are configured afterward from
-   Settings → Program Groups — see below).
+4. **Workshops** — two steps: create a group (a named bucket a delegate
+   picks one option from — the step suggests "Workshops" as a starting
+   point, but nothing is built in beyond what's added here), then add
+   options into it, picked from a dropdown of groups already created. Add as
+   many groups as the conference needs. Finer settings like "required" or
+   "allow more than one" are configured afterward from Settings → Program
+   Groups — see below.
 5. **UPI & Bank Transfer** — the conference's UPI VPA/payee name and bank
    transfer details shown to delegates as a payment option.
 6. **SMS** and **Email** — provider credentials, both optional at this stage.
@@ -432,8 +435,9 @@ zero-padded sequence shared by every registration regardless of prefix
 prefix only affects registrations created after the change; existing numbers
 are never rewritten, so a deployment that retargets mid-event ends up with
 old- and new-prefix numbers coexisting, by design. The number, the
-chosen workshop and QI practice, and a **View / Download Receipt** button are
-shown to the delegate only once the payment is verified; before that the
+delegate's chosen program-group selections, and a **View / Download
+Receipt** button are shown to the delegate only once the payment is
+verified; before that the
 dashboard shows the register/pay action. `GET /api/registrations/me/receipt`
 returns a printable HTML receipt (own registration, verified only).
 Verification also backfills a number for any older row that lacked one.
@@ -447,7 +451,7 @@ role-gated in `REPORT_ROLES` (`server.js`):
 | --- | --- |
 | Registered delegates (demography & institute) | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
 | Payment details & status | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
-| Registrations per workshop/QI practice | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
+| Registrations per program option (any group) | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
 | Accepted abstracts | `SUPER_ADMIN`, `ACADEMIC_REVIEWER`, `OPERATIONS` |
 
 Each is available via `GET /api/admin/reports/:type` as a **printable HTML
