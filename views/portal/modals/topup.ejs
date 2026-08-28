@@ -10,14 +10,32 @@
         <p id="topup-amount-display" class="text-2xl font-extrabold text-orange-700">₹0</p>
       </div>
 
-      <div class="flex flex-col items-center gap-2 mb-4">
+      <input type="radio" name="topup-payment-mode" value="UPI" checked class="hidden">
+      <input type="radio" name="topup-payment-mode" value="NEFT_RTGS" class="hidden">
+
+      <div id="topup-upi-pay-block" class="flex flex-col items-center gap-2 mb-4">
         <img id="topup-qr-image" src="" alt="UPI QR for balance" class="w-40 h-40 border-2 border-orange-200 rounded-xl p-1 bg-white">
         <a id="topup-pay-link" href="#" class="text-xs font-semibold text-indigo-600 hover:underline">Pay via UPI App</a>
+        <p>
+          <button type="button" onclick="setTopupPaymentMode('NEFT_RTGS')" class="text-xs text-indigo-600 hover:text-indigo-800 underline font-semibold">UPI not working? Pay by Bank Transfer instead</button>
+        </p>
+      </div>
+
+      <div id="topup-neft-pay-block" class="hidden text-left bg-white border border-orange-200 rounded-xl p-4 space-y-1 text-sm mb-4">
+        <p class="text-xs text-slate-500 uppercase font-bold mb-2">Bank Transfer Details</p>
+        <p>Account Name: <b>NQoCN Conf 2026</b></p>
+        <p>Account No: <b>5975992001</b></p>
+        <p>IFSC Code: <b>CBIN0280697</b></p>
+        <p>Branch: <b>Sewagram</b></p>
+        <p class="text-[10px] text-slate-500 pt-1">After transferring, enter the transaction/UTR number and upload a screenshot of the confirmation below.</p>
+        <p class="text-center pt-2">
+          <button type="button" onclick="setTopupPaymentMode('UPI')" class="text-xs text-indigo-600 hover:text-indigo-800 underline font-semibold">Pay by UPI instead</button>
+        </p>
       </div>
 
       <form id="topup-form" onsubmit="submitTopup(event)" class="space-y-3">
         <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1">Transaction UTR / Reference Number</label>
+          <label id="topup-utr-label" class="block text-xs font-semibold text-slate-700 mb-1">Transaction UTR / Reference Number</label>
           <input type="text" id="topup-utr" required placeholder="12-digit UTR No." class="w-full p-2.5 border rounded-lg text-sm font-mono outline-none">
         </div>
         <div>

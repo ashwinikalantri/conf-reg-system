@@ -1099,6 +1099,24 @@ async function verifyAndSubmitPayment(e) {
 }
 
 // --- TOP-UP (outstanding balance) ---
+// Same UPI-QR-with-a-Bank-Transfer-fallback pattern as the initial
+// registration payment (setPaymentMode/togglePaymentMode), kept as its own
+// small pair rather than generalizing the existing functions -- the two
+// modals' blocks have different ids and can be in the DOM at the same time.
+function setTopupPaymentMode(mode) {
+  const input = document.querySelector(`input[name="topup-payment-mode"][value="${mode}"]`);
+  if (input) input.checked = true;
+  const isNeft = mode === 'NEFT_RTGS';
+  const upiBlock = document.getElementById('topup-upi-pay-block');
+  const neftBlock = document.getElementById('topup-neft-pay-block');
+  if (upiBlock) upiBlock.classList.toggle('hidden', isNeft);
+  if (neftBlock) neftBlock.classList.toggle('hidden', !isNeft);
+  const label = document.getElementById('topup-utr-label');
+  const input2 = document.getElementById('topup-utr');
+  if (label) label.innerText = isNeft ? 'Bank Transaction / Reference Number' : 'Transaction UTR / Reference Number';
+  if (input2) input2.placeholder = isNeft ? 'Transaction reference no.' : '12-digit UTR No.';
+}
+
 function openTopupModal() {
   const reg = currentRegistration;
   if (!reg || !(reg.remaining > 0)) return showToast('No outstanding balance to pay.');
@@ -1107,6 +1125,7 @@ function openTopupModal() {
   document.getElementById('topup-utr').value = '';
   const fileInput = document.getElementById('topup-screenshot');
   if (fileInput) fileInput.value = '';
+  setTopupPaymentMode('UPI'); // reset to the default each time the modal opens
 
   // UPI QR for the exact balance, with the delegate's reg number + name as the
   // note so finance can match it -- same scheme as the initial payment.
@@ -1135,7 +1154,9 @@ async function submitTopup(e) {
   btn.disabled = true;
   try {
     const screenshot = await readFileAsDataURL(file);
-    const payload = { amount: Number(reg.remaining), utr, screenshot, paymentMode: 'UPI' };
+    const modeInput = document.querySelector('input[name="topup-payment-mode"]:checked');
+    const paymentMode = modeInput ? modeInput.value : 'UPI';
+    const payload = { amount: Number(reg.remaining), utr, screenshot, paymentMode };
     const submit = async (acknowledged) => (await fetch('/api/registrations/topup', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, acknowledged }),
     })).json();
