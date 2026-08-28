@@ -16,6 +16,12 @@ set -euo pipefail
 export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 
 APP_DIR="/home/ashwinikalantri/nqocn"
+# The live app moved from a pm2 process running out of APP_DIR to a Docker
+# container as of 2026-08-28 -- conference.db/uploads/bank-statements now
+# live on the container's named volume, not in this source checkout, since
+# nothing writes to APP_DIR's own copies anymore. APP_DIR is kept above only
+# because the Node invocation below still needs its node_modules (sqlite3).
+DATA_DIR="/var/lib/docker/volumes/nqocn_data/_data"
 BACKUP_ROOT="/home/ashwinikalantri/nqocn-backups"
 RETENTION_DAYS=14
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
@@ -33,10 +39,10 @@ log "Starting backup -> $DEST"
 # version mismatch on this host and refuses to run at all). VACUUM INTO is
 # transactionally consistent, same guarantee as the CLI's `.backup` would
 # have given: safe to run while the app is live and writing.
-if [ -f "$APP_DIR/conference.db" ]; then
+if [ -f "$DATA_DIR/conference.db" ]; then
   ( cd "$APP_DIR" && node -e "
     const sqlite3 = require('sqlite3').verbose();
-    const db = new sqlite3.Database('conference.db');
+    const db = new sqlite3.Database('$DATA_DIR/conference.db');
     db.run(\"VACUUM INTO '$DEST/conference.db'\", (err) => {
       if (err) { console.error(err.message); process.exit(1); }
       db.close();
@@ -44,14 +50,14 @@ if [ -f "$APP_DIR/conference.db" ]; then
   " ) || { log "ERROR: database backup failed"; exit 1; }
   log "Database backed up ($(du -h "$DEST/conference.db" | cut -f1))"
 else
-  log "WARNING: conference.db not found at $APP_DIR"
+  log "WARNING: conference.db not found at $DATA_DIR"
 fi
 
 # 2. Uploaded files (payment screenshots, ID cards) and imported bank
 #    statements -- not stored in the DB, so a DB-only backup would lose them.
 for dir in uploads bank-statements; do
-  if [ -d "$APP_DIR/$dir" ] && [ -n "$(ls -A "$APP_DIR/$dir" 2>/dev/null)" ]; then
-    tar -czf "$DEST/$dir.tar.gz" -C "$APP_DIR" "$dir"
+  if [ -d "$DATA_DIR/$dir" ] && [ -n "$(ls -A "$DATA_DIR/$dir" 2>/dev/null)" ]; then
+    tar -czf "$DEST/$dir.tar.gz" -C "$DATA_DIR" "$dir"
     log "$dir/ archived ($(du -h "$DEST/$dir.tar.gz" | cut -f1))"
   fi
 done

@@ -8,7 +8,14 @@
 
 const path = require('path');
 const APP_DIR = path.join(__dirname, '..');
-require('dotenv').config({ path: path.join(APP_DIR, '.env') });
+// The live app moved from a pm2 process running out of APP_DIR to a Docker
+// container as of 2026-08-28 -- .env and conference.db now live on the
+// container's named volume, not in this source checkout, since the app
+// (and Settings -> General, which writes credential/config changes back
+// into .env) only ever touches the volume's copy from here on. APP_DIR's
+// own .env/conference.db are frozen leftovers from before the migration.
+const DATA_DIR = '/var/lib/docker/volumes/nqocn_data/_data';
+require('dotenv').config({ path: path.join(DATA_DIR, '.env') });
 
 // Node 16 exposes node:crypto as globalThis.crypto, which lacks the Web
 // Crypto getRandomValues the AWS SDK v3 (SES) requires -- same polyfill as
@@ -165,7 +172,7 @@ function buildDigestHtml(pending, pendingCount, verifiedCount, dateLabel) {
 }
 
 async function main() {
-  const db = new sqlite3.Database(path.join(APP_DIR, 'conference.db'), sqlite3.OPEN_READONLY);
+  const db = new sqlite3.Database(path.join(DATA_DIR, 'conference.db'), sqlite3.OPEN_READONLY);
   try {
     await resyncFromSchemaMeta(db);
 
