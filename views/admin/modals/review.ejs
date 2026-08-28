@@ -6,23 +6,57 @@
         <h3 id="review-title" class="text-lg font-bold text-slate-800">Review Payment</h3>
       </div>
       <div class="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 overflow-hidden">
-        <!-- Screenshot: sized to fill available height without needing to scroll -->
-        <div class="bg-slate-900 flex items-center justify-center min-h-[260px] md:min-h-0 md:h-full">
-          <img id="review-screenshot" src="" alt="Payment screenshot" class="max-h-[40vh] md:max-h-[75vh] h-full w-full object-contain">
+        <!-- Evidence pane. Carries BOTH documents (payment screenshot and,
+             for student categories, the ID card) behind a switcher -- the ID
+             card used to be squeezed into the narrow right column at full
+             width, which made a document you actually have to *read*
+             effectively unreadable. Zoom swaps object-contain fit for the
+             image's natural size inside a scrollable box, so a low-res ID
+             can be panned around. -->
+        <div class="bg-slate-900 flex flex-col min-h-[260px] md:min-h-0 md:h-full">
+          <div class="flex items-center gap-1 p-2 shrink-0 border-b border-slate-800">
+            <button type="button" id="review-img-tab-screenshot" onclick="setReviewImage('screenshot')" class="px-2.5 py-1 rounded-md text-[11px] font-semibold transition">Screenshot</button>
+            <button type="button" id="review-img-tab-idcard" onclick="setReviewImage('idcard')" class="hidden px-2.5 py-1 rounded-md text-[11px] font-semibold transition">ID Card</button>
+            <div class="ml-auto flex items-center gap-1">
+              <button type="button" id="review-img-zoom-btn" onclick="toggleReviewImageZoom()" class="px-2.5 py-1 rounded-md text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition">🔍 Zoom</button>
+              <a id="review-img-open-link" href="" target="_blank" rel="noopener" class="px-2.5 py-1 rounded-md text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition">Open ↗</a>
+            </div>
+          </div>
+          <div id="review-img-box" class="flex-1 min-h-0 overflow-auto flex items-center justify-center p-1">
+            <img id="review-screenshot" src="" alt="" class="max-h-full max-w-full object-contain">
+          </div>
+          <p id="review-img-empty" class="hidden text-[11px] text-slate-500 text-center pb-3">No image on file.</p>
         </div>
+
         <div class="p-5 overflow-y-auto space-y-4 text-sm">
           <div>
             <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Delegate</p>
             <p id="review-name" class="font-bold text-slate-800"></p>
             <p id="review-category" class="text-xs text-slate-500"></p>
             <p id="review-regno" class="text-xs font-mono text-indigo-700 font-semibold mt-0.5"></p>
+            <!-- Demographics: one wrapped line rather than a 2x2 grid of
+                 labelled cells. It's context for the decision, never the
+                 decision itself, so it doesn't earn four rows. -->
+            <p id="review-demographics" class="text-xs text-slate-500 mt-1"></p>
           </div>
-          <div class="grid grid-cols-2 gap-3">
-            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Designation</p><p id="review-designation" class="font-semibold"></p></div>
-            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Institute</p><p id="review-institute" class="font-semibold"></p></div>
-            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Age</p><p id="review-age" class="font-semibold"></p></div>
-            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Gender</p><p id="review-gender" class="font-semibold"></p></div>
+
+          <!-- DECISION STRIP: what was owed, what's actually in, and exactly
+               what's still blocking Accept & Verify. Rendered by
+               renderReviewStatusStrip(); the gate list is refreshed live by
+               updateReviewAcceptGate() so ticking the ID box updates it
+               without a re-open. -->
+          <div id="review-status-strip" class="rounded-lg border p-3">
+            <div class="flex items-center justify-between gap-3 flex-wrap">
+              <div class="flex items-baseline gap-3 text-xs">
+                <span class="text-slate-500">Fee <b id="review-strip-fee" class="text-slate-800 text-sm"></b></span>
+                <span class="text-slate-500">Paid <b id="review-strip-paid" class="text-slate-800 text-sm"></b></span>
+                <span id="review-strip-balance-wrap" class="hidden text-slate-500">Balance <b id="review-strip-balance" class="text-orange-700 text-sm"></b></span>
+              </div>
+              <span id="review-strip-verdict" class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"></span>
+            </div>
+            <div id="review-gate-list" class="mt-2 space-y-0.5 text-[11px]"></div>
           </div>
+
           <div class="grid grid-cols-2 gap-3">
             <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mode</p><p id="review-mode" class="font-semibold"></p></div>
             <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Amount</p><p id="review-amount" class="font-semibold"></p></div>
@@ -30,24 +64,15 @@
             <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date Submitted</p><p id="review-date" class="font-semibold"></p></div>
           </div>
 
-          <!-- Payment progress: fee vs cumulative verified vs balance due,
-               plus the per-transaction ledger. Shown when there's more than a
-               single clean full payment (partial payments / top-ups). -->
+          <!-- Payment progress: the per-transaction ledger and its bank
+               reconciliation. Effectively always shown -- every registration
+               has at least one transaction row. -->
           <div id="review-payment-progress" class="hidden bg-slate-50 border border-slate-200 rounded-lg p-3">
             <div class="flex items-center justify-between text-xs mb-2">
               <span class="text-slate-500 font-semibold uppercase tracking-wider text-[10px]">Transactions &amp; Bank Reconciliation</span>
               <span id="review-progress-summary" class="font-bold"></span>
             </div>
             <div id="review-txn-ledger" class="space-y-2 text-[11px]"></div>
-          </div>
-
-          <!-- Admin-initiated: attach a bank credit that never had a matching
-               claim submitted (e.g. a second transfer the delegate didn't
-               mention). Always available, unlike the ledger above which only
-               shows once a transaction exists. -->
-          <div class="border border-slate-200 rounded-lg p-3">
-            <button type="button" onclick="toggleAdminAddPayment()" class="text-[11px] text-indigo-600 hover:underline font-semibold">+ Add a bank credit not yet claimed</button>
-            <div id="review-admin-add-payment-box" class="hidden mt-2 divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-40 overflow-y-auto"></div>
           </div>
 
           <!-- Excess this delegate paid, and the refund record (bookkeeping
@@ -59,54 +84,64 @@
             <div id="review-refund-history" class="mt-1"></div>
           </div>
 
-          <!-- Category lock: set the correct delegate category and lock it so
-               the delegate can't change it; the fee recalculates. -->
-          <div class="border border-slate-200 rounded-lg p-3">
-            <div class="flex items-center justify-between mb-1.5">
-              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Delegate Category</p>
-              <span id="review-category-locked-badge" class="hidden text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">🔒 Locked</span>
-            </div>
-            <div class="flex items-center gap-2">
-              <select id="review-category-select" class="flex-1 p-2 border rounded-lg text-sm bg-white outline-none"></select>
-              <button type="button" id="review-category-lock-btn" onclick="reviewLockCategory()" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shrink-0">Lock</button>
-              <button type="button" id="review-category-unlock-btn" onclick="reviewUnlockCategory()" class="hidden px-3 py-2 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 rounded-lg text-xs font-semibold shrink-0">Unlock</button>
-            </div>
-            <p class="text-[11px] text-slate-500 mt-1">Locking recalculates the fee and prevents the delegate from changing category.</p>
-          </div>
-
           <div>
             <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Automated Checks</p>
             <div id="review-checks" class="flex flex-wrap gap-1.5"></div>
           </div>
-          <div id="review-idcard-wrap" class="hidden">
-            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Student ID Card</p>
-            <img id="review-idcard" src="" alt="Student ID card" class="w-full rounded-lg border border-slate-200">
-          </div>
+
+          <!-- ID verification stays in the main flow, NOT in the disclosure
+               below: it's a gate on Accept & Verify, so burying it would
+               just move the "why is this button disabled?" problem. The card
+               image itself lives in the evidence pane on the left. -->
           <div id="review-idverify-wrap" class="hidden border-t border-slate-100 pt-3">
             <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Student ID Verification <span class="normal-case font-normal">(required to verify)</span></p>
             <label class="flex items-start gap-2 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-2.5 cursor-pointer">
               <input type="checkbox" id="review-idverify-checkbox" class="mt-0.5 shrink-0" onchange="reviewSetIdVerified(this.checked)">
-              <span>I have reviewed the ID card above and confirm it verifies this delegate's student status for the selected category.</span>
+              <span>I have reviewed the ID card (see the <b>ID Card</b> tab on the left) and confirm it verifies this delegate's student status for the selected category.</span>
             </label>
             <p id="review-idverify-note" class="hidden text-[11px] text-emerald-700 font-semibold mt-1"></p>
           </div>
+
           <div id="review-flagged-note" class="hidden bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-lg p-2.5">⚠️ Flagged for manual scrutiny — one or more automated checks did not pass.</div>
 
-          <!-- Legacy registration-level link section: superseded by the
-               per-transaction reconciliation in the ledger above. Hidden by
-               renderReviewPaymentProgress; kept in the DOM for its helpers. -->
-          <div id="review-legacy-link-section" class="hidden border-t border-slate-100 pt-3">
-            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Bank Statement Link <span class="normal-case font-normal">(required to verify)</span></p>
-            <div id="review-txn-linked" class="hidden bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 space-y-1">
-              <p class="text-emerald-800 font-semibold text-xs">✓ Linked to a statement transaction</p>
-              <p id="review-txn-details" class="text-[11px] text-emerald-700"></p>
-              <button type="button" onclick="reviewUnlinkTransaction()" class="text-[11px] text-rose-600 hover:underline font-semibold">Unlink</button>
+          <!-- Corrections & adjustments: the two power tools (attach an
+               unclaimed bank credit, change/lock the category) folded into
+               one disclosure, closed by default. Both are rare -- only 6 of
+               127 registrations have ever had a category locked -- and they
+               previously sat permanently expanded, taking a large share of
+               this column for something almost no review needs. Opened
+               automatically when the category is already locked, so that
+               state stays discoverable. -->
+          <details id="review-corrections" class="border border-slate-200 rounded-lg">
+            <summary class="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 rounded-lg">
+              ⚙️ Corrections &amp; adjustments
+              <span id="review-corrections-hint" class="font-normal text-slate-400"></span>
+            </summary>
+            <div class="px-3 pb-3 pt-1 space-y-3">
+              <!-- Attach a bank credit that never had a matching claim
+                   submitted (e.g. a second transfer the delegate didn't
+                   mention). -->
+              <div>
+                <button type="button" onclick="toggleAdminAddPayment()" class="text-[11px] text-indigo-600 hover:underline font-semibold">+ Add a bank credit not yet claimed</button>
+                <div id="review-admin-add-payment-box" class="hidden mt-2 divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-40 overflow-y-auto"></div>
+              </div>
+
+              <!-- Set the correct delegate category and lock it so the
+                   delegate can't change it; the fee recalculates. -->
+              <div class="border-t border-slate-100 pt-3">
+                <div class="flex items-center justify-between mb-1.5">
+                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Delegate Category</p>
+                  <span id="review-category-locked-badge" class="hidden text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">🔒 Locked</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <select id="review-category-select" class="flex-1 p-2 border rounded-lg text-sm bg-white outline-none"></select>
+                  <button type="button" id="review-category-lock-btn" onclick="reviewLockCategory()" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shrink-0">Lock</button>
+                  <button type="button" id="review-category-unlock-btn" onclick="reviewUnlockCategory()" class="hidden px-3 py-2 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 rounded-lg text-xs font-semibold shrink-0">Unlock</button>
+                </div>
+                <p class="text-[11px] text-slate-500 mt-1">Locking recalculates the fee and prevents the delegate from changing category.</p>
+              </div>
             </div>
-            <div id="review-txn-unlinked">
-              <p id="review-txn-empty" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">⚠️ No matching statement transaction found automatically. Pick one below, or upload/refresh the bank statement first.</p>
-              <div id="review-txn-candidates" class="mt-2 divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-48 overflow-y-auto"></div>
-            </div>
-          </div>
+          </details>
         </div>
       </div>
       <div class="p-4 border-t border-slate-100 flex justify-end gap-2 shrink-0">

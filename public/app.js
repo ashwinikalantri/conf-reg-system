@@ -2551,17 +2551,31 @@ function openReviewModal(id) {
   setText('review-name', p.delegate_name);
   setText('review-category', p.category_label);
   setText('review-regno', p.registration_number ? `Reg No. ${p.registration_number}` : '');
-  setText('review-designation', p.delegate_designation || '—');
-  setText('review-institute', p.delegate_institution || '—');
-  setText('review-age', p.delegate_age != null && p.delegate_age !== '' ? p.delegate_age : '—');
-  setText('review-gender', p.delegate_gender || '—');
+  // Context for the decision, not the decision itself -- one wrapped line
+  // rather than four labelled cells. Blank fields drop out entirely instead
+  // of rendering a row of em-dashes.
+  setText('review-demographics', [
+    p.delegate_designation,
+    p.delegate_institution,
+    p.delegate_age != null && p.delegate_age !== '' ? `${p.delegate_age}y` : null,
+    p.delegate_gender,
+  ].filter(Boolean).join(' · '));
   setText('review-mode', PAYMENT_MODE_LABELS[p.payment_mode] || p.payment_mode || 'UPI');
   setText('review-amount', `₹${inr(Number(p.paid_amount))}` + (p.expected_amount != null && Number(p.paid_amount) !== Number(p.expected_amount) ? ` (expected ₹${inr(Number(p.expected_amount))})` : ''));
   setText('review-utr', p.utr_number);
   setText('review-date', fmtAuditTime(p.submitted_at) || '—');
 
-  const img = document.getElementById('review-screenshot');
-  if (img) img.src = p.has_screenshot ? `/api/registrations/${encodeURIComponent(p.id)}/screenshot` : '';
+  // Evidence pane: both documents live here behind a switcher (see
+  // setReviewImage). Reset to the screenshot, unzoomed, on every open --
+  // otherwise the previous delegate's chosen tab/zoom carries over.
+  reviewImageUrls = {
+    screenshot: p.has_screenshot ? `/api/registrations/${encodeURIComponent(p.id)}/screenshot` : '',
+    idcard: p.has_id_card ? `/api/registrations/${encodeURIComponent(p.id)}/id-card` : '',
+  };
+  const idCardTab = document.getElementById('review-img-tab-idcard');
+  if (idCardTab) idCardTab.classList.toggle('hidden', !p.has_id_card);
+  reviewImageZoomed = false;
+  setReviewImage('screenshot');
 
   const checksBox = document.getElementById('review-checks');
   if (checksBox) {
@@ -2570,13 +2584,6 @@ function openReviewModal(id) {
     lines.push(ocrCheckLine('UTR', p.ocr_utr_match));
     if (p.ocr_id_match != null) lines.push(ocrCheckLine('ID Card', p.ocr_id_match));
     checksBox.innerHTML = lines.join('');
-  }
-
-  const idWrap = document.getElementById('review-idcard-wrap');
-  const idImg = document.getElementById('review-idcard');
-  if (idWrap && idImg) {
-    idWrap.classList.toggle('hidden', !p.has_id_card);
-    idImg.src = p.has_id_card ? `/api/registrations/${encodeURIComponent(p.id)}/id-card` : '';
   }
 
   const flaggedNote = document.getElementById('review-flagged-note');
@@ -2622,13 +2629,103 @@ function openReviewModal(id) {
   }
 
   renderReviewIdVerification(p);
-  // Bank reconciliation is now per transaction, inside the ledger
-  // (renderReviewPaymentProgress); the old registration-level renderReviewTxnLink
-  // is superseded and no longer called.
+  // Bank reconciliation is per transaction, inside the ledger.
   renderReviewPaymentProgress(p);
   renderReviewRefunds(p);
   renderReviewCategoryLock(p);
+  // Last: reads the reviewGate flags the two renders above just set, so the
+  // "what's blocking Accept" list reflects this registration's real state.
+  renderReviewStatusStrip(p);
   openModal('modal-review');
+}
+
+// --- REVIEW EVIDENCE PANE (screenshot + ID card) ---
+// Both documents share the left pane behind a switcher. The ID card used to
+// render full-width inside the narrow right column, which made a document
+// you have to actually read effectively unreadable.
+let reviewImageUrls = { screenshot: '', idcard: '' };
+let reviewImageZoomed = false;
+let reviewImageWhich = 'screenshot';
+
+function setReviewImage(which) {
+  reviewImageWhich = which;
+  const img = document.getElementById('review-screenshot');
+  const empty = document.getElementById('review-img-empty');
+  const link = document.getElementById('review-img-open-link');
+  const url = reviewImageUrls[which] || '';
+
+  if (img) { img.src = url; img.classList.toggle('hidden', !url); }
+  if (empty) empty.classList.toggle('hidden', !!url);
+  if (link) { link.href = url; link.classList.toggle('hidden', !url); }
+  // Nothing to zoom or open on a ₹0 registration (fully discounted -- no
+  // screenshot was ever required), so don't offer controls that do nothing.
+  const zoomBtn = document.getElementById('review-img-zoom-btn');
+  if (zoomBtn) zoomBtn.classList.toggle('hidden', !url);
+
+  // Active-tab styling, applied by hand rather than via a framework class
+  // toggle so the inactive state stays legible on the dark pane.
+  ['screenshot', 'idcard'].forEach((k) => {
+    const tab = document.getElementById(`review-img-tab-${k}`);
+    if (!tab) return;
+    const active = k === which;
+    tab.className = `${k === 'idcard' && !reviewImageUrls.idcard ? 'hidden ' : ''}px-2.5 py-1 rounded-md text-[11px] font-semibold transition ${
+      active ? 'bg-white text-slate-900' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`;
+  });
+  applyReviewImageZoom();
+}
+
+// Fit (object-contain) vs natural size inside a scrollable box -- a real
+// 1:1 zoom you can pan, which is what a low-resolution ID card needs.
+function applyReviewImageZoom() {
+  const img = document.getElementById('review-screenshot');
+  const box = document.getElementById('review-img-box');
+  const btn = document.getElementById('review-img-zoom-btn');
+  if (!img || !box) return;
+  if (reviewImageZoomed) {
+    img.className = 'max-w-none max-h-none w-auto h-auto';
+    box.className = 'flex-1 min-h-0 overflow-auto p-1';
+  } else {
+    img.className = 'max-h-full max-w-full object-contain';
+    box.className = 'flex-1 min-h-0 overflow-auto flex items-center justify-center p-1';
+  }
+  if (btn) btn.textContent = reviewImageZoomed ? '🔍 Fit' : '🔍 Zoom';
+}
+
+function toggleReviewImageZoom() {
+  reviewImageZoomed = !reviewImageZoomed;
+  applyReviewImageZoom();
+}
+
+// --- REVIEW DECISION STRIP ---
+// What was owed, what's actually in, and (via updateReviewAcceptGate) what
+// is still blocking Accept & Verify. Previously the Accept button just sat
+// disabled with no explanation of which requirement was unmet.
+function renderReviewStatusStrip(p) {
+  const strip = document.getElementById('review-status-strip');
+  if (!strip) return;
+  const fee = Number(p.expected_amount) || 0;
+  const paid = Number(p.verified_total) || 0;
+  const balance = Math.max(0, fee - paid);
+
+  setText('review-strip-fee', `₹${inr(fee)}`);
+  setText('review-strip-paid', `₹${inr(paid)}`);
+  const balWrap = document.getElementById('review-strip-balance-wrap');
+  if (balWrap) balWrap.classList.toggle('hidden', balance <= 0);
+  setText('review-strip-balance', `₹${inr(balance)}`);
+
+  const verdict = document.getElementById('review-strip-verdict');
+  const TONE = {
+    BANK_VERIFIED: ['Verified', 'bg-emerald-100 text-emerald-800', 'bg-emerald-50 border-emerald-200'],
+    REJECTED: ['Rejected', 'bg-rose-100 text-rose-800', 'bg-rose-50 border-rose-200'],
+    PARTIAL_PAYMENT: ['Partial', 'bg-orange-100 text-orange-800', 'bg-orange-50 border-orange-200'],
+    PENDING: ['Pending', 'bg-amber-100 text-amber-800', 'bg-amber-50 border-amber-200'],
+  };
+  const [label, pillTone, stripTone] = TONE[p.bank_status] || TONE.PENDING;
+  if (verdict) verdict.className = `text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${pillTone}`;
+  if (verdict) verdict.textContent = label;
+  strip.className = `rounded-lg border p-3 ${stripTone}`;
+
+  updateReviewAcceptGate();
 }
 
 // The reconciliation surface: fee/verified/balance summary plus the
@@ -2641,8 +2738,6 @@ let reviewRegVerified = false;
 function renderReviewPaymentProgress(p) {
   const wrap = document.getElementById('review-payment-progress');
   const ledger = document.getElementById('review-txn-ledger');
-  const legacy = document.getElementById('review-legacy-link-section');
-  if (legacy) legacy.classList.add('hidden'); // superseded by per-transaction linking
   const txns = p.transactions || [];
   reviewTxns = txns;
   reviewRegVerified = p.bank_status === 'BANK_VERIFIED';
@@ -2882,7 +2977,29 @@ async function adminAddPayment(bankTxnId, maxRemaining) {
 const reviewGate = { linked: false, idOk: true };
 function updateReviewAcceptGate() {
   const acceptBtn = document.getElementById('review-accept-btn');
-  if (acceptBtn) acceptBtn.disabled = !(reviewGate.linked && reviewGate.idOk);
+  const blocked = !(reviewGate.linked && reviewGate.idOk);
+  if (acceptBtn) acceptBtn.disabled = blocked;
+
+  // Spell out each requirement rather than leaving a disabled button with no
+  // explanation. Refreshed from here (not only on open) so ticking the ID
+  // checkbox updates the list immediately. Only rendered while the button is
+  // actually on screen -- on an already-verified or rejected registration
+  // there's no decision left to gate.
+  const list = document.getElementById('review-gate-list');
+  if (!list) return;
+  const acceptVisible = acceptBtn && !acceptBtn.classList.contains('hidden');
+  if (!acceptVisible) { list.innerHTML = ''; return; }
+  const row = (ok, okText, blockedText) =>
+    `<div class="${ok ? 'text-emerald-700' : 'text-amber-700 font-semibold'}">${ok ? '✓' : '○'} ${ok ? okText : blockedText}</div>`;
+  const rows = [row(reviewGate.linked, 'All payments linked to bank credits', 'Link every payment to its bank credit below')];
+  // idOk is true for non-student categories, where there's nothing to confirm
+  // -- showing a permanently-ticked row there would be noise.
+  if (!reviewGate.idOk || isStudentCategory((cachedPaymentRegs.find((r) => String(r.id) === String(reviewTargetId)) || {}).category_key)) {
+    rows.push(row(reviewGate.idOk, 'Student ID confirmed', 'Confirm the student ID card below'));
+  }
+  list.innerHTML = blocked
+    ? `<p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Before you can verify</p>${rows.join('')}`
+    : rows.join('');
 }
 
 // Category list for the review modal's lock control, loaded once from the fee
@@ -2924,6 +3041,15 @@ async function renderReviewCategoryLock(p) {
   sel.disabled = locked;
   if (lockBtn) lockBtn.classList.toggle('hidden', locked);
   if (unlockBtn) unlockBtn.classList.toggle('hidden', !(locked && isSuper));
+
+  // The Corrections disclosure is closed by default (these controls are used
+  // on a small minority of reviews), but an already-locked category is state
+  // the admin needs to notice -- so surface it on the summary line and open
+  // the section when it applies.
+  const details = document.getElementById('review-corrections');
+  const hint = document.getElementById('review-corrections-hint');
+  if (hint) hint.textContent = locked ? ' · 🔒 category locked' : '';
+  if (details) details.open = locked;
 }
 
 async function reviewLockCategory() {
@@ -2977,65 +3103,6 @@ async function reviewSetIdVerified(checked) {
   }
   await renderBackendPayments();
   openReviewModal(reviewTargetId); // re-open with fresh cached data
-}
-
-// Show whether this registration is linked to a statement transaction; if
-// not, load candidates the admin can pick from manually. Verification is
-// blocked (both by the server and by disabling this button) until linked.
-function renderReviewTxnLink(p) {
-  const linkedBox = document.getElementById('review-txn-linked');
-  const unlinkedBox = document.getElementById('review-txn-unlinked');
-  const isLinked = !!p.bank_txn_id;
-
-  if (linkedBox) linkedBox.classList.toggle('hidden', !isLinked);
-  if (unlinkedBox) unlinkedBox.classList.toggle('hidden', isLinked);
-  reviewGate.linked = isLinked;
-  updateReviewAcceptGate();
-
-  if (isLinked) {
-    setText('review-txn-details', `${esc(p.bank_txn_date || '')} · ₹${inr(esc(p.bank_txn_credit))} · ${esc(p.bank_txn_description || '')}`);
-    return;
-  }
-  loadReviewTxnCandidates(p.id);
-}
-
-async function loadReviewTxnCandidates(regId) {
-  const box = document.getElementById('review-txn-candidates');
-  if (!box) return;
-  box.innerHTML = '<p class="text-xs text-slate-400 p-2">Loading candidates…</p>';
-  const res = await fetch(`/api/registrations/${encodeURIComponent(regId)}/candidate-transactions`);
-  if (!res.ok) { box.innerHTML = '<p class="text-xs text-rose-600 p-2">Could not load candidates.</p>'; return; }
-  const data = await res.json();
-  const txns = data.transactions || [];
-  box.innerHTML = txns.length ? txns.map(t => `
-    <div class="flex items-center justify-between gap-2 p-2 text-xs">
-      <div class="min-w-0">
-        <p class="font-semibold text-slate-700">${esc(t.post_date)} · ₹${inr(esc(t.credit))}</p>
-        <p class="text-slate-500 truncate">${esc(t.description)}</p>
-      </div>
-      <button type="button" class="review-txn-link-btn shrink-0 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg" data-txn-id="${esc(t.id)}">Link</button>
-    </div>`).join('') : '<p class="text-xs text-slate-400 p-2">No unused credits in the statement yet.</p>';
-
-  box.querySelectorAll('.review-txn-link-btn').forEach((btn) => {
-    btn.addEventListener('click', () => reviewLinkTransaction(btn.dataset.txnId));
-  });
-}
-
-async function reviewLinkTransaction(transactionId) {
-  const data = await (await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/link-transaction`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transactionId }),
-  })).json();
-  if (!data.success) return showToast(data.error || 'Could not link this transaction.');
-  await renderBackendPayments();
-  openReviewModal(reviewTargetId); // re-open with fresh cached data to reflect the new link
-}
-
-async function reviewUnlinkTransaction() {
-  if (!(await showConfirm('Unlink this transaction? You will need to link one before this can be verified.'))) return;
-  const data = await (await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/link-transaction`, { method: 'DELETE' })).json();
-  if (!data.success) return showToast(data.error || 'Could not unlink.');
-  await renderBackendPayments();
-  openReviewModal(reviewTargetId);
 }
 
 async function reviewAccept() {
