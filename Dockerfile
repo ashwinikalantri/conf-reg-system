@@ -16,6 +16,19 @@ FROM node:24-bookworm-slim
 
 WORKDIR /app
 
+# rclone: used by scripts/backup.sh to copy each nightly backup off-site to
+# Google Drive. From Debian's signed repo rather than an ad-hoc binary
+# download from rclone.org -- 1.60 is older than the host's 1.75 but was
+# verified to read the existing rclone.conf and authenticate to Drive fine
+# (the drive-remote config format is long-stable).
+#
+# ca-certificates is NOT optional here and NOT already present in the slim
+# base: without it rclone's TLS handshake to googleapis.com fails outright
+# with "x509: certificate signed by unknown authority".
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends rclone ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 # Dependencies first, and only the manifests -- so `npm ci` is only re-run
 # when package*.json actually change, not on every source edit.
 COPY package.json package-lock.json ./
