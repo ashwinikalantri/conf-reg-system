@@ -130,17 +130,46 @@
         </form>
       </div>
 
-      <!-- Other .env variables (read-only, not editable here) -->
+      <!-- Other Environment Variables -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <h3 class="text-lg font-bold text-slate-800 mb-1">🗄️ Other Environment Variables</h3>
-        <p class="text-xs text-slate-500 mb-3">Server-level settings, showing the value actually in effect right now. Not editable here — set these in .env on the server and restart.</p>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse text-sm">
-            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
-              <th class="py-2 px-3">Variable</th><th class="py-2 px-3">Effective Value</th><th class="py-2 px-3">Source</th>
-            </tr></thead>
-            <tbody id="gs-other-env-body" class="divide-y divide-slate-100"></tbody>
-          </table>
+        <p class="text-xs text-slate-500 mb-3">Server-level settings, stored in the database instead of the server's .env file. Portal URL and OTP Echo apply immediately; Port, Cookie Name, and Cookie Secure are saved now but only take effect the next time the server process restarts.</p>
+        <form onsubmit="saveGeneralSettings(event, 'otherEnv')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="sm:col-span-2">
+            <label class="block text-[10px] font-semibold text-slate-600 mb-1">Portal URL</label>
+            <input id="gs-env-portalurl" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+            <p class="text-[10px] text-slate-400 mt-1">Shown in discount-code emails and similar messages. Applies immediately.</p>
+          </div>
+          <div class="border-t pt-3">
+            <label class="block text-[10px] font-semibold text-slate-600 mb-1">Port</label>
+            <input id="gs-env-port" type="number" min="1" max="65535" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
+            <p class="text-[10px] text-amber-700 mt-1">⚠️ Takes effect only after the server process is restarted.</p>
+          </div>
+          <div class="border-t pt-3">
+            <label class="block text-[10px] font-semibold text-slate-600 mb-1">Cookie Name</label>
+            <input id="gs-env-cookiename" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
+            <p class="text-[10px] text-amber-700 mt-1">⚠️ Takes effect only after restart, and signs everyone out (delegates and admins alike) the moment it does.</p>
+          </div>
+          <div class="sm:col-span-2 border-t pt-3">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="gs-env-cookiesecure" class="w-5 h-5">
+              <span class="text-sm font-semibold text-slate-700">Cookie Secure (HTTPS-only)</span>
+            </label>
+            <p class="text-[10px] text-amber-700 mt-1">⚠️ Takes effect only after restart, and signs everyone out when it does. Only turn this ON if the site is actually served over HTTPS — turning it on over plain HTTP will silently break every login.</p>
+          </div>
+          <div class="sm:col-span-2 border-t pt-3">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="gs-env-otpecho" class="w-5 h-5">
+              <span class="text-sm font-semibold text-slate-700">OTP Echo</span>
+            </label>
+            <p class="text-[10px] text-rose-700 mt-1">⚠️ Development convenience only — when ON, OTP codes are returned directly in the login API response instead of only via SMS. Applies immediately. Never leave this on in production.</p>
+          </div>
+          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save</button></div>
+        </form>
+        <div class="mt-4 pt-3 border-t border-slate-100">
+          <p class="text-[10px] font-semibold text-slate-500 uppercase mb-1">Node Environment</p>
+          <p id="gs-env-nodeenv" class="text-sm font-mono text-slate-700">—</p>
+          <p class="text-[10px] text-slate-400 mt-1">Read-only — set via the NODE_ENV environment variable when the process is launched (pm2 / the shell), not editable from here.</p>
         </div>
       </div>
     </section>

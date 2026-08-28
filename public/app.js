@@ -4133,15 +4133,19 @@ async function renderGeneralSettings() {
   setText('gs-email-accesskey-hint', data.email.accessKeyMasked ? `(current: ${data.email.accessKeyMasked})` : '(not set)');
   setText('gs-email-secretkey-hint', data.email.hasSecretKey ? '(configured)' : '(not set)');
 
-  const envBody = document.getElementById('gs-other-env-body');
-  if (envBody) {
-    envBody.innerHTML = (data.otherEnvVars || []).map((v) => `
-      <tr>
-        <td class="py-2 px-3 font-mono text-xs text-slate-700">${esc(v.key)}</td>
-        <td class="py-2 px-3 text-xs text-slate-600">${esc(v.value)}</td>
-        <td class="py-2 px-3 text-[10px]">${v.fromEnv ? '<span class="text-indigo-600 font-semibold">.env</span>' : '<span class="text-slate-400">default</span>'}</td>
-      </tr>`).join('') || `<tr><td colspan="3" class="py-3 text-center text-slate-400">None</td></tr>`;
-  }
+  // "Other Environment Variables" -- five editable fields plus the read-only
+  // NODE_ENV line. otherEnvVars is a flat array (see describeOtherEnvVars()
+  // server-side); pull each one out by key rather than assuming array order.
+  const envByKey = {};
+  (data.otherEnvVars || []).forEach((v) => { envByKey[v.key] = v; });
+  setVal('gs-env-portalurl', envByKey.PORTAL_URL && envByKey.PORTAL_URL.value);
+  setVal('gs-env-port', envByKey.PORT && envByKey.PORT.value);
+  setVal('gs-env-cookiename', envByKey.COOKIE_NAME && envByKey.COOKIE_NAME.value);
+  const cookieSecureEl = document.getElementById('gs-env-cookiesecure');
+  if (cookieSecureEl && document.activeElement !== cookieSecureEl) cookieSecureEl.checked = !!(envByKey.COOKIE_SECURE && envByKey.COOKIE_SECURE.value === 'true');
+  const otpEchoEl = document.getElementById('gs-env-otpecho');
+  if (otpEchoEl && document.activeElement !== otpEchoEl) otpEchoEl.checked = !!(envByKey.OTP_ECHO && envByKey.OTP_ECHO.value === 'true');
+  setText('gs-env-nodeenv', (envByKey.NODE_ENV && envByKey.NODE_ENV.value) || '(unset)');
 }
 
 // Turning this on locks every delegate and non-super admin out of the portal,
@@ -4217,6 +4221,14 @@ async function saveGeneralSettings(e, group) {
     // Digest recipients are still persisted as email.digestRecipients server-side
     // (same schema_meta key as before) -- only the admin UI moved to its own card.
     body = { email: { digestRecipients: gsDigestRecipients.map((r) => r.phone).join(',') } };
+  } else if (group === 'otherEnv') {
+    body = { otherEnv: {
+      portalUrl: document.getElementById('gs-env-portalurl').value,
+      port: document.getElementById('gs-env-port').value,
+      cookieName: document.getElementById('gs-env-cookiename').value,
+      cookieSecure: document.getElementById('gs-env-cookiesecure').checked,
+      otpEcho: document.getElementById('gs-env-otpecho').checked,
+    } };
   } else {
     return;
   }
@@ -4224,8 +4236,12 @@ async function saveGeneralSettings(e, group) {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   })).json();
   if (!data.success) return showToast(data.error || 'Could not save.');
-  const groupLabels = { sms: 'SMS', email: 'Email', upi: 'UPI', conference: 'Conference Details', notifications: 'Notification', maintenance: 'Maintenance' };
-  showToast(`${groupLabels[group] || group} settings saved.`, 'success');
+  const groupLabels = { sms: 'SMS', email: 'Email', upi: 'UPI', conference: 'Conference Details', notifications: 'Notification', maintenance: 'Maintenance', otherEnv: 'Environment' };
+  if (data.restartRequired) {
+    showToast(`${groupLabels[group] || group} settings saved. Restart the server (pm2 restart) for the port/cookie changes to take effect.`, 'info');
+  } else {
+    showToast(`${groupLabels[group] || group} settings saved.`, 'success');
+  }
   // Clear any credential inputs immediately after a successful save -- they
   // should never sit filled-in on screen once submitted.
   credentialInputs.forEach((id) => { const el = document.getElementById(id); if (el) el.value = ''; });

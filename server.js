@@ -23,7 +23,14 @@ const multer = require('multer');
 const XLSX = require('xlsx');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+// `let`, not `const`: admin-editable from Settings → General (see
+// GENERAL_SETTINGS_KEYS / RUNTIME_ENV_SETTERS below), same as COOKIE_NAME,
+// COOKIE_SECURE, OTP_ECHO, and PORTAL_URL further down. This one is read
+// exactly once, at process boot -- loadGeneralSettings() overlays any
+// schema_meta value onto it before startServer() calls app.listen(PORT, ...),
+// and nothing reads it again after that -- so a saved change here only takes
+// effect on the next restart, never live.
+let PORT = process.env.PORT || 3000;
 
 // Payment screenshots are written here (never committed; see .gitignore) and
 // served only through an authenticated route -- not from the static root.
@@ -50,7 +57,12 @@ const IMAGE_EXT = {
 const EXT_MIME = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
 
 // --- CONFIG -------------------------------------------------------------
-const COOKIE_NAME = process.env.COOKIE_NAME || 'nqocn_sid';
+// `let`, not `const` -- same admin-editable-with-restart pattern as PORT
+// above. Read once at boot (loadGeneralSettings() overlays schema_meta
+// before app.listen()); changing it later only takes effect on the next
+// restart, and every currently-issued session cookie stops being recognized
+// the moment it does (see the PUT handler's change note for this field).
+let COOKIE_NAME = process.env.COOKIE_NAME || 'nqocn_sid';
 const OTP_TTL_MS = 5 * 60 * 1000;        // OTP valid for 5 minutes
 const OTP_RESEND_MS = 30 * 1000;         // min gap between OTP requests
 const OTP_MAX_ATTEMPTS = 5;              // wrong tries before OTP is burned
@@ -58,14 +70,20 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // sessions last 12 hours
 
 // Send the OTP back to the client when there is no real SMS gateway.
 // Defaults on outside production so the app is usable out of the box;
-// force it off with OTP_ECHO=false, or on with OTP_ECHO=true.
-const OTP_ECHO = process.env.OTP_ECHO
+// force it off with OTP_ECHO=false, or on with OTP_ECHO=true. `let`: also
+// admin-editable (Settings → General), but unlike PORT/COOKIE_NAME/
+// COOKIE_SECURE this one is read fresh on every OTP request, so a saved
+// change applies immediately, no restart needed.
+let OTP_ECHO = process.env.OTP_ECHO
   ? process.env.OTP_ECHO === 'true'
   : process.env.NODE_ENV !== 'production';
 
 // Set COOKIE_SECURE=true when served over HTTPS (directly or via a proxy).
-const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
-if (COOKIE_SECURE) app.set('trust proxy', 1);
+// `let`, restart-required -- see COOKIE_NAME above; app.set('trust proxy', 1)
+// is applied after loadGeneralSettings() resolves instead of here, so it
+// still reflects a schema_meta override by the time it matters (see the boot
+// sequence near app.listen).
+let COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
 
 // The admin panel is assembled at request time from views/admin.ejs and its
 // partials (one file per tab/section/modal under views/admin/) rather than
@@ -103,7 +121,8 @@ const CONFERENCE = {
   location: 'MGIMS, Sevagram, Wardha',
   regPrefix: 'NQOCN2026',
 };
-const PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
+// `let`: admin-editable, applies immediately (read fresh wherever it's used).
+let PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
 
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -228,13 +247,30 @@ const GENERAL_SETTINGS_KEYS = {
   conference_start_date: ['CONFERENCE', 'startDate'], conference_end_date: ['CONFERENCE', 'endDate'],
   conference_location: ['CONFERENCE', 'location'], conference_reg_prefix: ['CONFERENCE', 'regPrefix'],
 };
+
+// The rest of "Other Environment Variables" -- PORT, PORTAL_URL, COOKIE_NAME,
+// COOKIE_SECURE, OTP_ECHO. Each is its own top-level `let`, not a property on
+// one of the SMS/EMAIL/UPI/CONFERENCE objects above, so it needs its own
+// setter rather than a generic [object, prop] pair. NODE_ENV is deliberately
+// not here -- it's a Node/process-launch convention read before any of this
+// code runs, not application config, so it stays a real env var.
+const RUNTIME_ENV_SETTERS = {
+  portal_url: (v) => { PORTAL_URL = v; },
+  otp_echo: (v) => { OTP_ECHO = v !== '0'; },
+  port: (v) => { const n = Number(v); if (Number.isInteger(n) && n > 0 && n <= 65535) PORT = n; },
+  cookie_name: (v) => { COOKIE_NAME = v; },
+  cookie_secure: (v) => { COOKIE_SECURE = v !== '0'; },
+};
+
 async function loadGeneralSettings() {
-  const keys = Object.keys(GENERAL_SETTINGS_KEYS);
+  const keys = [...Object.keys(GENERAL_SETTINGS_KEYS), ...Object.keys(RUNTIME_ENV_SETTERS)];
   const rows = await dbAll(`SELECT key, value FROM schema_meta WHERE key IN (${keys.map(() => '?').join(',')})`, keys);
   const targets = { SMS, EMAIL, UPI, CONFERENCE };
   for (const row of rows) {
     const dest = GENERAL_SETTINGS_KEYS[row.key];
-    if (dest && row.value) targets[dest[0]][dest[1]] = row.value;
+    if (dest) { if (row.value) targets[dest[0]][dest[1]] = row.value; continue; }
+    const setter = RUNTIME_ENV_SETTERS[row.key];
+    if (setter && row.value != null) setter(row.value);
   }
   rebuildSesClient();
 }
@@ -4660,21 +4696,30 @@ app.get('/api/admin/group-rules', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), a
 // -- only whether they're present, so the admin can tell why a channel is
 // unavailable without the secret itself ever reaching the browser.
 // Every env var the app knows how to read, beyond the SMS/Email/UPI fields
-// already editable above -- shown read-only in Settings → General so an
-// admin can see the full picture of what's actually running, not just
-// what's in .env. None of these are secret, so the *effective* value is
+// already editable above. Five of these six are now admin-editable from
+// Settings → General (persisted to schema_meta, same as everything else on
+// this page) -- NODE_ENV is the one exception, shown read-only since it's a
+// Node/process-launch convention, not application config (see
+// RUNTIME_ENV_SETTERS). None of these are secret, so the *effective* value is
 // shown (the resolved runtime constant, same as what the server actually
 // used at boot) rather than the raw env var -- most of these run on their
-// coded-in default with nothing in .env at all, and showing "not set" for
+// coded-in default with nothing set anywhere, and showing "not set" for
 // those would look broken even though it's accurate.
-function describeOtherEnvVars() {
+async function describeOtherEnvVars() {
+  const keys = Object.keys(RUNTIME_ENV_SETTERS);
+  const rows = await dbAll(`SELECT key FROM schema_meta WHERE key IN (${keys.map(() => '?').join(',')})`, keys);
+  const inDb = new Set(rows.map((r) => r.key));
+  // DB (if an admin has ever saved it) beats .env beats the coded-in default
+  // -- same precedence loadGeneralSettings() already applies when it overlays
+  // schema_meta on top of the process.env-seeded value at boot.
+  const source = (key, envVar) => inDb.has(key) ? 'database' : (process.env[envVar] !== undefined ? 'env' : 'default');
   return [
-    { key: 'PORT', value: String(PORT), fromEnv: process.env.PORT !== undefined },
-    { key: 'PORTAL_URL', value: PORTAL_URL, fromEnv: process.env.PORTAL_URL !== undefined },
-    { key: 'NODE_ENV', value: process.env.NODE_ENV || '(unset)', fromEnv: process.env.NODE_ENV !== undefined },
-    { key: 'COOKIE_NAME', value: COOKIE_NAME, fromEnv: process.env.COOKIE_NAME !== undefined },
-    { key: 'COOKIE_SECURE', value: String(COOKIE_SECURE), fromEnv: process.env.COOKIE_SECURE !== undefined },
-    { key: 'OTP_ECHO', value: String(OTP_ECHO), fromEnv: process.env.OTP_ECHO !== undefined },
+    { key: 'PORT', value: String(PORT), source: source('port', 'PORT'), editable: true, restartRequired: true },
+    { key: 'PORTAL_URL', value: PORTAL_URL, source: source('portal_url', 'PORTAL_URL'), editable: true, restartRequired: false },
+    { key: 'NODE_ENV', value: process.env.NODE_ENV || '(unset)', source: process.env.NODE_ENV !== undefined ? 'env' : 'default', editable: false, restartRequired: false },
+    { key: 'COOKIE_NAME', value: COOKIE_NAME, source: source('cookie_name', 'COOKIE_NAME'), editable: true, restartRequired: true },
+    { key: 'COOKIE_SECURE', value: String(COOKIE_SECURE), source: source('cookie_secure', 'COOKIE_SECURE'), editable: true, restartRequired: true },
+    { key: 'OTP_ECHO', value: String(OTP_ECHO), source: source('otp_echo', 'OTP_ECHO'), editable: true, restartRequired: false },
   ];
 }
 
@@ -4700,7 +4745,7 @@ app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
       upi: { id: UPI.id, payeeName: UPI.payeeName },
       conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym, startDate: CONFERENCE.startDate, endDate: CONFERENCE.endDate, location: CONFERENCE.location, regPrefix: CONFERENCE.regPrefix },
       maintenance: { enabled: maintenance.enabled, message: maintenance.message },
-      otherEnvVars: describeOtherEnvVars(),
+      otherEnvVars: await describeOtherEnvVars(),
     });
   } catch (err) {
     next(err);
@@ -4709,7 +4754,7 @@ app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
 
 app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
-    const { sms, email, upi, conference, notify, maintenance: maintenanceBody } = req.body || {};
+    const { sms, email, upi, conference, notify, maintenance: maintenanceBody, otherEnv } = req.body || {};
 
     // Reject line breaks in the credential fields up front, before anything is
     // persisted, so a bad paste can't inject extra .env lines and a malformed
@@ -4765,7 +4810,37 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
       return res.status(400).json({ success: false, error: 'Registration Number Prefix must be 1-20 letters/numbers only.' });
     }
 
+    // "Other Environment Variables". portalUrl/port/cookieName are required
+    // text fields (all three have a coded-in default, never legitimately
+    // blank); cookieSecure/otpEcho are booleans, validated separately below.
+    // Shape-checked up front, same as everything above, so nothing partially
+    // applies on a bad request.
+    if (otherEnv && otherEnv.portalUrl !== undefined && !String(otherEnv.portalUrl).trim()) {
+      return res.status(400).json({ success: false, error: 'Portal URL cannot be blank.' });
+    }
+    let otherEnvPort = null;
+    if (otherEnv && otherEnv.port !== undefined) {
+      const raw = String(otherEnv.port).trim();
+      otherEnvPort = Number(raw);
+      if (!raw || !Number.isInteger(otherEnvPort) || otherEnvPort < 1 || otherEnvPort > 65535) {
+        return res.status(400).json({ success: false, error: 'Port must be a whole number between 1 and 65535.' });
+      }
+    }
+    if (otherEnv && otherEnv.cookieName !== undefined) {
+      const val = String(otherEnv.cookieName).trim();
+      // A valid cookie-name token per RFC 6265 -- anything outside this could
+      // silently fail to set the cookie (or worse, break the Set-Cookie header
+      // outright) once it takes effect after a restart.
+      if (!val || !/^[A-Za-z0-9_.-]{1,64}$/.test(val)) {
+        return res.status(400).json({ success: false, error: 'Cookie name may only contain letters, numbers, underscore, dot, and hyphen.' });
+      }
+    }
+
     const changes = [];
+    // Set alongside `changes` whenever a saved field only takes effect on the
+    // next restart (PORT/COOKIE_NAME/COOKIE_SECURE) -- included in the
+    // response so the UI can say so explicitly instead of implying it's live.
+    let restartRequired = false;
     const setKV = (key, value) => dbRun(
       "INSERT INTO schema_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value]);
 
@@ -4864,10 +4939,57 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
       }
     }
 
+    // "Other Environment Variables". PORTAL_URL and OTP_ECHO are mutated in
+    // memory immediately, same as every field above -- applies without a
+    // restart. PORT/COOKIE_NAME/COOKIE_SECURE are deliberately NOT mutated
+    // here: they're read once at process boot (see the `let` declarations
+    // and loadGeneralSettings()), so writing only to schema_meta and leaving
+    // the live value untouched is what makes "takes effect on next restart"
+    // true rather than a UI claim that doesn't match reality.
+    if (otherEnv) {
+      if (otherEnv.portalUrl !== undefined) {
+        const val = String(otherEnv.portalUrl).trim();
+        if (val !== PORTAL_URL) {
+          PORTAL_URL = val;
+          await setKV('portal_url', val);
+          changes.push(`Portal URL: "${PORTAL_URL}" → "${val}"`);
+        }
+      }
+      if (otherEnv.otpEcho !== undefined) {
+        const on = !!otherEnv.otpEcho;
+        if (on !== OTP_ECHO) {
+          OTP_ECHO = on;
+          await setKV('otp_echo', on ? '1' : '0');
+          changes.push(`OTP Echo ${on ? 'ON — OTP codes will be returned in the login API response' : 'OFF'}`);
+        }
+      }
+      if (otherEnvPort !== null && otherEnvPort !== PORT) {
+        await setKV('port', String(otherEnvPort));
+        changes.push(`Port: ${PORT} → ${otherEnvPort} (takes effect on next restart)`);
+        restartRequired = true;
+      }
+      if (otherEnv.cookieName !== undefined) {
+        const val = String(otherEnv.cookieName).trim();
+        if (val !== COOKIE_NAME) {
+          await setKV('cookie_name', val);
+          changes.push(`Cookie name: "${COOKIE_NAME}" → "${val}" (takes effect on next restart — every current session will be signed out)`);
+          restartRequired = true;
+        }
+      }
+      if (otherEnv.cookieSecure !== undefined) {
+        const on = !!otherEnv.cookieSecure;
+        if (on !== COOKIE_SECURE) {
+          await setKV('cookie_secure', on ? '1' : '0');
+          changes.push(`Cookie Secure (HTTPS-only) ${on ? 'ON' : 'OFF'} (takes effect on next restart — every current session will be signed out)`);
+          restartRequired = true;
+        }
+      }
+    }
+
     if (changes.length) {
       await recordAudit({ req, entityType: 'general_settings', entityId: 'general', action: 'GENERAL_SETTINGS_UPDATE', oldValue: null, newValue: changes.join('; ') });
     }
-    res.json({ success: true, sms: notifyToggle.sms, email: notifyToggle.email, maintenance: maintenance.enabled });
+    res.json({ success: true, sms: notifyToggle.sms, email: notifyToggle.email, maintenance: maintenance.enabled, restartRequired });
   } catch (err) {
     next(err);
   }
@@ -5805,6 +5927,9 @@ retitleNamesOnBoot()
   .then(() => loadNotificationToggles().catch((err) => console.error('Notification-toggle load failed (continuing to start):', err.message)))
   .then(() => loadMaintenanceMode().catch((err) => console.error('Maintenance-mode load failed (continuing to start):', err.message)))
   .then(() => loadGeneralSettings().catch((err) => console.error('General-settings load failed (continuing to start):', err.message)))
+  // COOKIE_SECURE may have just been overlaid from schema_meta above, so this
+  // has to run after loadGeneralSettings(), not at module-load time.
+  .then(() => { if (COOKIE_SECURE) app.set('trust proxy', 1); })
   .then(startServer);
 
 function startServer() {
