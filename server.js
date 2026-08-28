@@ -6303,17 +6303,35 @@ async function buildReport(type, opts = {}) {
   }
   if (type === 'payments') {
     const rows = (await dbAll(
-      `SELECT registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, phone_number, category_label,
+      `SELECT id, registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, phone_number, category_label,
          payment_mode, utr_number, paid_amount, expected_amount, bank_status, submitted_at
          FROM registrations ORDER BY registration_number`)).map(withDelegateSalutation);
+    // Same verified-total-minus-refunds computation as GET /api/registrations
+    // and getPaymentSummary -- paid_amount above is just the claimed amount
+    // at submission, not the cumulative verified total across every linked
+    // bank credit, so it can't show excess on its own.
+    const allVerifiedTxns = await dbAll(
+      "SELECT registration_id, amount, verified_amount FROM payment_transactions WHERE txn_status = 'VERIFIED'");
+    const verifiedByReg = {};
+    for (const t of allVerifiedTxns) {
+      verifiedByReg[t.registration_id] = (verifiedByReg[t.registration_id] || 0) + (t.verified_amount != null ? t.verified_amount : (t.amount || 0));
+    }
+    const allRefunds = await dbAll('SELECT registration_id, amount FROM payment_refunds');
+    const refundedByReg = {};
+    for (const r of allRefunds) refundedByReg[r.registration_id] = (refundedByReg[r.registration_id] || 0) + (r.amount || 0);
+
     const fmtDate = (ms) => ms ? new Date(Number(ms)).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '';
     return {
       title: 'Delegate Payment Details & Status',
       sections: [{
-        columns: ['Reg No', 'Delegate', 'Mobile', 'Category', 'Mode', 'UTR / Txn No.', 'Amount Paid', 'Expected Amount', 'Status', 'Submitted'],
-        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label,
-          PAYMENT_MODE_LABELS[r.payment_mode] || r.payment_mode, r.utr_number, r.paid_amount, r.expected_amount,
-          BANK_STATUS_LABELS[r.bank_status] || r.bank_status, fmtDate(r.submitted_at)]),
+        columns: ['Reg No', 'Delegate', 'Mobile', 'Category', 'Mode', 'UTR / Txn No.', 'Amount Paid', 'Expected Amount', 'Excess Paid', 'Status', 'Submitted'],
+        rows: rows.map((r) => {
+          const netVerified = (verifiedByReg[r.id] || 0) - (refundedByReg[r.id] || 0);
+          const overpaid = Math.max(0, netVerified - (r.expected_amount || 0));
+          return [r.registration_number, r.delegate_name, r.phone_number, r.category_label,
+            PAYMENT_MODE_LABELS[r.payment_mode] || r.payment_mode, r.utr_number, r.paid_amount, r.expected_amount,
+            overpaid > 0 ? overpaid : '', BANK_STATUS_LABELS[r.bank_status] || r.bank_status, fmtDate(r.submitted_at)];
+        }),
       }],
     };
   }
