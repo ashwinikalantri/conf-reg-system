@@ -967,6 +967,28 @@ const dbGet = (sql, p = []) => new Promise((res, rej) => db.get(sql, p, (e, r) =
 const dbAll = (sql, p = []) => new Promise((res, rej) => db.all(sql, p, (e, r) => (e ? rej(e) : res(r))));
 const dbRun = (sql, p = []) => new Promise((res, rej) => db.run(sql, p, function (e) { e ? rej(e) : res(this); }));
 
+// db.serialize() only orders statements relative to WHEN they're queued, not
+// their position in this file. The additive migrations below queue their
+// ALTER TABLE statements dynamically, from inside a PRAGMA callback -- so on
+// an established database (nothing to add) they're a same-tick no-op, but on
+// a genuinely fresh one (every column missing), that queueing happens well
+// after boot code positioned "later" in this file has already been queued --
+// and, empirically, after code that runs via a separate async chain (like the
+// retitleNamesOnBoot()... sequence near the bottom of this file) has already
+// STARTED EXECUTING, since that chain's first query gets queued essentially
+// immediately once this synchronous block finishes, before any of these
+// dynamically-nested ALTERs have even been added to the queue. Confirmed by
+// tracing an actual fresh boot: retitleNamesOnBoot's first query fired before
+// the "Connected to SQLite database" callback even printed.
+//
+// These two promises are the fix: every piece of boot-time code that reads a
+// column added only by one of these two migrations awaits the matching
+// promise first, instead of trusting queue-position timing. See where each
+// resolves, below, for exactly what "done" means.
+let resolveFeeCategoriesMigration, resolveRegistrationsMigration;
+const feeCategoriesMigrationReady = new Promise((resolve) => { resolveFeeCategoriesMigration = resolve; });
+const registrationsMigrationReady = new Promise((resolve) => { resolveRegistrationsMigration = resolve; });
+
 db.serialize(() => {
   db.run(`
     CREATE TABLE IF NOT EXISTS users (
@@ -1151,19 +1173,26 @@ db.serialize(() => {
     )
   `);
   // Additive migration for fee tables created before the spot-registration
-  // phase existed.
+  // phase existed. feeCategoriesMigrationReady (see above) resolves once
+  // every branch below has actually finished -- the fee-category seed block
+  // further down awaits it before inserting a single row.
   db.all('PRAGMA table_info(fee_categories)', (err, cols) => {
-    if (err) return console.error('Schema check failed:', err.message);
+    if (err) { console.error('Schema check failed:', err.message); return resolveFeeCategoriesMigration(); }
     const names = cols.map((c) => c.name);
+    const pending = [];
     if (!names.includes('spot_fee')) {
-      db.run('ALTER TABLE fee_categories ADD COLUMN spot_fee REAL NOT NULL DEFAULT 0', () => {
-        // Default the new spot fee to the late fee so existing categories
-        // keep charging something sane until an admin sets it explicitly.
-        db.run('UPDATE fee_categories SET spot_fee = late_fee WHERE spot_fee = 0');
-      });
+      pending.push(new Promise((resolve) => {
+        db.run('ALTER TABLE fee_categories ADD COLUMN spot_fee REAL NOT NULL DEFAULT 0', () => {
+          // Default the new spot fee to the late fee so existing categories
+          // keep charging something sane until an admin sets it explicitly.
+          db.run('UPDATE fee_categories SET spot_fee = late_fee WHERE spot_fee = 0', resolve);
+        });
+      }));
     }
     if (!names.includes('subtitle')) {
-      db.run("ALTER TABLE fee_categories ADD COLUMN subtitle TEXT NOT NULL DEFAULT ''");
+      pending.push(new Promise((resolve) => {
+        db.run("ALTER TABLE fee_categories ADD COLUMN subtitle TEXT NOT NULL DEFAULT ''", resolve);
+      }));
     }
     // Student-ID requirement moved from the hardcoded STUDENT_CATEGORIES
     // object to per-category columns, admin-editable from the Fees tab.
@@ -1173,27 +1202,31 @@ db.serialize(() => {
     // upload but can't get an automated OCR match (falls through to manual
     // approver verification, same as an OCR miss on any other category).
     if (!names.includes('requires_student_id')) {
-      db.run('ALTER TABLE fee_categories ADD COLUMN requires_student_id INTEGER NOT NULL DEFAULT 0', () => {
-        db.run('ALTER TABLE fee_categories ADD COLUMN id_discipline TEXT', () => {
-          db.run('ALTER TABLE fee_categories ADD COLUMN id_level TEXT', () => {
-            // One-time backfill: the four categories STUDENT_CATEGORIES used to
-            // hardcode already exist as fee_categories rows with these exact
-            // keys (seeded at 1270-1275 below) -- carry their old discipline/
-            // level over so behavior is unchanged for existing deployments.
-            const legacy = [
-              ['nursing_ug', 'nursing', 'UG'], ['nursing_pg', 'nursing', 'PG'],
-              ['med_student', 'medical', 'UG'], ['pg_doctor', 'medical', 'PG'],
-            ];
-            for (const [key, discipline, level] of legacy) {
-              db.run(
-                'UPDATE fee_categories SET requires_student_id = 1, id_discipline = ?, id_level = ? WHERE category_key = ? AND requires_student_id = 0',
-                [discipline, level, key]
-              );
-            }
+      pending.push(new Promise((resolve) => {
+        db.run('ALTER TABLE fee_categories ADD COLUMN requires_student_id INTEGER NOT NULL DEFAULT 0', () => {
+          db.run('ALTER TABLE fee_categories ADD COLUMN id_discipline TEXT', () => {
+            db.run('ALTER TABLE fee_categories ADD COLUMN id_level TEXT', () => {
+              // One-time backfill: the four categories STUDENT_CATEGORIES used to
+              // hardcode already exist as fee_categories rows with these exact
+              // keys (seeded below) -- carry their old discipline/level over so
+              // behavior is unchanged for existing deployments.
+              const legacy = [
+                ['nursing_ug', 'nursing', 'UG'], ['nursing_pg', 'nursing', 'PG'],
+                ['med_student', 'medical', 'UG'], ['pg_doctor', 'medical', 'PG'],
+              ];
+              for (const [key, discipline, level] of legacy) {
+                db.run(
+                  'UPDATE fee_categories SET requires_student_id = 1, id_discipline = ?, id_level = ? WHERE category_key = ? AND requires_student_id = 0',
+                  [discipline, level, key]
+                );
+              }
+              resolve();
+            });
           });
         });
-      });
+      }));
     }
+    Promise.all(pending).then(resolveFeeCategoriesMigration);
   });
   db.all('PRAGMA table_info(fee_config)', (err, cols) => {
     if (err) return console.error('Schema check failed:', err.message);
@@ -1373,71 +1406,93 @@ db.serialize(() => {
 
   // Additive migrations: server-computed fee, OCR check results, registration
   // number, and the chosen program-option ids (for capacity accounting).
+  // registrationsMigrationReady (see above) resolves once the two backfill
+  // UPDATEs at the end of this callback complete -- by then every ALTER
+  // above them has necessarily already finished too (db.serialize() runs the
+  // statements THIS callback queues strictly in the order they're queued).
   db.all('PRAGMA table_info(registrations)', (err, cols) => {
-    if (err) return console.error('Schema check failed:', err.message);
+    if (err) { console.error('Schema check failed:', err.message); return resolveRegistrationsMigration(); }
     const names = cols.map((c) => c.name);
-    if (!names.includes('expected_amount')) db.run('ALTER TABLE registrations ADD COLUMN expected_amount REAL');
-    if (!names.includes('ocr_amount_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_amount_match INTEGER');
-    if (!names.includes('ocr_vpa_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_vpa_match INTEGER');
-    if (!names.includes('ocr_utr_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_utr_match INTEGER');
-    if (!names.includes('registration_number')) db.run('ALTER TABLE registrations ADD COLUMN registration_number TEXT');
-    if (!names.includes('workshop_option_id')) db.run('ALTER TABLE registrations ADD COLUMN workshop_option_id INTEGER');
-    if (!names.includes('qi_option_id')) db.run('ALTER TABLE registrations ADD COLUMN qi_option_id INTEGER');
+    // Every conditional ALTER below is tracked in `pending` and explicitly
+    // awaited before the two backfill UPDATEs run -- NOT just relied on as
+    // "queued earlier, so it must finish first". Empirically, two sibling
+    // db.run(sql) calls issued in the same synchronous callback are NOT
+    // reliably ordered against each other by db.serialize() alone when
+    // neither has a callback chaining to the other: tracing an actual fresh
+    // boot showed the registration_number backfill UPDATE below running (and
+    // failing with "no such column") before this block's OWN ALTER ADD
+    // COLUMN registration_number had completed, despite both being queued in
+    // the same callback invocation. Only an explicit completion signal
+    // (a promise here, resolved from each statement's own callback) is safe.
+    const alter = (sql) => new Promise((resolve) => db.run(sql, resolve));
+    const pending = [];
+    if (!names.includes('expected_amount')) pending.push(alter('ALTER TABLE registrations ADD COLUMN expected_amount REAL'));
+    if (!names.includes('ocr_amount_match')) pending.push(alter('ALTER TABLE registrations ADD COLUMN ocr_amount_match INTEGER'));
+    if (!names.includes('ocr_vpa_match')) pending.push(alter('ALTER TABLE registrations ADD COLUMN ocr_vpa_match INTEGER'));
+    if (!names.includes('ocr_utr_match')) pending.push(alter('ALTER TABLE registrations ADD COLUMN ocr_utr_match INTEGER'));
+    if (!names.includes('registration_number')) pending.push(alter('ALTER TABLE registrations ADD COLUMN registration_number TEXT'));
+    if (!names.includes('workshop_option_id')) pending.push(alter('ALTER TABLE registrations ADD COLUMN workshop_option_id INTEGER'));
+    if (!names.includes('qi_option_id')) pending.push(alter('ALTER TABLE registrations ADD COLUMN qi_option_id INTEGER'));
     // Faculty for a workshop/QI practice are enrolled the same way as a
     // delegate (same option_id columns) but don't occupy a capacity slot and
     // are labeled "Faculty" instead of counted as an attendee -- see
     // fetchProgramOptions() and the workshops report.
-    if (!names.includes('workshop_is_faculty')) db.run('ALTER TABLE registrations ADD COLUMN workshop_is_faculty INTEGER DEFAULT 0');
-    if (!names.includes('qi_is_faculty')) db.run('ALTER TABLE registrations ADD COLUMN qi_is_faculty INTEGER DEFAULT 0');
-    if (!names.includes('id_card')) db.run('ALTER TABLE registrations ADD COLUMN id_card TEXT');
-    if (!names.includes('ocr_id_match')) db.run('ALTER TABLE registrations ADD COLUMN ocr_id_match INTEGER');
-    if (!names.includes('rejection_reason')) db.run('ALTER TABLE registrations ADD COLUMN rejection_reason TEXT');
-    if (!names.includes('rejection_note')) db.run('ALTER TABLE registrations ADD COLUMN rejection_note TEXT');
-    if (!names.includes('payment_mode')) db.run("ALTER TABLE registrations ADD COLUMN payment_mode TEXT DEFAULT 'UPI'");
-    if (!names.includes('submitted_at')) db.run('ALTER TABLE registrations ADD COLUMN submitted_at INTEGER');
+    if (!names.includes('workshop_is_faculty')) pending.push(alter('ALTER TABLE registrations ADD COLUMN workshop_is_faculty INTEGER DEFAULT 0'));
+    if (!names.includes('qi_is_faculty')) pending.push(alter('ALTER TABLE registrations ADD COLUMN qi_is_faculty INTEGER DEFAULT 0'));
+    if (!names.includes('id_card')) pending.push(alter('ALTER TABLE registrations ADD COLUMN id_card TEXT'));
+    if (!names.includes('ocr_id_match')) pending.push(alter('ALTER TABLE registrations ADD COLUMN ocr_id_match INTEGER'));
+    if (!names.includes('rejection_reason')) pending.push(alter('ALTER TABLE registrations ADD COLUMN rejection_reason TEXT'));
+    if (!names.includes('rejection_note')) pending.push(alter('ALTER TABLE registrations ADD COLUMN rejection_note TEXT'));
+    if (!names.includes('payment_mode')) pending.push(alter("ALTER TABLE registrations ADD COLUMN payment_mode TEXT DEFAULT 'UPI'"));
+    if (!names.includes('submitted_at')) pending.push(alter('ALTER TABLE registrations ADD COLUMN submitted_at INTEGER'));
     if (!names.includes('bank_txn_id')) {
-      db.run('ALTER TABLE registrations ADD COLUMN bank_txn_id INTEGER', () => {
-        // One statement transaction can back at most one registration. SQLite
-        // treats each NULL as distinct in a UNIQUE index, so unlinked rows
-        // (the common case) never collide with each other.
-        db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_registrations_bank_txn_id ON registrations(bank_txn_id)');
-      });
+      pending.push(new Promise((resolve) => {
+        db.run('ALTER TABLE registrations ADD COLUMN bank_txn_id INTEGER', () => {
+          // One statement transaction can back at most one registration. SQLite
+          // treats each NULL as distinct in a UNIQUE index, so unlinked rows
+          // (the common case) never collide with each other.
+          db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_registrations_bank_txn_id ON registrations(bank_txn_id)', resolve);
+        });
+      }));
     }
     // Admin (approver) confirmation that a student category's uploaded ID
     // card actually verifies that status -- distinct from ocr_id_match,
     // which is only the automated advisory check. Required before a student
     // registration can be verified (see PUT .../status).
-    if (!names.includes('id_verified')) db.run('ALTER TABLE registrations ADD COLUMN id_verified INTEGER DEFAULT 0');
-    if (!names.includes('id_verified_by')) db.run('ALTER TABLE registrations ADD COLUMN id_verified_by TEXT');
-    if (!names.includes('id_verified_at')) db.run('ALTER TABLE registrations ADD COLUMN id_verified_at INTEGER');
+    if (!names.includes('id_verified')) pending.push(alter('ALTER TABLE registrations ADD COLUMN id_verified INTEGER DEFAULT 0'));
+    if (!names.includes('id_verified_by')) pending.push(alter('ALTER TABLE registrations ADD COLUMN id_verified_by TEXT'));
+    if (!names.includes('id_verified_at')) pending.push(alter('ALTER TABLE registrations ADD COLUMN id_verified_at INTEGER'));
     // Admin category lock: when set, the delegate cannot change their category
     // on the portal and the fee is fixed to the locked category (see the
     // lock-category endpoint).
-    if (!names.includes('category_locked')) db.run('ALTER TABLE registrations ADD COLUMN category_locked INTEGER DEFAULT 0');
+    if (!names.includes('category_locked')) pending.push(alter('ALTER TABLE registrations ADD COLUMN category_locked INTEGER DEFAULT 0'));
     // Applied promo/discount code and the rupee amount it took off the fee.
-    if (!names.includes('discount_code')) db.run('ALTER TABLE registrations ADD COLUMN discount_code TEXT');
-    if (!names.includes('discount_amount')) db.run('ALTER TABLE registrations ADD COLUMN discount_amount REAL DEFAULT 0');
+    if (!names.includes('discount_code')) pending.push(alter('ALTER TABLE registrations ADD COLUMN discount_code TEXT'));
+    if (!names.includes('discount_amount')) pending.push(alter('ALTER TABLE registrations ADD COLUMN discount_amount REAL DEFAULT 0'));
 
-    // Backfill a number for any already-verified registration that predates
-    // number assignment. Idempotent -- matches nothing once filled. Runs at
-    // boot, before loadGeneralSettings() has read CONFERENCE.regPrefix from
-    // schema_meta, and only ever repairs pre-existing legacy rows -- so it
-    // intentionally stays on the literal historical prefix rather than
-    // CONFERENCE.regPrefix (unlike assignUserRegNumber, which runs from
-    // request handlers well after boot and does use the live value).
-    db.run(
-      `UPDATE registrations
-          SET registration_number = 'NQOCN2026' || printf('%04d', id)
-        WHERE bank_status = 'BANK_VERIFIED' AND (registration_number IS NULL OR registration_number = '')`
-    );
+    Promise.all(pending).then(() => {
+      // Backfill a number for any already-verified registration that predates
+      // number assignment. Idempotent -- matches nothing once filled. Runs at
+      // boot, before loadGeneralSettings() has read CONFERENCE.regPrefix from
+      // schema_meta, and only ever repairs pre-existing legacy rows -- so it
+      // intentionally stays on the literal historical prefix rather than
+      // CONFERENCE.regPrefix (unlike assignUserRegNumber, which runs from
+      // request handlers well after boot and does use the live value).
+      db.run(
+        `UPDATE registrations
+            SET registration_number = 'NQOCN2026' || printf('%04d', id)
+          WHERE bank_status = 'BANK_VERIFIED' AND (registration_number IS NULL OR registration_number = '')`
+      );
 
-    // One-time reformat: drop the hyphen from older NQOCN2026-000N numbers.
-    // Idempotent -- matches nothing once no hyphenated numbers remain.
-    db.run(
-      `UPDATE registrations
-          SET registration_number = REPLACE(registration_number, 'NQOCN2026-', 'NQOCN2026')
-        WHERE registration_number LIKE 'NQOCN2026-%'`
-    );
+      // One-time reformat: drop the hyphen from older NQOCN2026-000N numbers.
+      // Idempotent -- matches nothing once no hyphenated numbers remain.
+      db.run(
+        `UPDATE registrations
+            SET registration_number = REPLACE(registration_number, 'NQOCN2026-', 'NQOCN2026')
+          WHERE registration_number LIKE 'NQOCN2026-%'`,
+        resolveRegistrationsMigration
+      );
+    });
   });
 
   // Seed the program master on first run from the original fixed options.
@@ -1469,22 +1524,27 @@ db.serialize(() => {
   });
 
   // Seed the fee master on first run from the original hardcoded tiers. The
-  // spot (walk-in) fee defaults to a step above the late fee.
-  db.get('SELECT COUNT(*) AS n FROM fee_categories', (err, r) => {
-    if (err || (r && r.n > 0)) return;
-    const stmt = db.prepare('INSERT INTO fee_categories (category_key, label, early_fee, regular_fee, late_fee, spot_fee, active, sort_order, requires_student_id, id_discipline, id_level) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)');
-    const seed = [
-      ['nursing_ug', 'Nursing Student UG', 500, 1000, 2000, 2500, 1, 'nursing', 'UG'],
-      ['nursing_pg', 'Nursing Student PG', 750, 1500, 2500, 3000, 1, 'nursing', 'PG'],
-      ['med_student', 'Medical Student UG', 1500, 2200, 3000, 3500, 1, 'medical', 'UG'],
-      ['nurse_cho', 'Nurse / Paramedical / CHO', 2000, 2800, 3500, 4000, 0, null, null],
-      ['pg_doctor', 'PG Student / Resident Doctor', 3000, 4000, 5000, 5500, 1, 'medical', 'PG'],
-      ['faculty_mo', 'Doctors / Faculty / NHM MO', 3000, 4000, 5000, 5500, 0, null, null],
-      ['chw', 'Frontline CHWs (ASHA/ANM/AWW)', 200, 200, 200, 200, 0, null, null],
-    ];
-    seed.forEach((s, i) => stmt.run(s[0], s[1], s[2], s[3], s[4], s[5], i, s[6], s[7], s[8]));
-    stmt.finalize();
-    console.log('Seeded default fee categories.');
+  // spot (walk-in) fee defaults to a step above the late fee. Waits for
+  // feeCategoriesMigrationReady -- a fresh install seeds every one of
+  // spot_fee/requires_student_id/id_discipline/id_level immediately, and
+  // those columns don't exist until the migration above finishes.
+  feeCategoriesMigrationReady.then(() => {
+    db.get('SELECT COUNT(*) AS n FROM fee_categories', (err, r) => {
+      if (err || (r && r.n > 0)) return;
+      const stmt = db.prepare('INSERT INTO fee_categories (category_key, label, early_fee, regular_fee, late_fee, spot_fee, active, sort_order, requires_student_id, id_discipline, id_level) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)');
+      const seed = [
+        ['nursing_ug', 'Nursing Student UG', 500, 1000, 2000, 2500, 1, 'nursing', 'UG'],
+        ['nursing_pg', 'Nursing Student PG', 750, 1500, 2500, 3000, 1, 'nursing', 'PG'],
+        ['med_student', 'Medical Student UG', 1500, 2200, 3000, 3500, 1, 'medical', 'UG'],
+        ['nurse_cho', 'Nurse / Paramedical / CHO', 2000, 2800, 3500, 4000, 0, null, null],
+        ['pg_doctor', 'PG Student / Resident Doctor', 3000, 4000, 5000, 5500, 1, 'medical', 'PG'],
+        ['faculty_mo', 'Doctors / Faculty / NHM MO', 3000, 4000, 5000, 5500, 0, null, null],
+        ['chw', 'Frontline CHWs (ASHA/ANM/AWW)', 200, 200, 200, 200, 0, null, null],
+      ];
+      seed.forEach((s, i) => stmt.run(s[0], s[1], s[2], s[3], s[4], s[5], i, s[6], s[7], s[8]));
+      stmt.finalize();
+      console.log('Seeded default fee categories.');
+    });
   });
   // Four pricing phases: Early Bird till 31 Aug 2026, Regular till 30 Sep
   // 2026, Late till 31 Oct 2026, Spot Registration after.
@@ -1684,28 +1744,33 @@ db.serialize(() => {
 // their registration's number if it has one), then sync registrations to it.
 // Same boot-time-ordering reasoning as the backfill above -- stays on the
 // literal prefix rather than CONFERENCE.regPrefix, which isn't loaded yet.
-db.serialize(() => {
-  db.all(
-    `SELECT phone_number,
-       (SELECT registration_number FROM registrations r WHERE r.phone_number = users.phone_number) AS reg_num
-     FROM users WHERE registration_number IS NULL OR registration_number = ''`,
-    async (err, rows) => {
-      if (err) return console.error('Reg-number backfill failed:', err.message);
-      for (const row of rows) {
-        let number = row.reg_num;
-        if (!number) {
-          const seq = await dbRun('INSERT INTO reg_seq DEFAULT VALUES');
-          number = 'NQOCN2026' + String(seq.lastID).padStart(4, '0');
+// Waits for registrationsMigrationReady: the subquery below reads
+// registrations.registration_number, which doesn't exist on a fresh install
+// until that migration finishes.
+registrationsMigrationReady.then(() => {
+  db.serialize(() => {
+    db.all(
+      `SELECT phone_number,
+         (SELECT registration_number FROM registrations r WHERE r.phone_number = users.phone_number) AS reg_num
+       FROM users WHERE registration_number IS NULL OR registration_number = ''`,
+      async (err, rows) => {
+        if (err) return console.error('Reg-number backfill failed:', err.message);
+        for (const row of rows) {
+          let number = row.reg_num;
+          if (!number) {
+            const seq = await dbRun('INSERT INTO reg_seq DEFAULT VALUES');
+            number = 'NQOCN2026' + String(seq.lastID).padStart(4, '0');
+          }
+          await dbRun('UPDATE users SET registration_number = ? WHERE phone_number = ?', [number, row.phone_number]);
         }
-        await dbRun('UPDATE users SET registration_number = ? WHERE phone_number = ?', [number, row.phone_number]);
+        await dbRun(
+          `UPDATE registrations SET registration_number =
+             (SELECT registration_number FROM users u WHERE u.phone_number = registrations.phone_number)
+           WHERE EXISTS (SELECT 1 FROM users u WHERE u.phone_number = registrations.phone_number AND u.registration_number IS NOT NULL)`
+        );
       }
-      await dbRun(
-        `UPDATE registrations SET registration_number =
-           (SELECT registration_number FROM users u WHERE u.phone_number = registrations.phone_number)
-         WHERE EXISTS (SELECT 1 FROM users u WHERE u.phone_number = registrations.phone_number AND u.registration_number IS NOT NULL)`
-      );
-    }
-  );
+    );
+  });
 });
 
 // Periodically purge expired OTPs and sessions. unref() so it never keeps
@@ -6034,7 +6099,15 @@ app.use((err, req, res, next) => {
 // auto-linking (picks up any statement rows imported before this boot that
 // match already-submitted registrations). Bounded and logged rather than
 // awaited unconditionally, so a DB hiccup doesn't block startup forever.
-retitleNamesOnBoot()
+//
+// Waits for registrationsMigrationReady first -- backfillPaymentTransactionsOnBoot
+// further down this chain reads several columns (expected_amount, the ocr_*
+// matches, payment_mode, submitted_at, bank_txn_id, rejection_reason/note)
+// that only exist once that migration has actually run; on a fresh install,
+// this chain's own query would otherwise be queued (and would start
+// executing) before that migration even begins -- see the promise's
+// declaration, above the big db.serialize() block, for why.
+registrationsMigrationReady.then(retitleNamesOnBoot)
   .catch((err) => console.error('Title-case backfill failed (continuing to start):', err.message))
   .then(() => splitSalutationsOnBoot().catch((err) => console.error('Salutation split failed (continuing to start):', err.message)))
   .then(() => backfillPaymentTransactionsOnBoot().catch((err) => console.error('Payment-transaction backfill failed (continuing to start):', err.message)))
