@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-sesv2": "^3.1106.0",
+    "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "ejs": "^6.0.1",

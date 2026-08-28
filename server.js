@@ -10,6 +10,7 @@ if (typeof (globalThis.crypto && globalThis.crypto.getRandomValues) !== 'functio
 
 const express = require('express');
 const path = require('path');
+const compression = require('compression');
 const crypto = require('crypto');
 const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
@@ -1753,6 +1754,14 @@ function requireRole(...roles) {
 }
 
 // --- MIDDLEWARE ---------------------------------------------------------
+// gzip everything compressible -- first, so it also covers the JSON API
+// responses and EJS-rendered pages below, not just the static files. Biggest
+// win is the two static topology/pincode datasets behind the delegate map
+// (public/data/*.json, ~2.1MB uncompressed): gzip shrinks JSON like that by
+// roughly 80-85%, and compression's default filter already skips anything
+// already-compressed (images) or under 1KB where the gzip overhead isn't
+// worth it.
+app.use(compression());
 // Body limit sized for a single base64 screenshot (5 MB image + ~33%
 // encoding overhead + form fields), not the old 50 MB.
 app.use(express.json({ limit: '8mb' }));
