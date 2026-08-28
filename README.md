@@ -29,12 +29,12 @@ ID verification below for what that means for a non-healthcare deployment.
    npm start
    ```
 
-4. Visit <http://localhost:3000> — with no admin account yet, you'll land on
-   (or be redirected to) the first-run setup wizard at `/setup`.
+4. Visit <http://localhost:3000> — with no admin account yet, the base URL
+   *is* the first-run setup wizard. There is no separate `/setup` URL (an
+   old link to it just redirects here).
 
-   Delegate portal: <http://localhost:3000>
+   Delegate portal / first-run setup (same URL): <http://localhost:3000>
    Admin panel: <http://localhost:3000/admin>
-   First-run setup: <http://localhost:3000/setup>
 
 `conference.db` (SQLite) is created automatically on first run, with **no
 admin account and no fee categories, workshops, or conference details** —
@@ -44,14 +44,18 @@ all of that is configured through the setup wizard described next.
 
 A brand-new `conference.db` has zero admin users, and every account-creation
 route already requires being one — a deadlock with no way in through the app
-itself. `/setup` breaks that deadlock exactly once: it's reachable with no
-token or credential of any kind, but only while `isSetupModeActive()` holds —
-no admin-role user exists yet **and** `schema_meta.setup_completed` is unset.
-There's no risk window to gate with a secret, because the very first thing
-the wizard does is create that admin account, and the moment it does the
-route is permanently and irreversibly closed (see below) — anyone reaching
-the server before that has, by definition, arrived before any real data or
-configuration exists to protect.
+itself. The setup wizard breaks that deadlock exactly once, by taking over
+the base URL (`GET /`) in place of the normal delegate portal — reachable
+with no token or credential of any kind, but only while
+`isSetupModeActive()` holds: no admin-role user exists yet **and**
+`schema_meta.setup_completed` is unset. There's no risk window to gate with
+a secret, because the very first thing the wizard does is create that admin
+account, and the moment it does, `isSetupModeActive()` flips to false and
+stays false — checked fresh on every request, not cached in the session —
+so `/` reverts to the normal portal permanently, for that browser and every
+other one, even if the very session that just created the account reloads
+mid-wizard. Anyone reaching the server before that has, by definition,
+arrived before any real data or configuration exists to protect.
 
 The wizard walks through, one screen at a time, each skippable and
 finishable later from the admin panel:
@@ -67,22 +71,21 @@ finishable later from the admin panel:
    transfer details shown to delegates as a payment option.
 6. **SMS** and **Email** — provider credentials, both optional at this stage.
 
-Every step reuses the same admin endpoints Settings → General / Fees /
-Workshops already use (`PUT /api/admin/general-settings`,
-`POST /api/admin/fees/categories`, `POST /api/admin/program-options`, etc.) —
-so anything set here can be edited or added to later exactly the same way,
-and skipping a step just means doing it from the admin panel afterward.
+Everything from Step 2 onward happens client-side against the same admin
+endpoints Settings → General / Fees / Workshops already use
+(`PUT /api/admin/general-settings`, `POST /api/admin/fees/categories`,
+`POST /api/admin/program-options`, etc.) without another page load — so
+anything set here can be edited or added to later exactly the same way, and
+skipping a step just means doing it from the admin panel afterward. Because
+Step 1 already flipped `setup_completed`, a refresh partway through drops
+you onto the normal portal instead of back into the wizard; nothing already
+saved is lost, and the rest is one `/admin` login away.
 
-Creating the admin account irreversibly disables `/setup`
-(`schema_meta.setup_completed`) the instant it succeeds — not deferred to the
-end of the wizard — so deleting the only admin account later does not
-silently reopen account creation to the public internet. Recovering a fully
-locked-out deployment (every admin account gone) is a manual database
-operation, same as it always was — `/setup` deliberately does not reopen for
-that.
-
-Existing deployments (which already have an admin) are entirely unaffected —
-`/setup` 404s for them just like any unknown route.
+Recovering a fully locked-out deployment (every admin account gone) is a
+manual database operation, same as it always was — the wizard deliberately
+does not reopen for that. Existing deployments (which already have an
+admin) are entirely unaffected — `/` just serves the normal portal, same as
+it always has.
 
 ## Docker
 
@@ -90,9 +93,9 @@ Existing deployments (which already have an admin) are entirely unaffected —
 # 1. Build and start (defaults to host port 3000; override with HOST_PORT=...)
 docker compose up -d --build
 
-# 2. Visit http://localhost:3000/setup and create the first Super Admin --
-#    see First-Run Setup above. No token or extra .env step is needed; a
-#    fresh container has no admin account, so /setup is open by default.
+# 2. Visit http://localhost:3000 and create the first Super Admin -- see
+#    First-Run Setup above. No token or extra .env step is needed; a fresh
+#    container has no admin account, so the base URL is the setup wizard.
 ```
 
 Everything the app writes to at runtime — `.env` (the admin panel writes

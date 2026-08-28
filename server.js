@@ -1957,22 +1957,38 @@ app.get('/api/maintenance', (req, res) => {
 // already-SUPER_ADMIN-gated endpoints Settings itself uses.
 // Anonymous + setup-inactive gets a plain 404, no signal about which of
 // "completed" / "never reachable" is true.
-app.get('/setup', async (req, res, next) => {
+// The setup wizard used to live at its own /setup URL; it's now folded into
+// '/' below (see there for why), so this is just a redirect for anyone who
+// still has the old link bookmarked or documented somewhere.
+app.get('/setup', (req, res) => {
+  res.redirect('/');
+});
+
+// Delegate portal -- except on a deployment that hasn't finished first-run
+// setup yet, where '/' *is* the setup wizard instead. There's no separate
+// URL for it: isSetupModeActive() is the single source of truth (no
+// admin-role user exists yet AND schema_meta.setup_completed is unset --
+// see isSetupModeActive above), and it's checked fresh on every request, not
+// cached in the session -- so once the wizard's own Step 1 creates the
+// first admin account, setup_completed flips immediately and every
+// subsequent load of '/' (including a mid-wizard refresh, from that same
+// browser or any other) goes straight to the normal portal instead,
+// permanently. That's deliberate, not a rough edge: the remaining wizard
+// steps (conference details, fees, workshops, UPI, SMS, email) are each
+// skippable and independently finishable afterward from Settings → General
+// / Fees / Workshops -- see README -- so there is nothing to lose by not
+// being able to return to the wizard itself, and no path back into it.
+// Assembled from partials the same way as /admin; almost no server-rendered
+// data (everything is still populated client-side by app.js) -- the page
+// <title> is the one exception, so the browser tab shows something
+// meaningful before the client-side fetch resolves.
+app.get('/', async (req, res, next) => {
   try {
-    const alreadyAdmin = req.session && req.session.role === 'SUPER_ADMIN';
-    if (!alreadyAdmin && !(await isSetupModeActive())) return res.status(404).send('Not found');
-    res.render('setup');
+    if (await isSetupModeActive()) return res.render('setup');
+    res.render('index', { conferenceName: CONFERENCE.name });
   } catch (err) {
     next(err);
   }
-});
-
-// Delegate portal. Assembled from partials the same way as /admin; almost no
-// server-rendered data (everything is still populated client-side by
-// app.js) -- the page <title> is the one exception, so the browser tab
-// shows something meaningful before the client-side fetch resolves.
-app.get('/', (req, res) => {
-  res.render('index', { conferenceName: CONFERENCE.name });
 });
 
 // Admin panel lives outside the static root and is only served to a
