@@ -3713,7 +3713,7 @@ async function handleRosterRemove(phone) {
 
 // --- FEES (admin) ---
 async function renderBackendFees() {
-  const res = await fetch('/api/admin/fees');
+  const [res, confRes] = await Promise.all([fetch('/api/admin/fees'), fetch('/api/conference')]);
   const tbody = document.getElementById('fee-table-body');
   if (!tbody || !res.ok) return;
   const data = await res.json();
@@ -3725,6 +3725,16 @@ async function renderBackendFees() {
   if (early) early.value = cfg.early_until || '';
   if (regular) regular.value = cfg.regular_until || '';
   if (late) late.value = cfg.late_until || '';
+  // A pricing-phase cutoff can't be in the past, or after the conference has
+  // already started -- nudged here, enforced server-side regardless (see
+  // PUT /api/admin/fees/config).
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const conf = confRes.ok ? await confRes.json() : {};
+  [early, regular, late].forEach((el) => {
+    if (!el) return;
+    el.min = todayStr;
+    if (conf.startDate) el.max = conf.startDate;
+  });
 
   tbody.innerHTML = (data.categories || []).map((c) => `
     <tr class="${c.active ? '' : 'opacity-50'}" data-id="${esc(c.id)}">
@@ -4402,6 +4412,17 @@ async function renderGeneralSettings() {
   setVal('gs-conf-startdate', data.conference.startDate);
   setVal('gs-conf-enddate', data.conference.endDate);
   setVal('gs-conf-regprefix', data.conference.regPrefix);
+  // A conference being set up is always in the future, and it can't end
+  // before it starts -- nudged here, enforced server-side regardless (see
+  // PUT /api/admin/general-settings).
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const startInput = document.getElementById('gs-conf-startdate');
+  const endInput = document.getElementById('gs-conf-enddate');
+  if (startInput) {
+    startInput.min = todayStr;
+    startInput.onchange = () => { if (endInput) endInput.min = startInput.value || todayStr; };
+  }
+  if (endInput) endInput.min = (startInput && startInput.value) || todayStr;
   setVal('gs-maintenance-message', data.maintenance && data.maintenance.message);
 
   // Credential fields are never prefilled. Bearer secrets (SMS API key, AWS

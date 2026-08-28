@@ -180,6 +180,7 @@ function formatConferenceDates() {
   const e = parse(CONFERENCE.endDate);
   if (!s && !e) return '';
   if (s && e) {
+    if (CONFERENCE.startDate === CONFERENCE.endDate) return `${s.day} ${s.month} ${s.year}`;
     return (s.month === e.month && s.year === e.year)
       ? `${s.day}–${e.day} ${s.month} ${s.year}`
       : `${s.day} ${s.month}${s.year !== e.year ? ' ' + s.year : ''} – ${e.day} ${e.month} ${e.year}`;
@@ -5439,6 +5440,28 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
       return res.status(400).json({ success: false, error: 'Registration Number Prefix must be 1-20 letters/numbers only.' });
     }
 
+    // Conference dates: a deployment is always being set up for an event
+    // that hasn't happened yet, so the start date can't be in the past, and
+    // the end date can't be before the (possibly just-changed) start date.
+    // Compared as YYYY-MM-DD strings, which sort the same as dates.
+    if (conference) {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const startDate = conference.startDate !== undefined ? String(conference.startDate).trim() : CONFERENCE.startDate;
+      const endDate = conference.endDate !== undefined ? String(conference.endDate).trim() : CONFERENCE.endDate;
+      if (conference.startDate !== undefined && startDate && !DATE_RE.test(startDate)) {
+        return res.status(400).json({ success: false, error: 'Start Date must be YYYY-MM-DD.' });
+      }
+      if (conference.endDate !== undefined && endDate && !DATE_RE.test(endDate)) {
+        return res.status(400).json({ success: false, error: 'End Date must be YYYY-MM-DD.' });
+      }
+      if (conference.startDate !== undefined && startDate && startDate < todayStr) {
+        return res.status(400).json({ success: false, error: 'Start Date cannot be in the past.' });
+      }
+      if (startDate && endDate && endDate < startDate) {
+        return res.status(400).json({ success: false, error: 'End Date cannot be before Start Date.' });
+      }
+    }
+
     // "Other Environment Variables". portalUrl/port/cookieName are required
     // text fields (all three have a coded-in default, never legitimately
     // blank); cookieSecure/otpEcho are booleans, validated separately below.
@@ -5708,6 +5731,18 @@ app.put('/api/admin/fees/config', requireRole('SUPER_ADMIN'), async (req, res, n
     }
     if (regularUntil && lateUntil && regularUntil > lateUntil) {
       return res.status(400).json({ success: false, error: 'Regular cutoff must be on or before the late cutoff.' });
+    }
+    // A cutoff in the past makes that pricing phase unreachable the moment
+    // it's saved, and a cutoff after the conference has already started
+    // makes no sense either (an "early bird" rate that lasts past day one).
+    // Compared as YYYY-MM-DD strings, which sort the same as dates.
+    const todayStr = new Date().toISOString().slice(0, 10);
+    for (const [label, d] of [['Early', earlyUntil], ['Regular', regularUntil], ['Late', lateUntil]]) {
+      if (!d) continue;
+      if (d < todayStr) return res.status(400).json({ success: false, error: `${label} cutoff cannot be before today.` });
+      if (CONFERENCE.startDate && d > CONFERENCE.startDate) {
+        return res.status(400).json({ success: false, error: `${label} cutoff cannot be after the conference start date.` });
+      }
     }
     const existing = await getFeeConfig();
     await dbRun('UPDATE fee_config SET early_until = ?, regular_until = ?, late_until = ? WHERE id = 1',

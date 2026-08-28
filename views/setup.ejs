@@ -286,6 +286,16 @@
       setVal('su-conf-startdate', data.conference.startDate);
       setVal('su-conf-enddate', data.conference.endDate);
       setVal('su-conf-regprefix', data.conference.regPrefix);
+      // A conference being set up is always in the future, and can't end
+      // before it starts -- nudged here, enforced server-side regardless.
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const startInput = document.getElementById('su-conf-startdate');
+      const endInput = document.getElementById('su-conf-enddate');
+      if (startInput) {
+        startInput.min = todayStr;
+        startInput.onchange = () => { if (endInput) endInput.min = startInput.value || todayStr; };
+      }
+      if (endInput) endInput.min = (startInput && startInput.value) || todayStr;
       setVal('su-upi-id', data.upi.id);
       setVal('su-upi-payeename', data.upi.payeeName);
       setVal('su-bank-name', data.bank.accountName);
@@ -406,6 +416,17 @@
       if (regular && !regular.value) regular.value = (data.config && data.config.regular_until) || '';
       const late = document.getElementById('su-phase-late');
       if (late && !late.value) late.value = (data.config && data.config.late_until) || '';
+
+      // A pricing-phase cutoff can't be in the past, or after the conference
+      // has already started -- nudged here, enforced server-side regardless.
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const confRes = await fetch('/api/conference');
+      const conf = confRes.ok ? await confRes.json() : {};
+      [early, regular, late].forEach((el) => {
+        if (!el) return;
+        el.min = todayStr;
+        if (conf.startDate) el.max = conf.startDate;
+      });
     }
 
     function escapeHtml(v) {
