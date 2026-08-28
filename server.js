@@ -5544,6 +5544,30 @@ async function buildReport(type, opts = {}) {
     ];
     return { title: opts.optionId && options[0] ? `Registrations — ${options[0].name}` : 'Registrations per Workshop / QI Practice', sections };
   }
+  if (type === 'users') {
+    // Every column the users table actually has, plus the registration/
+    // workshop/QI snapshot already joined in for the Users tab (see
+    // GET /api/users) -- same source of truth, just exported wholesale
+    // instead of paginated in a table.
+    const rows = await dbAll(`
+      SELECT users.*, r.bank_status AS registration_status, r.workshop, r.qi_exposure
+        FROM users
+        LEFT JOIN registrations r ON r.phone_number = users.phone_number
+       ORDER BY users.created_at ASC, users.full_name ASC`);
+    const fmtDate = (ms) => ms ? new Date(Number(ms)).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '';
+    return {
+      title: 'All Users — Full Directory',
+      sections: [{
+        columns: ['Reg No', 'Salutation', 'Name', 'Mobile', 'Role', 'Age', 'Gender', 'Email',
+          'Designation', 'Institution', 'Post Office', 'District', 'State', 'Pincode', 'Signed Up',
+          'Registration Status', 'Workshop', 'QI Practice'],
+        rows: rows.map((u) => [u.registration_number, u.salutation, u.full_name, u.phone_number, u.role,
+          u.age, u.gender, u.email, u.designation, u.institution, u.post_office, u.district, u.state, u.pincode,
+          fmtDate(u.created_at), u.registration_status ? (BANK_STATUS_LABELS[u.registration_status] || u.registration_status) : 'Not Registered',
+          u.workshop, u.qi_exposure]),
+      }],
+    };
+  }
   if (type === 'abstracts') {
     const rows = await dbAll(
       `SELECT title, author_name, format, phone_number FROM abstracts WHERE status = 'ACCEPTED' ORDER BY title`);
@@ -5563,6 +5587,8 @@ const REPORT_ROLES = {
   payments: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'OPERATIONS'],
   workshops: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'OPERATIONS'],
   abstracts: ['SUPER_ADMIN', 'ACADEMIC_REVIEWER', 'OPERATIONS'],
+  // Same roles that can see the Users tab at all (GET /api/users).
+  users: ['SUPER_ADMIN', 'OPERATIONS'],
 };
 
 function toCsv(rep) {

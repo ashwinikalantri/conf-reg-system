@@ -5,9 +5,14 @@
           <h3 class="text-lg font-bold text-slate-800">Users</h3>
           <p class="text-xs text-slate-500">Everyone with an account — delegates and staff. Open a row for full details, registration, payments, and role.</p>
         </div>
-        <button onclick="openCreateUserModal()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md">
-          + Create New Staff Account
-        </button>
+        <div class="flex flex-wrap gap-2 shrink-0">
+          <button onclick="downloadReport('users','csv')" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-xl shadow-md">
+            ⬇ Export CSV
+          </button>
+          <button onclick="openCreateUserModal()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md">
+            + Create New Staff Account
+          </button>
+        </div>
       </div>
 
       <div class="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-wrap items-center gap-3">
