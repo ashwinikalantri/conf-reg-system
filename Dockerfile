@@ -2,7 +2,17 @@
 # native bindings, so this avoids needing a C/C++ toolchain (python3, make,
 # g++) in the image just to compile it from source, which alpine's musl libc
 # would otherwise force.
-FROM node:16-bookworm-slim
+#
+# Node 24 ("Krypton") is the newest LTS line -- deliberately not the newest
+# release overall (Node 26 exists but is still "Current", not LTS, until
+# Oct 2026; production tracks LTS). Node 16 was not merely old here, it was
+# below two dependencies' own declared minimums: @aws-sdk/client-sesv2
+# requires >=20 and jimp requires >=18, both of which only ran at all
+# because npm treats `engines` as advisory. The AWS SDK also warns at boot
+# that builds published after early January 2027 will require >=22, so
+# staying on 16 would have broken email outright on the next dependency
+# update.
+FROM node:24-bookworm-slim
 
 WORKDIR /app
 
