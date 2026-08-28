@@ -4390,6 +4390,12 @@ async function renderGeneralSettings() {
   loadDigestRecipients(data.email.digestRecipients);
   setVal('gs-upi-id', data.upi.id);
   setVal('gs-upi-payeename', data.upi.payeeName);
+  if (data.bank) {
+    setVal('gs-bank-accountname', data.bank.accountName);
+    setVal('gs-bank-accountnumber', data.bank.accountNumber);
+    setVal('gs-bank-ifsc', data.bank.ifsc);
+    setVal('gs-bank-branch', data.bank.branch);
+  }
   setVal('gs-conf-name', data.conference.name);
   setVal('gs-conf-acronym', data.conference.acronym);
   setVal('gs-conf-location', data.conference.location);
@@ -4479,6 +4485,13 @@ async function saveGeneralSettings(e, group) {
       id: document.getElementById('gs-upi-id').value,
       payeeName: document.getElementById('gs-upi-payeename').value,
     } };
+  } else if (group === 'bank') {
+    body = { bank: {
+      accountName: document.getElementById('gs-bank-accountname').value,
+      accountNumber: document.getElementById('gs-bank-accountnumber').value,
+      ifsc: document.getElementById('gs-bank-ifsc').value,
+      branch: document.getElementById('gs-bank-branch').value,
+    } };
   } else if (group === 'conference') {
     body = { conference: {
       name: document.getElementById('gs-conf-name').value,
@@ -4509,7 +4522,7 @@ async function saveGeneralSettings(e, group) {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   })).json();
   if (!data.success) return showToast(data.error || 'Could not save.');
-  const groupLabels = { sms: 'SMS', email: 'Email', upi: 'UPI', conference: 'Conference Details', notifications: 'Notification', maintenance: 'Maintenance', otherEnv: 'Environment' };
+  const groupLabels = { sms: 'SMS', email: 'Email', upi: 'UPI', bank: 'Bank Transfer', conference: 'Conference Details', notifications: 'Notification', maintenance: 'Maintenance', otherEnv: 'Environment' };
   if (data.restartRequired) {
     showToast(`${groupLabels[group] || group} settings saved. Restart the server (pm2 restart) for the port/cookie changes to take effect.`, 'info');
   } else {
