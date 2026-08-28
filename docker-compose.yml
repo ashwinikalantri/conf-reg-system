@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    # One named volume, mounted at /data and symlinked from inside the image
+    # (see the Dockerfile) -- covers .env, conference.db, uploads/,
+    # bank-statements/, and the OCR cache together, so all of it survives an
+    # image rebuild or `docker compose down` (without -v) as one unit.
+    volumes:
+      - data:/data
+    restart: unless-stopped
+
+volumes:
+  data:

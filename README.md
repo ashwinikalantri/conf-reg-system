@@ -72,6 +72,38 @@ to this specific conference, not generic placeholders — a new deployment
 inherits NQOCN's specifics until edited via Settings → Fees / Workshops / QI
 or the setup wizard's UPI step.
 
+## Docker
+
+```bash
+# 1. Build and start (defaults to host port 3000; override with HOST_PORT=...)
+docker compose up -d --build
+
+# 2. Seed SETUP_TOKEN so /setup activates (see First-Run Setup above) --
+#    dotenv only loads .env at boot, so a restart is needed to pick it up.
+docker compose exec app sh -c "echo 'SETUP_TOKEN=choose-something-long' >> .env"
+docker compose restart
+
+# 3. Visit http://localhost:3000/setup and create the first Super Admin.
+```
+
+Everything the app writes to at runtime — `.env` (the admin panel writes
+secrets like the SMS API key back into it), `conference.db`, `uploads/`,
+`bank-statements/`, and the OCR language-model cache — lives on one named
+Docker volume (`data`, mounted at `/data` and symlinked from inside the
+image; see the Dockerfile) so all of it survives `docker compose down` and
+an image rebuild together. It's gone only after `docker compose down -v`.
+
+To add or rotate a credential directly (rather than through Settings →
+General once the admin panel is up): `docker compose exec app sh -c "echo
+'AWS_ACCESS_KEY_ID=...' >> .env"`, then `docker compose restart` — same as
+editing `.env` on a bare-metal install, just via `exec` instead of a text
+editor, since the file lives on the container's filesystem rather than the
+host's.
+
+This is packaging only — it doesn't replace or affect any non-Docker
+deployment of this app; a `pm2`-managed instance and a Docker Compose
+instance are independent, each with their own `.env`/database/uploads.
+
 ## SMS OTP (Vynttra)
 
 OTPs are delivered by SMS via the Vynttra JSON API using a registered DLT

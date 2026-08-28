@@ -1,0 +1,32 @@
+node_modules/
+.git/
+.gitignore
+
+# Runtime data -- never bake delegate PII, secrets, or uploaded files into
+# the image. All of these are volume-mounted at runtime instead; see
+# docker-compose.yml.
+conference.db
+conference.db-journal
+conference.db-wal
+conference.db-shm
+*.db
+*.sqlite
+*.sqlite3
+uploads/
+bank-statements/
+.ocr-cache/
+*.traineddata
+.env
+.env.*
+!.env.example
+backups/
+docs/
+
+# Logs / editor / OS junk
+logs/
+*.log
+npm-debug.log*
+.DS_Store
+.vscode/
+.idea/
+*.swp
