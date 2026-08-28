@@ -1592,6 +1592,14 @@ db.serialize(() => {
     )
   `);
   db.run('CREATE INDEX IF NOT EXISTS idx_payment_refunds_reg ON payment_refunds(registration_id)');
+  // A refund must now be backed by an actual debit row from the imported
+  // bank statement -- proof the money genuinely left the account, the same
+  // way a payment must be backed by a credit row before it can be verified.
+  // UNIQUE (not the split-friendly plain index payment_transactions.bank_txn_id
+  // uses): one statement debit is one real outgoing transfer, so it can back
+  // at most one refund record.
+  db.run('ALTER TABLE payment_refunds ADD COLUMN bank_txn_id INTEGER', () => {});
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_refunds_bank_txn_id ON payment_refunds(bank_txn_id)');
 
   // Additive migrations: server-computed fee, OCR check results, registration
   // number, and the chosen program-option ids (for capacity accounting).
@@ -1891,7 +1899,10 @@ async function getPaymentSummary(registrationId, expectedAmount) {
     .filter((t) => t.txn_status === 'VERIFIED')
     .reduce((sum, t) => sum + (t.verified_amount != null ? t.verified_amount : (t.amount || 0)), 0);
   const refunds = await dbAll(
-    'SELECT * FROM payment_refunds WHERE registration_id = ? ORDER BY refunded_at ASC, id ASC',
+    `SELECT payment_refunds.*, b.post_date AS bank_txn_date, b.description AS bank_txn_description
+       FROM payment_refunds
+       LEFT JOIN bank_statement_transactions b ON b.id = payment_refunds.bank_txn_id
+      WHERE registration_id = ? ORDER BY refunded_at ASC, id ASC`,
     [registrationId]);
   const refundedTotal = refunds.reduce((sum, r) => sum + (r.amount || 0), 0);
   // What's actually still credited to this registration once recorded
@@ -3578,7 +3589,10 @@ app.get('/api/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async
     // Same batched-fetch-then-group approach as transactions above, for
     // recorded refunds (see payment_refunds / getPaymentSummary).
     const allRefunds = await dbAll(
-      'SELECT * FROM payment_refunds ORDER BY refunded_at ASC, id ASC');
+      `SELECT payment_refunds.*, b.post_date AS bank_txn_date, b.description AS bank_txn_description
+         FROM payment_refunds
+         LEFT JOIN bank_statement_transactions b ON b.id = payment_refunds.bank_txn_id
+        ORDER BY refunded_at ASC, id ASC`);
     const refundsByReg = {};
     for (const r of allRefunds) (refundsByReg[r.registration_id] ||= []).push(r);
 
@@ -4277,14 +4291,41 @@ app.post('/api/registrations/:id/admin-add-payment', requireRole('SUPER_ADMIN', 
   }
 });
 
+// Candidate statement debits for refunding one registration's excess --
+// unlinked debit rows, nearest to the outstanding overpaid amount first.
+// Same shape/reasoning as /api/payment-transactions/:txnId/candidates for
+// credits, but 1-to-1 (see the UNIQUE index on payment_refunds.bank_txn_id)
+// rather than split-capable, since a refund debit is one real transfer out.
+app.get('/api/registrations/:id/refund-candidates', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const reg = await dbGet('SELECT id, expected_amount FROM registrations WHERE id = ?', [req.params.id]);
+    if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
+    const summary = await getPaymentSummary(reg.id, reg.expected_amount);
+    const rows = await dbAll(
+      `SELECT * FROM bank_statement_transactions
+        WHERE debit IS NOT NULL AND debit > 0
+          AND id NOT IN (SELECT bank_txn_id FROM payment_refunds WHERE bank_txn_id IS NOT NULL)
+        ORDER BY ABS(COALESCE(debit, 0) - ?) ASC, post_date DESC
+        LIMIT 50`,
+      [summary.overpaid]);
+    res.json({ transactions: rows, overpaid: summary.overpaid });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Record that excess a delegate paid (see getPaymentSummary's overpaid) was
 // sent back to them. Bookkeeping only -- this app has never moved money in
 // either direction, it verifies bank statements; a row here means "we sent
-// this back manually and I'm recording it," not a trigger to transfer
-// anything. Nets off verifiedTotal in getPaymentSummary going forward, so a
+// this back and it shows in the statement as an actual debit, and I'm
+// recording it," not a trigger to transfer anything. A refund must now be
+// backed by a real, unlinked debit row (bankTxnId) -- the same proof-via-
+// statement requirement payments already have, applied to the outgoing
+// side. Nets off verifiedTotal in getPaymentSummary going forward, so a
 // refunded registration doesn't sit there looking permanently overpaid.
 // Allows a partial refund (amount less than the full outstanding excess) --
-// the rest stays recorded as still-outstanding excess for a later refund.
+// the rest stays recorded as still-outstanding excess for a later refund
+// against a different debit row.
 app.post('/api/registrations/:id/refund', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
     const reg = await dbGet('SELECT id, expected_amount FROM registrations WHERE id = ?', [req.params.id]);
@@ -4292,6 +4333,21 @@ app.post('/api/registrations/:id/refund', requireRole('SUPER_ADMIN', 'FINANCE_AD
     const amount = Number(req.body.amount);
     if (!Number.isFinite(amount) || amount <= 0) {
       return res.status(400).json({ success: false, error: 'Enter a valid refund amount.' });
+    }
+    const bankTxnId = req.body.bankTxnId;
+    if (!bankTxnId) {
+      return res.status(400).json({ success: false, error: 'Select the debit transaction from the bank statement that this refund was paid out on.' });
+    }
+    const bank = await dbGet('SELECT id, debit FROM bank_statement_transactions WHERE id = ?', [bankTxnId]);
+    if (!bank || !bank.debit || bank.debit <= 0) {
+      return res.status(400).json({ success: false, error: 'That statement transaction is not a debit.' });
+    }
+    const alreadyLinked = await dbGet('SELECT id FROM payment_refunds WHERE bank_txn_id = ?', [bankTxnId]);
+    if (alreadyLinked) {
+      return res.status(409).json({ success: false, error: 'That debit transaction is already linked to another refund.' });
+    }
+    if (amount > bank.debit + 0.5) {
+      return res.status(400).json({ success: false, error: `The refund amount can't exceed the debit's own amount (₹${inr(bank.debit)}).` });
     }
     const note = req.body.note ? String(req.body.note).trim().slice(0, 300) : null;
 
@@ -4304,14 +4360,22 @@ app.post('/api/registrations/:id/refund', requireRole('SUPER_ADMIN', 'FINANCE_AD
     }
 
     const now = Date.now();
-    const result = await dbRun(
-      'INSERT INTO payment_refunds (registration_id, amount, reference_note, refunded_by, refunded_at) VALUES (?, ?, ?, ?, ?)',
-      [reg.id, amount, note, req.session.name || req.session.phone, now]
-    );
+    let result;
+    try {
+      result = await dbRun(
+        'INSERT INTO payment_refunds (registration_id, amount, reference_note, refunded_by, refunded_at, bank_txn_id) VALUES (?, ?, ?, ?, ?, ?)',
+        [reg.id, amount, note, req.session.name || req.session.phone, now, bankTxnId]
+      );
+    } catch (err) {
+      if (err.code === 'SQLITE_CONSTRAINT') {
+        return res.status(409).json({ success: false, error: 'That debit transaction is already linked to another refund.' });
+      }
+      throw err;
+    }
     await recordAudit({
       req, entityType: 'registration', entityId: req.params.id,
       action: 'PAYMENT_REFUNDED', oldValue: null,
-      newValue: `refund#${result.lastID} ₹${inr(amount)}${note ? ` — ${note}` : ''}`,
+      newValue: `refund#${result.lastID} ₹${inr(amount)} (debit#${bankTxnId})${note ? ` — ${note}` : ''}`,
     });
     res.json({ success: true });
   } catch (err) {

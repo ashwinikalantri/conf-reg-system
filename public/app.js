@@ -2671,7 +2671,14 @@ function renderReviewPaymentProgress(p) {
 // elsewhere. Shown whenever there's currently outstanding excess or any
 // refund has ever been recorded, so the history stays visible even after
 // the excess is fully refunded.
-function renderReviewRefunds(p) {
+// Cache of the candidate debit rows currently offered in the select, keyed
+// by their bank_statement_transactions.id -- recordRefund() reads a
+// selected debit's own amount from here to cap/default the refund amount,
+// rather than re-fetching.
+let reviewRefundCandidates = [];
+let reviewRefundOverpaid = 0;
+
+async function renderReviewRefunds(p) {
   const wrap = document.getElementById('review-refund-section');
   if (!wrap) return;
   const overpaid = Number(p.overpaid) || 0;
@@ -2680,36 +2687,66 @@ function renderReviewRefunds(p) {
   if (overpaid <= 0 && refunds.length === 0) return;
 
   const excessLine = document.getElementById('review-refund-excess-line');
-  if (excessLine) {
-    excessLine.innerHTML = overpaid > 0
-      ? `<span class="font-bold text-amber-700">₹${inr(overpaid)} excess still outstanding</span>
-         <div class="flex items-center gap-1 mt-1">
-           <input type="number" min="0.01" max="${esc(overpaid)}" step="0.01" value="${esc(overpaid)}" id="review-refund-amount" class="w-24 p-1 border rounded text-[10px]">
-           <input type="text" placeholder="Reference / note (optional)" id="review-refund-note" class="flex-1 min-w-0 p-1 border rounded text-[10px]">
-           <button type="button" onclick="recordRefund()" class="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded text-[10px]">Record Refund</button>
-         </div>`
-      : `<span class="text-emerald-700 font-semibold">✓ No outstanding excess</span>`;
+  if (excessLine && overpaid > 0) {
+    // A refund must now be backed by a real, unlinked debit row from the
+    // imported bank statement (see POST /api/registrations/:id/refund) --
+    // fetch what's available rather than accepting a free-typed amount.
+    const data = await (await fetch(`/api/registrations/${encodeURIComponent(p.id)}/refund-candidates`)).json();
+    reviewRefundCandidates = data.transactions || [];
+    excessLine.innerHTML = `<span class="font-bold text-amber-700">₹${inr(overpaid)} excess still outstanding</span>
+       <div class="mt-1 space-y-1">
+         ${reviewRefundCandidates.length
+        ? `<select id="review-refund-txn" onchange="onReviewRefundTxnChange()" class="w-full p-1 border rounded text-[10px]">
+               ${reviewRefundCandidates.map((t) => `<option value="${esc(t.id)}">${esc(t.post_date)} · ₹${inr(t.debit)}${t.description ? ' · ' + esc(String(t.description).slice(0, 40)) : ''}</option>`).join('')}
+             </select>`
+        : `<p class="text-rose-600 font-semibold">No unlinked debit found in the imported bank statement. Import the latest statement (Settings → Bank Reconciliation) once this refund has actually been paid out, then come back here.</p>`}
+         <div class="flex items-center gap-1">
+           <input type="number" min="0.01" step="0.01" id="review-refund-amount" ${reviewRefundCandidates.length ? '' : 'disabled'} class="w-24 p-1 border rounded text-[10px]">
+           <input type="text" placeholder="Reference / note (optional)" id="review-refund-note" ${reviewRefundCandidates.length ? '' : 'disabled'} class="flex-1 min-w-0 p-1 border rounded text-[10px]">
+           <button type="button" onclick="recordRefund()" ${reviewRefundCandidates.length ? '' : 'disabled'} class="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold rounded text-[10px]">Record Refund</button>
+         </div>
+       </div>`;
+    reviewRefundOverpaid = overpaid;
+    if (reviewRefundCandidates.length) onReviewRefundTxnChange();
+  } else if (excessLine) {
+    excessLine.innerHTML = `<span class="text-emerald-700 font-semibold">✓ No outstanding excess</span>`;
   }
 
   const historyBox = document.getElementById('review-refund-history');
   if (historyBox) {
     historyBox.innerHTML = refunds.length ? refunds.map((r) => `
       <div class="flex items-center justify-between gap-2 py-1 text-[10px] border-t border-slate-100">
-        <span class="text-slate-600">${esc(fmtAuditTime(r.refunded_at))} · ₹${inr(esc(r.amount))}${r.reference_note ? ` · ${esc(r.reference_note)}` : ''} <span class="text-slate-400">(${esc(r.refunded_by || '—')})</span></span>
+        <span class="text-slate-600">${esc(fmtAuditTime(r.refunded_at))} · ₹${inr(esc(r.amount))}${r.bank_txn_date ? ` · debit ${esc(r.bank_txn_date)}` : ''}${r.reference_note ? ` · ${esc(r.reference_note)}` : ''} <span class="text-slate-400">(${esc(r.refunded_by || '—')})</span></span>
         <button type="button" onclick="deleteRefund(${esc(r.id)})" class="shrink-0 text-rose-600 hover:underline font-semibold">Undo</button>
       </div>`).join('') : '';
   }
 }
 
+// The refund amount can't exceed either the outstanding excess or the
+// selected debit's own amount, whichever is smaller -- re-capped every time
+// the picked debit changes.
+function onReviewRefundTxnChange() {
+  const sel = document.getElementById('review-refund-txn');
+  const amountInput = document.getElementById('review-refund-amount');
+  if (!sel || !amountInput) return;
+  const txn = reviewRefundCandidates.find((t) => String(t.id) === sel.value);
+  const cap = Math.min(reviewRefundOverpaid, txn ? Number(txn.debit) || 0 : reviewRefundOverpaid);
+  amountInput.max = cap;
+  amountInput.value = cap;
+}
+
 async function recordRefund() {
+  const txnSelect = document.getElementById('review-refund-txn');
   const amountInput = document.getElementById('review-refund-amount');
   const noteInput = document.getElementById('review-refund-note');
+  const bankTxnId = txnSelect ? txnSelect.value : null;
+  if (!bankTxnId) return showToast('Select the debit transaction this refund was paid out on.');
   const amount = amountInput ? Number(amountInput.value) : 0;
   if (!Number.isFinite(amount) || amount <= 0) return showToast('Enter a valid refund amount.');
-  if (!(await showConfirm(`Record a ₹${inr(amount)} refund for this registration? This only logs that it happened -- it doesn't send any money.`))) return;
+  if (!(await showConfirm(`Record a ₹${inr(amount)} refund for this registration, against the selected debit? This only logs that it happened -- it doesn't send any money.`))) return;
   const data = await (await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/refund`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ amount, note: noteInput ? noteInput.value.trim() : '' }),
+    body: JSON.stringify({ amount, bankTxnId, note: noteInput ? noteInput.value.trim() : '' }),
   })).json();
   if (!data.success) return showToast(data.error || 'Could not record this refund.');
   showToast('Refund recorded.', 'success');
