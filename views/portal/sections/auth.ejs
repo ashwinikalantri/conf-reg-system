@@ -21,7 +21,16 @@
           <div class="flex gap-2">
             <div class="relative flex-1">
               <span class="absolute left-3 top-3 text-sm text-slate-500 font-bold">+91</span>
-              <input type="tel" id="login-phone" inputmode="tel" autocomplete="tel" maxlength="10" placeholder="10-digit Mobile No." onkeydown="if(event.key==='Enter'){event.preventDefault(); document.getElementById('btn-send-login-otp').click();}" class="w-full p-2.5 pl-12 border rounded-lg bg-white text-sm font-mono outline-none">
+              <!-- tel-national, not tel: this field holds the 10-digit
+                   number only (the +91 is a fixed label beside it, and
+                   maxlength is 10), whereas `tel` means the full number
+                   *including* country code -- so a browser holding
+                   "+919876543210" had 13 characters to put in a 10-character
+                   field and simply declined to autofill. name= is here for
+                   the same reason: browser autofill heuristics key off it,
+                   and the forms are submit-handled in JS (preventDefault), so
+                   naming the fields changes nothing else. -->
+              <input type="tel" id="login-phone" name="phone" inputmode="tel" autocomplete="tel-national" maxlength="10" placeholder="10-digit Mobile No." onkeydown="if(event.key==='Enter'){event.preventDefault(); document.getElementById('btn-send-login-otp').click();}" class="w-full p-2.5 pl-12 border rounded-lg bg-white text-sm font-mono outline-none">
             </div>
             <button type="button" id="btn-send-login-otp" onclick="requestOTP('login')" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shrink-0">
               Send OTP
@@ -45,7 +54,7 @@
             <label class="block text-xs font-bold text-indigo-800 uppercase tracking-wide">Registered Mobile Number</label>
             <div class="relative mt-1.5">
               <span class="absolute left-3 top-3 text-sm text-slate-500 font-bold">+91</span>
-              <input type="tel" id="login-password-phone" inputmode="tel" autocomplete="tel" maxlength="10" placeholder="10-digit Mobile No." class="w-full p-2.5 pl-12 border rounded-lg bg-white text-sm font-mono outline-none">
+              <input type="tel" id="login-password-phone" name="phone" inputmode="tel" autocomplete="tel-national" maxlength="10" placeholder="10-digit Mobile No." class="w-full p-2.5 pl-12 border rounded-lg bg-white text-sm font-mono outline-none">
             </div>
           </div>
           <div>
@@ -91,7 +100,7 @@
         <div class="flex gap-2">
           <div class="relative flex-1">
             <span class="absolute left-3 top-3 text-sm text-slate-500 font-bold">+91</span>
-            <input type="tel" id="reg-phone" maxlength="10" placeholder="10-digit Mobile No." required class="w-full p-2.5 pl-12 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono">
+            <input type="tel" id="reg-phone" name="phone" inputmode="tel" autocomplete="tel-national" maxlength="10" placeholder="10-digit Mobile No." required class="w-full p-2.5 pl-12 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono">
           </div>
           <button type="button" id="btn-send-reg-otp" onclick="requestOTP('reg')" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shrink-0">
             Send OTP
