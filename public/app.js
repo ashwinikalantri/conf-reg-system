@@ -2036,10 +2036,12 @@ function applyRoleVisibility(role) {
   // Show only the report cards this role can access. Operations sees all of
   // them, same as Super Admin.
   const rd = document.getElementById('report-delegates');
+  const rdp = document.getElementById('report-delegate-programs');
   const rp = document.getElementById('report-payments');
   const rw = document.getElementById('report-workshops');
   const ra = document.getElementById('report-abstracts');
   if (rd) rd.classList.toggle('hidden', !(isFinance || isOperations));
+  if (rdp) rdp.classList.toggle('hidden', !(isFinance || isOperations));
   if (rp) rp.classList.toggle('hidden', !(isFinance || isOperations));
   if (rw) rw.classList.toggle('hidden', !(isFinance || isOperations));
   if (ra) ra.classList.toggle('hidden', !(isReviewer || isOperations));

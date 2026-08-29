@@ -6386,6 +6386,60 @@ async function buildReport(type, opts = {}) {
       }],
     };
   }
+  // One row per delegate, one COLUMN per program group -- the complement to
+  // the 'workshops' report above, which is one section per option. This
+  // shape is what you want for a spreadsheet (sort/filter/pivot by group);
+  // that one is what you want for a printed door list.
+  //
+  // Scope is every non-rejected registration, matching how enrollment is
+  // counted everywhere else (fetchProgramOptions holds a capacity slot for
+  // any non-rejected registration) -- so the per-group totals here reconcile
+  // with the per-option rosters. A Status column keeps that unambiguous,
+  // since it means pending registrations are included too.
+  if (type === 'delegate-programs') {
+    const groups = await fetchProgramGroups({ activeOnly: false });
+    const rows = (await dbAll(
+      `SELECT registrations.id, registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN},
+         registrations.phone_number AS phone_number, category_label, bank_status,
+         u.email, u.designation, u.institution
+         FROM registrations
+         LEFT JOIN users u ON u.phone_number = registrations.phone_number
+         WHERE registrations.bank_status != 'REJECTED'
+         ORDER BY registrations.registration_number`)).map(withDelegateSalutation);
+
+    // One batched query rather than a join per group -- works the same
+    // whether there are two groups or ten.
+    const selRows = await dbAll(
+      `SELECT ro.registration_id, ro.group_id, ro.is_faculty, o.name AS option_name
+         FROM registration_options ro
+         JOIN program_options o ON o.id = ro.option_id
+         ORDER BY o.name`);
+    const byReg = new Map();
+    for (const s of selRows) {
+      if (!byReg.has(s.registration_id)) byReg.set(s.registration_id, new Map());
+      const perGroup = byReg.get(s.registration_id);
+      // Faculty are attached to an option without occupying a capacity slot
+      // (see fetchProgramOptions), so the roster has to say which they are.
+      const label = s.option_name + (s.is_faculty ? ' (Faculty)' : '');
+      perGroup.set(s.group_id, [...(perGroup.get(s.group_id) || []), label]);
+    }
+
+    return {
+      title: 'Delegates & Program Selections',
+      sections: [{
+        columns: ['Reg No', 'Name', 'Mobile', 'Email', 'Designation', 'Institution', 'Category', 'Status',
+          ...groups.map((g) => g.name)],
+        rows: rows.map((r) => {
+          const perGroup = byReg.get(r.id) || new Map();
+          return [r.registration_number, r.delegate_name, r.phone_number, r.email, r.designation, r.institution,
+            r.category_label, BANK_STATUS_LABELS[r.bank_status] || r.bank_status,
+            // join, not [0]: a group configured with max_select > 1 can
+            // legitimately hold several options for one delegate.
+            ...groups.map((g) => (perGroup.get(g.id) || []).join('; '))];
+        }),
+      }],
+    };
+  }
   if (type === 'payments') {
     const rows = (await dbAll(
       `SELECT id, registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, phone_number, category_label,
@@ -6495,6 +6549,7 @@ async function buildReport(type, opts = {}) {
 
 const REPORT_ROLES = {
   delegates: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'OPERATIONS'],
+  'delegate-programs': ['SUPER_ADMIN', 'FINANCE_ADMIN', 'OPERATIONS'],
   payments: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'OPERATIONS'],
   workshops: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'OPERATIONS'],
   abstracts: ['SUPER_ADMIN', 'ACADEMIC_REVIEWER', 'OPERATIONS'],

@@ -10,6 +10,15 @@
             <button onclick="downloadReport('delegates')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">🖨 PDF</button>
           </div>
         </div>
+        <div id="report-delegate-programs" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+          <h3 class="font-bold text-slate-800">Delegates &amp; Program Selections</h3>
+          <p class="text-xs text-slate-500 mt-1 mb-4">One row per delegate with a column per program group (Workshops, QI Practices, …) — for sorting and filtering in Excel. Includes pending registrations; faculty are marked.</p>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="viewReport('delegate-programs')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg">👁 View</button>
+            <button onclick="downloadReport('delegate-programs','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">⬇ Excel</button>
+            <button onclick="downloadReport('delegate-programs')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">🖨 PDF</button>
+          </div>
+        </div>
         <div id="report-payments" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
           <h3 class="font-bold text-slate-800">Payments</h3>
           <p class="text-xs text-slate-500 mt-1 mb-4">Every registration's payment details and status — pending, verified, and rejected.</p>
