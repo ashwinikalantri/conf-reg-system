@@ -6557,6 +6557,22 @@ const REPORT_ROLES = {
   users: ['SUPER_ADMIN', 'OPERATIONS'],
 };
 
+// Filename-safe conference tag for report downloads, e.g. "nqocn2026" ->
+// nqocn2026-delegates-report.csv. regPrefix is tried first because it's
+// already validated to [A-Za-z0-9]{1,20} (see the general-settings PUT), so
+// it needs no cleaning; acronym is free text and does. The fallback matters:
+// a fresh install has both blank by design, and without it the download
+// would be named "-delegates-report.csv".
+//
+// Slugifying also keeps admin-supplied text out of the raw header -- acronym
+// is editable from Settings → General, and a value containing a quote or a
+// line break would otherwise break (or inject into) Content-Disposition.
+function reportFilePrefix() {
+  const slug = String(CONFERENCE.regPrefix || CONFERENCE.acronym || '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return slug || 'conference';
+}
+
 function toCsv(rep) {
   const cell = (v) => {
     const s = v == null ? '' : String(v);
@@ -6633,7 +6649,7 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
     res.set('Cache-Control', 'private, no-store');
     if (req.query.format === 'csv') {
       res.set('Content-Type', 'text/csv; charset=utf-8');
-      res.set('Content-Disposition', `attachment; filename="nqocn-${type}-report.csv"`);
+      res.set('Content-Disposition', `attachment; filename="${reportFilePrefix()}-${type}-report.csv"`);
       return res.send(toCsv(rep));
     }
     if (req.query.format === 'json') {
