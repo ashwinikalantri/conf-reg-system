@@ -5123,6 +5123,115 @@ async function sendBalanceDueReminders() {
   await renderBackendBalanceDueReminders(balanceDueIsSuper);
 }
 
+// --- CUSTOM-RECIPIENT REMINDERS (admin) ---
+// Reaches addresses with no account in this system at all -- e.g. an
+// external mailing list -- so it's driven by a pasted list, not a picked-
+// from-a-table selection like the two reminder cards above.
+
+// Defaults to an "early bird ends today" push (fetching the actual cutoff
+// date from /api/fees so the copy doesn't drift from the real fee_config),
+// since that's the recurring reason this card gets used -- an admin can
+// still overwrite both fields for any other announcement.
+let customReminderInitialized = false;
+async function initCustomReminderCard() {
+  updateCustomReminderCount();
+  if (customReminderInitialized) return;
+  customReminderInitialized = true;
+
+  const subjectInput = document.getElementById('customreminder-subject');
+  const bodyBox = document.getElementById('customreminder-body');
+  if (subjectInput && !subjectInput.value.trim()) {
+    subjectInput.value = conferenceInfo.acronym ? `Early Bird Registration for ${conferenceInfo.acronym} Ends Today` : 'Early Bird Registration Ends Today';
+  }
+  if (bodyBox && !bodyBox.value.trim()) {
+    let deadlineLine = '';
+    try {
+      const fees = await (await fetch('/api/fees')).json();
+      if (fees.earlyUntil) deadlineLine = ` (${esc(formatFullDate(fees.earlyUntil))})`;
+    } catch { /* best-effort -- the email still makes sense without the exact date */ }
+    bodyBox.value = `<p>Dear Colleague,</p>
+<p>This is a reminder that <b>today${deadlineLine} is the last day</b> to register for the ${esc(conferenceInfo.name || 'conference')} at the early bird rate. Fees go up starting tomorrow.</p>
+<p style="text-align:center;margin:1.5rem 0">
+  <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Register Now</a>
+</p>
+<p>If you've already registered, please disregard this email.</p>`;
+  }
+}
+
+function parseCustomReminderEmails() {
+  const raw = document.getElementById('customreminder-emails').value;
+  return raw.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+}
+
+function updateCustomReminderCount() {
+  setText('customreminder-send-count', String(parseCustomReminderEmails().length));
+  const sendBtn = document.getElementById('customreminder-send-btn');
+  if (sendBtn) sendBtn.disabled = !isSuperAdminViewer();
+}
+
+// Reuses the same test-send endpoint as the other two cards -- it only ever
+// emails the logged-in admin's own address, so it doesn't care which card
+// triggered it.
+async function sendCustomReminderTest() {
+  const subject = document.getElementById('customreminder-subject').value.trim();
+  const bodyHtml = document.getElementById('customreminder-body').value.trim();
+  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
+
+  const btn = document.getElementById('customreminder-test-btn');
+  const resultEl = document.getElementById('customreminder-send-result');
+  if (btn) btn.disabled = true;
+  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending test…'; }
+
+  const data = await (await fetch('/api/admin/reminders/test-send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject, bodyHtml }),
+  })).json();
+
+  if (!data.success) {
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Test send failed.'; }
+    showToast(data.error || 'Could not send test email.');
+  } else {
+    const msg = `Test sent to ${data.sentTo}.`;
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
+    showToast(msg, 'success');
+  }
+  if (btn) btn.disabled = false;
+}
+
+async function sendCustomReminders() {
+  const subject = document.getElementById('customreminder-subject').value.trim();
+  const bodyHtml = document.getElementById('customreminder-body').value.trim();
+  const emails = parseCustomReminderEmails();
+  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
+  if (!emails.length) return showToast('Enter at least one email address.');
+
+  if (!confirm(`Send this reminder to ${emails.length} entered ${emails.length === 1 ? 'address' : 'addresses'}? This can't be undone.`)) return;
+
+  const btn = document.getElementById('customreminder-send-btn');
+  const resultEl = document.getElementById('customreminder-send-result');
+  if (btn) btn.disabled = true;
+  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending…'; }
+
+  const data = await (await fetch('/api/admin/reminders/custom-send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject, bodyHtml, emails }),
+  })).json();
+
+  if (!data.success) {
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Send failed.'; }
+    showToast(data.error || 'Could not send reminders.');
+  } else {
+    const skipNotes = [
+      data.skippedInvalid ? `${data.skippedInvalid} not a valid address` : null,
+      data.skippedSentRecently ? `${data.skippedSentRecently} sent within the last 24h` : null,
+    ].filter(Boolean).join(', ');
+    const msg = `Sent to ${data.sent} of ${data.total}${skipNotes ? ` (${skipNotes})` : ''}.`;
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
+    showToast(msg, 'success');
+  }
+  if (btn) btn.disabled = false;
+}
+
 // CSV downloads; HTML opens a printable report (Print / Save as PDF).
 // `extraQuery` is an already-encoded query fragment like "&optionId=5"
 // (used by the workshops report's one-at-a-time picker).
@@ -5864,7 +5973,7 @@ function switchBackendTab(tab) {
   if (tab === 'general') renderGeneralSettings();
   if (tab === 'activity') renderBackendActivity();
   if (tab === 'users') loadBackendUsers();
-  if (tab === 'reminders') { renderBackendReminders(isSuperAdminViewer()); renderBackendBalanceDueReminders(isSuperAdminViewer()); }
+  if (tab === 'reminders') { renderBackendReminders(isSuperAdminViewer()); renderBackendBalanceDueReminders(isSuperAdminViewer()); initCustomReminderCard(); }
   [...MAIN_TABS, ...SETTINGS_TABS].forEach(t => {
     const section = document.getElementById(`section-${t}`);
     if (section) section.classList.toggle('hidden', t !== tab);

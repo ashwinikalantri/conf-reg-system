@@ -5150,6 +5150,73 @@ app.post('/api/admin/reminders/balance-due/send', requireRole('SUPER_ADMIN'), as
   }
 });
 
+// Send a reminder to an admin-supplied list of raw email addresses, not tied
+// to any existing account -- for reaching people who haven't signed up yet
+// at all (e.g. an external mailing list, "early bird ends today"), which the
+// two reminder tools above can't do since they only ever address existing
+// users/registrations. No {{name}}/{{amount}} substitution: there's no
+// record behind these addresses to personalize from. Deliberately
+// SUPER_ADMIN only and rolling-24h-deduped per address, same reasoning as
+// the other two: a one-way bulk blast, nothing to undo if wrong.
+app.post('/api/admin/reminders/custom-send', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const { subject, bodyHtml, emails } = req.body;
+    if (!subject || !String(subject).trim()) {
+      return res.status(400).json({ success: false, error: 'Subject is required.' });
+    }
+    if (!bodyHtml || !String(bodyHtml).trim()) {
+      return res.status(400).json({ success: false, error: 'Email body is required.' });
+    }
+    if (!emailEnabled()) {
+      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
+    }
+    if (!Array.isArray(emails) || !emails.length) {
+      return res.status(400).json({ success: false, error: 'Enter at least one email address.' });
+    }
+
+    // Dedupe (case-insensitive) and split valid-looking addresses from junk,
+    // rather than hard-failing the whole pasted list over one typo.
+    const seen = new Set();
+    const valid = [];
+    let skippedInvalid = 0;
+    for (const raw of emails) {
+      const addr = String(raw || '').trim();
+      if (!addr) continue;
+      const key = addr.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (EMAIL_RE.test(addr)) valid.push(addr); else skippedInvalid++;
+    }
+    if (!valid.length) {
+      return res.status(400).json({ success: false, error: 'None of the entered addresses look valid.' });
+    }
+
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    const sentRecentlyRows = await dbAll(
+      `SELECT DISTINCT entity_id FROM audit_log
+        WHERE entity_type = 'reminder_email' AND action = 'CUSTOM_REMINDER_SENT' AND created_at >= ?`,
+      [since]
+    );
+    const sentRecentlySet = new Set(sentRecentlyRows.map((r) => (r.entity_id || '').toLowerCase()));
+
+    let sent = 0;
+    let skippedSentRecently = 0;
+    for (const addr of valid) {
+      if (sentRecentlySet.has(addr.toLowerCase())) { skippedSentRecently++; continue; }
+      await sendEmail(addr, subject, emailWrap(subject, bodyHtml));
+      await recordAudit({
+        req, entityType: 'reminder_email', entityId: addr,
+        action: 'CUSTOM_REMINDER_SENT', oldValue: null, newValue: subject,
+      });
+      sent++;
+    }
+
+    res.json({ success: true, sent, skippedInvalid, skippedSentRecently, total: emails.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- PROGRAM GROUPS ADMIN (Workshops, QI Practices, or any further group) --
 
 function validGroupInput({ name, required, maxSelect }, { partial } = {}) {
