@@ -2346,18 +2346,33 @@ function setText(id, value) {
   if (el) el.textContent = value;
 }
 
+// Sibling of setText for the few places that need markup rather than text.
+// Callers own escaping: pass only markup you built yourself, with esc()
+// around anything that came from the database.
+function setHTML(id, html) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+}
+
 // One line of the screenshot OCR check result: 1 = match, 0 = mismatch,
 // null/undefined = not checked (legacy rows).
 // Rendered as a small chip rather than a plain colored line, so a row of
 // checks reads at a glance (used both in the compact table cell and the
 // larger review modal).
-function ocrCheckLine(label, val) {
+// The verdict of one automated screenshot check, rendered as a mark that
+// sits in front of the field it judges (Amount, Transaction ID, Mode) rather
+// than as a free-floating pill the reviewer has to match back to a value.
+// A null check never ran, which is not the same as failing, so it gets a
+// muted dash instead of a cross. Colour alone doesn't carry it -- the glyph
+// differs too, so it survives being read on a bad monitor or by someone
+// colour-blind.
+function reviewCheckMark(val, what) {
   if (val == null) {
-    return `<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">${esc(label)} <span class="opacity-70">·  not checked</span></span>`;
+    return `<span class="text-slate-300 font-bold" title="${esc(what)} was not checked automatically">–</span>`;
   }
   return Number(val) === 1
-    ? `<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✓ ${esc(label)}</span>`
-    : `<span class="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-300 rounded-full px-2 py-0.5">✗ ${esc(label)}</span>`;
+    ? `<span class="text-emerald-600 font-bold" title="${esc(what)} matches the payment screenshot">✓</span>`
+    : `<span class="text-rose-600 font-bold" title="${esc(what)} does not match the payment screenshot">✗</span>`;
 }
 
 // Format an epoch-ms audit timestamp for display; '' when absent.
@@ -3044,13 +3059,12 @@ function openReviewModal(id) {
   // to do was a real, uncached fetch every single time.
   prefetchReviewImages();
 
-  const checksBox = document.getElementById('review-checks');
-  if (checksBox) {
-    const lines = [ocrCheckLine('Amount', p.ocr_amount_match)];
-    if (p.payment_mode !== 'NEFT_RTGS') lines.push(ocrCheckLine('UPI ID', p.ocr_vpa_match));
-    lines.push(ocrCheckLine('UTR', p.ocr_utr_match));
-    checksBox.innerHTML = lines.join('');
-  }
+  // Automated check verdicts, shown against the field each one is about.
+  // NEFT/RTGS slips carry no VPA to read, so Mode gets no mark at all there
+  // -- a dash would imply a check that could have run and didn't.
+  setHTML('review-amount-check', reviewCheckMark(p.ocr_amount_match, 'The amount'));
+  setHTML('review-utr-check', reviewCheckMark(p.ocr_utr_match, 'The transaction ID'));
+  setHTML('review-mode-check', p.payment_mode === 'NEFT_RTGS' ? '' : reviewCheckMark(p.ocr_vpa_match, 'The UPI ID'));
 
   const flaggedNote = document.getElementById('review-flagged-note');
   if (flaggedNote) flaggedNote.classList.toggle('hidden', !p.is_flagged);
@@ -3684,8 +3698,9 @@ async function reviewUnlockCategory() {
 }
 
 // Student categories require an approver to confirm the uploaded ID card
-// verifies that status before the registration can be verified -- the
-// automated OCR check alone (shown among Automated Checks) is advisory.
+// verifies that status before the registration can be verified. This drives
+// the whole ID Verification section of the review modal, header included --
+// non-student categories have no ID question to answer, so they see none of it.
 function renderReviewIdVerification(p) {
   const wrap = document.getElementById('review-idverify-wrap');
   const checkbox = document.getElementById('review-idverify-checkbox');

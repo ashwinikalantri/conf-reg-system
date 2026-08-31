@@ -2,8 +2,14 @@
   <div id="modal-review" class="hidden fixed inset-0 bg-slate-900/70 flex justify-center items-center p-2 sm:p-4 z-50">
     <div class="bg-white w-full max-w-5xl rounded-2xl shadow-2xl relative max-h-[95vh] flex flex-col">
       <button onclick="closeModal('modal-review')" class="absolute top-3 right-3 text-slate-400 hover:text-slate-600 text-xl font-bold z-10">✕</button>
-      <div class="p-5 border-b border-slate-100 shrink-0">
+      <div class="p-5 border-b border-slate-100 shrink-0 flex items-start justify-between gap-3">
         <h3 id="review-title" class="text-lg font-bold text-slate-800">Review Payment</h3>
+        <!-- Top right, beside the title: being flagged is a property of the
+             whole registration, so it belongs with the heading rather than
+             buried among the details. mr-7 keeps it clear of the ✕. The
+             failing checks themselves are marked against the individual
+             fields below, so this doesn't repeat them. -->
+        <div id="review-flagged-note" class="hidden shrink-0 mr-7 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-lg px-2.5 py-1.5">⚠️ Flagged for manual scrutiny</div>
       </div>
       <div class="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 overflow-hidden">
         <!-- Evidence pane. Carries BOTH documents (payment screenshot and,
@@ -67,6 +73,14 @@
             <p id="review-demographics" class="text-xs text-slate-500 mt-1"></p>
           </div>
 
+          <!-- SECTION 1 of 2: PAYMENT VERIFICATION. Everything about the
+               money -- what's owed, what arrived, how it reconciles against
+               the bank, and any excess. The ID question is deliberately a
+               separate section below, because it's a different judgement
+               made against a different document. -->
+          <section class="space-y-3">
+            <h4 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b border-slate-200 pb-1.5">Payment Verification</h4>
+
           <!-- DECISION STRIP: what was owed, what's actually in, and exactly
                what's still blocking Accept & Verify. Rendered by
                renderReviewStatusStrip(); the gate list is refreshed live by
@@ -84,10 +98,16 @@
             <div id="review-gate-list" class="mt-2 space-y-0.5 text-[11px]"></div>
           </div>
 
+          <!-- The automated screenshot checks used to sit in a separate
+               "Automated Checks" pill row, which made the reviewer match a
+               pill back to the field it was judging. The verdict now sits
+               directly in front of the value it's about (see reviewCheckMark)
+               -- Mode carries the UPI-ID check, which is why NEFT/RTGS, where
+               there is no VPA to read, shows no mark at all. -->
           <div class="grid grid-cols-2 gap-3">
-            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mode</p><p id="review-mode" class="font-semibold"></p></div>
-            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Amount</p><p id="review-amount" class="font-semibold"></p></div>
-            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Transaction ID</p><p id="review-utr" class="font-mono font-semibold"></p></div>
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mode</p><p class="font-semibold flex items-center gap-1.5"><span id="review-mode-check" class="shrink-0"></span><span id="review-mode"></span></p></div>
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Amount</p><p class="font-semibold flex items-center gap-1.5"><span id="review-amount-check" class="shrink-0"></span><span id="review-amount"></span></p></div>
+            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Transaction ID</p><p class="font-semibold flex items-center gap-1.5"><span id="review-utr-check" class="shrink-0"></span><span id="review-utr" class="font-mono break-all"></span></p></div>
             <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date Submitted</p><p id="review-date" class="font-semibold"></p></div>
           </div>
 
@@ -111,18 +131,19 @@
             <div id="review-refund-history" class="mt-1"></div>
           </div>
 
-          <div>
-            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Automated Checks</p>
-            <div id="review-checks" class="flex flex-wrap gap-1.5"></div>
-          </div>
+          </section>
 
-          <!-- ID verification stays in the main flow, NOT in the disclosure
-               below: it's a gate on Accept & Verify, so burying it would
-               just move the "why is this button disabled?" problem. The card
-               image itself lives in the evidence pane on the left. -->
-          <div id="review-idverify-wrap" class="hidden border-t border-slate-100 pt-3">
+          <!-- SECTION 2 of 2: ID VERIFICATION. Hidden wholesale (header and
+               all) for categories that don't require a student ID -- see
+               renderReviewIdVerification. It stays in the main flow rather
+               than in the Corrections disclosure because it gates
+               Accept & Verify; burying it would just move the "why is this
+               button disabled?" problem. The card image itself lives in the
+               evidence pane on the left. -->
+          <section id="review-idverify-wrap" class="hidden space-y-3">
+            <h4 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b border-slate-200 pb-1.5">ID Verification</h4>
             <div class="flex items-center justify-between gap-2 mb-1.5">
-              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Student ID Verification <span class="normal-case font-normal">(required to verify)</span></p>
+              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Student ID <span class="normal-case font-normal">(required to verify)</span></p>
               <!-- Jumps the evidence pane straight to the ID card instead of
                    making the reviewer hunt for the small tab on the left --
                    the exact document this whole block is asking them to
@@ -134,9 +155,7 @@
               <span>I have reviewed the ID card (click <b>View ID Card</b> above to see it) and confirm it verifies this delegate's student status for the selected category.</span>
             </label>
             <p id="review-idverify-note" class="hidden text-[11px] text-emerald-700 font-semibold mt-1"></p>
-          </div>
-
-          <div id="review-flagged-note" class="hidden bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-lg p-2.5">⚠️ Flagged for manual scrutiny — one or more automated checks did not pass.</div>
+          </section>
 
           <!-- Corrections & adjustments: the two power tools (attach an
                unclaimed bank credit, change/lock the category) folded into
