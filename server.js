@@ -5419,6 +5419,138 @@ app.delete('/api/registrations/:id/refund/:refundId', requireRole('SUPER_ADMIN',
   }
 });
 
+// --- CASH AT THE DESK -> BULK BANK DEPOSIT ------------------------------
+// Cash taken at the desk (see POST /api/admin/registrations, mode CASH) is
+// real money already in hand: it is VERIFIED the moment it's taken, and the
+// admin's presence is the proof. What it ISN'T is banked -- it sits with no
+// bank_txn_id, unaccounted for against the statement, until someone walks a
+// day's takings to the bank as ONE deposit covering many registrations.
+//
+// That deposit arrives in the statement as a single credit, so the link is
+// many payments -> one credit. payment_transactions.bank_txn_id already
+// supports that (its index is deliberately plain, not UNIQUE -- see the
+// migration above), and allocatedForBankTxn() already caps the total against
+// the credit.
+//
+// Deliberately NOT reusing PUT /api/payment-transactions/:txnId/link: that
+// endpoint overwrites verified_amount with min(amount, remaining), which is
+// right for a bank payment (linking IS the acknowledgement, and you can only
+// acknowledge what actually arrived) but wrong for cash. The delegate handed
+// over their fee in full; if the admin later banks less than they collected,
+// that discrepancy belongs to the cash handling, not to the delegate, and
+// must not quietly reduce what a fully-paid delegate is recorded as having
+// paid. Linking cash records WHERE it was banked and changes nothing else.
+app.get('/api/admin/cash-in-hand', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const rows = await dbAll(`
+      SELECT pt.id, pt.registration_id, pt.phone_number,
+             COALESCE(pt.verified_amount, pt.amount) AS amount,
+             pt.submitted_at, pt.reviewed_by,
+             r.registration_number, r.delegate_name, r.category_label
+        FROM payment_transactions pt
+        LEFT JOIN registrations r ON r.id = pt.registration_id
+       WHERE pt.payment_mode = 'CASH'
+         AND pt.txn_status = 'VERIFIED'
+         AND pt.bank_txn_id IS NULL
+       ORDER BY pt.submitted_at ASC, pt.id ASC`);
+    const total = rows.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+    res.json({ transactions: rows, total, count: rows.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Link a batch of cash collections to the single bank credit they were
+// deposited as. All-or-nothing: either every selected payment is attached to
+// this deposit or none is, so a partially-applied batch can't leave the
+// desk's books half-reconciled.
+app.post('/api/admin/cash-deposit', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const bankTxnId = req.body.bankTxnId;
+    const txnIds = Array.isArray(req.body.txnIds) ? req.body.txnIds.map(Number).filter(Number.isFinite) : [];
+    if (!bankTxnId) return res.status(400).json({ success: false, error: 'Select the bank deposit to link these to.' });
+    if (!txnIds.length) return res.status(400).json({ success: false, error: 'Select at least one cash collection.' });
+
+    const bank = await dbGet('SELECT * FROM bank_statement_transactions WHERE id = ?', [bankTxnId]);
+    if (!bank) return res.status(404).json({ success: false, error: 'Statement transaction not found.' });
+    if (!(bank.credit > 0)) return res.status(400).json({ success: false, error: 'That statement row has no credit amount.' });
+    if (bank.is_non_registration) {
+      return res.status(400).json({ success: false, error: 'This transaction is marked as non-registration and cannot be linked.' });
+    }
+
+    // Every selected row must still be unbanked cash. Re-checked here rather
+    // than trusted from the client, since the list could have been rendered
+    // before another admin banked some of it.
+    const placeholders = txnIds.map(() => '?').join(',');
+    const rows = await dbAll(
+      `SELECT id, COALESCE(verified_amount, amount) AS amount, payment_mode, txn_status, bank_txn_id
+         FROM payment_transactions WHERE id IN (${placeholders})`, txnIds);
+    if (rows.length !== txnIds.length) {
+      return res.status(404).json({ success: false, error: 'One or more of those payments no longer exists.' });
+    }
+    const bad = rows.find((t) => t.payment_mode !== 'CASH' || t.txn_status !== 'VERIFIED' || t.bank_txn_id != null);
+    if (bad) {
+      return res.status(409).json({
+        success: false,
+        error: bad.bank_txn_id != null
+          ? 'One of those cash collections has already been banked — reload and try again.'
+          : 'Only verified cash collections can be added to a deposit.',
+      });
+    }
+
+    // The deposit has to be big enough to hold what's being attributed to it.
+    const selectedTotal = rows.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+    const { remaining } = await allocatedForBankTxn(bankTxnId);
+    if (selectedTotal > remaining + 0.5) {
+      return res.status(409).json({
+        success: false,
+        error: `Those collections total ₹${inr(selectedTotal)}, but only ₹${inr(remaining)} of that deposit is still unallocated.`,
+      });
+    }
+
+    await dbRun(
+      `UPDATE payment_transactions SET bank_txn_id = ?
+        WHERE id IN (${placeholders}) AND bank_txn_id IS NULL`,
+      [bankTxnId, ...txnIds]);
+
+    await recordAudit({
+      req, entityType: 'bank_txn', entityId: String(bankTxnId),
+      action: 'CASH_DEPOSIT_LINK', oldValue: null,
+      newValue: `${rows.length} cash collection(s) totalling ₹${inr(selectedTotal)} banked as ${bank.post_date} deposit of ₹${inr(bank.credit)}`
+        + (selectedTotal + 0.5 < bank.credit ? ` — ₹${inr(bank.credit - selectedTotal)} of the deposit still unaccounted` : ''),
+    });
+    res.json({ success: true, linked: rows.length, total: selectedTotal, depositRemaining: Math.max(0, remaining - selectedTotal) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Detach cash from a deposit -- back to unbanked, not un-verified. The money
+// was still collected; only the claim about where it was banked is undone.
+app.post('/api/admin/cash-deposit/unlink', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const txnIds = Array.isArray(req.body.txnIds) ? req.body.txnIds.map(Number).filter(Number.isFinite) : [];
+    if (!txnIds.length) return res.status(400).json({ success: false, error: 'Select at least one cash collection.' });
+    const placeholders = txnIds.map(() => '?').join(',');
+    const rows = await dbAll(
+      `SELECT id, bank_txn_id, COALESCE(verified_amount, amount) AS amount
+         FROM payment_transactions WHERE id IN (${placeholders}) AND payment_mode = 'CASH'`, txnIds);
+    if (!rows.length) return res.status(404).json({ success: false, error: 'No matching cash collections.' });
+
+    await dbRun(
+      `UPDATE payment_transactions SET bank_txn_id = NULL
+        WHERE id IN (${placeholders}) AND payment_mode = 'CASH'`, txnIds);
+    await recordAudit({
+      req, entityType: 'bank_txn', entityId: String(rows[0].bank_txn_id || ''),
+      action: 'CASH_DEPOSIT_UNLINK', oldValue: String(rows[0].bank_txn_id || ''),
+      newValue: `${rows.length} cash collection(s) returned to unbanked (still verified)`,
+    });
+    res.json({ success: true, unlinked: rows.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Unlink a payment transaction, which also un-acknowledges it (back to pending).
 app.delete('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {

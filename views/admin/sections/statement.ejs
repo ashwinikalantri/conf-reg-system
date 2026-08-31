@@ -48,6 +48,38 @@
         </div>
       </div>
 
+      <!-- Cash taken at the desk is verified the moment it's collected, but it
+           isn't BANKED until someone deposits the day's takings as one credit
+           covering many registrations. Until then it's money in a drawer with
+           nothing in the statement to match it against, which is what this
+           panel surfaces. Hidden when there is none. -->
+      <div id="cash-in-hand-panel" class="hidden">
+        <h3 class="text-sm font-bold text-emerald-700 uppercase tracking-wide mb-2">💵 Cash at the Desk — Not Yet Banked</h3>
+        <p class="text-xs text-slate-500 mb-2">Collected in person and already counted towards each delegate's fee. Select the collections that went into a single bank deposit, pick that deposit, and link them together.</p>
+        <div class="bg-white rounded-2xl border border-emerald-200 shadow-sm overflow-hidden">
+          <div class="flex flex-wrap items-center gap-3 px-4 py-3 bg-emerald-50/50 border-b border-emerald-100">
+            <label class="flex items-center gap-2 text-xs font-bold text-slate-600">
+              <input type="checkbox" id="cash-select-all" onchange="toggleAllCashRows(this.checked)">
+              Select all
+            </label>
+            <span class="text-xs text-slate-500"><span id="cash-selected-count" class="font-bold text-slate-700">0</span> of <span id="cash-total-count" class="font-bold text-slate-700">0</span> selected · <span id="cash-selected-total" class="font-bold text-emerald-700">₹0</span> of <span id="cash-grand-total" class="font-bold text-slate-700">₹0</span> in hand</span>
+            <div class="ml-auto flex items-center gap-2">
+              <select id="cash-deposit-select" class="p-2 border border-slate-300 rounded-lg text-xs bg-white outline-none max-w-[320px]"></select>
+              <button type="button" id="cash-deposit-btn" onclick="submitCashDeposit()" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg">Link to Deposit</button>
+            </div>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse sm:min-w-[720px] text-sm">
+              <thead class="hidden sm:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+                <th class="py-3 px-4 w-10"></th><th class="py-3 px-4">Collected</th><th class="py-3 px-4">Delegate</th><th class="py-3 px-4">Reg No</th><th class="py-3 px-4 text-right">Amount ₹</th>
+              </tr></thead>
+              <tbody id="cash-in-hand-body" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+          <p id="cash-deposit-result" class="hidden px-4 py-2.5 text-xs font-semibold border-t border-slate-100"></p>
+        </div>
+      </div>
+
       <div>
         <h3 class="text-sm font-bold text-amber-700 uppercase tracking-wide mb-2">Bank Credits Not Matched to a Registration</h3>
         <p class="text-xs text-slate-500 mb-2">Includes non-UPI credits (NEFT/RTGS/IMPS) which don't carry a machine-readable reference — match these manually by amount, date, and description. If a credit will never belong to a registration (bank charges, interest, an unrelated transfer), mark it as non-registration instead of leaving it here.</p>

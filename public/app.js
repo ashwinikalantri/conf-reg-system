@@ -3462,12 +3462,21 @@ function reviewTxnRowHtml(t) {
   const isRejected = t.txn_status === 'REJECTED';
   // Unlink is offered on a linked payment until the registration itself is
   // confirmed (BANK_VERIFIED) -- undoing a link un-acknowledges the payment.
+  // Cash is a different claim from a bank payment. It was acknowledged the
+  // moment it was taken at the desk, so "not acknowledged" would be wrong and
+  // "Link & acknowledge" would offer to do something already done -- what's
+  // outstanding is only whether it has been BANKED, which is reconciled in
+  // bulk from the Bank Statement tab, not one delegate at a time. See the
+  // cash-deposit endpoints in server.js.
+  const isCash = t.payment_mode === 'CASH';
   const linkLine = linked
-    ? `<span class="text-emerald-700 font-semibold">🔗 ${esc(t.bank_txn_date || '')} · ₹${inr(esc(t.bank_txn_credit != null ? t.bank_txn_credit : ''))}</span>`
-        + (reviewRegVerified ? '' : ` <button type="button" class="text-rose-600 hover:underline font-semibold ml-1" onclick="unlinkTxn(${esc(t.id)})">Unlink</button>`)
+    ? `<span class="text-emerald-700 font-semibold">🔗 ${isCash ? 'Banked ' : ''}${esc(t.bank_txn_date || '')} · ₹${inr(esc(t.bank_txn_credit != null ? t.bank_txn_credit : ''))}</span>`
+        + (reviewRegVerified || isCash ? '' : ` <button type="button" class="text-rose-600 hover:underline font-semibold ml-1" onclick="unlinkTxn(${esc(t.id)})">Unlink</button>`)
     : isRejected
       ? `<span class="text-slate-400">Rejected — not linked</span>`
-      : `<span class="text-amber-700 font-semibold">⚠ Not acknowledged</span> <button type="button" class="text-indigo-600 hover:underline font-semibold ml-1" onclick="toggleTxnCandidates(${esc(t.id)})">Link &amp; acknowledge</button>`;
+      : isCash
+        ? `<span class="text-slate-500">💵 Cash taken at the desk — <span class="text-amber-700 font-semibold">not yet banked</span></span>`
+        : `<span class="text-amber-700 font-semibold">⚠ Not acknowledged</span> <button type="button" class="text-indigo-600 hover:underline font-semibold ml-1" onclick="toggleTxnCandidates(${esc(t.id)})">Link &amp; acknowledge</button>`;
   // Each payment keeps its OWN slip (payment_transactions.screenshot), unlike
   // registrations.screenshot which the next submission overwrites -- so this
   // is how the original partial payment's slip stays reachable after a
@@ -6665,10 +6674,113 @@ async function handleStatementUpload(e) {
   }
 }
 
+// --- CASH AT THE DESK -> BULK DEPOSIT -----------------------------------
+// Cash is verified when taken but unbanked until the day's takings go in as
+// one credit. This panel is the only place that reconciliation happens:
+// per-delegate linking would be the wrong shape, since one deposit covers
+// many registrations. See the cash-deposit endpoints in server.js.
+let cashInHandRows = [];
+
+async function renderCashInHand(unmatchedCredits) {
+  const panel = document.getElementById('cash-in-hand-panel');
+  const body = document.getElementById('cash-in-hand-body');
+  if (!panel || !body) return;
+
+  const res = await fetch('/api/admin/cash-in-hand');
+  if (!res.ok) { panel.classList.add('hidden'); return; }
+  const data = await res.json();
+  cashInHandRows = data.transactions || [];
+
+  // Nothing in hand means nothing to reconcile -- and for most of a
+  // conference's life there is no desk cash at all, so the panel stays out
+  // of the way entirely rather than sitting empty.
+  panel.classList.toggle('hidden', cashInHandRows.length === 0);
+  if (!cashInHandRows.length) return;
+
+  setText('cash-total-count', String(data.count));
+  setText('cash-grand-total', `₹${inr(data.total)}`);
+
+  body.innerHTML = cashInHandRows.map((t) => `
+    <tr class="hover:bg-slate-50">
+      <td class="py-3 px-4"><input type="checkbox" class="cash-row-checkbox" value="${esc(t.id)}" data-amount="${esc(t.amount)}" onchange="updateCashSelection()"></td>
+      <td class="py-3 px-4 text-xs text-slate-500">${esc(fmtAuditTime(t.submitted_at) || '—')}</td>
+      <td class="py-3 px-4 font-semibold text-slate-700">${esc(t.delegate_name || '—')}<br><span class="text-[11px] font-normal text-slate-400">${esc(t.category_label || '')}</span></td>
+      <td class="py-3 px-4 font-mono text-xs">${esc(t.registration_number || '—')}</td>
+      <td class="py-3 px-4 text-right font-semibold">₹${inr(t.amount)}</td>
+    </tr>`).join('');
+
+  // Only credits with room left can receive a deposit; each option carries
+  // its remaining amount so the admin can see what fits before selecting.
+  const sel = document.getElementById('cash-deposit-select');
+  if (sel) {
+    const opts = (unmatchedCredits || []).filter((c) => Number(c.credit) > 0);
+    sel.innerHTML = opts.length
+      ? '<option value="">— Choose the bank deposit —</option>' + opts.map((c) =>
+          `<option value="${esc(c.id)}">${esc(c.post_date)} · ₹${inr(c.credit)} · ${esc(String(c.description || '').slice(0, 40))}</option>`).join('')
+      : '<option value="">No unmatched credits — import the statement first</option>';
+  }
+  updateCashSelection();
+}
+
+function toggleAllCashRows(checked) {
+  document.querySelectorAll('.cash-row-checkbox').forEach((b) => { b.checked = checked; });
+  updateCashSelection();
+}
+
+function updateCashSelection() {
+  const boxes = Array.from(document.querySelectorAll('.cash-row-checkbox'));
+  const picked = boxes.filter((b) => b.checked);
+  const total = picked.reduce((sum, b) => sum + (Number(b.dataset.amount) || 0), 0);
+  setText('cash-selected-count', String(picked.length));
+  setText('cash-selected-total', `₹${inr(total)}`);
+  const all = document.getElementById('cash-select-all');
+  if (all) all.checked = boxes.length > 0 && picked.length === boxes.length;
+  const btn = document.getElementById('cash-deposit-btn');
+  if (btn) btn.disabled = picked.length === 0;
+}
+
+async function submitCashDeposit() {
+  const txnIds = Array.from(document.querySelectorAll('.cash-row-checkbox:checked')).map((b) => Number(b.value));
+  const bankTxnId = (document.getElementById('cash-deposit-select') || {}).value;
+  const resultEl = document.getElementById('cash-deposit-result');
+  const show = (msg, ok) => {
+    if (!resultEl) return;
+    resultEl.className = `px-4 py-2.5 text-xs font-semibold border-t border-slate-100 ${ok ? 'text-emerald-700 bg-emerald-50/50' : 'text-rose-600 bg-rose-50/50'}`;
+    resultEl.textContent = msg;
+  };
+  if (!txnIds.length) return show('Select at least one cash collection.', false);
+  if (!bankTxnId) return show('Choose the bank deposit these were paid into.', false);
+
+  const selected = txnIds.reduce((sum, id) => {
+    const row = cashInHandRows.find((t) => Number(t.id) === id);
+    return sum + (row ? Number(row.amount) || 0 : 0);
+  }, 0);
+  if (!(await showConfirm(`Link ${txnIds.length} cash collection(s) totalling ₹${inr(selected)} to this deposit?`))) return;
+
+  const btn = document.getElementById('cash-deposit-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const data = await (await fetch('/api/admin/cash-deposit', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bankTxnId: Number(bankTxnId), txnIds }),
+    })).json();
+    if (!data.success) return show(data.error || 'Could not link these collections.', false);
+    show(`Linked ${data.linked} collection(s) totalling ₹${inr(data.total)}.`
+      + (data.depositRemaining > 0 ? ` ₹${inr(data.depositRemaining)} of that deposit is still unaccounted for.` : ''), true);
+    await loadReconciliation();
+    await renderBackendPayments();
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function loadReconciliation() {
   const res = await fetch('/api/admin/bank-statement/reconcile');
   if (!res.ok) return;
   const data = await res.json();
+  // Rendered from the same payload's unmatched credits, so the deposit
+  // picker can only ever offer a credit that is genuinely still unallocated.
+  await renderCashInHand(data.unmatchedCredits || []);
 
   setText('rec-metric-total', data.summary.registrations);
   setText('rec-metric-matched', data.summary.matched);
