@@ -934,11 +934,31 @@ async function fetchRegistrationSelections(registrationId) {
   );
 }
 
+// Today's calendar date in IST, as YYYY-MM-DD.
+//
+// Every cutoff in this app (pricing phases, promo expiry, conference dates)
+// is an INDIAN calendar date -- "early bird ends 31 August" means the end of
+// 31 August in Sevagram, not in UTC. The server, though, runs UTC in Docker,
+// and toISOString() is UTC regardless of the host's timezone. Reading the
+// date straight off it therefore reported yesterday for the 5.5 hours
+// between midnight and 05:30 IST, which kept early-bird pricing alive for
+// most of the night after it should have ended.
+//
+// toLocaleDateString('en-CA', {timeZone}) is the "correct" way to do this,
+// but silently falls back to US M/D/YYYY on this Node build's limited ICU --
+// no error, just the wrong format, which breaks the string comparisons these
+// callers do. Shifting the clock by IST's fixed +5:30 and reading the UTC
+// date is ICU-independent. India has no DST, so a fixed offset is exact.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+function istDateString(when = Date.now()) {
+  return new Date(Number(when) + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
 // Which pricing phase is in effect today, from the configured cutoff dates.
 // Four phases: early (<= early_until), regular (<= regular_until),
 // late (<= late_until), spot (after late_until, or if no cutoffs are set).
 function currentPhase(config, today = new Date()) {
-  const d = today.toISOString().slice(0, 10); // YYYY-MM-DD
+  const d = istDateString(today); // YYYY-MM-DD, IST
   if (config && config.early_until && d <= config.early_until) return 'early';
   if (config && config.regular_until && d <= config.regular_until) return 'regular';
   if (config && config.late_until && d <= config.late_until) return 'late';
@@ -979,12 +999,7 @@ async function validateDiscountCode(rawCode, phone, categoryKey) {
   if (!row || !row.active) return { ok: false, error: 'This promo code is not valid.' };
   if (row.expires_at) {
     // Compare as calendar dates in IST; a code is valid through its expiry day.
-    // toLocaleDateString('en-CA', {timeZone}) is the "correct" way to get this,
-    // but silently falls back to US M/D/YYYY on this Node build's limited ICU
-    // (no error -- it just returns the wrong format), which broke the string
-    // comparison below for every code with an expiry. Shifting the clock by
-    // IST's fixed +5:30 offset and reading the UTC date is ICU-independent.
-    const today = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10); // YYYY-MM-DD
+    const today = istDateString();
     if (row.expires_at < today) return { ok: false, error: 'This promo code has expired.' };
   }
   if (row.scope_type === 'CATEGORY' && row.scope_value !== categoryKey) {
@@ -6749,7 +6764,7 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
     // the end date can't be before the (possibly just-changed) start date.
     // Compared as YYYY-MM-DD strings, which sort the same as dates.
     if (conference) {
-      const todayStr = new Date().toISOString().slice(0, 10);
+      const todayStr = istDateString(); // IST: these are Indian calendar dates
       const startDate = conference.startDate !== undefined ? String(conference.startDate).trim() : CONFERENCE.startDate;
       const endDate = conference.endDate !== undefined ? String(conference.endDate).trim() : CONFERENCE.endDate;
       if (conference.startDate !== undefined && startDate && !DATE_RE.test(startDate)) {
@@ -7045,7 +7060,7 @@ app.put('/api/admin/fees/config', requireRole('SUPER_ADMIN'), async (req, res, n
     // it's saved, and a cutoff after the conference has already started
     // makes no sense either (an "early bird" rate that lasts past day one).
     // Compared as YYYY-MM-DD strings, which sort the same as dates.
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = istDateString(); // IST: these are Indian calendar dates
     for (const [label, d] of [['Early', earlyUntil], ['Regular', regularUntil], ['Late', lateUntil]]) {
       if (!d) continue;
       if (d < todayStr) return res.status(400).json({ success: false, error: `${label} cutoff cannot be before today.` });

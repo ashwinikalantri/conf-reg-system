@@ -2346,6 +2346,16 @@ function setText(id, value) {
   if (el) el.textContent = value;
 }
 
+// Today's calendar date in IST as YYYY-MM-DD, matching the server's
+// istDateString(). Used for the min/max on date inputs: every cutoff in this
+// app is an Indian calendar date, and an admin opening the page at 00:30 IST
+// would otherwise be offered yesterday as the earliest allowed date, because
+// toISOString() reports UTC no matter where the browser is. India has no DST,
+// so the fixed +5:30 offset is exact.
+function istDateString(when = Date.now()) {
+  return new Date(Number(when) + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 // Sibling of setText for the few places that need markup rather than text.
 // Callers own escaping: pass only markup you built yourself, with esc()
 // around anything that came from the database.
@@ -3497,10 +3507,20 @@ function reviewTxnRowHtml(t) {
   const slipBtn = t.has_screenshot
     ? `<button type="button" class="text-indigo-600 hover:underline font-semibold" onclick="showTxnSlip(${esc(t.id)}, '${esc(fmtAuditTime(t.submitted_at) || '')}')">📄 Payment Slip</button>`
     : `<span class="text-slate-400">No slip on file</span>`;
+  // The bank statement's own description of the credit this payment landed
+  // as -- the bank's words, not the delegate's. The UTR shown here before was
+  // typed in by the delegate: a CLAIM about a payment, unverified and
+  // sometimes simply wrong. Once a payment is linked, the statement line is
+  // the authoritative record of what actually arrived, so that's what a
+  // reviewer should be reading against. Descriptions run long, so it
+  // truncates with the full text on hover.
+  const stmtDesc = t.bank_txn_description
+    ? `<span class="font-mono text-slate-500 truncate min-w-0" title="${esc(t.bank_txn_description)}">${esc(t.bank_txn_description)}</span>`
+    : `<span class="text-slate-400 italic shrink-0">Not yet in the statement</span>`;
   return `<div class="border border-slate-200 rounded-lg p-2 bg-white">
-    <div class="flex items-center justify-between">
-      <span class="font-mono text-slate-500">${esc(t.utr_number || '—')}</span>
-      <span class="flex items-center gap-2">
+    <div class="flex items-center justify-between gap-2">
+      ${stmtDesc}
+      <span class="flex items-center gap-2 shrink-0">
         <span class="font-semibold">₹${inr(Number(amt))}</span>
         <span class="font-bold ${TONE[t.txn_status] || 'text-slate-500'}">${esc(t.txn_status)}</span>
       </span>
@@ -4494,7 +4514,7 @@ async function renderBackendFees() {
   // A pricing-phase cutoff can't be in the past, or after the conference has
   // already started -- nudged here, enforced server-side regardless (see
   // PUT /api/admin/fees/config).
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = istDateString();
   const conf = confRes.ok ? await confRes.json() : {};
   [early, regular, late].forEach((el) => {
     if (!el) return;
@@ -5190,7 +5210,7 @@ async function renderGeneralSettings() {
   // A conference being set up is always in the future, and it can't end
   // before it starts -- nudged here, enforced server-side regardless (see
   // PUT /api/admin/general-settings).
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = istDateString();
   const startInput = document.getElementById('gs-conf-startdate');
   const endInput = document.getElementById('gs-conf-enddate');
   if (startInput) {

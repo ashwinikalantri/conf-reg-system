@@ -9,6 +9,13 @@ services:
     # image rebuild or `docker compose down` (without -v) as one unit.
     volumes:
       - data:/data
+    # The conference is in India and every cutoff in the app is an Indian
+    # calendar date. Date COMPARISONS don't depend on this (they go through
+    # istDateString, which is explicit about the offset), but times rendered
+    # into receipts, emails and logs do -- without it they read 5.5 hours
+    # behind what the desk staff see on their own clocks.
+    environment:
+      TZ: Asia/Kolkata
     restart: unless-stopped
 
 volumes:
