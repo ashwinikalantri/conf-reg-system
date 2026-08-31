@@ -4204,7 +4204,7 @@ app.get('/api/payment-transactions/:txnId/candidates', requireRole('SUPER_ADMIN'
 app.put('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
     const { bankTxnId } = req.body;
-    const txn = await dbGet('SELECT id, registration_id, bank_txn_id, amount, txn_status FROM payment_transactions WHERE id = ?', [req.params.txnId]);
+    const txn = await dbGet('SELECT id, registration_id, bank_txn_id, amount, verified_amount, txn_status FROM payment_transactions WHERE id = ?', [req.params.txnId]);
     if (!txn) return res.status(404).json({ success: false, error: 'Payment transaction not found.' });
     if (txn.txn_status === 'REJECTED') {
       return res.status(400).json({ success: false, error: 'This payment was rejected and cannot be linked.' });
@@ -4216,48 +4216,59 @@ app.put('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FIN
     }
 
     // One credit can now back several payment_transactions (see
-    // allocatedForBankTxn) -- the cap is "this claim fits in what's left",
-    // not "nobody else has touched this credit at all".
+    // allocatedForBankTxn) -- the only real blocker is nothing left to
+    // allocate at all. A claim bigger than what's left is not an error on
+    // its own: a genuine partial payment (the delegate paid less than the
+    // fee due) looks exactly like this -- a real credit smaller than the
+    // claimed amount -- and it must still be linkable so the registration
+    // can move to PARTIAL_PAYMENT rather than sit stuck unlinkable forever.
     const { remaining } = await allocatedForBankTxn(bankTxnId, txn.id);
-    if ((txn.amount || 0) > remaining + 0.5) {
-      return res.status(409).json({
-        success: false,
-        error: remaining > 0
-          ? `Only ₹${inr(remaining)} of that bank transaction is still unallocated (this payment claims ₹${inr(txn.amount)}).`
-          : 'That bank transaction is already fully allocated to other payments.',
-      });
+    if (remaining <= 0) {
+      return res.status(409).json({ success: false, error: 'That bank transaction is already fully allocated to other payments.' });
     }
 
-    // Linking acknowledges the payment at its own claimed amount. This used to
-    // hard-block once the registration's cumulative verified total would pass
-    // the fee due (the bug that guard caught: a duplicate resubmission
-    // transaction wrongly linked to a second, real credit, over-crediting a
-    // registration and stranding someone else's payment -- see Divya
-    // Selokar). Deliberately no longer a hard block: two genuine transactions
-    // legitimately linked to one delegate can leave them overpaid, and that's
-    // fine now -- the excess is tracked for the refund feature (not yet
-    // built) rather than refused outright. The audit trail still records
-    // when a link creates an overpayment, so it's visible without a UI yet.
+    // Linking acknowledges the payment at whatever the credit actually
+    // covers -- its own claimed amount if the credit is big enough, or the
+    // credit's remaining balance if the claim is larger (a partial payment).
+    // This used to hard-block once the registration's cumulative verified
+    // total would pass the fee due (the bug that guard caught: a duplicate
+    // resubmission transaction wrongly linked to a second, real credit,
+    // over-crediting a registration and stranding someone else's payment --
+    // see Divya Selokar). Deliberately no longer a hard block on the
+    // over-fee side either: two genuine transactions legitimately linked to
+    // one delegate can leave them overpaid, and that's fine now -- the
+    // excess is tracked for the refund feature rather than refused outright.
+    // The audit trail records both an overpayment and a short-covered link,
+    // so either is visible without a dedicated UI badge yet.
+    const acknowledged = Math.min(txn.amount || 0, remaining);
     const reg = await dbGet('SELECT expected_amount FROM registrations WHERE id = ?', [txn.registration_id]);
-    let overpayNote = '';
+    let noteSuffix = '';
     if (reg && reg.expected_amount > 0) {
       const summary = await getPaymentSummary(txn.registration_id, reg.expected_amount);
-      const wouldBeTotal = summary.verifiedTotal + (txn.amount || 0);
+      // This link may be re-linking a transaction that's already VERIFIED
+      // (e.g. correcting a wrongly-sized auto-link) -- summary.verifiedTotal
+      // above still counts that stale contribution, so back it out before
+      // adding the freshly-computed acknowledged amount, or a re-link would
+      // double-count itself and falsely report an overpayment.
+      const priorContribution = txn.txn_status === 'VERIFIED'
+        ? (txn.verified_amount != null ? txn.verified_amount : (txn.amount || 0)) : 0;
+      const wouldBeTotal = summary.verifiedTotal - priorContribution + acknowledged;
       if (wouldBeTotal > reg.expected_amount + 0.5) {
-        overpayNote = ` — ₹${inr(wouldBeTotal - reg.expected_amount)} over the ₹${inr(reg.expected_amount)} fee due (pending refund)`;
+        noteSuffix = ` — ₹${inr(wouldBeTotal - reg.expected_amount)} over the ₹${inr(reg.expected_amount)} fee due (pending refund)`;
+      } else if (acknowledged + 0.5 < (txn.amount || 0)) {
+        noteSuffix = ` — claimed ₹${inr(txn.amount)}, credit only covers ₹${inr(acknowledged)} (partial)`;
       }
     }
 
-    // Linking acknowledges the payment at its own amount.
     await dbRun(
       `UPDATE payment_transactions
-          SET bank_txn_id = ?, txn_status = 'VERIFIED', verified_amount = amount,
+          SET bank_txn_id = ?, txn_status = 'VERIFIED', verified_amount = ?,
               reviewed_by = ?, reviewed_at = ?
         WHERE id = ?`,
-      [bankTxnId, req.session.name || req.session.phone, Date.now(), txn.id]);
+      [bankTxnId, acknowledged, req.session.name || req.session.phone, Date.now(), txn.id]);
     await recordAudit({
       req, entityType: 'registration', entityId: String(txn.registration_id),
-      action: 'BANK_TXN_LINK', oldValue: txn.bank_txn_id, newValue: `txn#${txn.id} → bank#${bankTxnId} (₹${inr(txn.amount)} acknowledged)${overpayNote}`,
+      action: 'BANK_TXN_LINK', oldValue: txn.bank_txn_id, newValue: `txn#${txn.id} → bank#${bankTxnId} (₹${inr(acknowledged)} acknowledged)${noteSuffix}`,
     });
     res.json({ success: true });
   } catch (err) {
@@ -6322,11 +6333,11 @@ async function autoLinkTransactions() {
   if (!pend.length) return 0;
 
   const credits = await dbAll(
-    `SELECT id, extracted_ref FROM bank_statement_transactions
+    `SELECT id, extracted_ref, credit FROM bank_statement_transactions
       WHERE credit IS NOT NULL AND credit > 0 AND extracted_ref IS NOT NULL AND is_non_registration = 0
         AND id NOT IN ${USED_BANK_TXN_SUBQUERY}`);
   const byRef = new Map();
-  credits.forEach((t) => byRef.set(digitsOnly(t.extracted_ref), t.id));
+  credits.forEach((t) => byRef.set(digitsOnly(t.extracted_ref), t));
 
   // Running verified total per registration, so the "not more than what's
   // due" cap holds even when a batch links more than one transaction for the
@@ -6343,26 +6354,30 @@ async function autoLinkTransactions() {
 
   let linked = 0;
   for (const txn of pend) {
-    const bankId = byRef.get(digitsOnly(txn.utr_number));
-    if (!bankId) continue;
-    // A UTR match acknowledges the payment at its own amount (same as a
-    // manual link) -- don't let it push the registration's cumulative total
-    // past the fee actually due. Leave it unlinked/pending for a human to
-    // review rather than silently over-crediting (e.g. a genuine accidental
-    // double payment, or a duplicate resubmission artifact).
+    const bank = byRef.get(digitsOnly(txn.utr_number));
+    if (!bank) continue;
+    // A UTR match acknowledges the payment at whatever the credit actually
+    // covers -- its own claimed amount if the credit is big enough, or the
+    // credit's own amount if the claim is larger (a genuine partial
+    // payment), same capping principle as a manual link. Then don't let the
+    // acknowledged amount push the registration's cumulative total past the
+    // fee actually due -- leave it unlinked/pending for a human to review
+    // rather than silently over-crediting (e.g. a genuine accidental double
+    // payment, or a duplicate resubmission artifact).
+    const acknowledged = Math.min(txn.amount || 0, bank.credit);
     const already = verifiedSoFar.get(txn.registration_id) || 0;
-    if (txn.expected_amount > 0 && already + (txn.amount || 0) > txn.expected_amount + 0.5) continue;
+    if (txn.expected_amount > 0 && already + acknowledged > txn.expected_amount + 0.5) continue;
     // Guard against two transactions racing for the same still-unused credit
     // within this loop (the UNIQUE index is the final backstop).
     byRef.delete(digitsOnly(txn.utr_number));
     try {
       await dbRun(
         `UPDATE payment_transactions
-            SET bank_txn_id = ?, txn_status = 'VERIFIED', verified_amount = amount,
+            SET bank_txn_id = ?, txn_status = 'VERIFIED', verified_amount = ?,
                 reviewed_by = 'auto (bank match)', reviewed_at = ?
           WHERE id = ? AND bank_txn_id IS NULL`,
-        [bankId, Date.now(), txn.id]);
-      verifiedSoFar.set(txn.registration_id, already + (txn.amount || 0));
+        [bank.id, acknowledged, Date.now(), txn.id]);
+      verifiedSoFar.set(txn.registration_id, already + acknowledged);
       linked++;
     } catch (err) {
       if (err.code !== 'SQLITE_CONSTRAINT') throw err;
