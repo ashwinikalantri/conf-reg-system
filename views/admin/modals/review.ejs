@@ -27,16 +27,12 @@
                toggle when there IS a second document (id-card-tab hidden
                otherwise); see setReviewImage. -->
           <div id="review-img-switcher" class="hidden items-center gap-1.5 px-2.5 pt-2.5 pb-1.5 shrink-0">
-            <div class="flex gap-1 bg-slate-800 rounded-lg p-1">
-              <button type="button" id="review-img-tab-screenshot" onclick="setReviewImage('screenshot')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition">📷 Screenshot</button>
-              <button type="button" id="review-img-tab-idcard" onclick="setReviewImage('idcard')" class="hidden items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition">🪪 ID Card</button>
-              <!-- Third slot, populated on demand by showTxnSlip when an
-                   admin opens one specific payment's slip from the
-                   reconciliation list. Its label carries that payment's
-                   date, so two slips from a partial + top-up are
-                   distinguishable. -->
-              <button type="button" id="review-img-tab-txnslip" onclick="setReviewImage('txnslip')" class="hidden items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition">📄 Slip</button>
-            </div>
+            <!-- Tabs are built per registration by setReviewImage rather than
+                 being fixed slots: the ID card, then ONE TAB PER PAYMENT that
+                 has a slip on file. A partial payment and its top-up each get
+                 their own ("Payment Slip 1", "Payment Slip 2") instead of
+                 sharing a single reused slot, so both stay reachable at once. -->
+            <div id="review-img-tabs" class="flex gap-1 bg-slate-800 rounded-lg p-1"></div>
             <span id="review-img-switcher-hint" class="hidden text-[10px] text-amber-300 font-semibold animate-pulse">← 2 documents, check both</span>
           </div>
           <div class="flex items-center gap-1 px-2 pb-2 shrink-0 border-b border-slate-800">
@@ -73,11 +69,38 @@
             <p id="review-demographics" class="text-xs text-slate-500 mt-1"></p>
           </div>
 
-          <!-- SECTION 1 of 2: PAYMENT VERIFICATION. Everything about the
+          <!-- SECTION 1 of 2: ID VERIFICATION. Hidden wholesale (header and
+               all) for categories that don't require a student ID, in which
+               case Payment Verification is simply the only section -- see
+               renderReviewIdVerification. It stays in the main flow rather
+               than in the Corrections disclosure because it gates
+               Accept & Verify; burying it would just move the "why is this
+               button disabled?" problem. The card image itself lives in the
+               evidence pane on the left. -->
+          <section id="review-idverify-wrap" class="hidden space-y-3">
+            <h4 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b border-slate-200 pb-1.5">ID Verification</h4>
+            <div class="flex items-center justify-between gap-2 mb-1.5">
+              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Student ID <span class="normal-case font-normal">(required to verify)</span></p>
+              <!-- Jumps the evidence pane straight to the ID card instead of
+                   making the reviewer hunt for the small tab on the left --
+                   the exact document this whole block is asking them to
+                   judge. See setReviewImage. -->
+              <button type="button" onclick="setReviewImage('idcard')" class="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg">🪪 View ID Card</button>
+            </div>
+            <label class="flex items-start gap-2 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-2.5 cursor-pointer">
+              <input type="checkbox" id="review-idverify-checkbox" class="mt-0.5 shrink-0" onchange="reviewSetIdVerified(this.checked)">
+              <span>I have reviewed the ID card (click <b>View ID Card</b> above to see it) and confirm it verifies this delegate's student status for the selected category.</span>
+            </label>
+            <p id="review-idverify-note" class="hidden text-[11px] text-emerald-700 font-semibold mt-1"></p>
+          </section>
+
+          <!-- SECTION 2 of 2: PAYMENT VERIFICATION. Everything about the
                money -- what's owed, what arrived, how it reconciles against
-               the bank, and any excess. The ID question is deliberately a
-               separate section below, because it's a different judgement
-               made against a different document. -->
+               the bank, and any excess. It comes second: for a student
+               category the ID decides whether this delegate is entitled to
+               the category's fee at all, so settling that first stops a
+               reviewer reconciling a payment against a fee that turns out to
+               be the wrong one. -->
           <section class="space-y-3">
             <h4 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b border-slate-200 pb-1.5">Payment Verification</h4>
 
@@ -133,29 +156,6 @@
 
           </section>
 
-          <!-- SECTION 2 of 2: ID VERIFICATION. Hidden wholesale (header and
-               all) for categories that don't require a student ID -- see
-               renderReviewIdVerification. It stays in the main flow rather
-               than in the Corrections disclosure because it gates
-               Accept & Verify; burying it would just move the "why is this
-               button disabled?" problem. The card image itself lives in the
-               evidence pane on the left. -->
-          <section id="review-idverify-wrap" class="hidden space-y-3">
-            <h4 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b border-slate-200 pb-1.5">ID Verification</h4>
-            <div class="flex items-center justify-between gap-2 mb-1.5">
-              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Student ID <span class="normal-case font-normal">(required to verify)</span></p>
-              <!-- Jumps the evidence pane straight to the ID card instead of
-                   making the reviewer hunt for the small tab on the left --
-                   the exact document this whole block is asking them to
-                   judge. See setReviewImage. -->
-              <button type="button" onclick="setReviewImage('idcard')" class="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg">🪪 View ID Card</button>
-            </div>
-            <label class="flex items-start gap-2 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-2.5 cursor-pointer">
-              <input type="checkbox" id="review-idverify-checkbox" class="mt-0.5 shrink-0" onchange="reviewSetIdVerified(this.checked)">
-              <span>I have reviewed the ID card (click <b>View ID Card</b> above to see it) and confirm it verifies this delegate's student status for the selected category.</span>
-            </label>
-            <p id="review-idverify-note" class="hidden text-[11px] text-emerald-700 font-semibold mt-1"></p>
-          </section>
 
           <!-- Corrections & adjustments: the two power tools (attach an
                unclaimed bank credit, change/lock the category) folded into
