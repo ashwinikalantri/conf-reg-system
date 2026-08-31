@@ -518,6 +518,8 @@ async function loadDashboard() {
   document.getElementById('user-display-sub').innerText =
     `${currentDelegate.designation} | ${currentDelegate.institution || currentDelegate.institute}${contactLine ? ` (${contactLine})` : ''}`;
 
+  renderVerifyEmailBanner();
+
   const statusTag = document.getElementById('payment-status-tag');
   const confBtn = document.getElementById('register-conf-btn');
   const reverifyBanner = document.getElementById('reverify-banner');
@@ -1872,9 +1874,39 @@ async function submitSetPassword(e) {
 }
 
 // --- VERIFY EMAIL -------------------------------------------------------
+// Always-visible route to verification, unlike the post-login modal, which
+// is skippable and only fires once per session. Without it there'd be no
+// way back to the modal after skipping, and no way at all for a delegate
+// whose session predates the prompt.
+function renderVerifyEmailBanner() {
+  const banner = document.getElementById('verify-email-banner');
+  const me = signedInAccount();
+  if (!banner || !me) return;
+  const verified = !!me.email_verified;
+  banner.classList.toggle('hidden', verified);
+  if (verified) return;
+  const hasEmail = !!me.email;
+  setText('verify-email-banner-title', hasEmail ? 'Email not verified' : 'No email address on file');
+  setText('verify-email-banner-msg', hasEmail
+    ? `We haven\u2019t confirmed ${me.email} belongs to you. Verify it to receive your receipt and conference updates \u2014 and to sign in with it as well as your mobile.`
+    : 'Add an email address so we can send your receipt and conference updates.');
+}
+
+// Whichever portal we're in: the delegate dashboard tracks currentDelegate,
+// the admin panel activeAdminUser. Both are the signed-in account.
+function signedInAccount() {
+  return currentDelegate || activeAdminUser || null;
+}
+
 function openVerifyEmailModal() {
+  const me = signedInAccount();
+  const hasEmail = !!(me && me.email);
+  setText('verify-email-title', hasEmail ? 'Verify your email' : 'Add your email address');
+  setText('verify-email-blurb', hasEmail
+    ? 'We\u2019ll send a 6-digit code to your email address. Once verified you can sign in with it as well as your mobile number.'
+    : 'Add an email address and we\u2019ll send a 6-digit code to confirm it. You can then sign in with it as well as your mobile number.');
   const input = document.getElementById('verify-email-value');
-  if (input) input.value = (currentDelegate && currentDelegate.email) || '';
+  if (input) input.value = (me && me.email) || '';
   const wrap = document.getElementById('verify-email-otp-wrap');
   if (wrap) wrap.classList.add('hidden');
   const otp = document.getElementById('verify-email-otp');
@@ -1928,10 +1960,12 @@ async function submitVerifyEmail(e) {
       body: JSON.stringify({ channel: 'email', value, otp }),
     })).json();
     if (!data.success) return showToast(data.error || 'Could not verify that code.');
-    currentDelegate = data.user;
-    persistDelegate(currentDelegate);
+    // Update whichever portal's copy of the account is in play.
+    if (currentDelegate) { currentDelegate = data.user; persistDelegate(currentDelegate); }
+    if (activeAdminUser) activeAdminUser = data.user;
     showToast('Email verified.', 'success');
     closeModal('modal-verify-email');
+    renderVerifyEmailBanner();
   } finally {
     btn.disabled = false;
   }
@@ -2287,6 +2321,11 @@ async function initBackendPortal() {
   }
   activeAdminUser = (await meRes.json()).user;
   setText('active-admin-role-badge', activeAdminUser.full_name);
+  // Amber dot on the Settings menu item when this admin's own email is
+  // still unproven -- the only cue in the admin panel that there's
+  // something to do, since there's no dashboard banner here.
+  const emailDot = document.getElementById('admin-email-unverified-dot');
+  if (emailDot) emailDot.classList.toggle('hidden', !!activeAdminUser.email_verified);
 
   const { isSuper, isFinance, isReviewer, isOperations } = applyRoleVisibility(activeAdminUser.role);
 
