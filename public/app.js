@@ -6072,21 +6072,29 @@ async function handleCreateUserSubmit(e) {
   e.preventDefault();
   const password = document.getElementById('new-user-password').value;
   if (password && password.length < 8) return showToast('Password must be at least 8 characters, or leave it blank.');
+  const email = document.getElementById('new-user-email').value.trim();
+  if (!EMAIL_RE.test(email)) return showToast('Enter a valid email address for this user.');
   const payload = {
     name: document.getElementById('new-user-name').value,
     phone: document.getElementById('new-user-phone').value,
+    email,
     designation: document.getElementById('new-user-designation').value,
     institute: document.getElementById('new-user-institute').value,
     role: document.getElementById('new-user-role').value,
     password,
   };
 
-  await fetch('/api/users', {
+  // The response was previously discarded, so a rejected create (duplicate
+  // number, duplicate address, bad input) closed the modal exactly as a
+  // successful one did and the user simply never appeared.
+  const data = await (await fetch('/api/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
+    body: JSON.stringify(payload),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not create this user.');
 
+  showToast('User created.', 'success');
   closeModal('modal-create-user');
   initBackendPortal();
 }
@@ -6276,6 +6284,7 @@ async function handleRegisterDelegateSubmit(e) {
     name: document.getElementById('rd-name').value.trim(),
     designation: document.getElementById('rd-designation').value.trim(),
     institute: document.getElementById('rd-institute').value.trim(),
+    email: document.getElementById('rd-email').value.trim(),
     categoryKey,
     optionIds: collectRegisterDelegateOptionIds(),
     discountCode: document.getElementById('rd-discount-code').value.trim(),

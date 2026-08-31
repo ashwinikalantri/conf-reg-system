@@ -2605,8 +2605,15 @@ app.post('/api/setup/create-admin', async (req, res, next) => {
     if (!name || !String(name).trim()) {
       return res.status(400).json({ success: false, error: 'Full name is required.' });
     }
-    const emailVal = email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim()) ? String(email).trim() : null;
-    if (email && !emailVal) {
+    // Required, like every other account-creating path -- see POST
+    // /api/auth/register. The first admin especially needs a reachable
+    // address: they are the account every notification setting is tested
+    // against.
+    const emailVal = String(email || '').trim();
+    if (!emailVal) {
+      return res.status(400).json({ success: false, error: 'An email address is required.' });
+    }
+    if (!isEmailValue(emailVal)) {
       return res.status(400).json({ success: false, error: 'Please enter a valid email address.' });
     }
     if (password && String(password).length < 8) {
@@ -2618,7 +2625,7 @@ app.post('/api/setup/create-admin', async (req, res, next) => {
     await dbRun(
       `INSERT INTO users (phone_number, phone, phone_verified, full_name, email, role, password_hash, created_at)
        VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
-      [phone, phone, nameVal, emailVal, 'SUPER_ADMIN', passwordHash, Date.now()]
+      [phone, phone, nameVal, normalizeEmail(emailVal), 'SUPER_ADMIN', passwordHash, Date.now()]
     );
     // Set the very moment the account exists, not deferred to the wizard's
     // last step -- the remaining steps (conference/UPI/SMS/Email) are just
@@ -2659,11 +2666,17 @@ app.post('/api/auth/register', async (req, res, next) => {
     if (phoneVal && !isPhoneValue(phoneVal)) {
       return res.status(400).json({ success: false, error: 'Invalid phone number.' });
     }
-    if (emailRaw && !isEmailValue(emailRaw)) {
-      return res.status(400).json({ success: false, error: 'Please enter a valid email address.' });
+    // An email address is always recorded, whether or not it ends up being
+    // the verified channel: it's how receipts, reminders and every other
+    // notification reach a delegate, and an account without one is
+    // unreachable by any of them. Phone stays optional -- verification is
+    // what's flexible here (see the phoneOk/emailOk check below), not
+    // whether we hold an address at all.
+    if (!emailRaw) {
+      return res.status(400).json({ success: false, error: 'An email address is required.' });
     }
-    if (!phoneVal && !emailRaw) {
-      return res.status(400).json({ success: false, error: 'Enter a mobile number or an email address.' });
+    if (!isEmailValue(emailRaw)) {
+      return res.status(400).json({ success: false, error: 'Please enter a valid email address.' });
     }
     if (!name) {
       return res.status(400).json({ success: false, error: 'Full name is required.' });
@@ -4940,6 +4953,22 @@ app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
     if (!name) {
       return res.status(400).json({ success: false, error: 'Full name is required.' });
     }
+    // Every account carries an address -- see POST /api/auth/register. A
+    // walk-in especially: this delegate is being confirmed on the spot, and
+    // their receipt has nowhere to go without one. An existing account's
+    // address is reused; only a brand-new one needs it typed in.
+    const emailVal = existingUser && existingUser.email
+      ? existingUser.email
+      : String(req.body.email || '').trim();
+    if (!emailVal) {
+      return res.status(400).json({ success: false, error: 'An email address is required.' });
+    }
+    if (!isEmailValue(emailVal)) {
+      return res.status(400).json({ success: false, error: 'Please enter a valid email address.' });
+    }
+    if (await emailTakenBy(emailVal, phone)) {
+      return res.status(409).json({ success: false, error: 'Another account already uses that email address.' });
+    }
 
     const feeInfo = await resolveFee(req.body.categoryKey);
     if (!feeInfo) {
@@ -5039,9 +5068,9 @@ app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
     if (!existingUser) {
       tempPassword = generateTempPassword();
       await dbRun(
-        `INSERT INTO users (phone_number, phone, phone_verified, full_name, designation, institution, role, password_hash, created_at)
-         VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)`,
-        [phone, phone, name, req.body.designation || null, req.body.institute || null, 'DELEGATE', hashPassword(tempPassword), Date.now()]
+        `INSERT INTO users (phone_number, phone, phone_verified, full_name, email, designation, institution, role, password_hash, created_at)
+         VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+        [phone, phone, name, normalizeEmail(emailVal), req.body.designation || null, req.body.institute || null, 'DELEGATE', hashPassword(tempPassword), Date.now()]
       );
     } else if (!existingUser.password_hash) {
       tempPassword = generateTempPassword();
@@ -5351,6 +5380,29 @@ app.put('/api/users/:phone', requireRole('SUPER_ADMIN'), async (req, res, next) 
     if (!existing) return res.status(404).json({ success: false, error: 'User not found.' });
 
     const b = req.body || {};
+
+    // Email needs the same treatment here as everywhere else it can be
+    // written. Editing it from the admin panel used to be a plain column
+    // write, which could both re-create the duplicate addresses this system
+    // now refuses to resolve at login, AND leave email_verified = 1 against
+    // an address nobody ever proved -- enough, since email became a login
+    // channel, to send a sign-in code somewhere it doesn't belong.
+    let emailChanged = false;
+    if (Object.prototype.hasOwnProperty.call(b, 'email')) {
+      const raw = String(b.email || '').trim();
+      if (raw && !isEmailValue(raw)) {
+        return res.status(400).json({ success: false, error: 'Please enter a valid email address.' });
+      }
+      if (raw && await emailTakenBy(raw, phone)) {
+        return res.status(409).json({ success: false, error: 'Another account already uses that email address.' });
+      }
+      const current = await dbGet('SELECT email FROM users WHERE phone_number = ?', [phone]);
+      emailChanged = normalizeEmail(current && current.email) !== normalizeEmail(raw);
+      // Stored normalised, so the uniqueness check above can't be sidestepped
+      // by case and LOWER(email) lookups keep matching.
+      b.email = raw ? normalizeEmail(raw) : null;
+    }
+
     const fields = ['salutation', 'full_name', 'designation', 'institution', 'email',
       'age', 'gender', 'pincode', 'state', 'district'];
     const sets = [];
@@ -5361,7 +5413,12 @@ app.put('/api/users/:phone', requireRole('SUPER_ADMIN'), async (req, res, next) 
         params.push(b[f] === '' ? null : b[f]);
       }
     }
+    // Back to unproven whenever the address actually changes: the delegate
+    // verifies the new one themselves (the dashboard banner prompts them)
+    // rather than inheriting the old address's verified standing.
+    if (emailChanged) sets.push('email_verified = 0');
     if (!sets.length) return res.status(400).json({ success: false, error: 'Nothing to update.' });
+
     params.push(phone);
     await dbRun(`UPDATE users SET ${sets.join(', ')} WHERE phone_number = ?`, params);
     res.json({ success: true });
@@ -5375,6 +5432,20 @@ app.post('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res
     const { name, phone, designation, institute, role, password } = req.body;
     if (!phone || !/^\d{10}$/.test(phone)) {
       return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+    }
+    // Every account carries an address, however it was created -- see the
+    // note in POST /api/auth/register. Recorded unverified: an admin typing
+    // it in is not proof the person controls it, so they still verify it
+    // themselves before it can receive a login code.
+    const emailVal = String(req.body.email || '').trim();
+    if (!emailVal) {
+      return res.status(400).json({ success: false, error: 'An email address is required.' });
+    }
+    if (!isEmailValue(emailVal)) {
+      return res.status(400).json({ success: false, error: 'Please enter a valid email address.' });
+    }
+    if (await emailTakenBy(emailVal, phone)) {
+      return res.status(409).json({ success: false, error: 'Another account already uses that email address.' });
     }
     if (!ADMIN_ROLES.includes(role) && role !== 'DELEGATE') {
       return res.status(400).json({ success: false, error: 'Invalid role.' });
@@ -5399,9 +5470,9 @@ app.post('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res
     // so a staff member created without a password would otherwise have no
     // way in whatsoever.
     await dbRun(
-      `INSERT INTO users (phone_number, phone, phone_verified, full_name, designation, institution, role, password_hash, created_at)
-       VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)`,
-      [phone, phone, name, designation, institute, role, passwordHash, Date.now()]
+      `INSERT INTO users (phone_number, phone, phone_verified, full_name, email, designation, institution, role, password_hash, created_at)
+       VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+      [phone, phone, name, normalizeEmail(emailVal), designation, institute, role, passwordHash, Date.now()]
     );
     res.json({ success: true });
   } catch (err) {
