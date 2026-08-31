@@ -5165,7 +5165,8 @@ ${dateRange || c.location ? `<table style="width:100%;margin:1rem 0;font-size:.8
 </table>` : ''}
 ${programLine ? `<p>Alongside the main conference, there are ${programLine}</p>` : ''}
 <p style="text-align:center;margin:1.5rem 0">
-  <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Register Now</a>
+  <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">Register Now</a>
+  <a href="https://nqocn2026.mgims.ac.in" style="background:#fff;color:#4f46e5;border:2px solid #4f46e5;padding:.65rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">Visit Conference Website</a>
 </p>
 <p>If you've already registered, please disregard this email.</p>`;
 }
