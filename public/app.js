@@ -2629,13 +2629,24 @@ function openReviewModal(id) {
 
   // Evidence pane: both documents live here behind a switcher (see
   // setReviewImage). Reset to the screenshot, unzoomed, on every open --
-  // otherwise the previous delegate's chosen tab/zoom carries over.
+  // otherwise the previous delegate's chosen tab/zoom carries over. Revoke
+  // the previous delegate's blob: URLs first -- otherwise every review this
+  // session leaks two of them.
+  Object.values(reviewImageBlobUrls).forEach((u) => { if (u) URL.revokeObjectURL(u); });
+  reviewImageBlobUrls = { screenshot: '', idcard: '' };
   reviewImageUrls = {
     screenshot: p.has_screenshot ? `/api/registrations/${encodeURIComponent(p.id)}/screenshot` : '',
     idcard: p.has_id_card ? `/api/registrations/${encodeURIComponent(p.id)}/id-card` : '',
   };
   reviewImageZoomed = false;
   setReviewImage('screenshot');
+  // Fetch both documents into memory (as blob: URLs) right away, in the
+  // background, so switching to the ID card later is instant instead of
+  // triggering a fresh network request at click time -- the endpoints are
+  // served with Cache-Control: no-store (payment evidence shouldn't sit in
+  // the browser's disk cache), so the plain <img src> reload the tab used
+  // to do was a real, uncached fetch every single time.
+  prefetchReviewImages();
 
   const checksBox = document.getElementById('review-checks');
   if (checksBox) {
@@ -2710,18 +2721,59 @@ function openReviewModal(id) {
 // render full-width inside the narrow right column, which made a document
 // you have to actually read effectively unreadable.
 let reviewImageUrls = { screenshot: '', idcard: '' };
+// Blob: URLs for documents already fetched into memory this modal-open --
+// see prefetchReviewImages(). Falls back to the plain API url (a real
+// network fetch, same as before) until its prefetch resolves.
+let reviewImageBlobUrls = { screenshot: '', idcard: '' };
 let reviewImageZoomed = false;
 let reviewImageWhich = 'screenshot';
+
+// Both documents are served with Cache-Control: no-store (payment evidence
+// shouldn't sit in the browser's disk cache), so a plain <img src> reload
+// hits the network every time a reviewer switches tabs -- the delay this
+// works around. Fetching each into a blob: URL up front means the switch
+// itself is just swapping which already-downloaded image is shown.
+function prefetchReviewImages() {
+  ['screenshot', 'idcard'].forEach((which) => {
+    const url = reviewImageUrls[which];
+    if (!url) return;
+    fetch(url)
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error('fetch failed'))))
+      .then((blob) => {
+        // The modal may have moved on to a different registration (or
+        // closed) by the time this resolves -- only apply it if the URL it
+        // was fetched for is still the one currently assigned to this slot.
+        if (reviewImageUrls[which] !== url) return;
+        reviewImageBlobUrls[which] = URL.createObjectURL(blob);
+        if (reviewImageWhich === which) setReviewImage(which); // clears the spinner if they're already looking at it
+      })
+      .catch(() => { /* leave it to load the normal way via <img src> on click */ });
+  });
+}
 
 function setReviewImage(which) {
   reviewImageWhich = which;
   const img = document.getElementById('review-screenshot');
   const empty = document.getElementById('review-img-empty');
   const link = document.getElementById('review-img-open-link');
+  const loading = document.getElementById('review-img-loading');
   const url = reviewImageUrls[which] || '';
+  const blobUrl = reviewImageBlobUrls[which];
+  const displayUrl = blobUrl || url;
 
-  if (img) { img.src = url; img.classList.toggle('hidden', !url); }
+  if (loading) loading.classList.toggle('hidden', !url || !!blobUrl);
+  if (img) {
+    img.classList.toggle('hidden', !displayUrl);
+    if (displayUrl) {
+      img.onload = () => { if (loading) loading.classList.add('hidden'); };
+      img.onerror = () => { if (loading) loading.classList.add('hidden'); };
+      img.src = displayUrl;
+    }
+  }
   if (empty) empty.classList.toggle('hidden', !!url);
+  // Open ↗ always uses the real (session-authenticated) API url, never the
+  // blob: one -- a blob: URL is only valid inside this tab and won't
+  // resolve if opened in a new one.
   if (link) { link.href = url; link.classList.toggle('hidden', !url); }
   // Nothing to zoom or open on a ₹0 registration (fully discounted -- no
   // screenshot was ever required), so don't offer controls that do nothing.

@@ -34,7 +34,16 @@
               <a id="review-img-open-link" href="" target="_blank" rel="noopener" class="px-2.5 py-1 rounded-md text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition">Open ↗</a>
             </div>
           </div>
-          <div id="review-img-box" class="flex-1 min-h-0 overflow-auto flex items-center justify-center p-1">
+          <div id="review-img-box" class="flex-1 min-h-0 overflow-auto flex items-center justify-center p-1 relative">
+            <!-- Shown while the selected image is still downloading -- both
+                 documents are prefetched the moment the modal opens (see
+                 openReviewModal) so switching tabs is normally instant, but
+                 this covers a slow connection or a click that beats the
+                 prefetch. -->
+            <div id="review-img-loading" class="hidden absolute inset-0 flex items-center justify-center text-slate-400 text-xs font-semibold gap-2">
+              <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+              Loading…
+            </div>
             <img id="review-screenshot" src="" alt="" class="max-h-full max-w-full object-contain">
           </div>
           <p id="review-img-empty" class="hidden text-[11px] text-slate-500 text-center pb-3">No image on file.</p>
