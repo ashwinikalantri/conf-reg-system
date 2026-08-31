@@ -2634,8 +2634,6 @@ function openReviewModal(id) {
     screenshot: p.has_screenshot ? `/api/registrations/${encodeURIComponent(p.id)}/screenshot` : '',
     idcard: p.has_id_card ? `/api/registrations/${encodeURIComponent(p.id)}/id-card` : '',
   };
-  const idCardTab = document.getElementById('review-img-tab-idcard');
-  if (idCardTab) idCardTab.classList.toggle('hidden', !p.has_id_card);
   reviewImageZoomed = false;
   setReviewImage('screenshot');
 
@@ -2730,14 +2728,36 @@ function setReviewImage(which) {
   const zoomBtn = document.getElementById('review-img-zoom-btn');
   if (zoomBtn) zoomBtn.classList.toggle('hidden', !url);
 
+  // Two documents on file -> a real segmented toggle, its own prominent row
+  // (see review.ejs) rather than a small button buried next to Zoom/Open.
+  // One document (the common case: no ID card required) -> no toggle to
+  // show at all, just a plain label so the pane doesn't look broken.
+  const bothPresent = !!(reviewImageUrls.screenshot && reviewImageUrls.idcard);
+  const switcher = document.getElementById('review-img-switcher');
+  const soloLabel = document.getElementById('review-img-solo-label');
+  if (switcher) switcher.classList.toggle('hidden', !bothPresent);
+  if (switcher) switcher.classList.toggle('flex', bothPresent);
+  if (soloLabel) {
+    const soloText = reviewImageUrls.screenshot ? '📷 Screenshot' : (reviewImageUrls.idcard ? '🪪 ID Card' : '');
+    soloLabel.textContent = soloText;
+    soloLabel.classList.toggle('hidden', bothPresent || !soloText);
+  }
+  // Nudges a reviewer who's only looked at the screenshot to also check the
+  // ID card -- the actual decision-relevant document for a student category
+  // -- rather than letting it go unnoticed as a small inactive tab. Clears
+  // itself the moment they switch to it.
+  const hint = document.getElementById('review-img-switcher-hint');
+  if (hint) hint.classList.toggle('hidden', !bothPresent || which !== 'screenshot');
+
   // Active-tab styling, applied by hand rather than via a framework class
   // toggle so the inactive state stays legible on the dark pane.
   ['screenshot', 'idcard'].forEach((k) => {
     const tab = document.getElementById(`review-img-tab-${k}`);
     if (!tab) return;
     const active = k === which;
-    tab.className = `${k === 'idcard' && !reviewImageUrls.idcard ? 'hidden ' : ''}px-2.5 py-1 rounded-md text-[11px] font-semibold transition ${
-      active ? 'bg-white text-slate-900' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`;
+    const showThisTab = bothPresent && (k !== 'idcard' || reviewImageUrls.idcard);
+    tab.className = `${showThisTab ? 'flex' : 'hidden'} items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition ${
+      active ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-300 hover:text-white hover:bg-slate-700'}`;
   });
   applyReviewImageZoom();
 }

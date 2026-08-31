@@ -14,9 +14,21 @@
              image's natural size inside a scrollable box, so a low-res ID
              can be panned around. -->
         <div class="bg-slate-900 flex flex-col min-h-[260px] md:min-h-0 md:h-full">
-          <div class="flex items-center gap-1 p-2 shrink-0 border-b border-slate-800">
-            <button type="button" id="review-img-tab-screenshot" onclick="setReviewImage('screenshot')" class="px-2.5 py-1 rounded-md text-[11px] font-semibold transition">Screenshot</button>
-            <button type="button" id="review-img-tab-idcard" onclick="setReviewImage('idcard')" class="hidden px-2.5 py-1 rounded-md text-[11px] font-semibold transition">ID Card</button>
+          <!-- Document switcher: its own row, sized and colored to read as
+               the primary control of this pane (two documents to pick
+               between), not a third icon lost next to Zoom/Open -- those
+               stay in a lighter row underneath. Only rendered as a real
+               toggle when there IS a second document (id-card-tab hidden
+               otherwise); see setReviewImage. -->
+          <div id="review-img-switcher" class="hidden items-center gap-1.5 px-2.5 pt-2.5 pb-1.5 shrink-0">
+            <div class="flex gap-1 bg-slate-800 rounded-lg p-1">
+              <button type="button" id="review-img-tab-screenshot" onclick="setReviewImage('screenshot')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition">📷 Screenshot</button>
+              <button type="button" id="review-img-tab-idcard" onclick="setReviewImage('idcard')" class="hidden items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition">🪪 ID Card</button>
+            </div>
+            <span id="review-img-switcher-hint" class="hidden text-[10px] text-amber-300 font-semibold animate-pulse">← 2 documents, check both</span>
+          </div>
+          <div class="flex items-center gap-1 px-2 pb-2 shrink-0 border-b border-slate-800">
+            <span id="review-img-solo-label" class="hidden px-1 text-[11px] font-semibold text-slate-400"></span>
             <div class="ml-auto flex items-center gap-1">
               <button type="button" id="review-img-zoom-btn" onclick="toggleReviewImageZoom()" class="px-2.5 py-1 rounded-md text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition">🔍 Zoom</button>
               <a id="review-img-open-link" href="" target="_blank" rel="noopener" class="px-2.5 py-1 rounded-md text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition">Open ↗</a>
