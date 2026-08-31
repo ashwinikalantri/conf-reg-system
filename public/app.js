@@ -230,6 +230,10 @@ function toggleAuth(view) {
   const loginForm = document.getElementById('login-form');
 
   if (view === 'register') {
+    // Fill the country list and apply its rules the first time the form is
+    // shown, so the phone/address fields are never briefly in the wrong shape.
+    populateSignupCountries();
+    onSignupCountryChange();
     regForm.classList.remove('hidden');
     loginForm.classList.add('hidden');
   } else {
@@ -411,6 +415,57 @@ function toE164(v, defaultCc = DEFAULT_PHONE_CC) {
 const isPhoneValue = (v) => !!toE164(v);
 const isIndianPhone = (v) => INDIAN_E164_RE.test(toE164(v));
 
+// Countries offered at signup. India first (the overwhelming majority and
+// the default), then alphabetical. Not an exhaustive ISO list -- it covers
+// the places delegates realistically attend from, and "Other" is the escape
+// hatch so nobody is ever blocked by an absent entry.
+const SIGNUP_COUNTRIES = ['India', 'Australia', 'Bangladesh', 'Bhutan', 'Canada', 'China', 'Egypt', 'Ethiopia',
+  'France', 'Germany', 'Ghana', 'Indonesia', 'Ireland', 'Italy', 'Japan', 'Kenya', 'Malaysia', 'Maldives',
+  'Mauritius', 'Nepal', 'Netherlands', 'New Zealand', 'Nigeria', 'Oman', 'Pakistan', 'Philippines', 'Qatar',
+  'Saudi Arabia', 'Singapore', 'South Africa', 'South Korea', 'Spain', 'Sri Lanka', 'Sweden', 'Switzerland',
+  'Tanzania', 'Thailand', 'Uganda', 'United Arab Emirates', 'United Kingdom', 'United States', 'Vietnam',
+  'Zambia', 'Zimbabwe', 'Other'];
+
+function populateSignupCountries() {
+  const sel = document.getElementById('reg-country');
+  if (!sel || sel.options.length) return;
+  sel.innerHTML = SIGNUP_COUNTRIES.map((c) => `<option value="${esc(c)}"${c === 'India' ? ' selected' : ''}>${esc(c)}</option>`).join('');
+}
+
+const signupCountryIsIndia = () => {
+  const sel = document.getElementById('reg-country');
+  return !sel || sel.value === 'India';
+};
+
+// Country decides the shape of the phone field and which address block
+// applies. Mirrors the server's rules in POST /api/auth/register.
+function onSignupCountryChange() {
+  const india = signupCountryIsIndia();
+  const phone = document.getElementById('reg-phone');
+  const cc = document.getElementById('reg-phone-cc');
+  const otpBtn = document.getElementById('btn-send-reg-otp');
+
+  if (cc) cc.classList.toggle('hidden', !india);
+  if (phone) {
+    phone.classList.toggle('pl-12', india);
+    phone.maxLength = india ? 10 : 20;
+    phone.placeholder = india ? '10-digit Mobile No.' : 'e.g. +44 7700 900123';
+    if (!india) phone.value = phone.value.replace(/^\+?91/, '');
+  }
+  setText('reg-phone-label', india ? 'Mobile Number' : 'Mobile Number (optional)');
+  // We can only SMS Indian numbers, so there is no OTP to send anywhere
+  // else -- an international delegate verifies by email instead.
+  if (otpBtn) otpBtn.classList.toggle('hidden', !india);
+  const otpBox = document.getElementById('reg-otp-container');
+  if (!india && otpBox) { otpBox.classList.add('hidden'); const o = document.getElementById('reg-otp'); if (o) o.value = ''; }
+
+  const indiaBlock = document.getElementById('reg-address-india');
+  const intlBlock = document.getElementById('reg-address-intl');
+  if (indiaBlock) indiaBlock.classList.toggle('hidden', !india);
+  if (intlBlock) { intlBlock.classList.toggle('hidden', india); intlBlock.classList.toggle('grid', !india); }
+  updateSignupVerifyStatus();
+}
+
 async function handleRegistration(e) {
   e.preventDefault();
   const phone = document.getElementById('reg-phone').value.trim();
@@ -418,13 +473,23 @@ async function handleRegistration(e) {
   const phoneOtp = document.getElementById('reg-otp').value.trim();
   const emailOtp = document.getElementById('reg-email-otp').value.trim();
 
-  if (!phone && !email) return showToast('Enter a mobile number or an email address.');
-  if (phone && !isPhoneValue(phone)) return showToast('Please enter a valid mobile number.');
+  const country = (document.getElementById('reg-country') || {}).value || 'India';
+  const india = signupCountryIsIndia();
+  if (india && !phone) return showToast('A mobile number is required.');
+  if (india && phone && !isIndianPhone(phone)) {
+    return showToast('Enter a valid 10-digit Indian mobile number, or change your country.');
+  }
+  if (phone && !isPhoneValue(phone)) return showToast('Please enter a valid mobile number, including the country code.');
+  if (!india && phone && isIndianPhone(phone)) {
+    return showToast('That looks like an Indian mobile number — please set your country to India.');
+  }
   if (email && !EMAIL_RE.test(email)) return showToast('Please enter a valid email address.');
   // The server is the real gate (it burns the OTP); this just avoids a
   // pointless round trip and gives a clearer message.
   if (!phoneOtp && !emailOtp) {
-    return showToast('Verify your mobile number or your email address with an OTP to continue.');
+    return showToast(india
+      ? 'Verify your mobile number or your email address with an OTP to continue.'
+      : 'Verify your email address with an OTP to continue — we can only send SMS to Indian numbers.');
   }
 
   const password = document.getElementById('reg-password').value;
@@ -444,9 +509,13 @@ async function handleRegistration(e) {
     designation: document.getElementById('reg-designation').value,
     institute: document.getElementById('reg-institute').value,
     password,
-    pincode: document.getElementById('reg-pincode').value,
-    state: document.getElementById('reg-state').value,
-    district: document.getElementById('reg-district').value
+    country,
+    // state/district carry the free-text region and city for an
+    // international delegate -- the same columns, since they mean the same
+    // thing; only the way they're collected differs.
+    pincode: india ? document.getElementById('reg-pincode').value : '',
+    state: india ? document.getElementById('reg-state').value : document.getElementById('reg-region').value,
+    district: india ? document.getElementById('reg-district').value : document.getElementById('reg-city').value,
   };
 
   const res = await fetch('/api/auth/register', {

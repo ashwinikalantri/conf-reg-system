@@ -1208,7 +1208,14 @@ db.serialize(() => {
    // refuses to send a login OTP to an unverified channel.
    'ALTER TABLE users ADD COLUMN phone_verified INTEGER DEFAULT 0',
    'ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0',
+   // Where the delegate is. Needed to tell an international delegate apart
+   // from an Indian one who simply has no PIN code on file -- without it the
+   // address fields alone can't distinguish them, and neither can the
+   // reports. Every account predating international support is Indian.
+   'ALTER TABLE users ADD COLUMN country TEXT',
   ].forEach((sql) => db.run(sql, () => {}));
+
+  db.run("UPDATE users SET country = 'India' WHERE country IS NULL OR country = ''", () => {});
 
   // One-time identity backfill for accounts predating the columns above.
   // Every such account signed up through the phone+OTP flow, which was the
@@ -2755,8 +2762,31 @@ app.post('/api/auth/register', async (req, res, next) => {
     const phoneVal = String(req.body.phone || '').trim();
     const emailRaw = String(req.body.email || '').trim();
 
+    // India is the default for anything that doesn't say otherwise, which
+    // keeps every existing client and the whole pre-international history
+    // behaving exactly as before.
+    const countryVal = String(req.body.country || '').trim() || 'India';
+    const isIndia = countryVal.toLowerCase() === 'india';
+
     if (phoneVal && !isPhoneValue(phoneVal)) {
-      return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+      return res.status(400).json({ success: false, error: 'Please enter a valid mobile number, including the country code.' });
+    }
+    // A phone is required for an Indian delegate (it's their SMS channel and
+    // their account key) but optional for everyone else -- we can't text an
+    // international number anyway, so demanding one would only collect a
+    // detail we can neither verify nor use.
+    if (isIndia) {
+      if (!phoneVal) {
+        return res.status(400).json({ success: false, error: 'A mobile number is required.' });
+      }
+      if (!isIndianPhone(phoneVal)) {
+        return res.status(400).json({ success: false, error: 'Enter a valid 10-digit Indian mobile number, or change your country.' });
+      }
+    } else if (phoneVal && isIndianPhone(phoneVal)) {
+      // An Indian number under a non-Indian country is almost certainly the
+      // country selector left untouched, and it would otherwise produce an
+      // account that can be texted but is filed as international.
+      return res.status(400).json({ success: false, error: 'That looks like an Indian mobile number — please set your country to India.' });
     }
     // An email address is always recorded, whether or not it ends up being
     // the verified channel: it's how receipts, reminders and every other
@@ -2841,10 +2871,19 @@ app.post('/api/auth/register', async (req, res, next) => {
       }
     }
 
-    // Account key: the phone number when there is one (keeps every existing
-    // account and every phone signup readable and unchanged), otherwise a
-    // synthetic key -- see the USER KEY note on the users table.
-    const userKey = existing ? existing.phone_number : (phoneVal || newUserKey());
+    // Account key: the bare national number for an Indian signup -- which
+    // keeps every existing account and every Indian signup readable and
+    // unchanged -- and a synthetic key for everyone else.
+    //
+    // The distinction matters because the key can never be edited (eight
+    // tables join on it). An Indian number is SMS-verified at signup, so
+    // it's known-good and safe to freeze. An international number can't be
+    // verified, so it's exactly the kind of value that gets mistyped and
+    // needs correcting later; keeping it out of the key leaves it editable
+    // like any other column. See the USER KEY note on the users table.
+    const userKey = existing
+      ? existing.phone_number
+      : (isIndianPhone(phoneVal) ? toE164(phoneVal).slice(1 + DEFAULT_PHONE_CC.length) : newUserKey());
     const passwordHash = hashPassword(String(password));
 
     // Verification is sticky: a channel already proven stays proven even if
@@ -2853,8 +2892,8 @@ app.post('/api/auth/register', async (req, res, next) => {
     const emailVerified = (emailOk || (existing && existing.email_verified && normalizeEmail(existing.email) === emailVal)) ? 1 : 0;
 
     await dbRun(
-      `INSERT INTO users (phone_number, phone, phone_verified, email_verified, salutation, full_name, designation, institution, pincode, state, district, age, gender, email, password_hash, role, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE', ?)
+      `INSERT INTO users (phone_number, phone, phone_verified, email_verified, salutation, full_name, designation, institution, country, pincode, state, district, age, gender, email, password_hash, role, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE', ?)
        ON CONFLICT(phone_number) DO UPDATE SET
          phone = excluded.phone,
          phone_verified = excluded.phone_verified,
@@ -2863,6 +2902,7 @@ app.post('/api/auth/register', async (req, res, next) => {
          full_name = excluded.full_name,
          designation = excluded.designation,
          institution = excluded.institution,
+         country = excluded.country,
          pincode = excluded.pincode,
          state = excluded.state,
          district = excluded.district,
@@ -2872,7 +2912,7 @@ app.post('/api/auth/register', async (req, res, next) => {
          password_hash = excluded.password_hash,
          created_at = COALESCE(users.created_at, excluded.created_at)`,
       [userKey, phoneVal ? toE164(phoneVal) : null, phoneVerified, emailVerified, salutationVal, nameVal, designation, institute,
-       pincode, state, district, ageNum, genderVal, emailVal, passwordHash, Date.now()]
+       countryVal, pincode || null, state || null, district || null, ageNum, genderVal, emailVal, passwordHash, Date.now()]
     );
 
     await assignUserRegNumber(userKey); // ensure a registration number exists
@@ -7491,7 +7531,7 @@ async function buildReport(type, opts = {}) {
   if (type === 'delegates') {
     const rows = (await dbAll(
       `SELECT registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number AS phone_number,
-         u.age, u.gender, u.designation, u.institution, u.district, u.state, u.pincode, u.email
+         u.age, u.gender, u.designation, u.institution, u.district, u.state, u.pincode, u.country, u.email, u.phone
          FROM registrations
          LEFT JOIN users u ON u.phone_number = registrations.phone_number
          WHERE registrations.bank_status = 'BANK_VERIFIED'
@@ -7499,8 +7539,8 @@ async function buildReport(type, opts = {}) {
     return {
       title: 'Registered Delegates — Demography & Institute Details',
       sections: [{
-        columns: ['Reg No', 'Name', 'Age', 'Gender', 'Mobile', 'Email', 'Designation', 'Institution', 'District', 'State', 'Pincode'],
-        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.age, r.gender, displayPhone(r), r.email, r.designation, r.institution, r.district, r.state, r.pincode]),
+        columns: ['Reg No', 'Name', 'Age', 'Gender', 'Mobile', 'Email', 'Designation', 'Institution', 'District', 'State', 'Pincode', 'Country'],
+        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.age, r.gender, displayPhone(r), r.email, r.designation, r.institution, r.district, r.state, r.pincode, r.country || 'India']),
       }],
     };
   }
@@ -7642,10 +7682,11 @@ async function buildReport(type, opts = {}) {
       title: 'All Users — Full Directory',
       sections: [{
         columns: ['Reg No', 'Salutation', 'Name', 'Mobile', 'Role', 'Age', 'Gender', 'Email',
-          'Designation', 'Institution', 'Post Office', 'District', 'State', 'Pincode', 'Signed Up',
+          'Designation', 'Institution', 'Post Office', 'District', 'State', 'Pincode', 'Country', 'Signed Up',
           'Registration Status', 'Program Selections'],
         rows: rows.map((u) => [u.registration_number, u.salutation, u.full_name, displayPhone(u), u.role,
           u.age, u.gender, u.email, u.designation, u.institution, u.post_office, u.district, u.state, u.pincode,
+          u.country || 'India',
           fmtDate(u.created_at), u.registration_status ? (BANK_STATUS_LABELS[u.registration_status] || u.registration_status) : 'Not Registered',
           (selByReg.get(u.registration_id) || []).join('; ')]),
       }],
