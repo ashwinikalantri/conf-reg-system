@@ -765,14 +765,6 @@ crash.
   risks silently breaking OTP delivery in a way that's hard to diagnose
   without a real DLT rejection. A deployment using a different registered
   template needs to edit that string in code to match it.
-- The session cookie name, the daily-digest recipient list, the
-  registration-number prefix, and which categories require a student ID are
-  all admin-configurable — see Authentication & sessions, Settings →
-  General, Registration number & receipt, and Student ID verification
-  above. Conference name/acronym/dates/location, fee structure, program
-  tracks, discount codes, SMS/Email provider config, and the UPI/bank
-  payment details are all admin-editable too, without a code change, and
-  none of them have a built-in default — see First-Run Setup above.
 - The student-ID OCR check itself is still limited to a fixed
   nursing/medical × UG/PG vocabulary (`detectIdAttributes()` in
   `server.js`) — any category can require an ID and be matched against one
