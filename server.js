@@ -3792,6 +3792,31 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
       `<tr><td class="k">${escapeHtml(label)}</td><td class="v">${escapeHtml(value)}</td></tr>`;
     const selections = await fetchRegistrationSelections(reg.id);
 
+    // Itemise every payment rather than printing one amount and one UTR.
+    // A delegate who paid a partial and then topped up has two (or more)
+    // real transactions, each with its own date, mode and reference; a
+    // receipt showing only the registration's single utr_number column --
+    // whichever submission happened to write it last -- doesn't account for
+    // what they actually paid.
+    const summary = await getPaymentSummary(reg.id, reg.expected_amount);
+    const paidTxns = summary.txns.filter((t) => t.txn_status === 'VERIFIED');
+    const fmtWhen = (ts) => (ts ? new Date(ts).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
+    const txnRows = paidTxns.map((t) => {
+      const amt = t.verified_amount != null ? t.verified_amount : t.amount;
+      const mode = PAYMENT_MODE_LABELS[t.payment_mode] || t.payment_mode || '';
+      const ref = t.utr_number ? ` · ${t.utr_number}` : '';
+      return `<tr>
+        <td class="k">${escapeHtml(fmtWhen(t.reviewed_at || t.submitted_at))}<span class="sub">${escapeHtml(mode + ref)}</span></td>
+        <td class="v">₹${escapeHtml(inr(Number(amt)))}</td>
+      </tr>`;
+    }).join('');
+    // Refunds are netted on the receipt too -- a document stating what was
+    // received shouldn't ignore money that went back.
+    const refundRows = (summary.refunds || []).map((r) => `<tr>
+        <td class="k">${escapeHtml(fmtWhen(r.refunded_at))}<span class="sub">Refunded${r.reference_note ? ' · ' + r.reference_note : ''}</span></td>
+        <td class="v neg">− ₹${escapeHtml(inr(Number(r.amount)))}</td>
+      </tr>`).join('');
+
     res.set('Cache-Control', 'private, no-store');
     res.type('html').send(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -3812,8 +3837,14 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
   .status { display:inline-block; background:#dcfce7; color:#166534; font-size:.7rem; font-weight:800; padding:.25rem .65rem; border-radius:999px; text-transform:uppercase; letter-spacing:.06em; }
   table { width:100%; border-collapse:collapse; font-size:.9rem; }
   td { padding:.6rem 0; border-bottom:1px solid #f1f5f9; vertical-align:top; }
-  td.k { color:#64748b; width:42%; }
-  td.v { font-weight:600; text-align:right; }
+  td.k { color:#64748b; width:60%; }
+  td.v { font-weight:600; text-align:right; white-space:nowrap; }
+  td.k .sub { display:block; font-size:.72rem; color:#94a3b8; margin-top:.15rem; word-break:break-all; }
+  td.v.neg { color:#b91c1c; }
+  .sect { margin:1.5rem 0 .25rem; font-size:.7rem; font-weight:800; letter-spacing:.1em; text-transform:uppercase; color:#4338ca; }
+  tr.tot td { border-bottom:0; border-top:2px solid #c7d2fe; padding-top:.7rem; font-weight:800; }
+  tr.tot td.k { color:#0f172a; }
+  .note { margin-top:.75rem; background:#fffbeb; border:1px solid #fde68a; color:#92400e; font-size:.75rem; border-radius:8px; padding:.6rem .75rem; line-height:1.45; }
   .foot { margin-top:1.5rem; font-size:.72rem; color:#94a3b8; text-align:center; line-height:1.5; }
   .actions { text-align:center; margin-top:1.5rem; }
   button { background:#4f46e5; color:#fff; border:0; border-radius:10px; padding:.65rem 1.5rem; font-size:.85rem; font-weight:700; cursor:pointer; }
@@ -3843,10 +3874,20 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
         ${displayPhone(reg) ? row('Mobile', '+91 ' + displayPhone(reg)) : ''}
         ${row('Category', reg.category_label)}
         ${selections.map((s) => row(s.group_name, s.option_name)).join('')}
-        ${row('Amount Paid', '₹' + inr(reg.expected_amount != null ? reg.expected_amount : reg.paid_amount))}
-        ${row('UTR / Txn Ref', reg.utr_number)}
+        ${row('Fee', '₹' + inr(reg.expected_amount != null ? reg.expected_amount : reg.paid_amount))}
         ${row('Verified On', verifiedOn)}
       </table>
+
+      <p class="sect">${paidTxns.length > 1 ? `Payments Received (${paidTxns.length})` : 'Payment Received'}</p>
+      <table>
+        ${txnRows || row('—', 'No itemised transactions on record')}
+        ${refundRows}
+        <tr class="tot">
+          <td class="k">Total Paid</td>
+          <td class="v">₹${escapeHtml(inr(summary.netVerifiedTotal))}</td>
+        </tr>
+      </table>
+      ${summary.overpaid > 0 ? `<p class="note">Paid ₹${escapeHtml(inr(summary.overpaid))} more than the ₹${escapeHtml(inr(summary.fee))} fee. The excess is due to be refunded — please contact the organisers if you have not received it.</p>` : ''}
       <div class="actions"><button onclick="window.print()">Print / Save as PDF</button></div>
       <p class="foot">This is a computer-generated receipt for conference registration.<br>Registration number <b>${escapeHtml(reg.registration_number)}</b> — please quote it in all correspondence.</p>
     </div>
