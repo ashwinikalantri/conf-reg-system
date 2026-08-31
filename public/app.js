@@ -3584,18 +3584,28 @@ function roleMarkBW(role) {
   return `<span class="text-slate-400 mr-1" title="${esc(roleLabel(role))}">${glyph}</span>`;
 }
 
-// Account-security marks for the Users table: verified mobile, verified
-// email, password set. Three fixed slots in a fixed order so the column
+// Account-security marks for the Users table: verified Mobile, verified
+// Email, Password set. Three fixed slots in a fixed order so the column
 // scans vertically -- a missing one reads as an absence at a glance rather
-// than shifting the others along. Greyed when absent rather than hidden,
-// for the same reason.
+// than shifting the others along, which is why the "off" state is shown
+// muted rather than hidden.
+//
+// Lettered pills, NOT emoji: emoji are rendered from a colour font and
+// ignore CSS `color`, so an emoji set of marks looks identical whether it's
+// styled as set or unset -- which is exactly how the first version of this
+// shipped looking always-on. Plain letters take the styling reliably, and
+// filled-vs-outlined carries the state independently of colour for anyone
+// who can't distinguish the two greens.
 function accountMarks(u) {
-  const mark = (on, glyph, onTitle, offTitle) =>
-    `<span class="${on ? 'text-emerald-600' : 'text-slate-300'}" title="${esc(on ? onTitle : offTitle)}">${glyph}</span>`;
-  return `<span class="inline-flex items-center gap-1.5 text-sm">
-    ${mark(u.phone_verified, '📱', `Mobile verified${delegateDisplayPhone(u) ? ` (${delegateDisplayPhone(u)})` : ''}`, delegateDisplayPhone(u) ? `Mobile not verified (${delegateDisplayPhone(u)})` : 'No mobile number on file')}
-    ${mark(u.email_verified, '✉️', `Email verified${u.email ? ` (${u.email})` : ''}`, u.email ? `Email not verified (${u.email})` : 'No email address on file')}
-    ${mark(u.hasPassword, '🔑', 'Password set', 'No password set — signs in by OTP only')}
+  const mark = (on, letter, onTitle, offTitle) =>
+    `<span class="inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold border ${
+      on ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-200 text-slate-300'
+    }" title="${esc(on ? onTitle : offTitle)}">${letter}</span>`;
+  const ph = delegateDisplayPhone(u);
+  return `<span class="inline-flex items-center gap-1">
+    ${mark(u.phone_verified, 'M', `Mobile verified${ph ? ` (${ph})` : ''}`, ph ? `Mobile NOT verified (${ph})` : 'No mobile number on file')}
+    ${mark(u.email_verified, 'E', `Email verified${u.email ? ` (${u.email})` : ''}`, u.email ? `Email NOT verified (${u.email})` : 'No email address on file')}
+    ${mark(u.hasPassword, 'P', 'Password set', 'No password set \u2014 signs in by OTP only')}
   </span>`;
 }
 
