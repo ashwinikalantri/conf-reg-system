@@ -2666,16 +2666,22 @@ function openReviewModal(id) {
     acceptBtn.classList.remove('hidden');
   }
 
-  // Revise Payment: for a category-changed registration that still owes money.
-  // Enabled only once the existing payment is linked (acknowledged), so the
-  // balance is against what they've actually paid -- not the full new fee.
+  // Revise Payment: request the outstanding balance from a delegate who's
+  // short of the fee -- whether that's because their category (and so the
+  // fee) changed, or simply because their actual bank credit fell short of
+  // what they claimed (a genuine partial payment, e.g. Priyanka Pothare:
+  // claimed ₹2,000, the linked credit only had ₹750). Both look the same
+  // here: a linked/verified total that doesn't cover expected_amount. Not
+  // gated to category_locked -- the server endpoint never required that
+  // either. Enabled only once the existing payment is linked (acknowledged),
+  // so the balance is against what they've actually paid -- not the claim.
   const reviseBtn = document.getElementById('review-revise-btn');
   if (reviseBtn) {
     const txns = p.transactions || [];
     const verified = Number(p.verified_total) || 0;
     const owed = (Number(p.expected_amount) || 0) - verified;
     const hasUnlinkedPending = txns.some((t) => t.txn_status === 'PENDING');
-    const showRevise = !!p.category_locked && p.bank_status === 'PENDING' && txns.length > 0 && owed > 0;
+    const showRevise = (p.bank_status === 'PENDING' || p.bank_status === 'PARTIAL_PAYMENT') && txns.length > 0 && owed > 0;
     reviseBtn.classList.toggle('hidden', !showRevise);
     if (showRevise) {
       const canRevise = !hasUnlinkedPending && verified > 0;

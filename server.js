@@ -3998,11 +3998,13 @@ app.put('/api/registrations/:id/lock-category', requireRole('SUPER_ADMIN', 'FINA
   }
 });
 
-// Ask the delegate to pay the outstanding balance after a fee change (e.g. a
-// category correction). Gated: the delegate's existing payment(s) must be
-// linked/acknowledged first, so the balance is computed against what they've
-// actually paid -- not the full new fee. Moves the registration to
-// PARTIAL_PAYMENT (the balance-due section) and emails the delegate.
+// Ask the delegate to pay the outstanding balance -- whether that's because
+// their category (and so the fee) changed, or their linked bank credit fell
+// short of what they claimed (a genuine partial payment). Gated: the
+// delegate's existing payment(s) must be linked/acknowledged first, so the
+// balance is computed against what they've actually paid -- not the claim.
+// Moves the registration to PARTIAL_PAYMENT (the balance-due section) and
+// emails the delegate.
 app.post('/api/registrations/:id/revise-payment', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
     const reg = await dbGet('SELECT id, phone_number, delegate_name, category_label, expected_amount, bank_status FROM registrations WHERE id = ?', [req.params.id]);
