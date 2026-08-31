@@ -2318,6 +2318,7 @@ async function renderBackendPayments() {
   setText('metric-pending-count', needsDecision.length);
   setText('metric-balance-count', partialAwaiting.length);
   setText('metric-balance-amount', `₹${inr(totalBalanceDue)} outstanding`);
+  setText('metric-rejected-count', rejected.length);
   setText('badge-pending-payments', needsDecision.length);
 
   tbody.innerHTML = needsDecision.map(paymentRowHtml).join('');
