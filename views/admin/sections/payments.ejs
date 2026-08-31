@@ -136,5 +136,9 @@
           <div id="delegate-map-legend" class="flex items-center gap-1.5"></div>
         </div>
         <div id="delegate-map" class="w-full relative"></div>
+        <!-- International delegates can't be plotted on an Indian district
+             choropleth, so they're tallied here instead of being dropped.
+             Hidden when there are none. See renderDelegateMap. -->
+        <div id="delegate-map-international" class="hidden mt-3 pt-3 border-t border-slate-100"></div>
       </div>
     </section>

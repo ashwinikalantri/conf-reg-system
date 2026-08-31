@@ -2769,7 +2769,11 @@ async function renderDelegateMap() {
     d3.json('/data/india-pincodes.json').catch(() => null),
   ]);
   if (!locRes.ok || !topo) { delegateMapRendered = false; setText('delegate-map-summary', 'Could not load the map.'); return; }
-  const locations = (await locRes.json()).locations || [];
+  const locPayload = await locRes.json();
+  const locations = locPayload.locations || [];
+  // Counted, not plotted: the choropleth is an Indian district map, so
+  // international delegates are reported beside it instead of vanishing.
+  const international = locPayload.international || [];
 
   const feat = topojson.feature(topo, topo.objects.in_district);
   const pinCoords = (pinFile && pinFile.pincodes) || {};
@@ -2793,7 +2797,7 @@ async function renderDelegateMap() {
     byKey.set(hit.key, { registered: prev.registered + loc.registered, signedup: prev.signedup + loc.signedup, rawName: prev.rawName });
   });
 
-  delegateMapData = { feat, byKey, totalReg, totalSign, districtCount: byKey.size, unmatched };
+  delegateMapData = { feat, byKey, totalReg, totalSign, districtCount: byKey.size, unmatched, international };
   drawDelegateMap();
 }
 
@@ -2858,9 +2862,30 @@ function drawDelegateMap() {
   if (regBtn) { regBtn.classList.toggle('bg-white', active); regBtn.classList.toggle('shadow-sm', active); regBtn.classList.toggle('text-emerald-700', active); regBtn.classList.toggle('text-slate-500', !active); }
   if (signBtn) { signBtn.classList.toggle('bg-white', !active); signBtn.classList.toggle('shadow-sm', !active); signBtn.classList.toggle('text-amber-700', !active); signBtn.classList.toggle('text-slate-500', active); }
 
+  const intl = data.international || [];
+  const intlReg = intl.reduce((n, c) => n + (c.registered || 0), 0);
+  const intlSign = intl.reduce((n, c) => n + (c.signedup || 0), 0);
   setText('delegate-map-summary',
     `${data.totalReg} registered · ${data.totalSign} signed up only across ${data.districtCount} districts`
     + (data.unmatched.length ? ` (${data.unmatched.length} not shown — unmapped location: ${data.unmatched.slice(0, 3).join(', ')}${data.unmatched.length > 3 ? '…' : ''})` : ''));
+
+  // International delegates, listed under the map rather than on it. Hidden
+  // entirely when there are none, so the panel doesn't sit empty for what is
+  // currently every conference.
+  const intlBox = document.getElementById('delegate-map-international');
+  if (intlBox) {
+    intlBox.classList.toggle('hidden', intl.length === 0);
+    if (intl.length) {
+      intlBox.innerHTML =
+        `<p class="text-xs font-bold text-slate-600 mb-1.5">🌍 International — ${intlReg} registered · ${intlSign} signed up only <span class="font-normal text-slate-400">(not shown on the map)</span></p>`
+        + `<div class="flex flex-wrap gap-1.5">${intl.map((c) => `
+             <span class="inline-flex items-center gap-1.5 bg-white border border-slate-200 rounded-full px-2.5 py-1 text-[11px]">
+               <span class="font-semibold text-slate-700">${esc(c.country)}</span>
+               <span class="text-emerald-700 font-bold">${c.registered}</span>
+               ${c.signedup ? `<span class="text-amber-600">+${c.signedup}</span>` : ''}
+             </span>`).join('')}</div>`;
+    }
+  }
 
   const W = 680, H = 720;
   host.innerHTML = '';

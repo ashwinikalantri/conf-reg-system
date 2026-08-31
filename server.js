@@ -4262,8 +4262,25 @@ app.get('/api/admin/delegate-locations', requireRole('SUPER_ADMIN', 'FINANCE_ADM
       FROM users u
       LEFT JOIN registrations r ON r.phone_number = u.phone_number
       WHERE u.pincode IS NOT NULL AND TRIM(u.pincode) != ''
+        AND (u.country IS NULL OR TRIM(u.country) = '' OR LOWER(TRIM(u.country)) = 'india')
       GROUP BY TRIM(u.pincode), LOWER(TRIM(u.district))`);
-    res.json({ locations: rows || [] });
+
+    // The choropleth is an Indian district map, so an international delegate
+    // has nowhere to be drawn -- and the pincode filter above would drop
+    // them silently, which is the one outcome worth avoiding. Counted
+    // separately instead, per country, so they're visibly accounted for
+    // rather than just missing from the total.
+    const intl = await dbAll(`
+      SELECT TRIM(u.country) AS country,
+        SUM(CASE WHEN r.phone_number IS NOT NULL THEN 1 ELSE 0 END) AS registered,
+        SUM(CASE WHEN r.phone_number IS NULL THEN 1 ELSE 0 END) AS signedup
+      FROM users u
+      LEFT JOIN registrations r ON r.phone_number = u.phone_number
+      WHERE u.country IS NOT NULL AND TRIM(u.country) != '' AND LOWER(TRIM(u.country)) != 'india'
+      GROUP BY TRIM(u.country)
+      ORDER BY registered DESC, signedup DESC, country`);
+
+    res.json({ locations: rows || [], international: intl || [] });
   } catch (err) {
     next(err);
   }
