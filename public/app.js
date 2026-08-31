@@ -2797,7 +2797,20 @@ async function renderDelegateMap() {
     byKey.set(hit.key, { registered: prev.registered + loc.registered, signedup: prev.signedup + loc.signedup, rawName: prev.rawName });
   });
 
-  delegateMapData = { feat, byKey, totalReg, totalSign, districtCount: byKey.size, unmatched, international };
+  // State borders and the country outline, derived once here rather than on
+  // every metric toggle -- they depend only on the topology. Computed in
+  // THIS function because `topo` is in scope here and not in
+  // drawDelegateMap, which only ever sees the cached object below.
+  //
+  // A mesh of the arcs where stname differs draws each internal border
+  // exactly once; stroking each state's outline separately would draw every
+  // shared edge twice and render it double-thickness. Filtering to arcs with
+  // only one side (a === b) gives the coast and international boundary.
+  const stateMesh = topojson.mesh(topo, topo.objects.in_district,
+    (a, b) => a !== b && a.properties.stname !== b.properties.stname);
+  const outline = topojson.mesh(topo, topo.objects.in_district, (a, b) => a === b);
+
+  delegateMapData = { feat, byKey, totalReg, totalSign, districtCount: byKey.size, unmatched, international, stateMesh, outline };
   drawDelegateMap();
 }
 
@@ -2931,6 +2944,25 @@ function drawDelegateMap() {
         .style('left', (ev.clientX - b.left + 12) + 'px').style('top', (ev.clientY - b.top - 6) + 'px');
     })
     .on('mouseleave', () => tip.style('opacity', 0));
+
+  // State borders, over the district fills but under the labels (see the
+  // meshes cached in renderDelegateMap). fill:none matters -- a mesh is a
+  // single MultiLineString, and filling it would flood the map.
+  svg.append('path')
+    .attr('d', path(data.stateMesh))
+    .attr('fill', 'none')
+    .attr('stroke', '#94a3b8')
+    .attr('stroke-width', 1)
+    .attr('stroke-linejoin', 'round')
+    .style('pointer-events', 'none');   // never steal hover from the districts
+
+  svg.append('path')
+    .attr('d', path(data.outline))
+    .attr('fill', 'none')
+    .attr('stroke', '#64748b')
+    .attr('stroke-width', 1.2)
+    .attr('stroke-linejoin', 'round')
+    .style('pointer-events', 'none');
 
   // Number labels at every colored district's centroid -- every district
   // with a non-zero value for the active metric gets a label, always (an
