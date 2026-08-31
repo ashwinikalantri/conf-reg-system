@@ -1237,6 +1237,14 @@ db.serialize(() => {
     if (!names.includes('results')) db.run('ALTER TABLE abstracts ADD COLUMN results TEXT');
     if (!names.includes('conclusion')) db.run('ALTER TABLE abstracts ADD COLUMN conclusion TEXT');
     if (!names.includes('keywords')) db.run('ALTER TABLE abstracts ADD COLUMN keywords TEXT');
+    // Reviewer's note when sending an abstract back for corrections (status
+    // REVISION_REQUESTED) -- shown to the delegate, who can then edit and
+    // resubmit through the same POST /api/abstracts endpoint (normally
+    // blocked once an abstract exists at all; this is the one status that
+    // reopens it). Cleared whenever the status moves away from
+    // REVISION_REQUESTED, same as `allocation` clearing on a non-ACCEPTED
+    // status change.
+    if (!names.includes('revision_note')) db.run('ALTER TABLE abstracts ADD COLUMN revision_note TEXT');
 
     // Enforce one abstract per author: drop duplicates (keep the latest) BEFORE
     // creating the unique index. Sequenced so the index can't fail on dupes.
@@ -3490,27 +3498,47 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
       return res.status(400).json({ success: false, error: `Your abstract is ${wordCount} words; the limit is ${ABSTRACT_MAX_WORDS}.` });
     }
 
-    // One abstract per author, and it is locked once submitted.
-    const prev = await dbGet('SELECT id FROM abstracts WHERE phone_number = ?', [req.session.phone]);
-    if (prev) {
+    // One abstract per author, locked once submitted -- with one exception:
+    // a reviewer sending it back for corrections (status REVISION_REQUESTED,
+    // see PUT /api/abstracts/:id/status) reopens this same endpoint for that
+    // delegate, as an update rather than blocking or requiring a second
+    // insert. Any other existing status stays locked.
+    const prev = await dbGet('SELECT id, status FROM abstracts WHERE phone_number = ?', [req.session.phone]);
+    if (prev && prev.status !== 'REVISION_REQUESTED') {
       return res.status(409).json({ success: false, error: 'You have already submitted an abstract; it cannot be changed.' });
     }
 
     const cleanTitle = String(title).trim();
-    await dbRun(
-      `INSERT INTO abstracts
-        (phone_number, author_name, format, title, background, aim, methods, results, conclusion, keywords, word_count, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNDER_REVIEW')`,
-      [req.session.phone, req.session.name, format, cleanTitle,
-       sections.background, sections.aim, sections.methods, sections.results, sections.conclusion,
-       keywords, wordCount]
-    );
+    const isResubmission = !!prev;
+    if (isResubmission) {
+      await dbRun(
+        `UPDATE abstracts SET
+           format = ?, title = ?, background = ?, aim = ?, methods = ?, results = ?, conclusion = ?,
+           keywords = ?, word_count = ?, status = 'UNDER_REVIEW', revision_note = NULL
+         WHERE id = ?`,
+        [format, cleanTitle, sections.background, sections.aim, sections.methods, sections.results, sections.conclusion,
+         keywords, wordCount, prev.id]
+      );
+      await recordAudit({
+        req, entityType: 'abstract', entityId: prev.id,
+        action: 'ABSTRACT_RESUBMITTED', oldValue: 'REVISION_REQUESTED', newValue: 'UNDER_REVIEW',
+      });
+    } else {
+      await dbRun(
+        `INSERT INTO abstracts
+          (phone_number, author_name, format, title, background, aim, methods, results, conclusion, keywords, word_count, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNDER_REVIEW')`,
+        [req.session.phone, req.session.name, format, cleanTitle,
+         sections.background, sections.aim, sections.methods, sections.results, sections.conclusion,
+         keywords, wordCount]
+      );
+    }
 
     // Acknowledge receipt; acceptance is communicated after committee review.
-    notifyDelegate(req.session.phone, 'Abstract received — under review',
+    notifyDelegate(req.session.phone, isResubmission ? 'Revised abstract received — under review' : 'Abstract received — under review',
       emailWrap('We’ve received your abstract',
         `<p>Dear ${escapeHtml(req.session.name)},</p>
-         <p>Thank you for submitting your abstract, <b>"${escapeHtml(cleanTitle)}"</b>, for the ${escapeHtml(CONFERENCE.name)}.</p>
+         <p>Thank you for ${isResubmission ? 'resubmitting your revised abstract' : 'submitting your abstract'}, <b>"${escapeHtml(cleanTitle)}"</b>, for the ${escapeHtml(CONFERENCE.name)}.</p>
          <p>Your submission has been received and is now <b>under review</b> by the scientific committee.</p>
          <p>You’ll be notified by email once a decision has been made. No further action is needed for now.</p>`));
 
@@ -3524,7 +3552,7 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
 app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
   try {
     const row = await dbGet(
-      `SELECT id, format, title, status, allocation,
+      `SELECT id, format, title, status, allocation, revision_note,
               background, aim, methods, results, conclusion, keywords, word_count
          FROM abstracts WHERE phone_number = ?`,
       [req.session.phone]
@@ -6680,30 +6708,42 @@ app.get('/api/abstracts', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEWER'), async
   }
 });
 
-// Step 1 of abstract review: Approval. Accept/reject/reset. Deliberately
-// silent -- no delegate email fires here. Approval only unlocks the abstract
-// for the separate Assignment step (below); the delegate hears from us once,
-// when that step gives the final decision (accepted + oral/poster, or not
-// accepted). This lets approval and assignment happen as two independent
-// actions, in separate sessions, possibly by different reviewers.
+// Step 1 of abstract review: Approval. Accept/reject/reset/send-back-for-
+// corrections. Deliberately silent for UNDER_REVIEW/ACCEPTED -- no delegate
+// email fires there. Approval only unlocks the abstract for the separate
+// Assignment step (below); the delegate hears from us once, when that step
+// gives the final decision (accepted + oral/poster, or not accepted). This
+// lets approval and assignment happen as two independent actions, in
+// separate sessions, possibly by different reviewers. REVISION_REQUESTED is
+// the exception: it emails immediately (the delegate needs to act) and,
+// unlike the other statuses, reopens POST /api/abstracts for that one
+// delegate to edit and resubmit (see there).
 app.put('/api/abstracts/:id/status', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEWER'), async (req, res, next) => {
   try {
     const { status } = req.body;
-    const allowed = ['UNDER_REVIEW', 'ACCEPTED', 'REJECTED'];
+    const allowed = ['UNDER_REVIEW', 'ACCEPTED', 'REJECTED', 'REVISION_REQUESTED'];
     if (!allowed.includes(status)) {
       return res.status(400).json({ success: false, error: 'Invalid abstract status.' });
     }
+    // A note is the whole point here -- without it the delegate has no idea
+    // what to fix, and the reviewer's own review cycle just repeats.
+    const note = status === 'REVISION_REQUESTED' ? String(req.body.note || '').trim() : null;
+    if (status === 'REVISION_REQUESTED' && !note) {
+      return res.status(400).json({ success: false, error: 'Enter a note explaining what the delegate needs to correct.' });
+    }
 
-    const existing = await dbGet('SELECT status FROM abstracts WHERE id = ?', [req.params.id]);
+    const existing = await dbGet('SELECT status, phone_number, author_name, title FROM abstracts WHERE id = ?', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ success: false, error: 'Abstract not found.' });
     }
 
-    // Resetting away from ACCEPTED clears any assignment.
-    if (status !== 'ACCEPTED') {
-      await dbRun('UPDATE abstracts SET status = ?, allocation = NULL WHERE id = ?', [status, req.params.id]);
+    // Resetting away from ACCEPTED clears any assignment; moving to any
+    // status other than REVISION_REQUESTED clears its note, the same way
+    // allocation only ever means something while status is ACCEPTED.
+    if (status === 'ACCEPTED') {
+      await dbRun('UPDATE abstracts SET status = ?, revision_note = NULL WHERE id = ?', [status, req.params.id]);
     } else {
-      await dbRun('UPDATE abstracts SET status = ? WHERE id = ?', [status, req.params.id]);
+      await dbRun('UPDATE abstracts SET status = ?, allocation = NULL, revision_note = ? WHERE id = ?', [status, note, req.params.id]);
     }
     await recordAudit({
       req,
@@ -6717,11 +6757,18 @@ app.put('/api/abstracts/:id/status', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEW
     // Rejecting at the approval step IS a final decision (there is no
     // assignment step to follow), so that's the one case this step emails.
     if (status === 'REJECTED' && existing.status !== 'REJECTED') {
-      const a = await dbGet('SELECT phone_number, author_name, title FROM abstracts WHERE id = ?', [req.params.id]);
-      if (a) notifyDelegate(a.phone_number, 'Your abstract submission — decision',
+      notifyDelegate(existing.phone_number, 'Your abstract submission — decision',
         emailWrap('Abstract decision',
-          `<p>Dear ${escapeHtml(a.author_name)},</p>
-           <p>Thank you for submitting your abstract, <b>"${escapeHtml(a.title)}"</b>. After review by the scientific committee, we regret that it has not been accepted for the ${escapeHtml(CONFERENCE.name)}.</p>`));
+          `<p>Dear ${escapeHtml(existing.author_name)},</p>
+           <p>Thank you for submitting your abstract, <b>"${escapeHtml(existing.title)}"</b>. After review by the scientific committee, we regret that it has not been accepted for the ${escapeHtml(CONFERENCE.name)}.</p>`));
+    }
+    if (status === 'REVISION_REQUESTED') {
+      notifyDelegate(existing.phone_number, 'Your abstract needs corrections',
+        emailWrap('Corrections requested',
+          `<p>Dear ${escapeHtml(existing.author_name)},</p>
+           <p>The scientific committee has reviewed your abstract, <b>"${escapeHtml(existing.title)}"</b>, and requests some corrections before it can be considered further:</p>
+           <blockquote style="margin:0.75rem 0;padding:0.5rem 1rem;border-left:3px solid #c7d2fe;color:#334155">${escapeHtml(note)}</blockquote>
+           <p>Please log in to the portal, update your abstract, and resubmit it for review.</p>`));
     }
     res.json({ success: true });
   } catch (err) {

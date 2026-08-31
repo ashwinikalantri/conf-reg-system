@@ -686,6 +686,7 @@ async function loadAbstractStatus() {
     UNDER_REVIEW: ['Under Review', 'bg-amber-100 text-amber-700'],
     ACCEPTED: ['Accepted ✓', 'bg-emerald-100 text-emerald-700'],
     REJECTED: ['Not Accepted', 'bg-rose-100 text-rose-700'],
+    REVISION_REQUESTED: ['Corrections Needed', 'bg-orange-100 text-orange-700'],
   };
   const previewToggle = document.getElementById('abstract-preview-toggle');
   const previewBox = document.getElementById('abstract-preview-box');
@@ -700,8 +701,16 @@ async function loadAbstractStatus() {
       tag.className = `text-xs font-bold px-2 py-0.5 rounded-full ${cls}`;
       tag.innerText = label;
 
-      // Locked after submission.
-      if (btn) { btn.innerText = 'Abstract Submitted'; btn.disabled = true; btn.classList.add('opacity-60', 'cursor-not-allowed'); }
+      // Locked after submission -- except REVISION_REQUESTED, the one
+      // status that reopens the form for editing (see POST /api/abstracts
+      // and openModal's prefill below).
+      const needsRevision = abs.status === 'REVISION_REQUESTED';
+      if (btn) {
+        btn.innerText = needsRevision ? 'Revise & Resubmit' : 'Abstract Submitted';
+        btn.disabled = !needsRevision;
+        btn.classList.toggle('opacity-60', !needsRevision);
+        btn.classList.toggle('cursor-not-allowed', !needsRevision);
+      }
       if (desc) {
         if (abs.status === 'ACCEPTED' && abs.allocation) {
           const kind = abs.allocation === 'ORAL' ? 'oral' : 'poster';
@@ -710,6 +719,8 @@ async function loadAbstractStatus() {
           desc.innerHTML = 'Your abstract has been <b>accepted</b>. The presentation format will be communicated.';
         } else if (abs.status === 'REJECTED') {
           desc.innerText = 'Your abstract was not accepted.';
+        } else if (needsRevision) {
+          desc.innerHTML = `<b>The committee has requested corrections:</b> ${esc(abs.revision_note || '')}`;
         } else {
           desc.innerText = 'Your abstract has been submitted and is under review. It cannot be changed.';
         }
@@ -1596,7 +1607,43 @@ async function handleAbstractSubmit(e) {
 
 function openModal(id) {
   document.getElementById(id).classList.remove('hidden');
-  if (id === 'modal-abstract') resetAbstractKeywords();
+  if (id === 'modal-abstract') {
+    // A delegate whose abstract was sent back for corrections
+    // (REVISION_REQUESTED -- the only status that leaves the dashboard
+    // button enabled here, see loadAbstractStatus) gets the form prefilled
+    // with what they already submitted; anyone else gets a blank form.
+    if (cachedOwnAbstract && cachedOwnAbstract.status === 'REVISION_REQUESTED') {
+      prefillAbstractFormForRevision(cachedOwnAbstract);
+    } else {
+      resetAbstractKeywords();
+      document.getElementById('abstract-title').value = '';
+      for (const id of ABSTRACT_SECTION_IDS) {
+        const el = document.getElementById(id);
+        if (el) { el.value = ''; autoResizeTextarea(el); }
+      }
+      updateAbstractWordCount();
+    }
+  }
+}
+
+// Prefills the abstract form's raw HTML-as-text (see the fields' own
+// comment: sanitizeAbstractHtml's output is exactly what these plain
+// <textarea>s already hold, so no conversion is needed) for a delegate
+// editing after REVISION_REQUESTED.
+function prefillAbstractFormForRevision(abs) {
+  document.getElementById('abstract-title').value = abs.title || '';
+  const formatInput = document.querySelector(`input[name="abstract-format"][value="${CSS.escape(abs.format || '')}"]`);
+  if (formatInput) formatInput.checked = true;
+  for (const id of ABSTRACT_SECTION_IDS) {
+    const el = document.getElementById(id);
+    const key = id.replace('abstract-', ''); // background, aim, methods, results, conclusion
+    if (el) { el.value = abs[key] || ''; autoResizeTextarea(el); }
+  }
+  abstractKeywords = (abs.keywords || '').split(',').map((k) => k.trim()).filter(Boolean);
+  renderAbstractKeywordPills();
+  const kwInput = document.getElementById('abstract-keywords-input');
+  if (kwInput) kwInput.value = '';
+  updateAbstractWordCount();
 }
 function closeModal(id) {
   document.getElementById(id).classList.add('hidden');
@@ -5274,6 +5321,7 @@ const ABSTRACT_STATUS_STYLES = {
   UNDER_REVIEW: 'bg-amber-100 text-amber-800',
   ACCEPTED: 'bg-emerald-100 text-emerald-800',
   REJECTED: 'bg-rose-100 text-rose-800',
+  REVISION_REQUESTED: 'bg-orange-100 text-orange-800',
 };
 
 // Shared header markup (title, author, status badge, last-action note, file
@@ -5289,6 +5337,7 @@ function abstractCardHeader(a) {
         </div>
         <div class="text-right shrink-0">
           <span class="${badge} text-xs px-2.5 py-1 rounded-full font-bold whitespace-nowrap">${esc(status.replace('_', ' '))}</span>
+          ${status === 'REVISION_REQUESTED' ? '<p class="text-[10px] text-orange-600 mt-1">Awaiting delegate resubmission</p>' : ''}
           ${a.last_action_by
             ? `<p class="text-[10px] text-slate-400 mt-1">by ${esc(a.last_action_by)} · ${esc(fmtAuditTime(a.last_action_at))}</p>`
             : ''
@@ -5307,7 +5356,14 @@ function abstractCardHeader(a) {
 // instead of bold.
 function abstractSectionsHtml(a) {
   const section = (label, html) => html ? `<div class="mb-2"><p class="text-[10px] font-bold text-slate-500 uppercase tracking-wide">${esc(label)}</p><p class="text-sm text-slate-700 whitespace-pre-wrap">${html}</p></div>` : '';
+  const revisionNote = a.status === 'REVISION_REQUESTED' && a.revision_note
+    ? `<div class="mb-3 bg-orange-50 border border-orange-200 rounded-lg p-3">
+         <p class="text-[10px] font-bold text-orange-700 uppercase tracking-wide">Corrections requested — awaiting resubmission</p>
+         <p class="text-sm text-orange-800 whitespace-pre-wrap mt-1">${esc(a.revision_note)}</p>
+       </div>`
+    : '';
   return `<div class="border-t border-slate-100 pt-3">
+    ${revisionNote}
     ${section('Background', a.background)}
     ${section('Aim', a.aim)}
     ${section('Methods', a.methods)}
@@ -5334,7 +5390,34 @@ function openAbstractReview(id) {
   if (body) body.innerHTML = abstractSectionsHtml(a);
   const actions = document.getElementById('abstract-review-modal-actions');
   if (actions) actions.dataset.id = a.id;
+  // Shared modal, reused per abstract -- collapse the revision note box and
+  // clear any text left over from a previous open.
+  const revisionBox = document.getElementById('abstract-revision-box');
+  const revisionNote = document.getElementById('abstract-revision-note');
+  if (revisionBox) revisionBox.classList.add('hidden');
+  if (revisionNote) revisionNote.value = '';
   openModal('modal-abstract-review');
+}
+
+function toggleAbstractRevisionBox() {
+  const box = document.getElementById('abstract-revision-box');
+  if (!box) return;
+  box.classList.toggle('hidden');
+  if (!box.classList.contains('hidden')) document.getElementById('abstract-revision-note').focus();
+}
+
+async function submitAbstractRevisionRequest() {
+  const actions = document.getElementById('abstract-review-modal-actions');
+  const id = actions && actions.dataset.id;
+  const note = document.getElementById('abstract-revision-note').value.trim();
+  if (!note) return showToast('Enter what needs to be corrected.');
+  const data = await (await fetch(`/api/abstracts/${encodeURIComponent(id)}/status`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'REVISION_REQUESTED', note }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not send this back for corrections.');
+  showToast('Sent back to the delegate for corrections.', 'success');
+  closeModal('modal-abstract-review');
+  renderBackendAbstracts();
 }
 
 async function renderBackendAbstracts() {

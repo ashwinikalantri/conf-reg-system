@@ -14,7 +14,21 @@
       <div id="abstract-review-modal-actions" class="flex flex-wrap gap-2 mt-4 pt-3 border-t border-slate-100">
         <button class="abstract-status-btn px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs" data-status="ACCEPTED">Approve</button>
         <button class="abstract-status-btn px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg text-xs" data-status="REJECTED">Reject</button>
+        <button type="button" onclick="toggleAbstractRevisionBox()" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-lg text-xs">Send Back for Corrections</button>
         <button class="abstract-status-btn px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg text-xs" data-status="UNDER_REVIEW">Reset</button>
+      </div>
+
+      <!-- Note is required server-side (see PUT /api/abstracts/:id/status) --
+           the delegate has no idea what to fix without it. Collapsed by
+           default so it doesn't compete with the one-click actions above for
+           the common case. -->
+      <div id="abstract-revision-box" class="hidden mt-3 pt-3 border-t border-slate-100">
+        <label class="block text-xs font-semibold text-slate-700 mb-1">What needs to be corrected? <span class="font-normal text-slate-400">(sent to the delegate by email)</span></label>
+        <textarea id="abstract-revision-note" rows="3" placeholder="e.g. Please clarify the sample size in Methods, and shorten Background to fit the word limit." class="w-full p-2.5 border border-slate-200 rounded-lg outline-none text-sm resize-none"></textarea>
+        <div class="flex justify-end gap-2 mt-2">
+          <button type="button" onclick="toggleAbstractRevisionBox()" class="px-3 py-1.5 border border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold rounded-lg text-xs">Cancel</button>
+          <button type="button" onclick="submitAbstractRevisionRequest()" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg text-xs">Send &amp; Notify Delegate</button>
+        </div>
       </div>
     </div>
   </div>
