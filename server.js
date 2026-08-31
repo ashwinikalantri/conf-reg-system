@@ -7468,13 +7468,29 @@ app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINAN
         // against the full credit, which stopped being a meaningful
         // comparison once a credit can legitimately back more than one
         // registration at less than its full amount each.
-        const totalLinked = creditLinks.reduce((sum, l) => sum + (l.amount || 0), 0);
+        //
+        // Summed on verified_amount, NOT amount: the question here is whether
+        // the CREDIT is fully accounted for, which is about what was
+        // allocated against it, not what the delegate originally claimed.
+        // Those differ whenever a claim was only partly covered -- a delegate
+        // claiming 2000 whose transfer was actually 750 has amount 2000 and
+        // verified_amount 750 against a 750 credit, and summing the claim made
+        // a perfectly reconciled credit report as a mismatch. Same precedence
+        // as allocatedForBankTxn(), the authority on what a credit has left.
+        const totalLinked = creditLinks.reduce(
+          (sum, l) => sum + (l.verified_amount != null ? l.verified_amount : (l.amount || 0)), 0);
         const amountOk = Math.abs(Number(t.credit) - totalLinked) < 0.5;
         for (const link of creditLinks) {
           const reg = regById.get(link.registration_id);
           if (!reg) continue; // linked to a registration with no UTR on file -- shouldn't happen, skip defensively
           matchedRegIds.add(reg.id);
-          matched.push({ ...reg, transaction: t, amountOk, linkedAmount: link.amount });
+          // This delegate's own PORTION of the credit -- what was allocated from
+          // it, not what they claimed. Sending the claim made a partly-covered
+          // payment render as "2,000 of 750".
+          matched.push({
+            ...reg, transaction: t, amountOk,
+            linkedAmount: link.verified_amount != null ? link.verified_amount : link.amount,
+          });
         }
         continue;
       }

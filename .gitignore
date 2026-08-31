@@ -41,3 +41,6 @@ npm-debug.log*
 .vscode/
 .idea/
 *.swp
+
+# Local DB snapshots taken before risky migrations (PII; see note above)
+backups/
