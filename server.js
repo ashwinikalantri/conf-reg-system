@@ -1151,6 +1151,19 @@ const feeCategoriesMigrationReady = new Promise((resolve) => { resolveFeeCategor
 const registrationsMigrationReady = new Promise((resolve) => { resolveRegistrationsMigration = resolve; });
 
 db.serialize(() => {
+  // USER KEY: phone_number is this app's account identifier -- the primary
+  // key here and the join column in registrations, abstracts, sessions,
+  // payment_transactions, group_members and the audit trail. Since email-only
+  // signup exists, it is no longer necessarily a phone number: treat it as an
+  // opaque key, and read the actual contact details from the `phone` and
+  // `email` columns instead.
+  //
+  // It still HOLDS the phone number for every account created through the
+  // phone flow (including all 300-odd that predate email signup), which is
+  // why no data migration was needed and why admin screens and audit rows
+  // still read naturally. Email-only accounts get a synthetic key instead
+  // (see newUserKey) -- deliberately not the email address itself, so that
+  // changing your email never has to cascade across six tables.
   db.run(`
     CREATE TABLE IF NOT EXISTS users (
       phone_number TEXT PRIMARY KEY,
@@ -1178,7 +1191,30 @@ db.serialize(() => {
    // OTP still works either way, and registration still requires OTP to
    // prove phone ownership regardless of whether a password is also set.
    'ALTER TABLE users ADD COLUMN password_hash TEXT',
+   // --- IDENTITY MODEL (see USER KEY note on the users table above) --------
+   // The actual phone number, as a contact channel rather than an identity.
+   // Distinct from phone_number, which is now an opaque account key: for
+   // every pre-existing account and every phone-based signup the two hold
+   // the same 10-digit value (so nothing about existing data or joins
+   // changes), but an email-only signup has a synthetic key in
+   // phone_number and NULL here until they add a number.
+   'ALTER TABLE users ADD COLUMN phone TEXT',
+   // Which channels this account has actually proven control of, by
+   // answering an OTP sent to them. At least one must be verified for the
+   // account to be reachable at all -- see resolveLoginIdentifier(), which
+   // refuses to send a login OTP to an unverified channel.
+   'ALTER TABLE users ADD COLUMN phone_verified INTEGER DEFAULT 0',
+   'ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0',
   ].forEach((sql) => db.run(sql, () => {}));
+
+  // One-time identity backfill for accounts predating the columns above.
+  // Every such account signed up through the phone+OTP flow, which was the
+  // only way in, so its phone_number is a real, OTP-proven number: copy it
+  // into the new phone column and mark it verified. Emails are NOT marked
+  // verified -- they were only ever self-asserted at signup, never proven,
+  // which is exactly why existing users get asked to verify theirs at next
+  // login. Guarded on phone IS NULL so it only ever runs once.
+  db.run("UPDATE users SET phone = phone_number, phone_verified = 1 WHERE phone IS NULL AND phone_number GLOB '[0-9]*'", () => {});
 
   // One-time backfill of created_at (account signup time) for rows predating
   // the column. The true original signup is lost for old accounts (12h
@@ -1271,16 +1307,43 @@ db.serialize(() => {
     }
   });
 
-  // One-time password codes, keyed by phone (one active code per number).
+  // One-time password codes, keyed by DESTINATION -- a phone number or an
+  // email address (one active code per destination), since an OTP can now
+  // be sent to either channel. `channel` is 'sms' or 'email', recorded so a
+  // consuming endpoint can tell which contact method a code actually proves.
+  //
   db.run(`
     CREATE TABLE IF NOT EXISTS otp_codes (
-      phone_number TEXT PRIMARY KEY,
+      destination TEXT PRIMARY KEY,
+      channel TEXT NOT NULL,
       otp_hash TEXT NOT NULL,
       expires_at INTEGER NOT NULL,
       attempts INTEGER DEFAULT 0,
       last_sent_at INTEGER NOT NULL
     )
   `);
+  // The pre-email-signup table was keyed by phone_number and had no channel
+  // column. Replace it in place, ONCE -- detected by looking for the old
+  // column rather than dropping unconditionally, which would wipe live
+  // in-flight codes on every restart. Nothing durable is lost either way:
+  // OTPs live 5 minutes (OTP_TTL_MS) and are single-use, so at worst someone
+  // mid-login when this first deploys requests a fresh code.
+  db.all('PRAGMA table_info(otp_codes)', (err, cols) => {
+    if (err || !cols || !cols.some((c) => c.name === 'phone_number')) return;
+    db.serialize(() => {
+      db.run('DROP TABLE otp_codes');
+      db.run(`
+        CREATE TABLE otp_codes (
+          destination TEXT PRIMARY KEY,
+          channel TEXT NOT NULL,
+          otp_hash TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          attempts INTEGER DEFAULT 0,
+          last_sent_at INTEGER NOT NULL
+        )
+      `);
+    });
+  });
 
   // Server-side sessions. Only the hash of the cookie token is stored.
   db.run(`
@@ -2047,26 +2110,182 @@ setInterval(() => {
 }, 60 * 60 * 1000).unref();
 
 // --- AUTH CORE ----------------------------------------------------------
-// Validate and burn an OTP. Returns { ok: true } or { ok: false, error }.
-async function consumeOtp(phone, otp) {
-  const row = await dbGet('SELECT * FROM otp_codes WHERE phone_number = ?', [phone]);
+// --- IDENTITY -----------------------------------------------------------
+// A signup identifies itself by a phone number, an email address, or both.
+// These helpers are the single place that decides which is which, so every
+// endpoint agrees on what a given string is.
+const PHONE_RE = /^\d{10}$/;
+// Pragmatic "good enough" email shape, not full RFC 5322 -- mirrored
+// client-side in public/app.js. Used for every address this app accepts.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const isPhoneValue = (v) => PHONE_RE.test(String(v || '').trim());
+const isEmailValue = (v) => EMAIL_RE.test(String(v || '').trim());
+// Emails are compared and stored case-insensitively: an OTP sent to
+// Foo@Bar.com must satisfy a login as foo@bar.com, and the uniqueness check
+// below must catch both as the same address.
+const normalizeEmail = (v) => String(v || '').trim().toLowerCase();
+const channelOf = (destination) => (isPhoneValue(destination) ? 'sms' : (isEmailValue(destination) ? 'email' : null));
+
+// The account key for a signup with no phone number to use as one. Prefixed
+// so it can never collide with, or be mistaken for, a real 10-digit number
+// -- see the USER KEY note on the users table.
+function newUserKey() {
+  return `u_${crypto.randomBytes(9).toString('hex')}`;
+}
+
+// What to show in a "Mobile" column or on a receipt. Most rows carry the
+// phone number in the account key itself, so this is usually just that
+// value; an email-only account has a synthetic key there, which is an
+// internal identifier and must never be printed as if it were a number.
+// Falls back to the explicit `phone` column when a row carries one.
+function displayPhone(row) {
+  if (!row) return '';
+  if (row.phone && isPhoneValue(row.phone)) return row.phone;
+  const key = row.phone_number;
+  return isPhoneValue(key) ? key : '';
+}
+
+// Look up the single account reachable at this phone/email, or explain why
+// there isn't one. Email is matched case-insensitively against users.email.
+//
+// An email shared by more than one account is deliberately refused rather
+// than resolved to an arbitrary one: two real delegates signed up twice with
+// the same address before email was ever an identifier, and picking either
+// would be a guess about whose account someone is logging into. They sign in
+// by phone, which is unambiguous. New signups can't reuse an address at all
+// (see emailTakenBy), so this only ever affects those pre-existing rows.
+async function resolveAccountByIdentifier(identifier) {
+  const id = String(identifier || '').trim();
+  if (isPhoneValue(id)) {
+    // Match the phone CHANNEL, not the account key -- an email-only account
+    // that later added a number has it in `phone` while its key is synthetic.
+    // COALESCE covers rows whose phone column predates the identity backfill.
+    const rows = await dbAll('SELECT * FROM users WHERE COALESCE(phone, phone_number) = ?', [id]);
+    if (!rows.length) return { error: 'notRegistered' };
+    return { user: rows[0], channel: 'sms', destination: id };
+  }
+  if (isEmailValue(id)) {
+    const rows = await dbAll('SELECT * FROM users WHERE LOWER(email) = ?', [normalizeEmail(id)]);
+    if (!rows.length) return { error: 'notRegistered' };
+    if (rows.length > 1) return { error: 'ambiguousEmail' };
+    return { user: rows[0], channel: 'email', destination: normalizeEmail(id) };
+  }
+  return { error: 'invalid' };
+}
+
+// Which account, if any, already holds this email -- the uniqueness gate for
+// signup and for adding/changing an address. Optionally excludes one account
+// key, so a user re-saving their own unchanged address isn't blocked by
+// themselves.
+async function emailTakenBy(email, exceptKey) {
+  const row = await dbGet(
+    'SELECT phone_number FROM users WHERE LOWER(email) = ? AND phone_number != ?',
+    [normalizeEmail(email), exceptKey || '']
+  );
+  return row ? row.phone_number : null;
+}
+
+// --- OTP ----------------------------------------------------------------
+// Signup OTPs are necessarily open -- no account exists yet to authorise
+// against -- which means /api/otp/request will send an email to any address
+// given to it. The per-destination throttle below doesn't bound that on its
+// own, since an abuser just rotates addresses, and a flood of mail to
+// strangers is what gets an SES sending domain throttled or suspended --
+// taking receipts, reminders and digests down with it.
+//
+// So: a rolling hourly ceiling on OTP emails, well above anything this
+// conference generates (a few hundred delegates in total) but low enough to
+// stop the damage. SMS is deliberately not capped here -- it has a per
+// message cost and the gateway enforces its own limits.
+const OTP_EMAIL_HOURLY_CAP = 200;
+let otpEmailWindowStart = Date.now();
+let otpEmailsThisHour = 0;
+function otpEmailBudgetAvailable() {
+  const now = Date.now();
+  if (now - otpEmailWindowStart >= 60 * 60 * 1000) {
+    otpEmailWindowStart = now;
+    otpEmailsThisHour = 0;
+  }
+  return otpEmailsThisHour < OTP_EMAIL_HOURLY_CAP;
+}
+
+// Generate, store and deliver a one-time code to either channel. Returns
+// { ok, devOtp?, delivered } -- devOtp only when OTP_ECHO is on AND nothing
+// was actually sent, exactly as the phone-only flow behaved.
+async function issueOtp(destination) {
+  const channel = channelOf(destination);
+  if (!channel) return { ok: false, error: 'Enter a valid mobile number or email address.' };
+  const dest = channel === 'email' ? normalizeEmail(destination) : String(destination).trim();
+
+  const existing = await dbGet('SELECT last_sent_at FROM otp_codes WHERE destination = ?', [dest]);
+  if (existing && Date.now() - existing.last_sent_at < OTP_RESEND_MS) {
+    const wait = Math.ceil((OTP_RESEND_MS - (Date.now() - existing.last_sent_at)) / 1000);
+    return { ok: false, error: `Please wait ${wait}s before requesting another OTP.` };
+  }
+
+  const otp = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  const now = Date.now();
+  await dbRun(
+    `INSERT INTO otp_codes (destination, channel, otp_hash, expires_at, attempts, last_sent_at)
+     VALUES (?, ?, ?, ?, 0, ?)
+     ON CONFLICT(destination) DO UPDATE SET
+       channel = excluded.channel,
+       otp_hash = excluded.otp_hash,
+       expires_at = excluded.expires_at,
+       attempts = 0,
+       last_sent_at = excluded.last_sent_at`,
+    [dest, channel, sha256(`${dest}:${otp}`), now + OTP_TTL_MS, now]
+  );
+
+  console.log(`[OTP] ${dest} -> ${otp} (valid ${OTP_TTL_MS / 60000} min, via ${channel})`);
+  let delivered = false;
+  if (channel === 'sms') {
+    delivered = smsEnabled() && notifyToggle.sms;
+    if (delivered) sendOtpSms(dest, otp); // fire-and-forget; logs on failure
+  } else {
+    if (!otpEmailBudgetAvailable()) {
+      console.error(`[OTP] hourly email cap (${OTP_EMAIL_HOURLY_CAP}) reached -- refusing OTP to ${dest}`);
+      return { ok: false, error: 'Too many verification emails have been sent recently. Please try again later, or use your mobile number.' };
+    }
+    delivered = emailEnabled() && notifyToggle.email;
+    if (delivered) {
+      otpEmailsThisHour++;
+      sendEmail(dest, `Your ${CONFERENCE.acronym || 'conference'} verification code`,
+        emailWrap('Your verification code',
+          `<p>Use this code to verify your email address:</p>
+           <p style="font-size:1.8rem;font-weight:800;letter-spacing:.25em;text-align:center;margin:1.25rem 0">${escapeHtml(otp)}</p>
+           <p>It expires in ${OTP_TTL_MS / 60000} minutes. If you didn't request it, you can ignore this email.</p>`));
+    }
+  }
+
+  // Never echo a code that was actually delivered -- same rule the
+  // phone-only flow used, now applying to both channels.
+  return { ok: true, delivered, devOtp: OTP_ECHO && !delivered ? otp : undefined };
+}
+
+// Validate and burn an OTP for one destination. Returns { ok, channel } or
+// { ok: false, error }.
+async function consumeOtp(destination, otp) {
+  const channel = channelOf(destination);
+  const dest = channel === 'email' ? normalizeEmail(destination) : String(destination || '').trim();
+  const row = await dbGet('SELECT * FROM otp_codes WHERE destination = ?', [dest]);
   if (!row) return { ok: false, error: 'Please request an OTP first.' };
 
   if (Date.now() > row.expires_at) {
-    await dbRun('DELETE FROM otp_codes WHERE phone_number = ?', [phone]);
+    await dbRun('DELETE FROM otp_codes WHERE destination = ?', [dest]);
     return { ok: false, error: 'OTP expired. Please request a new one.' };
   }
   if (row.attempts >= OTP_MAX_ATTEMPTS) {
-    await dbRun('DELETE FROM otp_codes WHERE phone_number = ?', [phone]);
+    await dbRun('DELETE FROM otp_codes WHERE destination = ?', [dest]);
     return { ok: false, error: 'Too many incorrect attempts. Please request a new OTP.' };
   }
-  if (!safeEqual(row.otp_hash, sha256(`${phone}:${otp}`))) {
-    await dbRun('UPDATE otp_codes SET attempts = attempts + 1 WHERE phone_number = ?', [phone]);
+  if (!safeEqual(row.otp_hash, sha256(`${dest}:${otp}`))) {
+    await dbRun('UPDATE otp_codes SET attempts = attempts + 1 WHERE destination = ?', [dest]);
     return { ok: false, error: 'Incorrect OTP.' };
   }
 
-  await dbRun('DELETE FROM otp_codes WHERE phone_number = ?', [phone]); // single use
-  return { ok: true };
+  await dbRun('DELETE FROM otp_codes WHERE destination = ?', [dest]); // single use
+  return { ok: true, channel: row.channel };
 }
 
 // Issue a session and attach its cookie to the response.
@@ -2297,42 +2516,76 @@ app.get('/api/directory/suggestions', async (req, res, next) => {
 
 // Request an OTP. Generates a random code, stores only its hash, and
 // (outside production) returns/logs it since there is no SMS gateway.
+// `destination` is a 10-digit phone or an email address; `phone` is still
+// accepted as the old field name so nothing breaks mid-deploy.
+//
+// For SIGNUP this is deliberately open: proving control of any address is
+// the point, and no account need exist yet. For LOGIN the client uses
+// /api/auth/login-otp instead, which additionally refuses to send a code to
+// a channel the target account hasn't verified.
 app.post('/api/otp/request', async (req, res, next) => {
   try {
-    const { phone } = req.body;
-    if (!phone || !/^\d{10}$/.test(phone)) {
-      return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+    const destination = req.body.destination || req.body.phone;
+    const result = await issueOtp(destination);
+    if (!result.ok) {
+      return res.status(result.error.startsWith('Please wait') ? 429 : 400).json({ success: false, error: result.error });
+    }
+    res.json({
+      success: true,
+      channel: channelOf(destination),
+      // smsSent kept for the existing client; delivered covers both channels.
+      smsSent: channelOf(destination) === 'sms' && result.delivered,
+      delivered: result.delivered,
+      ...(result.devOtp ? { devOtp: result.devOtp } : {}),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Request a LOGIN code. Unlike /api/otp/request above, this resolves the
+// identifier to a real account first and refuses to send unless that
+// account has already verified the channel being used -- "login only with
+// OTP from a verified mode". Without that check, an address someone merely
+// typed into their profile (never proven) would be enough to sign in.
+app.post('/api/auth/login-otp', async (req, res, next) => {
+  try {
+    const identifier = String(req.body.identifier || '').trim();
+    const found = await resolveAccountByIdentifier(identifier);
+
+    if (found.error === 'invalid') {
+      return res.status(400).json({ success: false, error: 'Enter a valid mobile number or email address.' });
+    }
+    // Tells the client to switch to sign-up, same contract as /api/auth/login.
+    if (found.error === 'notRegistered') return res.json({ success: false, notRegistered: true });
+    if (found.error === 'ambiguousEmail') {
+      return res.status(409).json({
+        success: false,
+        error: 'More than one account uses this email address. Please sign in with your mobile number instead.',
+      });
     }
 
-    const existing = await dbGet('SELECT last_sent_at FROM otp_codes WHERE phone_number = ?', [phone]);
-    if (existing && Date.now() - existing.last_sent_at < OTP_RESEND_MS) {
-      const wait = Math.ceil((OTP_RESEND_MS - (Date.now() - existing.last_sent_at)) / 1000);
-      return res.status(429).json({ success: false, error: `Please wait ${wait}s before requesting another OTP.` });
+    const { user, channel, destination } = found;
+    const verified = channel === 'sms' ? user.phone_verified : user.email_verified;
+    if (!verified) {
+      return res.status(403).json({
+        success: false,
+        error: channel === 'email'
+          ? 'This email address has not been verified yet. Sign in with your mobile number, and you can verify your email right after.'
+          : 'This mobile number has not been verified yet. Sign in with your email address instead.',
+      });
     }
 
-    const otp = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
-    const now = Date.now();
-    await dbRun(
-      `INSERT INTO otp_codes (phone_number, otp_hash, expires_at, attempts, last_sent_at)
-       VALUES (?, ?, ?, 0, ?)
-       ON CONFLICT(phone_number) DO UPDATE SET
-         otp_hash = excluded.otp_hash,
-         expires_at = excluded.expires_at,
-         attempts = 0,
-         last_sent_at = excluded.last_sent_at`,
-      [phone, sha256(`${phone}:${otp}`), now + OTP_TTL_MS, now]
-    );
-
-    console.log(`[OTP] ${phone} -> ${otp} (valid ${OTP_TTL_MS / 60000} min)`);
-    // Reflect the runtime SMS toggle: if a super admin has turned SMS off, the
-    // OTP isn't sent, and (in dev) it's echoed so login still works.
-    const smsWillSend = smsEnabled() && notifyToggle.sms;
-    if (smsWillSend) sendOtpSms(phone, otp); // fire-and-forget; logs on failure
-
-    const payload = { success: true, smsSent: smsWillSend };
-    // Never echo the OTP once SMS delivery is actually happening.
-    if (OTP_ECHO && !smsWillSend) payload.devOtp = otp;
-    res.json(payload);
+    const result = await issueOtp(destination);
+    if (!result.ok) {
+      return res.status(result.error.startsWith('Please wait') ? 429 : 400).json({ success: false, error: result.error });
+    }
+    res.json({
+      success: true,
+      channel,
+      delivered: result.delivered,
+      ...(result.devOtp ? { devOtp: result.devOtp } : {}),
+    });
   } catch (err) {
     next(err);
   }
@@ -2363,8 +2616,9 @@ app.post('/api/setup/create-admin', async (req, res, next) => {
     const nameVal = titleCase(String(name).trim());
     const passwordHash = password ? hashPassword(String(password)) : null;
     await dbRun(
-      'INSERT INTO users (phone_number, full_name, email, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-      [phone, nameVal, emailVal, 'SUPER_ADMIN', passwordHash, Date.now()]
+      `INSERT INTO users (phone_number, phone, phone_verified, full_name, email, role, password_hash, created_at)
+       VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
+      [phone, phone, nameVal, emailVal, 'SUPER_ADMIN', passwordHash, Date.now()]
     );
     // Set the very moment the account exists, not deferred to the wizard's
     // last step -- the remaining steps (conference/UPI/SMS/Email) are just
@@ -2388,17 +2642,34 @@ app.post('/api/setup/create-admin', async (req, res, next) => {
 });
 
 // Register (or update own profile) after OTP verification, then log in.
+//
+// A signup supplies a phone, an email, or both, and proves at least ONE of
+// them with an OTP (phoneOtp / emailOtp). Whichever is proven is recorded as
+// verified; the other is kept as an unverified contact detail the user can
+// verify later (see /api/auth/verify-contact). A password is required --
+// with email-only accounts there is no guaranteed SMS fallback, so an
+// account with neither a password nor a verified channel would be
+// unreachable.
 app.post('/api/auth/register', async (req, res, next) => {
   try {
-    const { phone, otp, salutation, name, designation, institute, pincode, state, district, age, gender, email, password } = req.body;
-    if (!phone || !/^\d{10}$/.test(phone)) {
+    const { otp, phoneOtp, emailOtp, salutation, name, designation, institute, pincode, state, district, age, gender, password } = req.body;
+    const phoneVal = String(req.body.phone || '').trim();
+    const emailRaw = String(req.body.email || '').trim();
+
+    if (phoneVal && !isPhoneValue(phoneVal)) {
       return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+    }
+    if (emailRaw && !isEmailValue(emailRaw)) {
+      return res.status(400).json({ success: false, error: 'Please enter a valid email address.' });
+    }
+    if (!phoneVal && !emailRaw) {
+      return res.status(400).json({ success: false, error: 'Enter a mobile number or an email address.' });
     }
     if (!name) {
       return res.status(400).json({ success: false, error: 'Full name is required.' });
     }
-    if (password && String(password).length < 8) {
-      return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' });
+    if (!password || String(password).length < 8) {
+      return res.status(400).json({ success: false, error: 'Please set a password of at least 8 characters.' });
     }
     // Always normalise the name to Title Case, so "pratiksha vasantrao
     // meshram", "JOHN SMITH", or "pratiksha Vasantrao meshram" all become
@@ -2411,28 +2682,78 @@ app.post('/api/auth/register', async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Please enter a valid age.' });
     }
     const genderVal = ['Male', 'Female', 'Other'].includes(gender) ? gender : null;
-    const emailVal = email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim()) ? String(email).trim() : null;
-    if (email && !emailVal) {
-      return res.status(400).json({ success: false, error: 'Please enter a valid email address.' });
+    const emailVal = emailRaw ? normalizeEmail(emailRaw) : null;
+
+    // Prove at least one channel. `otp` is the legacy single-code field and
+    // is treated as the phone code, so an older client keeps working.
+    const phoneCode = phoneOtp || otp;
+    let phoneOk = false;
+    let emailOk = false;
+    if (phoneVal && phoneCode) {
+      const c = await consumeOtp(phoneVal, phoneCode);
+      if (!c.ok) return res.status(400).json({ success: false, error: `Mobile OTP: ${c.error}` });
+      phoneOk = true;
+    }
+    if (emailVal && emailOtp) {
+      const c = await consumeOtp(emailVal, emailOtp);
+      if (!c.ok) return res.status(400).json({ success: false, error: `Email OTP: ${c.error}` });
+      emailOk = true;
+    }
+    if (!phoneOk && !emailOk) {
+      return res.status(400).json({ success: false, error: 'Verify your mobile number or your email address with an OTP to continue.' });
     }
 
-    const check = await consumeOtp(phone, otp);
-    if (!check.ok) return res.status(400).json({ success: false, error: check.error });
+    // Existing account for whichever channel was proven. An OTP proves
+    // control of that channel, so updating the account reachable at it is
+    // safe -- this is the same "re-register to update your profile" path the
+    // phone-only flow had, now reachable from either side.
+    const byPhone = phoneOk && phoneVal
+      ? await dbGet('SELECT * FROM users WHERE COALESCE(phone, phone_number) = ?', [phoneVal]) : null;
+    const byEmailRows = emailOk && emailVal
+      ? await dbAll('SELECT * FROM users WHERE LOWER(email) = ?', [emailVal]) : [];
+    if (byEmailRows.length > 1) {
+      return res.status(409).json({ success: false, error: 'More than one account already uses this email address. Please contact the organisers.' });
+    }
+    const existing = byPhone || byEmailRows[0] || null;
 
-    // OTP proves control of this number, so upserting the caller's own
-    // record is safe. Role is never set from the request body. Password is
-    // optional and independent of the OTP proof above -- registration (and
-    // re-registration, via this same upsert) always verifies the phone by
-    // OTP regardless of whether a password is also being set; a password
-    // is purely an alternative login method for next time, see
-    // POST /api/auth/login-password. COALESCE keeps any existing password
-    // on a re-registration call that didn't include one, rather than
-    // silently wiping it.
-    const passwordHash = password ? hashPassword(String(password)) : null;
+    // One address per account: without this, a new signup could claim an
+    // address already on someone else's account and then log in as neither
+    // (resolveAccountByIdentifier refuses an ambiguous email).
+    if (emailVal) {
+      const takenBy = await emailTakenBy(emailVal, existing ? existing.phone_number : null);
+      if (takenBy) {
+        return res.status(409).json({ success: false, error: 'An account with this email address already exists. Please sign in instead.' });
+      }
+    }
+    // Same for the phone number, which additionally doubles as the account
+    // key for phone signups.
+    if (phoneVal) {
+      const phoneTaken = await dbGet(
+        'SELECT phone_number FROM users WHERE COALESCE(phone, phone_number) = ? AND phone_number != ?',
+        [phoneVal, existing ? existing.phone_number : '']);
+      if (phoneTaken) {
+        return res.status(409).json({ success: false, error: 'An account with this mobile number already exists. Please sign in instead.' });
+      }
+    }
+
+    // Account key: the phone number when there is one (keeps every existing
+    // account and every phone signup readable and unchanged), otherwise a
+    // synthetic key -- see the USER KEY note on the users table.
+    const userKey = existing ? existing.phone_number : (phoneVal || newUserKey());
+    const passwordHash = hashPassword(String(password));
+
+    // Verification is sticky: a channel already proven stays proven even if
+    // this call only re-proved the other one.
+    const phoneVerified = (phoneOk || (existing && existing.phone_verified)) ? 1 : 0;
+    const emailVerified = (emailOk || (existing && existing.email_verified && normalizeEmail(existing.email) === emailVal)) ? 1 : 0;
+
     await dbRun(
-      `INSERT INTO users (phone_number, salutation, full_name, designation, institution, pincode, state, district, age, gender, email, password_hash, role, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE', ?)
+      `INSERT INTO users (phone_number, phone, phone_verified, email_verified, salutation, full_name, designation, institution, pincode, state, district, age, gender, email, password_hash, role, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE', ?)
        ON CONFLICT(phone_number) DO UPDATE SET
+         phone = excluded.phone,
+         phone_verified = excluded.phone_verified,
+         email_verified = excluded.email_verified,
          salutation = excluded.salutation,
          full_name = excluded.full_name,
          designation = excluded.designation,
@@ -2443,39 +2764,56 @@ app.post('/api/auth/register', async (req, res, next) => {
          age = excluded.age,
          gender = excluded.gender,
          email = excluded.email,
-         password_hash = COALESCE(excluded.password_hash, users.password_hash),
+         password_hash = excluded.password_hash,
          created_at = COALESCE(users.created_at, excluded.created_at)`,
-      [phone, salutationVal, nameVal, designation, institute, pincode, state, district, ageNum, genderVal, emailVal, passwordHash, Date.now()]
+      [userKey, phoneVal || null, phoneVerified, emailVerified, salutationVal, nameVal, designation, institute,
+       pincode, state, district, ageNum, genderVal, emailVal, passwordHash, Date.now()]
     );
 
-    await assignUserRegNumber(phone); // ensure a registration number exists
-    const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
-    await startSession(phone, user.role, res);
-    recordLogin(phone, user.full_name, user.role); // fire-and-forget
+    await assignUserRegNumber(userKey); // ensure a registration number exists
+    const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [userKey]);
+    await startSession(userKey, user.role, res);
+    recordLogin(userKey, user.full_name, user.role); // fire-and-forget
     res.json({ success: true, user: omitPasswordHash(user) });
   } catch (err) {
     next(err);
   }
 });
 
-// Log in an existing user after OTP verification.
+// Log in an existing user after OTP verification. `identifier` is a phone
+// number or an email address (`phone` still accepted as the old field name).
+// The channel must already be verified on that account -- re-checked here
+// and not just in /api/auth/login-otp, since nothing stops a client from
+// calling this endpoint directly with a code obtained elsewhere.
 app.post('/api/auth/login', async (req, res, next) => {
   try {
-    const { phone, otp } = req.body;
-    if (!phone || !/^\d{10}$/.test(phone)) {
-      return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+    const identifier = String(req.body.identifier || req.body.phone || '').trim();
+    const { otp } = req.body;
+    const found = await resolveAccountByIdentifier(identifier);
+
+    if (found.error === 'invalid') {
+      return res.status(400).json({ success: false, error: 'Enter a valid mobile number or email address.' });
+    }
+    // Tell the client to switch to sign-up. Done before consuming the OTP so
+    // the same code remains valid there.
+    if (found.error === 'notRegistered') return res.json({ success: false, notRegistered: true });
+    if (found.error === 'ambiguousEmail') {
+      return res.status(409).json({
+        success: false,
+        error: 'More than one account uses this email address. Please sign in with your mobile number instead.',
+      });
     }
 
-    // If the number isn't registered, tell the client to switch to sign-up.
-    // Done before consuming the OTP so the same code remains valid there.
-    const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
-    if (!user) return res.json({ success: false, notRegistered: true });
+    const { user, channel, destination } = found;
+    if (!(channel === 'sms' ? user.phone_verified : user.email_verified)) {
+      return res.status(403).json({ success: false, error: 'That contact method has not been verified for this account.' });
+    }
 
-    const check = await consumeOtp(phone, otp);
+    const check = await consumeOtp(destination, otp);
     if (!check.ok) return res.status(400).json({ success: false, error: check.error });
 
-    await startSession(phone, user.role, res);
-    recordLogin(phone, user.full_name, user.role); // fire-and-forget
+    await startSession(user.phone_number, user.role, res);
+    recordLogin(user.phone_number, user.full_name, user.role); // fire-and-forget
     res.json({ success: true, user: omitPasswordHash(user) });
   } catch (err) {
     next(err);
@@ -2484,37 +2822,46 @@ app.post('/api/auth/login', async (req, res, next) => {
 
 // Log in with a password instead of OTP -- an alternative for any account
 // that has one set (see hashPassword/verifyPassword and POST
-// /api/auth/set-password), never a requirement. Registration itself is
-// unaffected: a phone number is still only ever verified by OTP, at sign-up
-// time -- this endpoint only ever runs against an ALREADY-registered,
-// already-OTP-verified account.
+// /api/auth/set-password). `identifier` is a phone number or an email
+// address (`phone` still accepted as the old field name).
+//
+// Unlike OTP login this does NOT require the identifier's channel to be
+// verified: the password itself is the proof of identity, and the channel is
+// only being used to name the account. An unverified address can't be used
+// to RECEIVE anything here, so there's nothing to hijack.
 app.post('/api/auth/login-password', async (req, res, next) => {
   try {
-    const { phone, password } = req.body;
-    if (!phone || !/^\d{10}$/.test(phone)) {
-      return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+    const identifier = String(req.body.identifier || req.body.phone || '').trim();
+    const { password } = req.body;
+    if (!isPhoneValue(identifier) && !isEmailValue(identifier)) {
+      return res.status(400).json({ success: false, error: 'Enter a valid mobile number or email address.' });
     }
     if (!password) {
       return res.status(400).json({ success: false, error: 'Password is required.' });
     }
 
-    const attempt = passwordLoginAttempts.get(phone);
+    const attemptKey = isEmailValue(identifier) ? normalizeEmail(identifier) : identifier;
+    const attempt = passwordLoginAttempts.get(attemptKey);
     if (attempt && attempt.lockUntil && Date.now() < attempt.lockUntil) {
       const mins = Math.ceil((attempt.lockUntil - Date.now()) / 60000);
       return res.status(429).json({ success: false, error: `Too many attempts. Try again in ${mins} minute(s), or use OTP instead.` });
     }
 
-    const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
+    const found = await resolveAccountByIdentifier(identifier);
+    const user = found.user;
     const ok = user && user.password_hash && verifyPassword(password, user.password_hash);
     if (!ok) {
       const count = (attempt ? attempt.count : 0) + 1;
       const next = { count, lockUntil: count >= PASSWORD_MAX_ATTEMPTS ? Date.now() + PASSWORD_LOCKOUT_MS : null };
-      passwordLoginAttempts.set(phone, next);
-      // Same error either way -- an unregistered phone and a wrong password
-      // for a real one are indistinguishable from the outside, on purpose.
-      return res.status(401).json({ success: false, error: 'Incorrect phone number or password.' });
+      passwordLoginAttempts.set(attemptKey, next);
+      // Same error either way -- an unregistered identifier and a wrong
+      // password for a real one are indistinguishable from the outside, on
+      // purpose. (An email shared by two accounts lands here too, rather
+      // than leaking that it matched more than one.)
+      return res.status(401).json({ success: false, error: 'Incorrect mobile number / email or password.' });
     }
-    passwordLoginAttempts.delete(phone);
+    passwordLoginAttempts.delete(attemptKey);
+    const phone = user.phone_number;
 
     await startSession(phone, user.role, res);
     recordLogin(phone, user.full_name, user.role); // fire-and-forget
@@ -2537,6 +2884,84 @@ app.post('/api/auth/set-password', requireAuth, async (req, res, next) => {
     }
     await dbRun('UPDATE users SET password_hash = ? WHERE phone_number = ?', [hashPassword(String(password)), req.session.phone]);
     res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- VERIFY A CONTACT CHANNEL ON THE CALLER'S OWN ACCOUNT ----------------
+// Two steps, both requiring a live session: request a code to an address,
+// then confirm it. This is how the ~300 accounts that predate email
+// verification get their address proven (prompted at next login), and how
+// anyone adds or changes a phone/email afterwards.
+//
+// The address is taken from the REQUEST, not from the stored record, so the
+// same flow covers "verify the address already on file" and "replace it with
+// one I can actually receive mail at".
+app.post('/api/auth/verify-contact/request', requireAuth, async (req, res, next) => {
+  try {
+    const channel = req.body.channel === 'sms' ? 'sms' : 'email';
+    const value = String(req.body.value || '').trim();
+    if (channel === 'email' && !isEmailValue(value)) {
+      return res.status(400).json({ success: false, error: 'Please enter a valid email address.' });
+    }
+    if (channel === 'sms' && !isPhoneValue(value)) {
+      return res.status(400).json({ success: false, error: 'Please enter a valid 10-digit mobile number.' });
+    }
+
+    // Can't claim a channel that already belongs to someone else.
+    const taken = channel === 'email'
+      ? await emailTakenBy(value, req.session.phone)
+      : (await dbGet('SELECT phone_number FROM users WHERE COALESCE(phone, phone_number) = ? AND phone_number != ?',
+          [value, req.session.phone]) || {}).phone_number;
+    if (taken) {
+      return res.status(409).json({
+        success: false,
+        error: channel === 'email'
+          ? 'Another account already uses this email address.'
+          : 'Another account already uses this mobile number.',
+      });
+    }
+
+    const result = await issueOtp(value);
+    if (!result.ok) {
+      return res.status(result.error.startsWith('Please wait') ? 429 : 400).json({ success: false, error: result.error });
+    }
+    res.json({ success: true, delivered: result.delivered, ...(result.devOtp ? { devOtp: result.devOtp } : {}) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/auth/verify-contact/confirm', requireAuth, async (req, res, next) => {
+  try {
+    const channel = req.body.channel === 'sms' ? 'sms' : 'email';
+    const value = String(req.body.value || '').trim();
+    const { otp } = req.body;
+    if (channelOf(value) !== channel) {
+      return res.status(400).json({ success: false, error: 'That does not look like a valid contact detail.' });
+    }
+
+    // Re-checked at confirm time too: the request step's check could have
+    // been won by another account in between.
+    const taken = channel === 'email'
+      ? await emailTakenBy(value, req.session.phone)
+      : (await dbGet('SELECT phone_number FROM users WHERE COALESCE(phone, phone_number) = ? AND phone_number != ?',
+          [value, req.session.phone]) || {}).phone_number;
+    if (taken) {
+      return res.status(409).json({ success: false, error: 'Another account already uses that contact detail.' });
+    }
+
+    const check = await consumeOtp(value, otp);
+    if (!check.ok) return res.status(400).json({ success: false, error: check.error });
+
+    if (channel === 'email') {
+      await dbRun('UPDATE users SET email = ?, email_verified = 1 WHERE phone_number = ?', [normalizeEmail(value), req.session.phone]);
+    } else {
+      await dbRun('UPDATE users SET phone = ?, phone_verified = 1 WHERE phone_number = ?', [value, req.session.phone]);
+    }
+    const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [req.session.phone]);
+    res.json({ success: true, user: omitPasswordHash(user) });
   } catch (err) {
     next(err);
   }
@@ -3400,7 +3825,7 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
         })())}
         ${row('Designation', user ? user.designation : '')}
         ${row('Institution', user ? user.institution : '')}
-        ${row('Mobile', '+91 ' + reg.phone_number)}
+        ${displayPhone(reg) ? row('Mobile', '+91 ' + displayPhone(reg)) : ''}
         ${row('Category', reg.category_label)}
         ${selections.map((s) => row(s.group_name, s.option_name)).join('')}
         ${row('Amount Paid', '₹' + inr(reg.expected_amount != null ? reg.expected_amount : reg.paid_amount))}
@@ -4521,8 +4946,9 @@ app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
     if (!existingUser) {
       tempPassword = generateTempPassword();
       await dbRun(
-        'INSERT INTO users (phone_number, full_name, designation, institution, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [phone, name, req.body.designation || null, req.body.institute || null, 'DELEGATE', hashPassword(tempPassword), Date.now()]
+        `INSERT INTO users (phone_number, phone, phone_verified, full_name, designation, institution, role, password_hash, created_at)
+         VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+        [phone, phone, name, req.body.designation || null, req.body.institute || null, 'DELEGATE', hashPassword(tempPassword), Date.now()]
       );
     } else if (!existingUser.password_hash) {
       tempPassword = generateTempPassword();
@@ -4873,9 +5299,16 @@ app.post('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res
     // away instead of waiting on their first OTP. Purely a convenience --
     // they can set/change it themselves later via Set Password regardless.
     const passwordHash = password ? hashPassword(String(password)) : null;
+    // phone_verified = 1: an admin creating this account is vouching for the
+    // number in person, the same standing the desk-side "eyes on the
+    // physical ID card" check already has. It also has to be 1 for the
+    // account to be usable at all -- OTP login refuses unverified channels,
+    // so a staff member created without a password would otherwise have no
+    // way in whatsoever.
     await dbRun(
-      'INSERT INTO users (phone_number, full_name, designation, institution, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [phone, name, designation, institute, role, passwordHash, Date.now()]
+      `INSERT INTO users (phone_number, phone, phone_verified, full_name, designation, institution, role, password_hash, created_at)
+       VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+      [phone, phone, name, designation, institute, role, passwordHash, Date.now()]
     );
     res.json({ success: true });
   } catch (err) {
@@ -5717,8 +6150,6 @@ app.get('/api/admin/discount-codes/:id/share', requireRole('SUPER_ADMIN', 'FINAN
     next(err);
   }
 });
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Emails the same voucher card as /share (HTML/print) and the WhatsApp
 // message -- to any address the admin types in, not just a delegate already
@@ -6768,7 +7199,7 @@ async function buildReport(type, opts = {}) {
       title: 'Registered Delegates — Demography & Institute Details',
       sections: [{
         columns: ['Reg No', 'Name', 'Age', 'Gender', 'Mobile', 'Email', 'Designation', 'Institution', 'District', 'State', 'Pincode'],
-        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.age, r.gender, r.phone_number, r.email, r.designation, r.institution, r.district, r.state, r.pincode]),
+        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.age, r.gender, displayPhone(r), r.email, r.designation, r.institution, r.district, r.state, r.pincode]),
       }],
     };
   }
@@ -6817,7 +7248,7 @@ async function buildReport(type, opts = {}) {
           ...groups.map((g) => g.name)],
         rows: rows.map((r) => {
           const perGroup = byReg.get(r.id) || new Map();
-          return [r.registration_number, r.delegate_name, r.phone_number, r.email, r.designation, r.institution,
+          return [r.registration_number, r.delegate_name, displayPhone(r), r.email, r.designation, r.institution,
             r.category_label, BANK_STATUS_LABELS[r.bank_status] || r.bank_status,
             // join, not [0]: a group configured with max_select > 1 can
             // legitimately hold several options for one delegate.
@@ -6853,7 +7284,7 @@ async function buildReport(type, opts = {}) {
         rows: rows.map((r) => {
           const netVerified = (verifiedByReg[r.id] || 0) - (refundedByReg[r.id] || 0);
           const overpaid = Math.max(0, netVerified - (r.expected_amount || 0));
-          return [r.registration_number, r.delegate_name, r.phone_number, r.category_label,
+          return [r.registration_number, r.delegate_name, displayPhone(r), r.category_label,
             PAYMENT_MODE_LABELS[r.payment_mode] || r.payment_mode, r.utr_number, r.paid_amount, r.expected_amount,
             overpaid > 0 ? overpaid : '', BANK_STATUS_LABELS[r.bank_status] || r.bank_status, fmtDate(r.submitted_at)];
         }),
@@ -6875,7 +7306,7 @@ async function buildReport(type, opts = {}) {
            ORDER BY ro.is_faculty DESC, delegate_name`,
         [optionId]
       )).map(withDelegateSalutation);
-      return rows.map((r) => [r.registration_number, r.delegate_name, r.phone_number, r.category_label,
+      return rows.map((r) => [r.registration_number, r.delegate_name, displayPhone(r), r.category_label,
         BANK_STATUS_LABELS[r.bank_status] || r.bank_status, r.is_faculty ? 'Faculty' : 'Delegate']);
     };
     const sections = [];
@@ -6912,7 +7343,7 @@ async function buildReport(type, opts = {}) {
         columns: ['Reg No', 'Salutation', 'Name', 'Mobile', 'Role', 'Age', 'Gender', 'Email',
           'Designation', 'Institution', 'Post Office', 'District', 'State', 'Pincode', 'Signed Up',
           'Registration Status', 'Program Selections'],
-        rows: rows.map((u) => [u.registration_number, u.salutation, u.full_name, u.phone_number, u.role,
+        rows: rows.map((u) => [u.registration_number, u.salutation, u.full_name, displayPhone(u), u.role,
           u.age, u.gender, u.email, u.designation, u.institution, u.post_office, u.district, u.state, u.pincode,
           fmtDate(u.created_at), u.registration_status ? (BANK_STATUS_LABELS[u.registration_status] || u.registration_status) : 'Not Registered',
           (selByReg.get(u.registration_id) || []).join('; ')]),

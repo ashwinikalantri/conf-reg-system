@@ -15,24 +15,21 @@
       </div>
 
       <div id="login-otp-mode">
-        <p class="text-xs text-slate-500 mb-3">Enter registered mobile number to receive OTP.</p>
+        <p class="text-xs text-slate-500 mb-3">Enter your registered mobile number or email address to receive an OTP.</p>
         <div class="bg-indigo-50/60 p-4 rounded-xl border border-indigo-100 space-y-3">
-          <label class="block text-xs font-bold text-indigo-800 uppercase tracking-wide">Registered Mobile Number</label>
+          <label class="block text-xs font-bold text-indigo-800 uppercase tracking-wide">Mobile Number or Email</label>
           <div class="flex gap-2">
-            <div class="relative flex-1">
-              <span class="absolute left-3 top-3 text-sm text-slate-500 font-bold">+91</span>
-              <!-- tel-national, not tel: this field holds the 10-digit
-                   number only (the +91 is a fixed label beside it, and
-                   maxlength is 10), whereas `tel` means the full number
-                   *including* country code -- so a browser holding
-                   "+919876543210" had 13 characters to put in a 10-character
-                   field and simply declined to autofill. name= is here for
-                   the same reason: browser autofill heuristics key off it,
-                   and the forms are submit-handled in JS (preventDefault), so
-                   naming the fields changes nothing else. -->
-              <input type="tel" id="login-phone" name="phone" inputmode="tel" autocomplete="tel-national" maxlength="10" placeholder="10-digit Mobile No." onkeydown="if(event.key==='Enter'){event.preventDefault(); document.getElementById('btn-send-login-otp').click();}" class="w-full p-2.5 pl-12 border rounded-lg bg-white text-sm font-mono outline-none">
+            <div class="flex-1">
+              <!-- One field for either identifier, so a delegate doesn't have
+                   to first work out which one their account is under. The
+                   server decides what it is (see resolveAccountByIdentifier)
+                   and refuses to send a code to an unverified channel.
+                   autocomplete="username" rather than tel-national: it may
+                   hold an email now, and a browser told to expect a
+                   10-character national number won't offer one. -->
+              <input type="text" id="login-identifier" name="username" autocomplete="username" placeholder="10-digit mobile or you@example.com" onkeydown="if(event.key==='Enter'){event.preventDefault(); document.getElementById('btn-send-login-otp').click();}" class="w-full p-2.5 border rounded-lg bg-white text-sm outline-none">
             </div>
-            <button type="button" id="btn-send-login-otp" onclick="requestOTP('login')" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shrink-0">
+            <button type="button" id="btn-send-login-otp" onclick="requestLoginOTP()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shrink-0">
               Send OTP
             </button>
           </div>
@@ -48,14 +45,11 @@
       </div>
 
       <div id="login-password-mode" class="hidden">
-        <p class="text-xs text-slate-500 mb-3">Enter your registered mobile number and password.</p>
+        <p class="text-xs text-slate-500 mb-3">Enter your registered mobile number or email address and your password.</p>
         <div class="bg-indigo-50/60 p-4 rounded-xl border border-indigo-100 space-y-3">
           <div>
-            <label class="block text-xs font-bold text-indigo-800 uppercase tracking-wide">Registered Mobile Number</label>
-            <div class="relative mt-1.5">
-              <span class="absolute left-3 top-3 text-sm text-slate-500 font-bold">+91</span>
-              <input type="tel" id="login-password-phone" name="phone" inputmode="tel" autocomplete="tel-national" maxlength="10" placeholder="10-digit Mobile No." class="w-full p-2.5 pl-12 border rounded-lg bg-white text-sm font-mono outline-none">
-            </div>
+            <label class="block text-xs font-bold text-indigo-800 uppercase tracking-wide">Mobile Number or Email</label>
+            <input type="text" id="login-password-identifier" name="username" autocomplete="username" placeholder="10-digit mobile or you@example.com" class="w-full mt-1.5 p-2.5 border rounded-lg bg-white text-sm outline-none">
           </div>
           <div>
             <label class="block text-xs font-bold text-indigo-800 uppercase tracking-wide">Password</label>
@@ -95,24 +89,51 @@
       </div>
       <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">⚠️ Enter your name (without any title/salutation) exactly as you want it printed on your certificate.</p>
 
-      <div class="bg-indigo-50/60 p-4 rounded-xl border border-indigo-100 space-y-3">
-        <label class="block text-xs font-bold text-indigo-800 uppercase tracking-wide">Mobile Number & Verification</label>
-        <div class="flex gap-2">
-          <div class="relative flex-1">
-            <span class="absolute left-3 top-3 text-sm text-slate-500 font-bold">+91</span>
-            <input type="tel" id="reg-phone" name="phone" inputmode="tel" autocomplete="tel-national" maxlength="10" placeholder="10-digit Mobile No." required class="w-full p-2.5 pl-12 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono">
-          </div>
-          <button type="button" id="btn-send-reg-otp" onclick="requestOTP('reg')" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shrink-0">
-            Send OTP
-          </button>
+      <!-- Contact & verification. Either channel alone is enough to create
+           an account, but at least one must be OTP-verified -- the server
+           enforces that (see POST /api/auth/register); this block just makes
+           the state obvious as you go. -->
+      <div class="bg-indigo-50/60 p-4 rounded-xl border border-indigo-100 space-y-4">
+        <div class="flex items-start justify-between gap-2">
+          <label class="block text-xs font-bold text-indigo-800 uppercase tracking-wide">Contact &amp; Verification</label>
+          <span id="reg-verify-status" class="text-[11px] font-bold text-amber-700 shrink-0">Verify mobile or email</span>
         </div>
 
-        <div id="reg-otp-container" class="hidden space-y-2 pt-2 border-t border-indigo-100">
-          <div class="flex justify-between items-center">
-            <label class="block text-xs font-semibold text-slate-700">Enter 6-Digit OTP</label>
-            <span id="reg-otp-hint" class="text-[11px] text-indigo-600 font-mono font-bold"></span>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1.5">Mobile Number <span class="font-normal text-slate-400">(optional if you verify email)</span></label>
+          <div class="flex gap-2">
+            <div class="relative flex-1">
+              <span class="absolute left-3 top-3 text-sm text-slate-500 font-bold">+91</span>
+              <input type="tel" id="reg-phone" name="phone" inputmode="tel" autocomplete="tel-national" maxlength="10" placeholder="10-digit Mobile No." class="w-full p-2.5 pl-12 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono">
+            </div>
+            <button type="button" id="btn-send-reg-otp" onclick="requestSignupOTP('phone')" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shrink-0">
+              Send OTP
+            </button>
           </div>
-          <input type="text" id="reg-otp" maxlength="6" placeholder="e.g. 123456" class="w-full p-2.5 border rounded-lg bg-white text-center font-mono tracking-widest text-lg">
+          <div id="reg-otp-container" class="hidden space-y-2 pt-2 mt-2 border-t border-indigo-100">
+            <div class="flex justify-between items-center">
+              <label class="block text-xs font-semibold text-slate-700">Mobile OTP</label>
+              <span id="reg-otp-hint" class="text-[11px] text-indigo-600 font-mono font-bold"></span>
+            </div>
+            <input type="text" id="reg-otp" maxlength="6" oninput="updateSignupVerifyStatus()" placeholder="e.g. 123456" class="w-full p-2.5 border rounded-lg bg-white text-center font-mono tracking-widest text-lg">
+          </div>
+        </div>
+
+        <div class="pt-1 border-t border-indigo-100">
+          <label class="block text-xs font-semibold text-slate-700 mb-1.5 mt-2">Email Address <span class="font-normal text-slate-400">(optional if you verify mobile)</span></label>
+          <div class="flex gap-2">
+            <input type="email" id="reg-email" autocomplete="email" placeholder="you@example.com" class="flex-1 p-2.5 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+            <button type="button" id="btn-send-reg-email-otp" onclick="requestSignupOTP('email')" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shrink-0">
+              Send OTP
+            </button>
+          </div>
+          <div id="reg-email-otp-container" class="hidden space-y-2 pt-2 mt-2 border-t border-indigo-100">
+            <div class="flex justify-between items-center">
+              <label class="block text-xs font-semibold text-slate-700">Email OTP</label>
+              <span id="reg-email-otp-hint" class="text-[11px] text-indigo-600 font-mono font-bold"></span>
+            </div>
+            <input type="text" id="reg-email-otp" maxlength="6" oninput="updateSignupVerifyStatus()" placeholder="e.g. 123456" class="w-full p-2.5 border rounded-lg bg-white text-center font-mono tracking-widest text-lg">
+          </div>
         </div>
       </div>
 
@@ -146,14 +167,9 @@
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-slate-700">Email <span class="text-xs text-slate-400">(for notifications)</span></label>
-        <input type="email" id="reg-email" placeholder="you@example.com" required class="w-full mt-1 p-3 border rounded-lg outline-none">
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700">Password <span class="text-xs text-slate-400">(optional, at least 8 characters)</span></label>
-        <input type="password" id="reg-password" autocomplete="new-password" placeholder="Leave blank to sign in by OTP only" class="w-full mt-1 p-3 border rounded-lg outline-none">
-        <p class="text-[11px] text-slate-400 mt-1">Your phone number is still verified by OTP either way. A password just lets you skip waiting for an OTP next time — can be added or changed later from your dashboard.</p>
+        <label class="block text-sm font-medium text-slate-700">Password <span class="text-xs text-slate-400">(required, at least 8 characters)</span></label>
+        <input type="password" id="reg-password" autocomplete="new-password" required minlength="8" placeholder="At least 8 characters" class="w-full mt-1 p-3 border rounded-lg outline-none">
+        <p class="text-[11px] text-slate-400 mt-1">Lets you sign in without waiting for an OTP. You can change it later from your dashboard.</p>
       </div>
 
       <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">

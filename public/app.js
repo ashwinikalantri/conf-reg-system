@@ -294,30 +294,86 @@ async function fetchAddressDetails(pincode) {
 }
 
 // --- AUTHENTICATION API CALLS ---
-async function requestOTP(context) {
-  const phone = document.getElementById(`${context}-phone`).value.trim();
-  if (phone.length !== 10 || isNaN(phone)) {
-    return showToast("Please enter a valid 10-digit Indian Mobile Number.");
+// Signup OTPs: either channel can be verified, and the server only requires
+// one of them (see POST /api/auth/register). Tracked here purely so the
+// status line and the submit-time check can tell you which you've done.
+const signupVerified = { phone: false, email: false };
+
+async function requestSignupOTP(which) {
+  const isPhone = which === 'phone';
+  const destination = document.getElementById(isPhone ? 'reg-phone' : 'reg-email').value.trim();
+  if (isPhone && !/^\d{10}$/.test(destination)) {
+    return showToast('Please enter a valid 10-digit Indian mobile number.');
+  }
+  if (!isPhone && !EMAIL_RE.test(destination)) {
+    return showToast('Please enter a valid email address.');
   }
 
-  const res = await fetch('/api/otp/request', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phone })
-  });
-  const data = await res.json();
+  const data = await (await fetch('/api/otp/request', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ destination }),
+  })).json();
 
-  if (data.success) {
-    document.getElementById(`${context}-otp-container`).classList.remove('hidden');
-    if (data.devOtp) {
-      document.getElementById(`${context}-otp-hint`).innerText = `Demo OTP: ${data.devOtp}`;
-      showToast(`OTP sent to +91 ${phone}.\nYour 6-Digit OTP is: ${data.devOtp}`, 'info');
-    } else {
-      document.getElementById(`${context}-otp-hint`).innerText = 'Sent via SMS';
-      showToast(`A 6-digit OTP has been sent to +91 ${phone}.`, 'info');
-    }
+  if (!data.success) return showToast(data.error || 'Could not send OTP. Please try again.');
+
+  const containerId = isPhone ? 'reg-otp-container' : 'reg-email-otp-container';
+  const hintId = isPhone ? 'reg-otp-hint' : 'reg-email-otp-hint';
+  document.getElementById(containerId).classList.remove('hidden');
+  const where = isPhone ? `+91 ${destination}` : destination;
+  if (data.devOtp) {
+    setText(hintId, `Demo OTP: ${data.devOtp}`);
+    showToast(`OTP for ${where}: ${data.devOtp}`, 'info');
   } else {
-    showToast(data.error || 'Could not send OTP. Please try again.');
+    setText(hintId, isPhone ? 'Sent via SMS' : 'Sent via email');
+    showToast(`A 6-digit OTP has been sent to ${where}.`, 'info');
+  }
+}
+
+// Reflects which channels have a code entered -- the server is what actually
+// decides, this just stops someone submitting the whole form with neither.
+function updateSignupVerifyStatus() {
+  const el = document.getElementById('reg-verify-status');
+  if (!el) return;
+  const hasPhoneOtp = !!(document.getElementById('reg-otp') || {}).value?.trim();
+  const hasEmailOtp = !!(document.getElementById('reg-email-otp') || {}).value?.trim();
+  if (hasPhoneOtp || hasEmailOtp) {
+    const which = [hasPhoneOtp && 'mobile', hasEmailOtp && 'email'].filter(Boolean).join(' + ');
+    el.textContent = `OTP entered for ${which}`;
+    el.className = 'text-[11px] font-bold text-emerald-700 shrink-0';
+  } else {
+    el.textContent = 'Verify mobile or email';
+    el.className = 'text-[11px] font-bold text-amber-700 shrink-0';
+  }
+}
+
+// Login OTPs go through a different endpoint to the signup ones above: it
+// resolves the identifier to a real account and refuses to send a code to a
+// channel that account hasn't verified.
+async function requestLoginOTP() {
+  const identifier = document.getElementById('login-identifier').value.trim();
+  if (!identifier) return showToast('Enter your mobile number or email address.');
+
+  const data = await (await fetch('/api/auth/login-otp', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier }),
+  })).json();
+
+  if (data.notRegistered) {
+    // Carry whatever they typed into the signup form's matching field.
+    toggleAuth('register');
+    const isEmail = EMAIL_RE.test(identifier);
+    document.getElementById(isEmail ? 'reg-email' : 'reg-phone').value = identifier;
+    return showToast("That isn't registered yet — please complete the sign-up form to create your account.", 'info');
+  }
+  if (!data.success) return showToast(data.error || 'Could not send OTP. Please try again.');
+
+  document.getElementById('login-otp-container').classList.remove('hidden');
+  if (data.devOtp) {
+    setText('login-otp-hint', `Demo OTP: ${data.devOtp}`);
+    showToast(`Your OTP is: ${data.devOtp}`, 'info');
+  } else {
+    setText('login-otp-hint', data.channel === 'email' ? 'Sent via email' : 'Sent via SMS');
+    showToast(`A 6-digit OTP has been sent to your ${data.channel === 'email' ? 'email address' : 'mobile'}.`, 'info');
   }
 }
 
@@ -331,30 +387,35 @@ const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 async function handleRegistration(e) {
   e.preventDefault();
   const phone = document.getElementById('reg-phone').value.trim();
-  const otp = document.getElementById('reg-otp').value.trim();
   const email = document.getElementById('reg-email').value.trim();
+  const phoneOtp = document.getElementById('reg-otp').value.trim();
+  const emailOtp = document.getElementById('reg-email-otp').value.trim();
 
-  if (email && !EMAIL_RE.test(email)) {
-    showToast('Please enter a valid email address.');
-    return;
+  if (!phone && !email) return showToast('Enter a mobile number or an email address.');
+  if (phone && !/^\d{10}$/.test(phone)) return showToast('Please enter a valid 10-digit mobile number.');
+  if (email && !EMAIL_RE.test(email)) return showToast('Please enter a valid email address.');
+  // The server is the real gate (it burns the OTP); this just avoids a
+  // pointless round trip and gives a clearer message.
+  if (!phoneOtp && !emailOtp) {
+    return showToast('Verify your mobile number or your email address with an OTP to continue.');
   }
 
   const password = document.getElementById('reg-password').value;
-  if (password && password.length < 8) {
-    showToast('Password must be at least 8 characters, or leave it blank.');
-    return;
+  if (!password || password.length < 8) {
+    return showToast('Please set a password of at least 8 characters.');
   }
 
   const payload = {
     phone,
-    otp,
+    email,
+    phoneOtp,
+    emailOtp,
     salutation: document.getElementById('reg-salutation').value,
     name: document.getElementById('reg-name').value,
     age: document.getElementById('reg-age').value,
     gender: document.getElementById('reg-gender').value,
     designation: document.getElementById('reg-designation').value,
     institute: document.getElementById('reg-institute').value,
-    email,
     password,
     pincode: document.getElementById('reg-pincode').value,
     state: document.getElementById('reg-state').value,
@@ -371,7 +432,7 @@ async function handleRegistration(e) {
   if (data.success) {
     currentDelegate = data.user;
     persistDelegate(currentDelegate);
-    showToast("Mobile OTP Verified! Account registered.", 'success');
+    showToast('Verified! Your account has been created.', 'success');
     await loadDashboard();
     // Straight into payment (step 1) so a freshly-created account doesn't
     // sit "signed up but never paid" -- that's the drop-off we're trying
@@ -386,15 +447,15 @@ async function handleLogin(e) {
   e.preventDefault();
   if (loginMode === 'password') return handlePasswordLogin();
 
-  const phone = document.getElementById('login-phone').value.trim();
+  const identifier = document.getElementById('login-identifier').value.trim();
   const otp = document.getElementById('login-otp').value.trim();
-  if (!/^\d{10}$/.test(phone)) return showToast('Enter a valid 10-digit mobile number.');
-  if (!otp) return showToast('Enter the OTP sent to your phone.');
+  if (!identifier) return showToast('Enter your mobile number or email address.');
+  if (!otp) return showToast('Enter the OTP that was sent to you.');
 
   const res = await fetch('/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phone, otp })
+    body: JSON.stringify({ identifier, otp })
   });
   const data = await res.json();
 
@@ -407,30 +468,28 @@ async function handleLogin(e) {
     // whose every API call is going to come back 503.
     if (await shouldShowMaintenance(currentDelegate)) return navigateTo('maintenance-page');
     loadDashboard();
-    promptSetPasswordIfMissing();
+    runPostLoginPrompts();
   } else if (data.notRegistered) {
-    // New number — switch to sign-up, carrying the phone and (still-valid) OTP.
+    // New identifier — switch to sign-up, carrying it across.
     toggleAuth('register');
-    document.getElementById('reg-phone').value = phone;
-    document.getElementById('reg-otp-container').classList.remove('hidden');
-    document.getElementById('reg-otp').value = otp;
-    document.getElementById('reg-otp-hint').innerText = otp ? 'OTP carried over' : '';
-    showToast("This number isn't registered yet — please complete the sign-up form to create your account.", 'info');
+    const isEmail = EMAIL_RE.test(identifier);
+    document.getElementById(isEmail ? 'reg-email' : 'reg-phone').value = identifier;
+    showToast("That isn't registered yet — please complete the sign-up form to create your account.", 'info');
   } else {
     showToast(data.error || "Login failed.");
   }
 }
 
 async function handlePasswordLogin() {
-  const phone = document.getElementById('login-password-phone').value.trim();
+  const identifier = document.getElementById('login-password-identifier').value.trim();
   const password = document.getElementById('login-password').value;
-  if (!/^\d{10}$/.test(phone)) return showToast('Enter a valid 10-digit mobile number.');
+  if (!identifier) return showToast('Enter your mobile number or email address.');
   if (!password) return showToast('Enter your password.');
 
   const res = await fetch('/api/auth/login-password', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phone, password }),
+    body: JSON.stringify({ identifier, password }),
   });
   const data = await res.json();
   if (!data.success) return showToast(data.error || 'Login failed.');
@@ -441,6 +500,7 @@ async function handlePasswordLogin() {
   showToast(`Welcome back, ${currentDelegate.salutation ? currentDelegate.salutation + ' ' : ''}${welcomeName}!`, 'success');
   if (await shouldShowMaintenance(currentDelegate)) return navigateTo('maintenance-page');
   loadDashboard();
+  runPostLoginPrompts();
 }
 
 // --- DELEGATE DASHBOARD & FEATURES ---
@@ -449,7 +509,14 @@ async function loadDashboard() {
 
   const displayName = currentDelegate.full_name || currentDelegate.name;
   document.getElementById('user-display-name').innerText = currentDelegate.salutation ? `${currentDelegate.salutation} ${displayName}` : displayName;
-  document.getElementById('user-display-sub').innerText = `${currentDelegate.designation} | ${currentDelegate.institution || currentDelegate.institute} (+91 ${currentDelegate.phone_number || currentDelegate.phone})`;
+  // phone_number is the account key, which is only a real number for
+  // phone-based accounts -- fall back to the email for email-only ones
+  // rather than printing a synthetic key as if it were a mobile.
+  const contactLine = delegateDisplayPhone(currentDelegate)
+    ? `+91 ${delegateDisplayPhone(currentDelegate)}`
+    : (currentDelegate.email || '');
+  document.getElementById('user-display-sub').innerText =
+    `${currentDelegate.designation} | ${currentDelegate.institution || currentDelegate.institute}${contactLine ? ` (${contactLine})` : ''}`;
 
   const statusTag = document.getElementById('payment-status-tag');
   const confBtn = document.getElementById('register-conf-btn');
@@ -1647,9 +1714,6 @@ function prefillAbstractFormForRevision(abs) {
 }
 function closeModal(id) {
   document.getElementById(id).classList.add('hidden');
-  // Dismissing the set-password nudge (via the X, not by saving a password)
-  // shouldn't bring it back for the rest of this browser session.
-  if (id === 'modal-set-password') sessionStorage.setItem('setPasswordPromptDismissed', '1');
 }
 
 // In-page confirmation dialog. Native confirm() is unreliable — browsers
@@ -1726,21 +1790,54 @@ async function submitReject() {
   renderBackendPayments();
 }
 
-// Nudges a delegate who just logged in via OTP to set a password, so future
-// logins don't require waiting on an SMS. Only fires for delegates without
-// one already -- hasPassword comes from the server (see omitPasswordHash in
-// server.js), never guessed client-side. Skippable via the modal's own close
-// button; not shown again this session once dismissed or set.
-function promptSetPasswordIfMissing() {
-  if (!currentDelegate || currentDelegate.role !== 'DELEGATE' || currentDelegate.hasPassword) return;
-  if (sessionStorage.getItem('setPasswordPromptDismissed')) return;
-  openModal('modal-set-password');
+// The phone number to SHOW for an account. phone_number is the account key,
+// which holds a real number for every phone-based signup but a synthetic one
+// for email-only accounts -- mirrors displayPhone() in server.js.
+function delegateDisplayPhone(u) {
+  if (!u) return '';
+  if (u.phone && /^\d{10}$/.test(u.phone)) return u.phone;
+  return /^\d{10}$/.test(u.phone_number || '') ? u.phone_number : '';
+}
+
+// Run after every successful login. Two things can be outstanding for an
+// account that predates password/email verification, and they're asked in a
+// fixed order so only one modal is ever open: set a password first (it's
+// mandatory and unblocks logging in at all next time), then verify email.
+function runPostLoginPrompts() {
+  if (!currentDelegate || currentDelegate.role !== 'DELEGATE') return;
+  if (!currentDelegate.hasPassword) return openSetPasswordModal(true);
+  promptVerifyEmailIfNeeded();
+}
+
+// Existing accounts had their email typed in at signup but never proven, so
+// it starts unverified (see the identity backfill in server.js) -- this is
+// what asks them to prove it. Skippable, unlike the password prompt: an
+// account with a verified phone can still log in without it.
+function promptVerifyEmailIfNeeded() {
+  if (!currentDelegate || currentDelegate.role !== 'DELEGATE') return;
+  if (currentDelegate.email_verified) return;
+  if (sessionStorage.getItem('verifyEmailPromptDismissed')) return;
+  openVerifyEmailModal();
 }
 
 // Shared by the delegate dashboard and the admin panel -- both include the
 // same modal (see views/portal/modals/set-password.ejs) and call the same
 // endpoint, since a password is just an alternative login method available
 // to every account type.
+// mandatory: the post-login prompt for an account that has no password yet
+// -- the close button and Esc/backdrop dismissal are removed, since the
+// requirement is that they end up with one. The dashboard's 🔑 button opens
+// the same modal voluntarily, where dismissing is fine.
+function openSetPasswordModal(mandatory) {
+  const closeBtn = document.getElementById('set-password-close-btn');
+  if (closeBtn) closeBtn.classList.toggle('hidden', !!mandatory);
+  setText('set-password-title', mandatory ? 'Set a password to continue' : 'Set Password');
+  setText('set-password-blurb', mandatory
+    ? 'Your account doesn\u2019t have a password yet. Set one now \u2014 it lets you sign in without waiting for an OTP.'
+    : 'Lets you log in with a password instead of waiting for an OTP each time. OTP still always works as a fallback. Applies immediately.');
+  openModal('modal-set-password');
+}
+
 async function submitSetPassword(e) {
   e.preventDefault();
   const password = document.getElementById('set-password-value').value;
@@ -1759,6 +1856,76 @@ async function submitSetPassword(e) {
       persistDelegate(currentDelegate);
     }
     closeModal('modal-set-password');
+    // Password was the first of the two post-login prompts; email
+    // verification is the second, so hand straight over rather than waiting
+    // for the next login to ask.
+    promptVerifyEmailIfNeeded();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// --- VERIFY EMAIL -------------------------------------------------------
+function openVerifyEmailModal() {
+  const input = document.getElementById('verify-email-value');
+  if (input) input.value = (currentDelegate && currentDelegate.email) || '';
+  const wrap = document.getElementById('verify-email-otp-wrap');
+  if (wrap) wrap.classList.add('hidden');
+  const otp = document.getElementById('verify-email-otp');
+  if (otp) otp.value = '';
+  setText('verify-email-hint', '');
+  openModal('modal-verify-email');
+}
+
+// Skipping is remembered for the session only, so it asks again next login
+// -- persistent enough not to nag, temporary enough to keep asking until
+// the address is actually proven.
+function dismissVerifyEmail() {
+  sessionStorage.setItem('verifyEmailPromptDismissed', '1');
+  closeModal('modal-verify-email');
+}
+
+async function requestVerifyEmailOTP() {
+  const value = document.getElementById('verify-email-value').value.trim();
+  if (!EMAIL_RE.test(value)) return showToast('Please enter a valid email address.');
+  const btn = document.getElementById('verify-email-send-btn');
+  btn.disabled = true;
+  try {
+    const data = await (await fetch('/api/auth/verify-contact/request', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel: 'email', value }),
+    })).json();
+    if (!data.success) return showToast(data.error || 'Could not send the code.');
+    document.getElementById('verify-email-otp-wrap').classList.remove('hidden');
+    if (data.devOtp) {
+      setText('verify-email-hint', `Demo code: ${data.devOtp}`);
+      showToast(`Your code is: ${data.devOtp}`, 'info');
+    } else {
+      setText('verify-email-hint', 'Sent — check your inbox');
+      showToast(`A 6-digit code has been sent to ${value}.`, 'info');
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function submitVerifyEmail(e) {
+  e.preventDefault();
+  const value = document.getElementById('verify-email-value').value.trim();
+  const otp = document.getElementById('verify-email-otp').value.trim();
+  if (!otp) return showToast('Enter the 6-digit code we sent you.');
+  const btn = document.getElementById('verify-email-submit-btn');
+  btn.disabled = true;
+  try {
+    const data = await (await fetch('/api/auth/verify-contact/confirm', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel: 'email', value, otp }),
+    })).json();
+    if (!data.success) return showToast(data.error || 'Could not verify that code.');
+    currentDelegate = data.user;
+    persistDelegate(currentDelegate);
+    showToast('Email verified.', 'success');
+    closeModal('modal-verify-email');
   } finally {
     btn.disabled = false;
   }
