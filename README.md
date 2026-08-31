@@ -1,7 +1,7 @@
 # Conference Registration Portal & RBAC Admin
 
-A self-hosted registration portal for a conference: phone+OTP (or password)
-delegate signup, payment collection with OCR-assisted verification,
+A self-hosted registration portal for a conference: delegate signup by mobile
+or email (OTP or password), payment collection with OCR-assisted verification,
 workshop/QI-style program tracks with capacity limits, abstract submission and
 review, discount codes, and a role-based admin panel with a full audit trail.
 The conference's identity (name, acronym, dates, location), fee structure, and
@@ -212,7 +212,7 @@ made on this page. Its recipient list — used only if nothing has ever been
 saved from Settings → General → Notifications — comes from
 `DIGEST_RECIPIENT_PHONES` (comma-separated 10-digit numbers) and is
 otherwise empty by default; there's no coded-in fallback list. Recipients
-are matched by phone number against Users & Roles (not stored as email
+are matched by phone number against Users (not stored as email
 addresses), so the list keeps working if someone's email changes.
 
 Cron invokes this script every 15 minutes (not once at a fixed hour); the
@@ -228,40 +228,120 @@ for testing a config change.
 
 ## Authentication & sessions
 
-Login is phone + OTP, or phone + password as an alternative — available to
-every account type, delegate and admin alike. On success the server issues a
-server-side session and sets an `httpOnly`, `SameSite=Lax` cookie
+An account is identified by a **mobile number or an email address** — both at
+login and at signup — and either can carry the OTP. On success the server
+issues a server-side session and sets an `httpOnly`, `SameSite=Lax` cookie
 (`COOKIE_NAME`, default `nqocn_sid`, 12-hour life). Only a hash of the
 session token and of the OTP is stored in the database.
 
 - OTP is a random 6-digit code, valid for 5 minutes, single-use, capped at
-  5 wrong attempts, with a 30-second resend throttle per number.
+  5 wrong attempts, with a 30-second resend throttle per destination.
 - Without `SMS_API_KEY` configured (see SMS OTP above), outside production the
   code is logged to the server console and returned in the API response
   (`devOtp`) so you can log in during development. Set `NODE_ENV=production`
   (or `OTP_ECHO=false`) to stop returning it — but then a working SMS gateway
   is required, or nobody can log in.
+- OTP emails are additionally capped globally at 200/hour. Signup OTPs are
+  necessarily open (no account exists yet to authorise against), so without
+  that ceiling the endpoint could be used to mail strangers at volume and
+  get the SES sending domain throttled — taking receipts, reminders and
+  digests down with it.
+
+### Verified channels
+
+An address or number is **verified** only by answering an OTP sent to it.
+Every account must have at least one verified channel, and **a login OTP is
+only ever sent to a channel that account has already verified** — otherwise
+an address someone merely typed into their profile would be enough to sign
+in as them. Password login does not require a verified channel: the password
+is itself the proof, and the identifier is only naming the account.
+
+Accounts predating email verification were marked phone-verified (they all
+passed phone OTP at signup, the only route that existed) and email-
+UNVERIFIED, since those addresses were only ever self-asserted. Those
+delegates are prompted to verify at next login, and a standing banner on the
+dashboard offers it any time — it also doubles as the way to *correct* an
+address you can't receive mail at, since the code goes to whatever is in the
+field rather than to whatever is on file.
+
+An **email address is mandatory** on every account-creating path (signup,
+admin create-user, desk registration, first-run setup). Verifying it is
+optional; recording it is not, because it's how receipts, reminders and every
+other notification reach a delegate. One address per account is enforced;
+an address already held by another account is refused.
+
+### Identity: the account key
+
+`users.phone_number` is the account key — the primary key here and the join
+column in `registrations`, `abstracts`, `sessions`, `payment_transactions`,
+`group_members`, `delegate_groups` and the audit trail. **It is not
+necessarily a phone number.** It holds the number for every account created
+through the Indian phone flow (which is why existing data, admin screens and
+audit rows still read naturally), and a synthetic `u_<hex>` key otherwise.
+
+The distinction matters because the key can never be edited — every one of
+those tables points at it. An Indian number is SMS-verified at signup, so it is known-good
+and safe to freeze; an international number can't be verified, so it is
+exactly the kind of value that gets mistyped and needs correcting later, and
+keeping it out of the key leaves it editable like any other column. Read the
+actual contact details from `users.phone` and `users.email`; use
+`displayPhone()` (server) / `delegateDisplayPhone()` (client) wherever a
+number is shown, so a synthetic key can never print as if it were one.
+
+### International delegates
+
+Phone numbers are stored in **E.164** (`+919823900641`). `toE164()` accepts
+anything a human types — `9823900641`, `09823900641`, `919823900641`,
+`+91 98239 00641`, `+44 7700 900123` — and both sides of every comparison are
+normalised through it, so how a number was entered never decides whether it
+matches.
+
+Signup asks for a **country**, and that answer drives the form:
+
+| | India | Elsewhere |
+| --- | --- | --- |
+| Mobile number | **required**, 10-digit, SMS-verified, becomes the account key | optional; stored as an unverifiable contact detail |
+| Verified by | SMS or email | email only |
+| Address | PIN code drives the India Post lookup (state/district readonly) | free-text city and region |
+| Account key | the number | synthetic `u_<hex>` |
+
+**We cannot send SMS outside India** — the gateway is an Indian DLT provider
+with no route elsewhere — so `issueOtp()` refuses a non-Indian SMS
+destination up front rather than storing a code that can never be delivered.
+An international number therefore can't receive a login code, which the
+verified-channel rule enforces without special-casing. A country/number
+mismatch is refused in both directions: an Indian number under a foreign
+country is almost always the selector left untouched.
+
+Delegate signup is the only international route. Admin create-user, desk
+registration and first-run setup remain Indian-only, since each makes the
+number the account key and expects the holder to be reachable by SMS.
 
 ### Password login
 
-A password is purely an alternative login method, never a substitute for
-proving phone ownership: **OTP is still required at registration**
-regardless of whether a password is also set (`POST /api/auth/register`
-always calls `consumeOtp()`). Once registered, a delegate or admin can set a
-password (`POST /api/auth/set-password`, self-service, no current password
-required — being logged in already is the proof) and from then on log in
-with either OTP or `POST /api/auth/login-password`. Passwords are hashed
-with scrypt (random 16-byte salt per password) and compared in constant
-time; the login-password endpoint is rate-limited in-memory (5 attempts, 15
-minute lockout per phone number) separately from the DB-backed OTP attempt
-counter. An admin can also set an initial password for a staff account at
-creation time (`POST /api/users`).
+A password is **required at signup**, and is an alternative to OTP for every
+account type. Registration still proves a channel by OTP regardless
+(`POST /api/auth/register` always calls `consumeOtp()`); the password is for
+next time. Once registered, a delegate or admin can change it
+(`POST /api/auth/set-password`, self-service, no current password required —
+being logged in already is the proof) and log in with either OTP or
+`POST /api/auth/login-password`.
 
-A delegate who logs in via OTP without a password set yet is prompted (once
-per browser session, dismissible) to set one from the dashboard — see the
-🔑 button there. The same button is not present in the admin panel; admin/
-staff passwords are set at account creation or via `set-password` while
-already logged in, not nudged.
+Passwords are hashed with scrypt (random 16-byte salt per password) and
+compared in constant time; the login-password endpoint is rate-limited
+in-memory (5 attempts, 15 minute lockout per identifier) separately from the
+DB-backed OTP attempt counter. A wrong password and an unknown identifier
+return the same error, so neither confirms whether an account exists. An
+admin can also set an initial password for a staff account at creation time
+(`POST /api/users`), and a desk registration issues a one-time temporary
+password shown once (see Desk registration below).
+
+Accounts predating the requirement have no password. They get a **blocking**
+prompt at next login — the close button is removed for that case only — after
+which the email-verification prompt follows. The dashboard's 🔑 button opens
+the same modal voluntarily, where dismissing is fine. Neither modal is in the
+admin panel: staff passwords are set at account creation or via
+`set-password` while already logged in.
 
 ### Roles (enforced server-side)
 
@@ -271,7 +351,7 @@ already logged in, not nudged.
 | `FINANCE_ADMIN`     | Payment reconciliation, reminders, group discounts (view + verify) |
 | `ACADEMIC_REVIEWER` | Abstract review & allotment                          |
 | `FINANCE_ACADEMIC`  | Both of the above                                    |
-| `OPERATIONS`        | All reports, plus Users & Roles (view/create/change role — not demographic edits, still `SUPER_ADMIN`-only) |
+| `OPERATIONS`        | All reports, plus Users (view/create/change role — not demographic edits, still `SUPER_ADMIN`-only) |
 | `DELEGATE`          | Own registration, payment, and abstract submission  |
 
 `OPERATIONS` cannot grant `SUPER_ADMIN` to anyone (including itself) and
@@ -415,6 +495,16 @@ delegate or a finance admin — never from the static root. Images must be PNG,
 JPEG, GIF, or WebP and under 5 MB. On first start after upgrading, any
 base64 screenshots still in the database are migrated to files automatically.
 
+Each payment keeps its **own** slip in `payment_transactions.screenshot`,
+served by `GET /api/payment-transactions/:txnId/screenshot` under the same
+access rule. That's what makes the earlier slip of a partial payment still
+viewable after a top-up — the registration's single `screenshot` column is
+overwritten by each new submission. Every row in the review modal's
+Transactions & Bank Reconciliation list has a **Payment Slip** button
+alongside that payment's date, so two slips from the same delegate are
+tellable apart. A slip whose file is missing from disk (an older rejected
+payment cleaned up on resubmission) says so rather than showing a blank pane.
+
 Back up `uploads/` alongside `conference.db`; it is not tracked in git.
 
 ## Screenshot OCR checks
@@ -458,17 +548,33 @@ dashboard shows the register/pay action. `GET /api/registrations/me/receipt`
 returns a printable HTML receipt (own registration, verified only).
 Verification also backfills a number for any older row that lacked one.
 
+The receipt **itemises every verified payment** — date, mode and reference
+per line, with a total — rather than a single amount and reference. A
+delegate who paid a partial amount and later topped up has two real
+transactions, and the registration's own `utr_number` column only holds
+whichever submission wrote it last. Rejected and still-pending attempts are
+excluded (they aren't money received), recorded refunds appear as negative
+lines and reduce the total, and an overpayment adds a note that the excess is
+due to be refunded — otherwise a total exceeding the fee just reads as an
+error.
+
 ## Reports
 
-The admin **Reports** tab offers four exportable reports, each independently
+The admin **Reports** tab offers six exportable reports, each independently
 role-gated in `REPORT_ROLES` (`server.js`):
 
 | Report | Roles |
 | --- | --- |
 | Registered delegates (demography & institute) | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
+| Delegates & program selections (one row per delegate, one column per group) | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
 | Payment details & status | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
 | Registrations per program option (any group) | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
 | Accepted abstracts | `SUPER_ADMIN`, `ACADEMIC_REVIEWER`, `OPERATIONS` |
+| All users | `SUPER_ADMIN`, `OPERATIONS` (the roles that can see the Users tab at all) |
+
+The delegates and users reports carry a **Country** column; mobile numbers
+render in E.164, and an account without one (an email-only international
+delegate) shows a blank rather than its internal key.
 
 Each is available via `GET /api/admin/reports/:type` as a **printable HTML
 page** (Print / Save as PDF) or, with `?format=csv`, as a **CSV download**
@@ -554,8 +660,8 @@ sees the ID check result and a link to view the card.
 ## Discount codes & group discounts
 
 Super admins can create promo codes (percent or flat, scoped globally, to a
-category, or to one delegate by phone, with an optional max-use cap and
-expiry) under **Discount Code**, and per-category group-registration
+category, or to one delegate identified by **mobile number or email**, with
+an optional max-use cap and expiry) under **Discount Code**, and per-category group-registration
 discounts (unlocked once a group reaches a minimum size) under **Group
 Discount**. A code that discounts a registration to ₹0 skips the payment
 step entirely — no screenshot or UTR required, confirmed immediately. Every
@@ -566,6 +672,66 @@ typed in — not limited to a delegate already on file, so a code can go out
 before someone has even signed up. Emailing reuses the same voucher content
 as the printable version and is gated behind Email being configured and
 turned on (Settings → General → Email).
+
+A group leader adds members by **mobile number or email** too. Both lookups
+resolve the identifier to an account and store that account's key, so an
+email-only delegate is reachable by either — matching an account key against
+a typed number would silently miss anyone whose key is synthetic. An address
+shared by more than one account is refused with a "use their mobile instead"
+message rather than resolved to an arbitrary one.
+
+## Reminder emails
+
+**Settings → Reminders** has three cards, all Super-Admin-only to send (a
+one-way bulk blast with nothing to undo) and all offering a test-send to
+your own address first:
+
+| Card | Recipients |
+| --- | --- |
+| Signed Up but Not Registered | accounts with no payment registration |
+| Balance Payment Awaited | `PARTIAL_PAYMENT` registrations, with `{{amount}}` per recipient |
+| Custom Recipients | any addresses pasted in — they need no account here |
+
+The first two pick recipients from a checklist and substitute `{{name}}`
+per person. The third exists because the other two can only reach people
+already in the system; it takes a pasted list (one per line or
+comma-separated), skips anything malformed or duplicated rather than failing
+the whole batch, and offers no `{{name}}` substitution since there's no
+record behind those addresses. Its body is pre-filled with an "early bird
+ends today" message built from the live conference details and fee cutoff,
+so the copy can't drift from the actual settings.
+
+All three apply a rolling 24-hour per-recipient dedupe, so a repeated send
+or an accidental double-click can't mail anyone twice.
+
+## Desk registration (walk-ins)
+
+`POST /api/admin/registrations` (Super Admin / Finance Admin, **+ Register
+Delegate** on the Payments tab) registers someone in person at the desk. It
+reuses the delegate's own submission logic end to end — fee resolution,
+program-group capacity and required-group rules, promo and group discounts,
+registration numbering — so a walk-in is priced and validated identically to
+a self-service registration.
+
+The payment is recorded as already settled rather than left pending, by one
+of three routes:
+
+- **Cash** — the admin's own presence at the desk substitutes for the
+  screenshot/OCR proof every other mode requires. There is deliberately no
+  self-service path to this mode.
+- **Existing bank transfer** — linking a credit already visible in the
+  imported statement, the same 1-to-1 link the review modal uses, made at
+  creation time instead of after a pending submission.
+- **Link later** — the delegate says they've paid but the credit hasn't been
+  imported yet. The registration is created now and the payment sits
+  `PENDING`, in exactly the shape a self-service submission starts in, so it
+  reconciles later through the normal review flow.
+
+A student category needs no ID upload here: the admin confirms the physical
+card with a checkbox, the same standing the desk has for vouching a phone
+number. A brand-new account (or an existing one with no password) is issued a
+**temporary password, shown once** and never stored in plaintext — only its
+scrypt hash reaches the database — for the admin to hand over.
 
 ## Rejection workflow
 
@@ -613,3 +779,21 @@ crash.
   of those four combos, but a conference with a different student
   population can't teach it new keywords without a code change. See Student
   ID verification above.
+- **An international delegate can register but cannot pay.** The payment
+  step offers UPI and NEFT/RTGS, both domestic Indian rails; fees are held
+  and displayed in INR only; and the receipt OCR looks for rupee markers. So
+  international signup works end to end right up to payment, and then stops.
+  The practical route today is for them to wire the money and for an admin
+  to record it through the desk registration flow above (which accepts an
+  admin-linked bank credit, so an international wire landing in the account
+  reconciles normally) — but nothing in the portal tells the delegate that,
+  so it needs saying out of band. Worth settling before international
+  registration is publicised.
+- SMS cannot be sent outside India (the gateway is an Indian DLT provider),
+  so an international delegate's only verifiable channel is email, and any
+  number they give is a contact detail that can never receive a login code.
+  See International delegates above.
+- Two accounts sharing one email address cannot use email login — the
+  system refuses to guess which is meant, and they sign in by mobile
+  instead. New signups can't reuse an address, so this only affects rows
+  predating that rule.

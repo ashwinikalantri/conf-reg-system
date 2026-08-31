@@ -1166,7 +1166,8 @@ db.serialize(() => {
   // why no data migration was needed and why admin screens and audit rows
   // still read naturally. Email-only accounts get a synthetic key instead
   // (see newUserKey) -- deliberately not the email address itself, so that
-  // changing your email never has to cascade across six tables.
+  // changing your email never has to cascade across every table that joins
+  // on it.
   db.run(`
     CREATE TABLE IF NOT EXISTS users (
       phone_number TEXT PRIMARY KEY,
