@@ -2182,7 +2182,13 @@ function paymentRowHtml(p) {
   const statusTone2 = balanceDue ? 'bg-orange-100 text-orange-800' : statusTone;
   const statusPill = `<span class="${statusTone2} text-[10px] sm:text-xs px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full font-bold">${esc(statusLabel)}</span>`;
   // Surface how much is still owed at a glance: use the verified total when
-  // there is one, else the claimed amount (category-changed, not yet verified).
+  // there is one, else the claimed amount (category-changed, not yet
+  // verified). Also what the Amount column itself shows below -- it used to
+  // show the raw claimed p.paid_amount there while the balance pill showed
+  // this verified-first figure, so the two could disagree (e.g. a delegate
+  // claims ₹2,000 but only ₹750 is actually verified: Amount showed ₹2,000
+  // while the pill correctly said "₹750 of ₹2,000"). Using the same value
+  // in both places keeps them consistent everywhere this row renders.
   const paidSoFar = Number(p.verified_total) > 0 ? Number(p.verified_total) : (Number(p.paid_amount) || 0);
   const owed = Number(p.expected_amount) - paidSoFar;
   // Category was changed to a higher fee and the delegate still owes -- flag it
@@ -2228,7 +2234,7 @@ function paymentRowHtml(p) {
             <p class="font-bold text-sm truncate">${esc(p.delegate_name)}</p>
             <p class="text-[11px] text-slate-500">${esc(p.category_label)}</p>
           </div>
-          <p class="font-semibold text-slate-700 shrink-0">₹${inr(Number(p.paid_amount))}</p>
+          <p class="font-semibold text-slate-700 shrink-0">₹${inr(paidSoFar)}</p>
         </div>
         <div class="flex flex-wrap items-center gap-1.5 mt-2">
           ${p.is_flagged ? `<span class="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">⚠️ Flagged</span>` : ''}
@@ -2243,7 +2249,7 @@ function paymentRowHtml(p) {
         ${p.is_flagged ? `<br><span class="inline-block mt-1 text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">⚠️ Flagged</span>` : ''}
       </td>
       <td class="p-4 text-sm hidden sm:table-cell">
-        <span class="font-semibold text-slate-700">₹${inr(Number(p.paid_amount))}</span>
+        <span class="font-semibold text-slate-700">₹${inr(paidSoFar)}</span>
       </td>
       <td class="p-4 hidden sm:table-cell">
         ${statusPill}
