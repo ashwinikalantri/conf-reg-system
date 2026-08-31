@@ -5143,18 +5143,10 @@ async function buildEarlyBirdReminderBody() {
   const dateRange = (start && end && c.startDate !== c.endDate) ? `${start} &ndash; ${end}` : (start || end);
 
   let deadlineLine = '';
-  let feeRows = '';
   try {
     const fees = await (await fetch('/api/fees')).json();
     if (fees.earlyUntil) deadlineLine = ` (${esc(formatFullDate(fees.earlyUntil))})`;
-    if (Array.isArray(fees.categories) && fees.categories.length) {
-      feeRows = fees.categories.map((cat) => `
-        <tr>
-          <td style="padding:.5rem .75rem;border-bottom:1px solid #e2e8f0">${esc(cat.label)}${cat.subtitle ? `<br><span style="color:#94a3b8;font-size:.75rem">${esc(cat.subtitle)}</span>` : ''}</td>
-          <td style="padding:.5rem .75rem;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700;white-space:nowrap">₹${inr(Number(cat.fee))}</td>
-        </tr>`).join('');
-    }
-  } catch { /* best-effort -- the email still makes sense without pricing */ }
+  } catch { /* best-effort -- the email still makes sense without the exact date */ }
 
   let programLine = '';
   try {
@@ -5165,20 +5157,12 @@ async function buildEarlyBirdReminderBody() {
     }
   } catch { /* best-effort -- the email still makes sense without this line */ }
 
-  const feeTable = feeRows
-    ? `<table style="width:100%;border-collapse:collapse;margin:1rem 0;font-size:.85rem">
-         <thead><tr><th style="text-align:left;padding:.4rem .75rem;border-bottom:2px solid #4f46e5;color:#4f46e5;font-size:.72rem;text-transform:uppercase;letter-spacing:.05em">Category</th><th style="text-align:right;padding:.4rem .75rem;border-bottom:2px solid #4f46e5;color:#4f46e5;font-size:.72rem;text-transform:uppercase;letter-spacing:.05em">Early Bird Fee</th></tr></thead>
-         <tbody>${feeRows}</tbody>
-       </table>`
-    : '';
-
   return `<p>Dear Colleague,</p>
 <p>This is a reminder that <b>today${deadlineLine} is the last day</b> to register for <b>${esc(c.name || 'the conference')}</b> at the early bird rate. Fees go up starting tomorrow, so this is your last chance to lock in the current pricing.</p>
 ${dateRange || c.location ? `<table style="width:100%;margin:1rem 0;font-size:.85rem">
   ${dateRange ? `<tr><td style="padding:.2rem 0;color:#64748b;width:90px">📅 Dates</td><td style="padding:.2rem 0;font-weight:600">${dateRange}</td></tr>` : ''}
   ${c.location ? `<tr><td style="padding:.2rem 0;color:#64748b">📍 Venue</td><td style="padding:.2rem 0;font-weight:600">${esc(c.location)}</td></tr>` : ''}
 </table>` : ''}
-${feeTable}
 ${programLine ? `<p>Alongside the main conference, there are ${programLine}</p>` : ''}
 <p style="text-align:center;margin:1.5rem 0">
   <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Register Now</a>
