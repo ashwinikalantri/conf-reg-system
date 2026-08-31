@@ -222,7 +222,7 @@ if (currentDelegate && document.getElementById('dashboard-page')) {
   const nameEl = document.getElementById('user-display-name');
   const subEl = document.getElementById('user-display-sub');
   if (nameEl) nameEl.innerText = currentDelegate.salutation ? `${currentDelegate.salutation} ${displayName}` : displayName;
-  if (subEl) subEl.innerText = `${currentDelegate.designation} | ${currentDelegate.institution || currentDelegate.institute} (+91 ${currentDelegate.phone_number || currentDelegate.phone})`;
+  if (subEl) subEl.innerText = `${currentDelegate.designation} | ${currentDelegate.institution || currentDelegate.institute} (${delegateDisplayPhone(currentDelegate) || currentDelegate.email || ''})`;
 }
 
 function toggleAuth(view) {
@@ -302,8 +302,8 @@ const signupVerified = { phone: false, email: false };
 async function requestSignupOTP(which) {
   const isPhone = which === 'phone';
   const destination = document.getElementById(isPhone ? 'reg-phone' : 'reg-email').value.trim();
-  if (isPhone && !/^\d{10}$/.test(destination)) {
-    return showToast('Please enter a valid 10-digit Indian mobile number.');
+  if (isPhone && !isIndianPhone(destination)) {
+    return showToast('We can only send SMS to Indian mobile numbers. Verify your email address instead.');
   }
   if (!isPhone && !EMAIL_RE.test(destination)) {
     return showToast('Please enter a valid email address.');
@@ -319,7 +319,7 @@ async function requestSignupOTP(which) {
   const containerId = isPhone ? 'reg-otp-container' : 'reg-email-otp-container';
   const hintId = isPhone ? 'reg-otp-hint' : 'reg-email-otp-hint';
   document.getElementById(containerId).classList.remove('hidden');
-  const where = isPhone ? `+91 ${destination}` : destination;
+  const where = isPhone ? (toE164(destination) || destination) : destination;
   if (data.devOtp) {
     setText(hintId, `Demo OTP: ${data.devOtp}`);
     showToast(`OTP for ${where}: ${data.devOtp}`, 'info');
@@ -384,6 +384,33 @@ async function requestLoginOTP() {
 // across browsers) or a round-trip to the server.
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
+// --- PHONE NUMBERS ------------------------------------------------------
+// Mirrors toE164 / isIndianPhone in server.js -- same rules, so the client
+// never accepts something the server will reject (or vice versa). Numbers
+// are held in E.164 (+<country><number>); a bare national number is assumed
+// to be the default country.
+const DEFAULT_PHONE_CC = '91';
+const E164_RE = /^\+[1-9]\d{7,14}$/;
+const INDIAN_E164_RE = /^\+91[6-9]\d{9}$/;
+
+function toE164(v, defaultCc = DEFAULT_PHONE_CC) {
+  let raw = String(v || '').trim().replace(/[\s()\-.]/g, '');
+  if (!raw) return '';
+  if (raw.startsWith('+')) return E164_RE.test(raw) ? raw : '';
+  raw = raw.replace(/\D/g, '');
+  if (!raw) return '';
+  if (raw.length === 11 && raw.startsWith('0')) raw = raw.slice(1);
+  if (raw.length > 10 && raw.startsWith(defaultCc)) {
+    const withPlus = `+${raw}`;
+    return E164_RE.test(withPlus) ? withPlus : '';
+  }
+  if (raw.length !== 10) return '';
+  const withCc = `+${defaultCc}${raw}`;
+  return E164_RE.test(withCc) ? withCc : '';
+}
+const isPhoneValue = (v) => !!toE164(v);
+const isIndianPhone = (v) => INDIAN_E164_RE.test(toE164(v));
+
 async function handleRegistration(e) {
   e.preventDefault();
   const phone = document.getElementById('reg-phone').value.trim();
@@ -392,7 +419,7 @@ async function handleRegistration(e) {
   const emailOtp = document.getElementById('reg-email-otp').value.trim();
 
   if (!phone && !email) return showToast('Enter a mobile number or an email address.');
-  if (phone && !/^\d{10}$/.test(phone)) return showToast('Please enter a valid 10-digit mobile number.');
+  if (phone && !isPhoneValue(phone)) return showToast('Please enter a valid mobile number.');
   if (email && !EMAIL_RE.test(email)) return showToast('Please enter a valid email address.');
   // The server is the real gate (it burns the OTP); this just avoids a
   // pointless round trip and gives a clearer message.
@@ -513,7 +540,7 @@ async function loadDashboard() {
   // phone-based accounts -- fall back to the email for email-only ones
   // rather than printing a synthetic key as if it were a mobile.
   const contactLine = delegateDisplayPhone(currentDelegate)
-    ? `+91 ${delegateDisplayPhone(currentDelegate)}`
+    ? delegateDisplayPhone(currentDelegate)
     : (currentDelegate.email || '');
   document.getElementById('user-display-sub').innerText =
     `${currentDelegate.designation} | ${currentDelegate.institution || currentDelegate.institute}${contactLine ? ` (${contactLine})` : ''}`;
@@ -716,7 +743,7 @@ async function submitAddGroupMember() {
   // delegate's account.
   const raw = document.getElementById('group-add-phone').value.trim();
   const identifier = EMAIL_RE.test(raw) ? raw : raw.replace(/\D/g, '');
-  if (!/^\d{10}$/.test(identifier) && !EMAIL_RE.test(identifier)) {
+  if (!isPhoneValue(identifier) && !EMAIL_RE.test(identifier)) {
     return showToast('Enter a valid 10-digit mobile number or email address.');
   }
   const gid = (await (await fetch('/api/groups/me')).json()).group?.id;
@@ -1803,8 +1830,10 @@ async function submitReject() {
 // for email-only accounts -- mirrors displayPhone() in server.js.
 function delegateDisplayPhone(u) {
   if (!u) return '';
-  if (u.phone && /^\d{10}$/.test(u.phone)) return u.phone;
-  return /^\d{10}$/.test(u.phone_number || '') ? u.phone_number : '';
+  // Returns the full E.164 form INCLUDING the country code -- callers must
+  // not prefix "+91" themselves.
+  if (u.phone) { const e = toE164(u.phone); if (e) return e; }
+  return isPhoneValue(u.phone_number || '') ? toE164(u.phone_number) : '';
 }
 
 // Run after every successful login. Two things can be outstanding for an
@@ -3899,7 +3928,7 @@ function renderUserDetail() {
 
   const nameEl = document.getElementById('user-detail-name');
   if (nameEl) nameEl.innerHTML = `${roleMarkBW(u.role)}${u.salutation ? esc(u.salutation) + ' ' : ''}${esc(u.full_name || '—')}`;
-  setText('user-detail-subline', `${u.registration_number || 'No reg no'} · +91 ${u.phone_number} · ${roleLabel(u.role)}`);
+  setText('user-detail-subline', `${u.registration_number || 'No reg no'}${delegateDisplayPhone(u) ? ' · ' + delegateDisplayPhone(u) : ''} · ${roleLabel(u.role)}`);
 
   if (userDetailEditing) { body.innerHTML = userDetailEditForm(u); return; }
 
@@ -3909,7 +3938,7 @@ function renderUserDetail() {
     + detailRow('Pincode', u.pincode);
 
   // Contact
-  const contact = detailRow('Email', u.email) + detailRow('Phone', '+91 ' + u.phone_number);
+  const contact = detailRow('Email', u.email) + detailRow('Phone', delegateDisplayPhone(u) || '—');
 
   // Registration + payment
   let regHtml;
@@ -4224,7 +4253,7 @@ async function loadRoster() {
       <div class="flex items-center justify-between py-2 gap-2">
         <div class="min-w-0">
           <p class="font-semibold text-slate-800 truncate">${esc(r.delegate_name)}${Number(r.is_faculty) ? ' <span class="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide align-middle">Faculty</span>' : ''}</p>
-          <p class="text-[11px] text-slate-500">+91 ${esc(r.phone_number)} · ${esc(r.registration_number || '—')}</p>
+          <p class="text-[11px] text-slate-500">${esc(delegateDisplayPhone(r) || r.email || '—')} · ${esc(r.registration_number || '—')}</p>
         </div>
         <div class="flex items-center gap-2 shrink-0">
           <label class="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer select-none">
@@ -4272,7 +4301,7 @@ function handleRosterSearch(query) {
     ? matches.map(r => `
       <button type="button" class="roster-search-pick w-full text-left px-3 py-2 hover:bg-indigo-50" data-phone="${esc(r.phone_number)}">
         <p class="font-semibold text-slate-800 text-sm">${esc(r.delegate_name)}</p>
-        <p class="text-[11px] text-slate-500">+91 ${esc(r.phone_number)} · ${esc(r.registration_number || '—')}${r.category_label ? ' · ' + esc(r.category_label) : ''}</p>
+        <p class="text-[11px] text-slate-500">${esc(delegateDisplayPhone(r) || r.email || '—')} · ${esc(r.registration_number || '—')}${r.category_label ? ' · ' + esc(r.category_label) : ''}</p>
       </button>`).join('')
     : '<p class="text-xs text-slate-400 p-3">No matching registered delegates.</p>';
   box.classList.remove('hidden');
@@ -4465,7 +4494,7 @@ async function renderBackendActivity() {
     <tr>
       <td class="py-3 px-4 whitespace-nowrap text-slate-500">${fmtAuditTime(r.created_at)}</td>
       <td class="py-3 px-4">${esc(r.actor_name || '—')}</td>
-      <td class="py-3 px-4 font-mono text-xs">+91 ${esc(r.phone)}</td>
+      <td class="py-3 px-4 font-mono text-xs">${esc(delegateDisplayPhone({ phone_number: r.phone }) || r.phone)}</td>
       <td class="py-3 px-4">${esc((r.actor_role || '').replace('_', ' '))}</td>
     </tr>`).join('') || `<tr><td colspan="4" class="py-6 text-center text-slate-400">No logins logged yet</td></tr>`;
 
@@ -4473,7 +4502,7 @@ async function renderBackendActivity() {
   document.getElementById('activity-sms-body').innerHTML = (data.sms || []).map((r) => `
     <tr>
       <td class="py-3 px-4 whitespace-nowrap text-slate-500">${fmtAuditTime(r.created_at)}</td>
-      <td class="py-3 px-4 font-mono text-xs">+91 ${esc(r.phone)}</td>
+      <td class="py-3 px-4 font-mono text-xs">${esc(delegateDisplayPhone({ phone_number: r.phone }) || r.phone)}</td>
       <td class="py-3 px-4">${activityPill(r.action === 'SMS_SENT' ? 'Sent' : 'Failed', r.action === 'SMS_SENT' ? 'ok' : 'bad')}</td>
       <td class="py-3 px-4 text-xs text-slate-500">${esc(r.detail || '—')}</td>
     </tr>`).join('') || `<tr><td colspan="4" class="py-6 text-center text-slate-400">No SMS sent yet</td></tr>`;
@@ -4619,7 +4648,8 @@ function openShareDiscountModal(id) {
   // For an individual code, pre-fill the delegate's own number (India country
   // code 91 + their 10-digit mobile) so the chat opens directly with them
   // instead of WhatsApp's "choose a contact" screen.
-  const waNumber = c.scope_type === 'INDIVIDUAL' && /^\d{10}$/.test(c.scope_value || '') ? `91${c.scope_value}` : '';
+  // wa.me wants digits with the country code and no '+'.
+  const waNumber = c.scope_type === 'INDIVIDUAL' ? toE164(c.scope_value || '').replace(/^\+/, '') : '';
   const waLink = document.getElementById('share-whatsapp-link');
   if (waLink) waLink.href = `https://wa.me/${waNumber}?text=${encodeURIComponent(message)}`;
   const pdfLink = document.getElementById('share-pdf-link');
@@ -4727,7 +4757,7 @@ function searchDiscDelegate(query) {
 // synthetic for an email-only account.
 function discDelegateContact(u) {
   const ph = delegateDisplayPhone(u);
-  return ph ? `+91 ${ph}` : (u.email || '');
+  return ph || (u.email || '');
 }
 
 function pickDiscDelegate(key, name, contact) {
@@ -4927,7 +4957,7 @@ function renderDigestChips() {
   if (!box) return;
   box.innerHTML = gsDigestRecipients.map((r) => `
     <span class="inline-flex items-center gap-1.5 bg-indigo-50 text-indigo-700 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-full">
-      ${esc(r.name || 'Unknown')} <span class="text-indigo-400">+91 ${esc(r.phone)}</span>
+      ${esc(r.name || 'Unknown')} <span class="text-indigo-400">${esc(delegateDisplayPhone({ phone_number: r.phone }) || r.phone)}</span>
       <button type="button" onclick="removeDigestRecipient('${esc(r.phone)}')" class="text-indigo-400 hover:text-indigo-900 font-bold leading-none px-0.5">×</button>
     </span>`).join('') || '<p class="text-xs text-slate-400">No recipients selected.</p>';
 }
@@ -4944,7 +4974,7 @@ function searchDigestRecipient(query) {
   box.innerHTML = matches.length
     ? matches.map((u) => `<button type="button" class="w-full text-left px-3 py-2 hover:bg-indigo-50" onclick="addDigestRecipient('${esc(u.phone_number)}', '${esc((u.full_name || '').replace(/'/g, "\\'"))}')">
         <p class="font-semibold text-slate-800 text-sm">${esc(u.full_name || '—')}</p>
-        <p class="text-[11px] text-slate-500">+91 ${esc(u.phone_number)}</p>
+        <p class="text-[11px] text-slate-500">${esc(delegateDisplayPhone(u) || u.email || '—')}</p>
       </button>`).join('')
     : '<p class="text-xs text-slate-400 p-3">No matching user.</p>';
   box.classList.remove('hidden');
@@ -6271,7 +6301,7 @@ function selectRegisterDelegateBankTxn(txn) {
 async function handleRegisterDelegateSubmit(e) {
   e.preventDefault();
   const phone = document.getElementById('rd-phone').value.trim();
-  if (!/^\d{10}$/.test(phone)) return showToast('Enter a valid 10-digit mobile number.');
+  if (!isPhoneValue(phone)) return showToast('Enter a valid mobile number.');
   const categoryKey = document.getElementById('rd-category').value;
   if (!categoryKey) return showToast('Select a delegate category.');
   const cat = rdCategoriesCache.find((c) => c.key === categoryKey);

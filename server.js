@@ -345,7 +345,10 @@ async function sendOtpSms(phone, otp) {
       headers: { 'Content-Type': 'application/json', apikey: SMS.apiKey },
       body: JSON.stringify({
         sender: SMS.sender,
-        message: [{ number: `91${phone}`, text }],
+        // Provider wants bare digits with the country code, no '+'. `phone`
+        // arrives as E.164 (see issueOtp), so this is just the plus stripped
+        // -- it used to hardcode 91 in front of a bare national number.
+        message: [{ number: String(phone).replace(/^\+/, ''), text }],
         messagetype: SMS.type,
         dltentityid: SMS.entityId,
         dlttempid: SMS.templateId,
@@ -1215,6 +1218,15 @@ db.serialize(() => {
   // which is exactly why existing users get asked to verify theirs at next
   // login. Guarded on phone IS NULL so it only ever runs once.
   db.run("UPDATE users SET phone = phone_number, phone_verified = 1 WHERE phone IS NULL AND phone_number GLOB '[0-9]*'", () => {});
+
+  // Phone numbers are stored in E.164 (+<country><number>) so that Indian
+  // and international numbers are the same kind of value everywhere. Every
+  // account predating international support is Indian by construction --
+  // signup was 10-digit-only -- so a bare 10-digit number is prefixed +91.
+  // Guarded on the shape, so this runs once and is a no-op afterwards; the
+  // account key (phone_number) is deliberately NOT touched, since eight
+  // tables join on it.
+  db.run("UPDATE users SET phone = '+91' || phone WHERE phone GLOB '[6-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'", () => {});
 
   // One-time backfill of created_at (account signup time) for rows predating
   // the column. The true original signup is lost for old accounts (12h
@@ -2114,11 +2126,52 @@ setInterval(() => {
 // A signup identifies itself by a phone number, an email address, or both.
 // These helpers are the single place that decides which is which, so every
 // endpoint agrees on what a given string is.
-const PHONE_RE = /^\d{10}$/;
+// --- PHONE NUMBERS ---------------------------------------------------
+// Stored and compared as E.164 (+<country><number>), so an Indian and an
+// international number are the same kind of value everywhere downstream.
+// DEFAULT_PHONE_CC is what a bare national number is assumed to be: every
+// account predating international support is Indian, and the delegate-facing
+// forms still default to +91.
+const DEFAULT_PHONE_CC = '91';
+const E164_RE = /^\+[1-9]\d{7,14}$/;          // ITU-T E.164: up to 15 digits
+const INDIAN_E164_RE = /^\+91[6-9]\d{9}$/;     // Indian mobiles start 6-9
 // Pragmatic "good enough" email shape, not full RFC 5322 -- mirrored
 // client-side in public/app.js. Used for every address this app accepts.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const isPhoneValue = (v) => PHONE_RE.test(String(v || '').trim());
+
+// Anything a human might type -> E.164, or '' if it can't be one. Accepts
+// "9823900641", "09823900641", "91 98239 00641", "+91-98239-00641" and
+// "+44 7700 900123" alike, so a stored number and a typed one always compare
+// equal regardless of how either was entered.
+function toE164(v, defaultCc = DEFAULT_PHONE_CC) {
+  let raw = String(v || '').trim().replace(/[\s()\-.]/g, '');
+  if (!raw) return '';
+  if (raw.startsWith('+')) return E164_RE.test(raw) ? raw : '';
+  raw = raw.replace(/\D/g, '');
+  if (!raw) return '';
+  // A single leading 0 is the national trunk prefix, not part of the number.
+  if (raw.length === 11 && raw.startsWith('0')) raw = raw.slice(1);
+  // Already carries the default country code (e.g. "919823900641").
+  if (raw.length > 10 && raw.startsWith(defaultCc)) {
+    const withPlus = `+${raw}`;
+    return E164_RE.test(withPlus) ? withPlus : '';
+  }
+  // Without an explicit country code we can only assume the default one,
+  // and that assumption is only safe at the exact national length -- else
+  // any short string of digits would silently become a "valid" number.
+  if (raw.length !== 10) return '';
+  const withCc = `+${defaultCc}${raw}`;
+  return E164_RE.test(withCc) ? withCc : '';
+}
+
+// True for anything that can be turned into a usable phone number. Kept
+// permissive on purpose: whether we can actually TEXT it is a separate
+// question -- see isIndianPhone / the SMS guard in issueOtp.
+const isPhoneValue = (v) => !!toE164(v);
+// The only numbers we can send an SMS to: the gateway is an Indian DLT
+// provider (see sendOtpSms), so a number outside +91 has no delivery path
+// and must verify by email instead.
+const isIndianPhone = (v) => INDIAN_E164_RE.test(toE164(v));
 const isEmailValue = (v) => EMAIL_RE.test(String(v || '').trim());
 // Emails are compared and stored case-insensitively: an OTP sent to
 // Foo@Bar.com must satisfy a login as foo@bar.com, and the uniqueness check
@@ -2140,9 +2193,27 @@ function newUserKey() {
 // Falls back to the explicit `phone` column when a row carries one.
 function displayPhone(row) {
   if (!row) return '';
-  if (row.phone && isPhoneValue(row.phone)) return row.phone;
+  // Returns the full E.164 form INCLUDING the country code -- callers must
+  // not prefix it themselves, which is what every "+91 " + displayPhone()
+  // site used to do and what made an international number unprintable.
+  if (row.phone) { const e = toE164(row.phone); if (e) return e; }
   const key = row.phone_number;
-  return isPhoneValue(key) ? key : '';
+  return isPhoneValue(key) ? toE164(key) : '';
+}
+
+// Matching a phone number has to survive three shapes at once: the E.164
+// form the backfill produced (+919823900641), a bare national number that
+// somehow escaped it, and the legacy accounts whose `phone` is NULL but
+// whose account key IS their number. Both sides are normalised to E.164
+// first, so how the caller typed it never matters.
+const PHONE_MATCH_SQL = '(phone = ? OR phone = ? OR (phone IS NULL AND phone_number = ?))';
+function phoneMatchParams(v) {
+  const e164 = toE164(v);
+  if (!e164) return null;
+  // The national form, for the two legacy shapes -- only meaningful for the
+  // default country, which is the only one any pre-existing row can be.
+  const national = e164.startsWith(`+${DEFAULT_PHONE_CC}`) ? e164.slice(1 + DEFAULT_PHONE_CC.length) : e164;
+  return [e164, national, national];
 }
 
 // Look up the single account reachable at this phone/email, or explain why
@@ -2160,9 +2231,12 @@ async function resolveAccountByIdentifier(identifier) {
     // Match the phone CHANNEL, not the account key -- an email-only account
     // that later added a number has it in `phone` while its key is synthetic.
     // COALESCE covers rows whose phone column predates the identity backfill.
-    const rows = await dbAll('SELECT * FROM users WHERE COALESCE(phone, phone_number) = ?', [id]);
+    const params = phoneMatchParams(id);
+    const rows = await dbAll(`SELECT * FROM users WHERE ${PHONE_MATCH_SQL}`, params);
     if (!rows.length) return { error: 'notRegistered' };
-    return { user: rows[0], channel: 'sms', destination: id };
+    // destination is the canonical E.164 form, so an OTP is always issued
+    // against one spelling of the number no matter how it was typed.
+    return { user: rows[0], channel: 'sms', destination: toE164(id) };
   }
   if (isEmailValue(id)) {
     const rows = await dbAll('SELECT * FROM users WHERE LOWER(email) = ?', [normalizeEmail(id)]);
@@ -2215,7 +2289,18 @@ function otpEmailBudgetAvailable() {
 async function issueOtp(destination) {
   const channel = channelOf(destination);
   if (!channel) return { ok: false, error: 'Enter a valid mobile number or email address.' };
-  const dest = channel === 'email' ? normalizeEmail(destination) : String(destination).trim();
+  // Canonical form on both channels, so one destination has exactly one OTP
+  // row however the caller spelled it.
+  const dest = channel === 'email' ? normalizeEmail(destination) : toE164(destination);
+  // The SMS gateway is an Indian DLT provider and has no route to anything
+  // else, so refuse up front rather than storing a code that can never be
+  // delivered and leaving the caller waiting for a message that isn't coming.
+  if (channel === 'sms' && !isIndianPhone(dest)) {
+    return {
+      ok: false,
+      error: 'We can only send SMS to Indian mobile numbers. Please verify your email address instead.',
+    };
+  }
 
   const existing = await dbGet('SELECT last_sent_at FROM otp_codes WHERE destination = ?', [dest]);
   if (existing && Date.now() - existing.last_sent_at < OTP_RESEND_MS) {
@@ -2267,7 +2352,12 @@ async function issueOtp(destination) {
 // { ok: false, error }.
 async function consumeOtp(destination, otp) {
   const channel = channelOf(destination);
-  const dest = channel === 'email' ? normalizeEmail(destination) : String(destination || '').trim();
+  // Canonicalised EXACTLY as issueOtp does -- a code issued to
+  // "9823900641" is stored under "+919823900641", so looking it up by the
+  // raw string would never find it and every bare-national redemption
+  // (which is what the signup form submits) would fail as "request an OTP
+  // first".
+  const dest = channel === 'email' ? normalizeEmail(destination) : (toE164(destination) || String(destination || '').trim());
   const row = await dbGet('SELECT * FROM otp_codes WHERE destination = ?', [dest]);
   if (!row) return { ok: false, error: 'Please request an OTP first.' };
 
@@ -2599,8 +2689,10 @@ app.post('/api/setup/create-admin', async (req, res, next) => {
     if (!(await isSetupModeActive())) return res.status(404).json({ success: false, error: 'Setup is not available.' });
 
     const { name, phone, email, password } = req.body;
-    if (!phone || !/^\d{10}$/.test(phone)) {
-      return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+    // One-time bootstrap for the host institution's first admin: Indian, and
+    // needs to be reachable by SMS. Same reasoning as POST /api/users.
+    if (!phone || !isIndianPhone(phone)) {
+      return res.status(400).json({ success: false, error: 'Enter a valid 10-digit Indian mobile number.' });
     }
     if (!name || !String(name).trim()) {
       return res.status(400).json({ success: false, error: 'Full name is required.' });
@@ -2625,7 +2717,7 @@ app.post('/api/setup/create-admin', async (req, res, next) => {
     await dbRun(
       `INSERT INTO users (phone_number, phone, phone_verified, full_name, email, role, password_hash, created_at)
        VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
-      [phone, phone, nameVal, normalizeEmail(emailVal), 'SUPER_ADMIN', passwordHash, Date.now()]
+      [phone, toE164(phone), nameVal, normalizeEmail(emailVal), 'SUPER_ADMIN', passwordHash, Date.now()]
     );
     // Set the very moment the account exists, not deferred to the wizard's
     // last step -- the remaining steps (conference/UPI/SMS/Email) are just
@@ -2721,7 +2813,7 @@ app.post('/api/auth/register', async (req, res, next) => {
     // safe -- this is the same "re-register to update your profile" path the
     // phone-only flow had, now reachable from either side.
     const byPhone = phoneOk && phoneVal
-      ? await dbGet('SELECT * FROM users WHERE COALESCE(phone, phone_number) = ?', [phoneVal]) : null;
+      ? await dbGet(`SELECT * FROM users WHERE ${PHONE_MATCH_SQL}`, phoneMatchParams(phoneVal)) : null;
     const byEmailRows = emailOk && emailVal
       ? await dbAll('SELECT * FROM users WHERE LOWER(email) = ?', [emailVal]) : [];
     if (byEmailRows.length > 1) {
@@ -2742,8 +2834,8 @@ app.post('/api/auth/register', async (req, res, next) => {
     // key for phone signups.
     if (phoneVal) {
       const phoneTaken = await dbGet(
-        'SELECT phone_number FROM users WHERE COALESCE(phone, phone_number) = ? AND phone_number != ?',
-        [phoneVal, existing ? existing.phone_number : '']);
+        `SELECT phone_number FROM users WHERE ${PHONE_MATCH_SQL} AND phone_number != ?`,
+        [...phoneMatchParams(phoneVal), existing ? existing.phone_number : '']);
       if (phoneTaken) {
         return res.status(409).json({ success: false, error: 'An account with this mobile number already exists. Please sign in instead.' });
       }
@@ -2779,7 +2871,7 @@ app.post('/api/auth/register', async (req, res, next) => {
          email = excluded.email,
          password_hash = excluded.password_hash,
          created_at = COALESCE(users.created_at, excluded.created_at)`,
-      [userKey, phoneVal || null, phoneVerified, emailVerified, salutationVal, nameVal, designation, institute,
+      [userKey, phoneVal ? toE164(phoneVal) : null, phoneVerified, emailVerified, salutationVal, nameVal, designation, institute,
        pincode, state, district, ageNum, genderVal, emailVal, passwordHash, Date.now()]
     );
 
@@ -2925,8 +3017,8 @@ app.post('/api/auth/verify-contact/request', requireAuth, async (req, res, next)
     // Can't claim a channel that already belongs to someone else.
     const taken = channel === 'email'
       ? await emailTakenBy(value, req.session.phone)
-      : (await dbGet('SELECT phone_number FROM users WHERE COALESCE(phone, phone_number) = ? AND phone_number != ?',
-          [value, req.session.phone]) || {}).phone_number;
+      : (await dbGet(`SELECT phone_number FROM users WHERE ${PHONE_MATCH_SQL} AND phone_number != ?`,
+          [...phoneMatchParams(value), req.session.phone]) || {}).phone_number;
     if (taken) {
       return res.status(409).json({
         success: false,
@@ -2959,8 +3051,8 @@ app.post('/api/auth/verify-contact/confirm', requireAuth, async (req, res, next)
     // been won by another account in between.
     const taken = channel === 'email'
       ? await emailTakenBy(value, req.session.phone)
-      : (await dbGet('SELECT phone_number FROM users WHERE COALESCE(phone, phone_number) = ? AND phone_number != ?',
-          [value, req.session.phone]) || {}).phone_number;
+      : (await dbGet(`SELECT phone_number FROM users WHERE ${PHONE_MATCH_SQL} AND phone_number != ?`,
+          [...phoneMatchParams(value), req.session.phone]) || {}).phone_number;
     if (taken) {
       return res.status(409).json({ success: false, error: 'Another account already uses that contact detail.' });
     }
@@ -3884,7 +3976,7 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
         })())}
         ${row('Designation', user ? user.designation : '')}
         ${row('Institution', user ? user.institution : '')}
-        ${displayPhone(reg) ? row('Mobile', '+91 ' + displayPhone(reg)) : ''}
+        ${displayPhone(reg) ? row('Mobile', displayPhone(reg)) : ''}
         ${row('Category', reg.category_label)}
         ${selections.map((s) => row(s.group_name, s.option_name)).join('')}
         ${row('Fee', '₹' + inr(reg.expected_amount != null ? reg.expected_amount : reg.paid_amount))}
@@ -4936,8 +5028,10 @@ app.get('/api/admin/bank-credit-candidates', requireRole('SUPER_ADMIN', 'FINANCE
 app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
     const phone = String(req.body.phone || '').trim();
-    if (!/^\d{10}$/.test(phone)) {
-      return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+    // Desk registrations stay Indian-only for now, same reasoning as
+    // POST /api/users: the number becomes the account key here.
+    if (!isIndianPhone(phone)) {
+      return res.status(400).json({ success: false, error: 'Enter a valid 10-digit Indian mobile number.' });
     }
     const paymentMode = req.body.paymentMode;
     if (!['CASH', 'BANK_TRANSFER'].includes(paymentMode)) {
@@ -5070,7 +5164,7 @@ app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
       await dbRun(
         `INSERT INTO users (phone_number, phone, phone_verified, full_name, email, designation, institution, role, password_hash, created_at)
          VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
-        [phone, phone, name, normalizeEmail(emailVal), req.body.designation || null, req.body.institute || null, 'DELEGATE', hashPassword(tempPassword), Date.now()]
+        [phone, toE164(phone), name, normalizeEmail(emailVal), req.body.designation || null, req.body.institute || null, 'DELEGATE', hashPassword(tempPassword), Date.now()]
       );
     } else if (!existingUser.password_hash) {
       tempPassword = generateTempPassword();
@@ -5430,8 +5524,11 @@ app.put('/api/users/:phone', requireRole('SUPER_ADMIN'), async (req, res, next) 
 app.post('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res, next) => {
   try {
     const { name, phone, designation, institute, role, password } = req.body;
-    if (!phone || !/^\d{10}$/.test(phone)) {
-      return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+    // Staff accounts stay Indian-only: this creates an account whose key IS
+    // the number, and whose holder is expected to be reachable by SMS.
+    // International delegates arrive through signup (see Phase 2), not here.
+    if (!phone || !isIndianPhone(phone)) {
+      return res.status(400).json({ success: false, error: 'Enter a valid 10-digit Indian mobile number.' });
     }
     // Every account carries an address, however it was created -- see the
     // note in POST /api/auth/register. Recorded unverified: an admin typing
@@ -5472,7 +5569,7 @@ app.post('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res
     await dbRun(
       `INSERT INTO users (phone_number, phone, phone_verified, full_name, email, designation, institution, role, password_hash, created_at)
        VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
-      [phone, phone, name, normalizeEmail(emailVal), designation, institute, role, passwordHash, Date.now()]
+      [phone, toE164(phone), name, normalizeEmail(emailVal), designation, institute, role, passwordHash, Date.now()]
     );
     res.json({ success: true });
   } catch (err) {
@@ -6045,10 +6142,19 @@ app.post('/api/admin/program-options/:id/enroll', requireRole('SUPER_ADMIN'), as
   try {
     const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
     if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
-    const phone = String(req.body.phone || '').trim();
-    if (!/^\d{10}$/.test(phone)) {
-      return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+    // Identified by number OR email, and resolved to the account first:
+    // registrations join on the account KEY, which is only the number for a
+    // phone-based signup -- looking the number up directly would silently
+    // miss anyone whose key is synthetic.
+    const identifier = String(req.body.identifier || req.body.phone || '').trim();
+    const found = await resolveAccountByIdentifier(identifier);
+    if (found.error === 'ambiguousEmail') {
+      return res.status(409).json({ success: false, error: 'More than one account uses that email address. Use their mobile number instead.' });
     }
+    if (found.error) {
+      return res.status(404).json({ success: false, error: 'No delegate found with that mobile number or email address.' });
+    }
+    const phone = found.user.phone_number;
     const reg = await dbGet('SELECT id FROM registrations WHERE phone_number = ?', [phone]);
     if (!reg) {
       return res.status(404).json({ success: false, error: 'This delegate has no payment registration yet -- they must register before being enrolled.' });
@@ -6298,7 +6404,7 @@ async function discountCodeLines(code) {
     // one rather than printing a synthetic key as "+91 u_...".
     const u = await dbGet('SELECT full_name, phone, email FROM users WHERE phone_number = ?', [code.scope_value]);
     const shownPhone = displayPhone({ ...(u || {}), phone_number: code.scope_value });
-    const contact = shownPhone ? `+91 ${shownPhone}` : ((u && u.email) || '');
+    const contact = shownPhone || ((u && u.email) || '');
     scopeLine = `Reserved for ${escapeHtml(u ? u.full_name : 'this delegate')}${contact ? ` (${escapeHtml(contact)})` : ''} only.`;
   }
   const discountLine = code.discount_type === 'PERCENT' ? `${Number(code.discount_value)}% off` : `₹${inr(Number(code.discount_value))} off`;
@@ -6500,7 +6606,10 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
     // than the generic blank/newline guards above.
     if (email && email.digestRecipients !== undefined) {
       const parts = String(email.digestRecipients).split(',').map((p) => p.trim()).filter(Boolean);
-      if (parts.some((p) => !/^\d{10}$/.test(p))) {
+      // Staff numbers, resolved by the standalone digest script against the
+      // users table -- deliberately still Indian-only, since a digest
+      // recipient is host-institution staff, not a delegate.
+      if (parts.some((p) => !isIndianPhone(p))) {
         return res.status(400).json({ success: false, error: 'Digest recipients must be a comma-separated list of 10-digit mobile numbers.' });
       }
     }
