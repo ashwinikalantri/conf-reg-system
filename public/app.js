@@ -3049,7 +3049,6 @@ function openReviewModal(id) {
     const lines = [ocrCheckLine('Amount', p.ocr_amount_match)];
     if (p.payment_mode !== 'NEFT_RTGS') lines.push(ocrCheckLine('UPI ID', p.ocr_vpa_match));
     lines.push(ocrCheckLine('UTR', p.ocr_utr_match));
-    if (p.ocr_id_match != null) lines.push(ocrCheckLine('ID Card', p.ocr_id_match));
     checksBox.innerHTML = lines.join('');
   }
 
@@ -4500,13 +4499,14 @@ async function renderBackendFees() {
       <td class="p-4"><input type="number" min="0" value="${esc(c.late_fee)}" class="fee-late w-20 p-1.5 border rounded text-sm" data-id="${esc(c.id)}"></td>
       <td class="p-4"><input type="number" min="0" value="${esc(c.spot_fee)}" class="fee-spot w-20 p-1.5 border rounded text-sm" data-id="${esc(c.id)}"></td>
       <td class="p-4">
-        <select class="fee-studentid p-1.5 border rounded text-sm bg-white" data-id="${esc(c.id)}">
-          <option value="" ${!c.requires_student_id ? 'selected' : ''}>Not required</option>
-          <option value="nursing|UG" ${c.requires_student_id && c.id_discipline === 'nursing' && c.id_level === 'UG' ? 'selected' : ''}>Nursing UG</option>
-          <option value="nursing|PG" ${c.requires_student_id && c.id_discipline === 'nursing' && c.id_level === 'PG' ? 'selected' : ''}>Nursing PG</option>
-          <option value="medical|UG" ${c.requires_student_id && c.id_discipline === 'medical' && c.id_level === 'UG' ? 'selected' : ''}>Medical UG</option>
-          <option value="medical|PG" ${c.requires_student_id && c.id_discipline === 'medical' && c.id_level === 'PG' ? 'selected' : ''}>Medical PG</option>
-        </select>
+        <!-- Just whether a card is required. It used to also pick a
+             discipline/level pair, which existed only to tell the ID-card
+             OCR what keywords to look for; that check is gone, so any
+             category can require an ID and an approver judges the card. -->
+        <label class="flex items-center gap-2 text-sm text-slate-600">
+          <input type="checkbox" class="fee-studentid" data-id="${esc(c.id)}" ${c.requires_student_id ? 'checked' : ''}>
+          Required
+        </label>
       </td>
       <td class="p-4 text-right whitespace-nowrap">
         <button class="fee-save px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(c.id)}">Save</button>
@@ -4669,15 +4669,6 @@ async function saveFeeConfig() {
   renderBackendFees();
 }
 
-// The Student ID <select> encodes discipline+level as "nursing|UG" etc (or
-// "" for not required) -- the only four combos runIdCardCheck's OCR keyword
-// matching recognizes (see studentCategoryInfo in server.js). Parses that
-// into the three body fields the fees API expects.
-function studentIdBodyFields(selectValue) {
-  if (!selectValue) return { requiresStudentId: false };
-  const [idDiscipline, idLevel] = selectValue.split('|');
-  return { requiresStudentId: true, idDiscipline, idLevel };
-}
 
 async function handleAddFeeCategory(e) {
   e.preventDefault();
@@ -4689,7 +4680,7 @@ async function handleAddFeeCategory(e) {
     regularFee: Number(document.getElementById('new-fee-regular').value),
     lateFee: Number(document.getElementById('new-fee-late').value),
     spotFee: Number(document.getElementById('new-fee-spot').value),
-    ...studentIdBodyFields(document.getElementById('new-fee-studentid').value),
+    requiresStudentId: document.getElementById('new-fee-studentid').checked,
   };
   const data = await (await fetch('/api/admin/fees/categories', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
@@ -4698,7 +4689,7 @@ async function handleAddFeeCategory(e) {
   document.getElementById('new-fee-key').value = '';
   document.getElementById('new-fee-label').value = '';
   document.getElementById('new-fee-subtitle').value = '';
-  document.getElementById('new-fee-studentid').value = '';
+  document.getElementById('new-fee-studentid').checked = false;
   reviewCategoryList = null; // category list changed -- force ensureReviewCategories() to refetch
   renderBackendFees();
 }
@@ -4712,7 +4703,7 @@ async function saveFeeCategory(id) {
       regularFee: Number(q('fee-regular').value),
       lateFee: Number(q('fee-late').value),
       spotFee: Number(q('fee-spot').value),
-      ...studentIdBodyFields(q('fee-studentid').value),
+      requiresStudentId: q('fee-studentid').checked,
     })
   })).json();
   if (!data.success) showToast(data.error || 'Update failed.');

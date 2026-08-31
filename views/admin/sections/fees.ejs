@@ -28,13 +28,13 @@
           <div class="flex-1 min-w-[180px]"><label class="block text-[10px] font-semibold text-slate-600 mb-1">Subtitle</label><input id="new-fee-subtitle" placeholder="Who this category is for" class="w-full p-2 border rounded-lg text-sm outline-none"></div>
           <div>
             <label class="block text-[10px] font-semibold text-slate-600 mb-1">Student ID</label>
-            <select id="new-fee-studentid" class="p-2 border rounded-lg text-sm outline-none bg-white">
-              <option value="">Not required</option>
-              <option value="nursing|UG">Nursing UG</option>
-              <option value="nursing|PG">Nursing PG</option>
-              <option value="medical|UG">Medical UG</option>
-              <option value="medical|PG">Medical PG</option>
-            </select>
+            <!-- Just whether a card is required; the discipline/level pair
+                 this used to carry existed only to feed the ID-card OCR
+                 check, which is gone. -->
+            <label class="flex items-center gap-2 h-[38px] text-sm text-slate-600">
+              <input type="checkbox" id="new-fee-studentid">
+              Required
+            </label>
           </div>
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Early ₹</label><input id="new-fee-early" type="number" min="0" value="0" class="w-20 p-2 border rounded-lg text-sm outline-none"></div>
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Regular ₹</label><input id="new-fee-regular" type="number" min="0" value="0" class="w-20 p-2 border rounded-lg text-sm outline-none"></div>

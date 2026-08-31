@@ -9,11 +9,6 @@ program tracks have no built-in defaults — they're configured once, for
 whichever event you're running, through the **first-run setup wizard** (see
 below) and remain admin-editable afterward from **Settings → General**.
 
-Which categories require a student ID upload is admin-editable per category
-(Settings → Fees) rather than hardcoded, but the automated OCR check behind
-it still only recognizes a nursing/medical × UG/PG vocabulary — see Student
-ID verification below for what that means for a non-healthcare deployment.
-
 ## How to Run
 
 1. Open your terminal in the project directory.
@@ -635,27 +630,25 @@ or Settings → Program Groups creates some.
 ## Student ID verification
 
 Whether a category requires a student ID upload is set per category from
-Settings → Fees (a "Student ID" dropdown next to its fees: **Not required**,
-or one of **Nursing UG/PG** / **Medical UG/PG**). A category so flagged must
-upload a student ID card with registration; the server OCRs the card and does
-a preliminary check that its discipline and level match. Like the payment
-checks this is advisory: a mismatch flags the registration for manual review
-rather than blocking it — an approver still confirms the ID before the
-registration can be verified (`PUT /api/registrations/:id/verify-id`).
+Settings → Fees (a **Required** checkbox next to its fees). A category so
+flagged must upload a student ID card with registration, and an approver
+confirms it by eye before the registration can be verified
+(`PUT /api/registrations/:id/verify-id`) — that human check is the gate.
 
-The four dropdown options are a closed set (the API rejects anything else)
-because the OCR keyword matcher (`detectIdAttributes()` in `server.js`) only
-recognizes nursing/medical UG/PG vocabulary — the one piece of this still
-specific to a healthcare-education audience. Any category can be flagged as
-requiring an ID and matched against one of the four combos, but a
-conference with a genuinely different student population (e.g. engineering,
-law) can't add its own discipline/level through this UI — extending
-`detectIdAttributes()`'s keyword patterns is a code change, not an admin
-setting.
+There is deliberately no OCR of the ID card. An earlier version ran one, but
+it only ever recognised a fixed nursing/medical x UG/PG vocabulary, which
+made it useless to a conference with any other student population, and it was
+advisory rather than a gate — a miss merely flagged the registration for the
+same manual review that happens anyway. Removing it also removed the closed
+discipline/level enum that existed only to feed it, so **any** category can
+now require an ID with no constraint on what kind of student it is.
+
+At the desk, the walk-in flow substitutes an "I have checked this delegate's
+physical card" confirmation for the upload (see Desk registration below) —
+the same human judgement, made in person.
 
 The card is stored in `uploads/` and served only through the authed
-`GET /api/registrations/:id/id-card` route (owner or finance admin). Finance
-sees the ID check result and a link to view the card.
+`GET /api/registrations/:id/id-card` route (owner or finance admin).
 
 ## Discount codes & group discounts
 
@@ -765,12 +758,6 @@ crash.
   risks silently breaking OTP delivery in a way that's hard to diagnose
   without a real DLT rejection. A deployment using a different registered
   template needs to edit that string in code to match it.
-- The student-ID OCR check itself is still limited to a fixed
-  nursing/medical × UG/PG vocabulary (`detectIdAttributes()` in
-  `server.js`) — any category can require an ID and be matched against one
-  of those four combos, but a conference with a different student
-  population can't teach it new keywords without a code change. See Student
-  ID verification above.
 - **An international delegate can register but cannot pay.** The payment
   step offers UPI and NEFT/RTGS, both domestic Indian rails; fees are held
   and displayed in INR only; and the receipt OCR looks for rupee markers. So
@@ -785,7 +772,3 @@ crash.
   so an international delegate's only verifiable channel is email, and any
   number they give is a contact detail that can never receive a login code.
   See International delegates above.
-- Two accounts sharing one email address cannot use email login — the
-  system refuses to guess which is meant, and they sign in by mobile
-  instead. New signups can't reuse an address, so this only affects rows
-  predating that rule.

@@ -54,9 +54,10 @@
           </select>
         </div>
 
-        <!-- Student ID: eyes-on-the-physical-card at the desk stands in for
-             the upload+OCR check the self-service form runs -- see
-             studentCategoryInfo/needsId in POST /api/admin/registrations. -->
+        <!-- Student ID: eyes-on-the-physical-card at the desk, instead of the
+             photo upload the self-service form asks for. Either way an
+             approver confirms the card by eye -- see
+             categoryRequiresStudentId/needsId in POST /api/admin/registrations. -->
         <div id="rd-idverify-wrap" class="hidden bg-amber-50 border border-amber-200 rounded-lg p-3">
           <label class="flex items-start gap-2 text-xs text-slate-700 cursor-pointer">
             <input type="checkbox" id="rd-idverify-checkbox" class="mt-0.5 shrink-0">

@@ -15,7 +15,6 @@ const crypto = require('crypto');
 const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 const { createWorker } = require('tesseract.js');
-const { Jimp } = require('jimp');
 const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 // Node 16 has no global fetch; node-fetch (v2, CommonJS) provides it for SMS.
 const fetch = require('node-fetch');
@@ -479,17 +478,20 @@ const BANK = {
   branch: process.env.BANK_BRANCH || '',
 };
 
-// Whether a category must upload a student ID card, and the discipline/level
-// the card is expected to show -- admin-editable per category (Settings →
-// Fees), persisted on fee_categories (requires_student_id/id_discipline/
-// id_level) rather than hardcoded. Returns null for a category that doesn't
-// require one, so every call site keeps working as a truthy/falsy check.
-async function studentCategoryInfo(categoryKey) {
-  if (!categoryKey) return null;
+// Whether a category must upload a student ID card -- admin-editable per
+// category (Settings → Fees), persisted on fee_categories.requires_student_id
+// rather than hardcoded.
+//
+// It used to also return the discipline/level the card was expected to show,
+// for an OCR keyword check. That check is gone: it only ever recognised a
+// fixed nursing/medical x UG/PG vocabulary, was advisory rather than a gate,
+// and the real check has always been an approver looking at the card (see
+// id_verified / PUT /api/registrations/:id/verify-id).
+async function categoryRequiresStudentId(categoryKey) {
+  if (!categoryKey) return false;
   const cat = await dbGet(
-    'SELECT requires_student_id, id_discipline, id_level FROM fee_categories WHERE category_key = ?', [categoryKey]);
-  if (!cat || !cat.requires_student_id) return null;
-  return { discipline: cat.id_discipline, level: cat.id_level };
+    'SELECT requires_student_id FROM fee_categories WHERE category_key = ?', [categoryKey]);
+  return !!(cat && cat.requires_student_id);
 }
 
 // --- CRYPTO / COOKIE HELPERS --------------------------------------------
@@ -758,71 +760,6 @@ async function runOcrChecks(buffer, { expectedAmount, utr }) {
   return { amount, vpa, utr: utrMatch };
 }
 
-// Roughly detect discipline and level from an ID card's OCR text. Deliberately
-// permissive keyword matching -- this is a preliminary, advisory check.
-function detectIdAttributes(text) {
-  const t = text.toLowerCase();
-  let discipline = null;
-  if (/nursing|g\.?n\.?m|a\.?n\.?m/.test(t)) discipline = 'nursing';
-  else if (/mbbs|m\.?b\.?b\.?s|medic|medicine|surgery|\bmd\b|\bms\b/.test(t)) discipline = 'medical';
-
-  let level = null;
-  if (/post[-\s]?grad|\bpg\b|m\.?sc|\bmd\b|\bms\b|resident|master|\bdnb\b/.test(t)) level = 'PG';
-  else if (/under[-\s]?grad|\bug\b|b\.?sc|mbbs|bachelor|(1st|2nd|3rd|first|second|third|final)\s+year/.test(t)) level = 'UG';
-
-  return { discipline, level };
-}
-
-// OCR a single ID-card buffer and return its raw text, or null on OCR failure.
-async function ocrIdCardText(buffer) {
-  try {
-    const worker = await getOcrWorker();
-    const result = await Promise.race([
-      worker.recognize(buffer),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('OCR timed out')), 15000)),
-    ]);
-    return (result && result.data && result.data.text) || '';
-  } catch (err) {
-    console.error('ID OCR failed:', err.message);
-    ocrWorkerPromise = null;
-    return null;
-  }
-}
-
-// OCR a student ID card and check it against the claimed category. Advisory:
-// an unreadable or ambiguous card yields false (flagged), never an error.
-//
-// Phone-photographed ID cards are frequently uploaded sideways or upside
-// down, which tanks OCR accuracy far more than blur or bad lighting does.
-// Try the image as-is first (the common case, and the fast path); only if
-// that fails to identify a matching discipline/level do we pay the cost of
-// re-OCRing at 90/180/270 degrees, keeping whichever rotation is the first
-// to produce a match.
-async function runIdCardCheck(buffer, categoryKey) {
-  const expect = await studentCategoryInfo(categoryKey);
-  if (!expect) return null; // category does not require an ID card
-
-  const text = await ocrIdCardText(buffer);
-  if (text === null) return false;
-  const attrs = detectIdAttributes(text);
-  if (attrs.discipline === expect.discipline && attrs.level === expect.level) return true;
-
-  for (const angle of [90, 180, 270]) {
-    let rotatedBuffer;
-    try {
-      const image = await Jimp.read(buffer);
-      rotatedBuffer = await image.rotate(angle).getBuffer('image/jpeg');
-    } catch (err) {
-      break; // not an image Jimp can decode -- rotating won't help
-    }
-    const rotatedText = await ocrIdCardText(rotatedBuffer);
-    if (rotatedText === null) continue;
-    const rotatedAttrs = detectIdAttributes(rotatedText);
-    if (rotatedAttrs.discipline === expect.discipline && rotatedAttrs.level === expect.level) return true;
-  }
-
-  return false;
-}
 
 // Best-effort removal of a stored screenshot file (ignores legacy data URIs
 // and already-missing files).
@@ -1503,11 +1440,11 @@ db.serialize(() => {
     }
     // Student-ID requirement moved from the hardcoded STUDENT_CATEGORIES
     // object to per-category columns, admin-editable from the Fees tab.
-    // id_discipline/id_level stay a closed 'nursing'/'medical' x 'UG'/'PG'
-    // enum -- runIdCardCheck's OCR keyword matching only recognizes those
-    // four values, so a category outside them can still require an ID
-    // upload but can't get an automated OCR match (falls through to manual
-    // approver verification, same as an OCR miss on any other category).
+    // id_discipline/id_level are dormant: they only ever told the ID-card
+    // OCR which keywords to expect, and that check has been removed. Kept
+    // rather than dropped, since a historical setting is harmless to retain
+    // and dropping a column on a live SQLite database mid-event is not
+    // worth the risk. Nothing reads or writes them.
     if (!names.includes('requires_student_id')) {
       pending.push(new Promise((resolve) => {
         db.run('ALTER TABLE fee_categories ADD COLUMN requires_student_id INTEGER NOT NULL DEFAULT 0', () => {
@@ -1755,6 +1692,8 @@ db.serialize(() => {
     if (!names.includes('workshop_is_faculty')) pending.push(alter('ALTER TABLE registrations ADD COLUMN workshop_is_faculty INTEGER DEFAULT 0'));
     if (!names.includes('qi_is_faculty')) pending.push(alter('ALTER TABLE registrations ADD COLUMN qi_is_faculty INTEGER DEFAULT 0'));
     if (!names.includes('id_card')) pending.push(alter('ALTER TABLE registrations ADD COLUMN id_card TEXT'));
+    // Dormant: held the ID-card OCR verdict, which no longer exists. Kept so
+    // historical rows are not rewritten; nothing reads or writes it.
     if (!names.includes('ocr_id_match')) pending.push(alter('ALTER TABLE registrations ADD COLUMN ocr_id_match INTEGER'));
     if (!names.includes('rejection_reason')) pending.push(alter('ALTER TABLE registrations ADD COLUMN rejection_reason TEXT'));
     if (!names.includes('rejection_note')) pending.push(alter('ALTER TABLE registrations ADD COLUMN rejection_note TEXT'));
@@ -1771,7 +1710,7 @@ db.serialize(() => {
       }));
     }
     // Admin (approver) confirmation that a student category's uploaded ID
-    // card actually verifies that status -- distinct from ocr_id_match,
+    // card actually verifies that status -- this is now the ONLY ID check,
     // which is only the automated advisory check. Required before a student
     // registration can be verified (see PUT .../status).
     if (!names.includes('id_verified')) pending.push(alter('ALTER TABLE registrations ADD COLUMN id_verified INTEGER DEFAULT 0'));
@@ -3235,7 +3174,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     // Student categories must upload an ID card, checked against the category
     // -- this is an eligibility check, not a payment one, so it still applies
     // even when the fee is fully discounted to ₹0.
-    const needsId = !!(await studentCategoryInfo(effectiveCategoryKey));
+    const needsId = !!(await categoryRequiresStudentId(effectiveCategoryKey));
     let idDecoded = null;
     if (needsId) {
       if (!idCard) {
@@ -3253,14 +3192,12 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     // ₹0 payment_transactions row that would sit stuck forever waiting for a
     // bank credit that will never arrive.
     if (isFree) {
-      const idPass = needsId ? await runIdCardCheck(idDecoded.buffer, effectiveCategoryKey) : null;
-      const idMatch = needsId ? (idPass ? 1 : 0) : null;
       const idFilename = idDecoded ? await writeUploadBuffer(idDecoded.buffer, idDecoded.ext) : null;
 
       await dbRun(
         `INSERT INTO registrations
-          (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount)
-          VALUES (?, ?, ?, ?, 0, 0, NULL, NULL, ?, NULL, NULL, NULL, ?, 0, 'BANK_VERIFIED', NULL, NULL, NULL, ?, ?, ?)
+          (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount)
+          VALUES (?, ?, ?, ?, 0, 0, NULL, NULL, ?, NULL, NULL, NULL, 0, 'BANK_VERIFIED', NULL, NULL, NULL, ?, ?, ?)
           ON CONFLICT(phone_number) DO UPDATE SET
             delegate_name = excluded.delegate_name,
             category_key = excluded.category_key,
@@ -3273,8 +3210,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
             ocr_amount_match = NULL,
             ocr_vpa_match = NULL,
             ocr_utr_match = NULL,
-            ocr_id_match = excluded.ocr_id_match,
-            is_flagged = 0,
+              is_flagged = 0,
             bank_status = 'BANK_VERIFIED',
             rejection_reason = NULL,
             rejection_note = NULL,
@@ -3283,7 +3219,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
             discount_code = excluded.discount_code,
             discount_amount = excluded.discount_amount`,
         [phone, name, effectiveCategoryKey, categoryLabel,
-          idFilename, idMatch, Date.now(), discountCodeApplied, discountAmount]
+          idFilename, Date.now(), discountCodeApplied, discountAmount]
       );
       const regRow = await dbGet('SELECT id FROM registrations WHERE phone_number = ?', [phone]);
       await saveRegistrationSelections(regRow.id, selections);
@@ -3313,13 +3249,16 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
       return res.status(400).json({ success: false, error: decoded.error });
     }
 
-    // Read the screenshot (amount / UPI ID / UTR) and, for students, the ID card.
-    // The VPA check only applies to UPI payments -- an NEFT/RTGS receipt has
-    // no UPI ID to find, so that check is not applicable (treated as passed).
+    // Read the payment screenshot (amount / UPI ID / UTR). The VPA check only
+    // applies to UPI payments -- an NEFT/RTGS receipt has no UPI ID to find,
+    // so that check is not applicable (treated as passed).
+    //
+    // The ID card is deliberately NOT machine-checked: an approver confirms
+    // it by eye before the registration can be verified (see id_verified and
+    // PUT /api/registrations/:id/verify-id), which was always the real gate.
     const checks = await runOcrChecks(decoded.buffer, { expectedAmount, utr });
     if (mode === 'NEFT_RTGS') checks.vpa = true;
-    if (needsId) checks.id = await runIdCardCheck(idDecoded.buffer, effectiveCategoryKey);
-    const allChecksPass = checks.amount && checks.vpa && checks.utr && (!needsId || checks.id);
+    const allChecksPass = checks.amount && checks.vpa && checks.utr;
 
     // If any check failed and the delegate hasn't acknowledged the warning,
     // don't commit -- let the client warn and re-submit with acknowledged=true.
@@ -3338,12 +3277,11 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 
     const filename = await writeScreenshotBuffer(decoded.buffer, decoded.ext);
     const idFilename = idDecoded ? await writeUploadBuffer(idDecoded.buffer, idDecoded.ext) : null;
-    const idMatch = needsId ? (checks.id ? 1 : 0) : null;
 
     const result = await dbRun(
       `INSERT INTO registrations
-        (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL, ?, ?, ?, ?)
+        (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL, ?, ?, ?, ?)
         ON CONFLICT(phone_number) DO UPDATE SET
           delegate_name = excluded.delegate_name,
           category_key = excluded.category_key,
@@ -3356,7 +3294,6 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
           ocr_amount_match = excluded.ocr_amount_match,
           ocr_vpa_match = excluded.ocr_vpa_match,
           ocr_utr_match = excluded.ocr_utr_match,
-          ocr_id_match = excluded.ocr_id_match,
           is_flagged = excluded.is_flagged,
           bank_status = 'PENDING',
           rejection_reason = NULL,
@@ -3367,7 +3304,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
           discount_amount = excluded.discount_amount`,
       [phone, name, effectiveCategoryKey, categoryLabel,
         expectedAmount, paidAmount, utr, filename, idFilename,
-        checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, idMatch, flagged, mode, Date.now(), discountCodeApplied, discountAmount]
+        checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, flagged, mode, Date.now(), discountCodeApplied, discountAmount]
     );
 
     if (prev && prev.screenshot && prev.screenshot !== filename) {
@@ -3594,7 +3531,7 @@ const DELEGATE_SALUTATION_COLUMN =
 const REGISTRATION_PUBLIC_COLUMNS =
   `registrations.id, registrations.registration_number, registrations.phone_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, category_key, category_label,
    expected_amount, paid_amount, utr_number, is_flagged, bank_status,
-   ocr_amount_match, ocr_vpa_match, ocr_utr_match, ocr_id_match, rejection_reason, rejection_note,
+   ocr_amount_match, ocr_vpa_match, ocr_utr_match, rejection_reason, rejection_note,
    payment_mode, submitted_at, id_verified, id_verified_by, id_verified_at, category_locked,
    (screenshot IS NOT NULL AND screenshot != '') AS has_screenshot,
    (id_card IS NOT NULL AND id_card != '') AS has_id_card`;
@@ -4385,7 +4322,7 @@ app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', '
   try {
     const rows = await dbAll(
       `SELECT id, registration_number, category_key, expected_amount, paid_amount, utr_number,
-              screenshot, id_card, payment_mode
+              screenshot, payment_mode
          FROM registrations WHERE is_flagged = 1`);
 
     let rescanned = 0;
@@ -4400,20 +4337,16 @@ app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', '
       const checks = await runOcrChecks(buffer, { expectedAmount: reg.expected_amount, utr: reg.utr_number });
       if (reg.payment_mode === 'NEFT_RTGS') checks.vpa = true;
 
-      const needsId = !!(await studentCategoryInfo(reg.category_key));
-      let idMatch = null;
-      if (needsId) {
-        const idBuffer = await readStoredUpload(reg.id_card);
-        idMatch = idBuffer ? await runIdCardCheck(idBuffer, reg.category_key) : false;
-      }
-
-      const allChecksPass = checks.amount && checks.vpa && checks.utr && (!needsId || idMatch);
+      // Only the payment screenshot is machine-checked; a student ID card is
+      // confirmed by an approver, not by OCR, so a rescan has nothing to
+      // re-judge about it.
+      const allChecksPass = checks.amount && checks.vpa && checks.utr;
       const amountTampered = reg.paid_amount == null || Math.round(reg.paid_amount) !== reg.expected_amount;
       const flagged = !allChecksPass || amountTampered ? 1 : 0;
 
       await dbRun(
-        `UPDATE registrations SET ocr_amount_match = ?, ocr_vpa_match = ?, ocr_utr_match = ?, ocr_id_match = ?, is_flagged = ? WHERE id = ?`,
-        [checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, needsId ? (idMatch ? 1 : 0) : null, flagged, reg.id]
+        `UPDATE registrations SET ocr_amount_match = ?, ocr_vpa_match = ?, ocr_utr_match = ?, is_flagged = ? WHERE id = ?`,
+        [checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, flagged, reg.id]
       );
 
       rescanned++;
@@ -4481,7 +4414,7 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
     // Student categories additionally require an approver to have confirmed
     // the uploaded ID card verifies that status (the automated OCR check is
     // only advisory) -- see PUT .../verify-id.
-    if (bankStatus === 'BANK_VERIFIED' && (await studentCategoryInfo(existing.category_key)) && !existing.id_verified) {
+    if (bankStatus === 'BANK_VERIFIED' && (await categoryRequiresStudentId(existing.category_key)) && !existing.id_verified) {
       return res.status(400).json({
         success: false,
         error: 'This is a student registration and its ID card has not been verified by an approver yet. Verify the student ID before approving.',
@@ -4747,7 +4680,7 @@ app.put('/api/registrations/:id/verify-id', requireRole('SUPER_ADMIN', 'FINANCE_
     const verified = !!req.body.verified;
     const existing = await dbGet('SELECT id, category_key, id_verified FROM registrations WHERE id = ?', [req.params.id]);
     if (!existing) return res.status(404).json({ success: false, error: 'Registration not found.' });
-    if (!(await studentCategoryInfo(existing.category_key))) {
+    if (!(await categoryRequiresStudentId(existing.category_key))) {
       return res.status(400).json({ success: false, error: 'This category does not require student ID verification.' });
     }
     await dbRun(
@@ -5132,7 +5065,7 @@ app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
     // self-service form runs against an uploaded photo. Same gate as the
     // one PUT /api/registrations/:id/status already enforces before letting
     // any BANK_VERIFIED status through for a student category.
-    const needsId = !!(await studentCategoryInfo(req.body.categoryKey));
+    const needsId = !!(await categoryRequiresStudentId(req.body.categoryKey));
     if (needsId && !req.body.idVerifiedByAdmin) {
       return res.status(400).json({ success: false, error: 'Confirm the student ID card before registering this category.' });
     }
@@ -5230,15 +5163,14 @@ app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
     }
 
     const now = Date.now();
-    const idMatch = needsId ? 1 : null;
     const result = await dbRun(
       `INSERT INTO registrations
         (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number,
-         id_verified, id_verified_by, id_verified_at, ocr_id_match, bank_status, payment_mode, submitted_at,
+         id_verified, id_verified_by, id_verified_at, bank_status, payment_mode, submitted_at,
          discount_code, discount_amount)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [phone, name, req.body.categoryKey, feeInfo.label, expectedAmount, paidAmount, utrNumber,
-       needsId ? 1 : 0, needsId ? (req.session.name || req.session.phone) : null, needsId ? now : null, idMatch,
+       needsId ? 1 : 0, needsId ? (req.session.name || req.session.phone) : null, needsId ? now : null,
        bankStatus, paymentMode, now, discountCodeApplied, discountAmount]
     );
     const registrationId = result.lastID;
@@ -6428,17 +6360,12 @@ const feeFields = (b) => ({
   early: Number(b.earlyFee), regular: Number(b.regularFee), late: Number(b.lateFee), spot: Number(b.spotFee),
 });
 
-// discipline/level stay a closed enum -- see the comment on studentCategoryInfo
-// for why (runIdCardCheck's OCR keyword matching only recognizes these four
-// combinations). Returns null on a bad request body rather than throwing, so
-// callers can turn that into a clean 400.
+// Whether this category requires a student ID card. It used to also carry a
+// discipline/level pair, which existed solely to tell the ID-card OCR what
+// keywords to look for; with that check gone there is nothing to constrain,
+// so any category can require an ID and an approver judges the card.
 function studentIdFields(b) {
-  const requiresStudentId = !!b.requiresStudentId;
-  if (!requiresStudentId) return { requiresStudentId: false, idDiscipline: null, idLevel: null };
-  const idDiscipline = String(b.idDiscipline || '');
-  const idLevel = String(b.idLevel || '');
-  if (!['nursing', 'medical'].includes(idDiscipline) || !['UG', 'PG'].includes(idLevel)) return null;
-  return { requiresStudentId: true, idDiscipline, idLevel };
+  return { requiresStudentId: !!b.requiresStudentId };
 }
 
 app.get('/api/admin/fees', requireRole('SUPER_ADMIN'), async (req, res, next) => {
@@ -7156,14 +7083,14 @@ app.post('/api/admin/fees/categories', requireRole('SUPER_ADMIN'), async (req, r
     if (!sid) return res.status(400).json({ success: false, error: 'Choose a discipline and level for the student ID requirement.' });
     const max = await dbGet('SELECT COALESCE(MAX(sort_order), -1) AS m FROM fee_categories');
     const result = await dbRun(
-      'INSERT INTO fee_categories (category_key, label, subtitle, early_fee, regular_fee, late_fee, spot_fee, active, sort_order, requires_student_id, id_discipline, id_level) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)',
-      [categoryKey, String(label).trim(), subtitle ? String(subtitle).trim() : '', f.early, f.regular, f.late, f.spot, max.m + 1, sid.requiresStudentId ? 1 : 0, sid.idDiscipline, sid.idLevel]
+      'INSERT INTO fee_categories (category_key, label, subtitle, early_fee, regular_fee, late_fee, spot_fee, active, sort_order, requires_student_id) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)',
+      [categoryKey, String(label).trim(), subtitle ? String(subtitle).trim() : '', f.early, f.regular, f.late, f.spot, max.m + 1, sid.requiresStudentId ? 1 : 0]
     );
     await recordAudit({
       req, entityType: 'fee_category', entityId: result.lastID,
       action: 'FEE_CATEGORY_CREATE', oldValue: null,
       newValue: `${categoryKey} "${String(label).trim()}" — early ₹${inr(f.early)}, regular ₹${inr(f.regular)}, late ₹${inr(f.late)}, spot ₹${inr(f.spot)}`
-        + (sid.requiresStudentId ? `, requires student ID (${sid.idDiscipline}/${sid.idLevel})` : ''),
+        + (sid.requiresStudentId ? ', requires student ID' : ''),
     });
     res.json({ success: true });
   } catch (err) {
@@ -7188,7 +7115,7 @@ app.put('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (req
     // requirement can be updated here. requiresStudentId is left untouched
     // when the field is absent from the body (same "absent = no change"
     // convention as active), so a plain fee edit never has to resend it.
-    let sid = { requiresStudentId: !!existing.requires_student_id, idDiscipline: existing.id_discipline, idLevel: existing.id_level };
+    let sid = { requiresStudentId: !!existing.requires_student_id };
     if (req.body.requiresStudentId !== undefined) {
       const parsed = studentIdFields(req.body);
       if (!parsed) return res.status(400).json({ success: false, error: 'Choose a discipline and level for the student ID requirement.' });
@@ -7198,14 +7125,14 @@ app.put('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (req
       active: active !== undefined ? (active ? 1 : 0) : existing.active,
     };
     await dbRun(
-      'UPDATE fee_categories SET early_fee = ?, regular_fee = ?, late_fee = ?, spot_fee = ?, active = ?, requires_student_id = ?, id_discipline = ?, id_level = ? WHERE id = ?',
-      [f.early, f.regular, f.late, f.spot, updated.active, sid.requiresStudentId ? 1 : 0, sid.idDiscipline, sid.idLevel, req.params.id]
+      'UPDATE fee_categories SET early_fee = ?, regular_fee = ?, late_fee = ?, spot_fee = ?, active = ?, requires_student_id = ? WHERE id = ?',
+      [f.early, f.regular, f.late, f.spot, updated.active, sid.requiresStudentId ? 1 : 0, req.params.id]
     );
-    const idNote = (v) => v.requiresStudentId ? `, requires student ID (${v.idDiscipline}/${v.idLevel})` : '';
+    const idNote = (v) => v.requiresStudentId ? ', requires student ID' : '';
     await recordAudit({
       req, entityType: 'fee_category', entityId: req.params.id,
       action: 'FEE_CATEGORY_UPDATE',
-      oldValue: `${existing.label} — early ₹${inr(existing.early_fee)}, regular ₹${inr(existing.regular_fee)}, late ₹${inr(existing.late_fee)}, spot ₹${inr(existing.spot_fee)}, ${existing.active ? 'active' : 'inactive'}${idNote({ requiresStudentId: !!existing.requires_student_id, idDiscipline: existing.id_discipline, idLevel: existing.id_level })}`,
+      oldValue: `${existing.label} — early ₹${inr(existing.early_fee)}, regular ₹${inr(existing.regular_fee)}, late ₹${inr(existing.late_fee)}, spot ₹${inr(existing.spot_fee)}, ${existing.active ? 'active' : 'inactive'}${idNote({ requiresStudentId: !!existing.requires_student_id })}`,
       newValue: `${existing.label} — early ₹${inr(f.early)}, regular ₹${inr(f.regular)}, late ₹${inr(f.late)}, spot ₹${inr(f.spot)}, ${updated.active ? 'active' : 'inactive'}${idNote(sid)}`,
     });
     res.json({ success: true });
