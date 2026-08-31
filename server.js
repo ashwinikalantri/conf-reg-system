@@ -4456,9 +4456,22 @@ app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
 
     // Resolve the payment itself before writing anything, so a bad bank
     // link can't leave a half-created registration behind.
+    // BANK_TRANSFER has two variants: linked now (an unclaimed credit the
+    // admin can already see in the imported statement, same as before) or
+    // linked later (the delegate says they've paid but the transaction
+    // hasn't shown up in the statement yet -- the registration still goes
+    // through today, and the payment sits PENDING, exactly like a
+    // self-service submission, until an admin reconciles it via the normal
+    // Review flow once the statement catches up).
+    const linkLater = paymentMode === 'BANK_TRANSFER' && !!req.body.linkLater;
     let bank = null;
     let paidAmount;
-    if (paymentMode === 'BANK_TRANSFER') {
+    let utrNumber = null;
+    if (linkLater) {
+      paidAmount = Number(req.body.amount);
+      if (!Number.isFinite(paidAmount) || paidAmount <= 0) return res.status(400).json({ success: false, error: 'Enter a valid amount.' });
+      utrNumber = req.body.utrNumber ? String(req.body.utrNumber).trim() : null;
+    } else if (paymentMode === 'BANK_TRANSFER') {
       const bankTxnId = req.body.bankTxnId;
       if (!bankTxnId) return res.status(400).json({ success: false, error: 'Select the bank credit this delegate already paid.' });
       bank = await dbGet('SELECT * FROM bank_statement_transactions WHERE id = ?', [bankTxnId]);
@@ -4469,6 +4482,7 @@ app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
       paidAmount = req.body.amount !== undefined ? Number(req.body.amount) : Math.min(remaining, expectedAmount);
       if (!Number.isFinite(paidAmount) || paidAmount <= 0) return res.status(400).json({ success: false, error: 'Enter a valid amount.' });
       if (paidAmount > remaining + 0.5) return res.status(409).json({ success: false, error: `Only ₹${inr(remaining)} of that bank transaction is still unallocated.` });
+      utrNumber = bank.extracted_ref || null;
     } else {
       paidAmount = req.body.amount !== undefined ? Number(req.body.amount) : expectedAmount;
       if (expectedAmount > 0 && (!Number.isFinite(paidAmount) || paidAmount <= 0)) {
@@ -4479,7 +4493,10 @@ app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
     // Fully covers the fee -> confirmed outright, same as the self-service
     // free-registration path; short of it -> PARTIAL_PAYMENT, same meaning
     // it already has everywhere else (something verified, balance still due).
-    const bankStatus = paidAmount >= expectedAmount ? 'BANK_VERIFIED' : 'PARTIAL_PAYMENT';
+    // A deferred link is neither -- nothing is actually verified yet, so it
+    // sits PENDING (the same status a self-service submission starts in)
+    // regardless of how the claimed amount compares to the fee.
+    const bankStatus = linkLater ? 'PENDING' : (paidAmount >= expectedAmount ? 'BANK_VERIFIED' : 'PARTIAL_PAYMENT');
 
     // Account: create it if this phone has never been seen before, including
     // a temporary password so the delegate can log in today without waiting
@@ -4507,8 +4524,7 @@ app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
          id_verified, id_verified_by, id_verified_at, ocr_id_match, bank_status, payment_mode, submitted_at,
          discount_code, discount_amount)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [phone, name, req.body.categoryKey, feeInfo.label, expectedAmount, paidAmount,
-       bank ? (bank.extracted_ref || null) : null,
+      [phone, name, req.body.categoryKey, feeInfo.label, expectedAmount, paidAmount, utrNumber,
        needsId ? 1 : 0, needsId ? (req.session.name || req.session.phone) : null, needsId ? now : null, idMatch,
        bankStatus, paymentMode, now, discountCodeApplied, discountAmount]
     );
@@ -4520,20 +4536,37 @@ app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
 
     // Ledger row, same as every other payment path -- the Review modal's
     // per-transaction reconciliation and the Payments report both assume
-    // every registration has one.
-    await dbRun(
-      `INSERT INTO payment_transactions
-        (registration_id, phone_number, amount, verified_amount, utr_number, payment_mode, txn_status, bank_txn_id, submitted_at, reviewed_by, reviewed_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'VERIFIED', ?, ?, ?, ?)`,
-      [registrationId, phone, paidAmount, paidAmount, bank ? (bank.extracted_ref || null) : null, paymentMode,
-       bank ? bank.id : null, now, req.session.name || req.session.phone, now]
-    );
+    // every registration has one. A deferred link goes in PENDING with no
+    // verified_amount/reviewer yet, same shape as a self-service submission's
+    // first ledger row, so the existing Review modal can reconcile it later
+    // exactly as it would for one of those.
+    if (linkLater) {
+      await dbRun(
+        `INSERT INTO payment_transactions
+          (registration_id, phone_number, amount, utr_number, payment_mode, txn_status, submitted_at)
+         VALUES (?, ?, ?, ?, ?, 'PENDING', ?)`,
+        [registrationId, phone, paidAmount, utrNumber, paymentMode, now]
+      );
+      // In case a matching statement transaction was already imported under
+      // this reference before this registration was created.
+      await autoLinkTransactions();
+    } else {
+      await dbRun(
+        `INSERT INTO payment_transactions
+          (registration_id, phone_number, amount, verified_amount, utr_number, payment_mode, txn_status, bank_txn_id, submitted_at, reviewed_by, reviewed_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'VERIFIED', ?, ?, ?, ?)`,
+        [registrationId, phone, paidAmount, paidAmount, utrNumber, paymentMode,
+         bank ? bank.id : null, now, req.session.name || req.session.phone, now]
+      );
+    }
 
     await recordAudit({
       req, entityType: 'registration', entityId: registrationId,
       action: 'ADMIN_REGISTERED',
       oldValue: null,
-      newValue: `${name} (${phone}) — ${feeInfo.label}, ₹${inr(paidAmount)} via ${PAYMENT_MODE_LABELS[paymentMode]}${bankStatus === 'PARTIAL_PAYMENT' ? ` (₹${inr(expectedAmount - paidAmount)} balance due)` : ''}`,
+      newValue: `${name} (${phone}) — ${feeInfo.label}, ₹${inr(paidAmount)} via ${PAYMENT_MODE_LABELS[paymentMode]}${
+        linkLater ? ' — pending bank-statement linkage'
+        : bankStatus === 'PARTIAL_PAYMENT' ? ` (₹${inr(expectedAmount - paidAmount)} balance due)` : ''}`,
     });
 
     // No prior registration exists here (this endpoint refuses if one does),
@@ -4544,11 +4577,20 @@ app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
       writeAuditRow('discount_code', promoCodeId, 'DISCOUNT_CODE_USED', null, `${promoCode} used by ${name} (${phone}), reg ${regNo}`, phone, name, 'DELEGATE').catch(() => {});
     }
 
-    notifyDelegate(phone, 'Registration confirmed',
-      emailWrap('Your registration is confirmed',
-        `<p>Dear ${escapeHtml(name)},</p>
-         <p>Your registration for the ${escapeHtml(CONFERENCE.name)} is <b>confirmed</b>.</p>
-         <p>Registration number: <b>${escapeHtml(regNo)}</b></p>`));
+    if (linkLater) {
+      notifyDelegate(phone, 'Payment received — verification pending',
+        emailWrap('We’ve received your payment details',
+          `<p>Dear ${escapeHtml(name)},</p>
+           <p>Your registration for the ${escapeHtml(CONFERENCE.name)} has been recorded and your payment is now <b>pending verification</b> by our team.</p>
+           <p>Registration number: <b>${escapeHtml(regNo)}</b></p>
+           <p>Your registration will be <b>confirmed once your payment is verified</b> against our bank statement — you’ll receive a confirmation email at that point.</p>`));
+    } else {
+      notifyDelegate(phone, 'Registration confirmed',
+        emailWrap('Your registration is confirmed',
+          `<p>Dear ${escapeHtml(name)},</p>
+           <p>Your registration for the ${escapeHtml(CONFERENCE.name)} is <b>confirmed</b>.</p>
+           <p>Registration number: <b>${escapeHtml(regNo)}</b></p>`));
+    }
 
     res.json({ success: true, registrationId, registrationNumber: regNo, tempPassword, expectedAmount, paidAmount, bankStatus });
   } catch (err) {

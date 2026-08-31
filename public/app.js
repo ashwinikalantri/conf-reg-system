@@ -5533,6 +5533,7 @@ let rdGroupsCache = [];
 let rdSelectedOptionIds = new Set();
 let rdMode = 'CASH';
 let rdSelectedBankTxn = null;
+let rdBankLinkLater = false;
 
 async function openRegisterDelegateModal() {
   resetRegisterDelegateForm();
@@ -5557,7 +5558,12 @@ function resetRegisterDelegateForm() {
   if (result) result.classList.add('hidden');
   rdSelectedOptionIds = new Set();
   rdSelectedBankTxn = null;
+  setRegisterDelegateBankLinkLater(false);
   setRegisterDelegateMode('CASH');
+  const linklaterAmount = document.getElementById('rd-bank-linklater-amount');
+  if (linklaterAmount) linklaterAmount.value = '';
+  const linklaterRef = document.getElementById('rd-bank-linklater-ref');
+  if (linklaterRef) linklaterRef.value = '';
   const idWrap = document.getElementById('rd-idverify-wrap');
   if (idWrap) idWrap.classList.add('hidden');
   const idCheckbox = document.getElementById('rd-idverify-checkbox');
@@ -5647,7 +5653,21 @@ function setRegisterDelegateMode(mode) {
   if (bankBtn) bankBtn.className = `flex-1 py-2 rounded-md ${!isCash ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`;
   if (cashBox) cashBox.classList.toggle('hidden', !isCash);
   if (bankBox) bankBox.classList.toggle('hidden', isCash);
-  if (!isCash) loadRegisterDelegateBankCandidates(updateRegisterDelegateFee());
+  if (isCash) setRegisterDelegateBankLinkLater(false);
+  else loadRegisterDelegateBankCandidates(updateRegisterDelegateFee());
+}
+
+// Bank Transfer has two sub-modes: pick a credit already in the imported
+// statement (default), or defer that link because the delegate's transaction
+// hasn't shown up yet -- see linkLater in POST /api/admin/registrations.
+function setRegisterDelegateBankLinkLater(later) {
+  rdBankLinkLater = later;
+  const linkNowSection = document.getElementById('rd-bank-linknow-section');
+  const linkLaterSection = document.getElementById('rd-bank-linklater-section');
+  const toggle = document.getElementById('rd-bank-linklater-toggle');
+  if (linkNowSection) linkNowSection.classList.toggle('hidden', later);
+  if (linkLaterSection) linkLaterSection.classList.toggle('hidden', !later);
+  if (toggle) toggle.classList.toggle('hidden', later);
 }
 
 async function loadRegisterDelegateBankCandidates(targetAmount) {
@@ -5696,6 +5716,11 @@ async function handleRegisterDelegateSubmit(e) {
   };
   if (rdMode === 'CASH') {
     payload.amount = Number(document.getElementById('rd-cash-amount').value);
+  } else if (rdBankLinkLater) {
+    payload.linkLater = true;
+    payload.amount = Number(document.getElementById('rd-bank-linklater-amount').value);
+    payload.utrNumber = document.getElementById('rd-bank-linklater-ref').value.trim();
+    if (!Number.isFinite(payload.amount) || payload.amount <= 0) return showToast('Enter the amount this delegate claims to have paid.');
   } else {
     if (!rdSelectedBankTxn) return showToast('Select the bank credit this delegate already paid.');
     payload.bankTxnId = rdSelectedBankTxn.id;
@@ -5713,10 +5738,19 @@ async function handleRegisterDelegateSubmit(e) {
     const result = document.getElementById('register-delegate-result');
     if (result) result.classList.remove('hidden');
     setText('rd-result-regno', `Registration No. ${data.registrationNumber}`);
+    const banner = document.getElementById('rd-result-banner');
+    const isPending = data.bankStatus === 'PENDING';
+    if (banner) banner.className = `rounded-xl p-4 text-center ${isPending ? 'bg-amber-50 border border-amber-200' : 'bg-emerald-50 border border-emerald-200'}`;
+    setText('rd-result-icon', isPending ? '⏳' : '✅');
+    const heading = document.getElementById('rd-result-heading');
+    if (heading) heading.className = `font-bold mt-1 ${isPending ? 'text-amber-800' : 'text-emerald-800'}`;
+    setText('rd-result-heading', isPending ? 'Registered — payment pending bank-statement linkage' : 'Registration confirmed');
     const balance = Math.max(0, Number(data.expectedAmount) - Number(data.paidAmount));
-    setText('rd-result-amount', balance > 0
-      ? `₹${inr(data.paidAmount)} of ₹${inr(data.expectedAmount)} recorded · ₹${inr(balance)} balance due`
-      : `₹${inr(data.paidAmount)} recorded — fully paid`);
+    setText('rd-result-amount', isPending
+      ? `₹${inr(data.paidAmount)} claimed — an admin will link it to the bank statement later`
+      : balance > 0
+        ? `₹${inr(data.paidAmount)} of ₹${inr(data.expectedAmount)} recorded · ₹${inr(balance)} balance due`
+        : `₹${inr(data.paidAmount)} recorded — fully paid`);
     const pwBox = document.getElementById('rd-result-password-box');
     if (data.tempPassword) {
       if (pwBox) pwBox.classList.remove('hidden');
