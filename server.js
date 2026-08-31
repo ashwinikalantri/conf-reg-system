@@ -3663,10 +3663,25 @@ app.post('/api/groups/:id/members', requireAuth, async (req, res, next) => {
     const group = await dbGet('SELECT * FROM delegate_groups WHERE id = ?', [req.params.id]);
     if (!group) return res.status(404).json({ success: false, error: 'Group not found.' });
     if (group.leader_phone !== req.session.phone) return res.status(403).json({ success: false, error: 'Only the group leader can add members.' });
-    const phone = String(req.body.phone || '').replace(/\D/g, '');
-    if (!/^\d{10}$/.test(phone)) return res.status(400).json({ success: false, error: 'Enter a valid 10-digit mobile number.' });
-    const user = await dbGet('SELECT full_name FROM users WHERE phone_number = ?', [phone]);
-    if (!user) return res.status(404).json({ success: false, error: 'No registered delegate with that mobile number.' });
+    // A member is identified by mobile number OR email address. Digits-only
+    // stripping would destroy an email, so it's applied only to a value that
+    // isn't one. group_members.phone_number stores the resolved ACCOUNT KEY
+    // (identical to the mobile for every phone-based account, which is why
+    // existing groups are unaffected).
+    const rawId = String(req.body.identifier || req.body.phone || '').trim();
+    const identifier = isEmailValue(rawId) ? rawId : rawId.replace(/\D/g, '');
+    const found = await resolveAccountByIdentifier(identifier);
+    if (found.error === 'invalid') {
+      return res.status(400).json({ success: false, error: 'Enter a valid mobile number or email address.' });
+    }
+    if (found.error === 'ambiguousEmail') {
+      return res.status(409).json({ success: false, error: 'More than one account uses that email address. Use their mobile number instead.' });
+    }
+    if (found.error) {
+      return res.status(404).json({ success: false, error: 'No registered delegate with that mobile number or email address.' });
+    }
+    const user = found.user;
+    const phone = user.phone_number;
     const inGroup = await dbGet('SELECT group_id FROM group_members WHERE phone_number = ?', [phone]);
     if (inGroup) return res.status(409).json({ success: false, error: 'That delegate is already in a group.' });
     const reg = await dbGet('SELECT category_key, bank_status FROM registrations WHERE phone_number = ?', [phone]);
@@ -6013,7 +6028,11 @@ function parseDiscountBody(body) {
   const discountValue = Number(body.discountValue);
   const scopeType = ['GLOBAL', 'CATEGORY', 'INDIVIDUAL'].includes(body.scopeType) ? body.scopeType : 'GLOBAL';
   let scopeValue = scopeType === 'GLOBAL' ? null : String(body.scopeValue || '').trim();
-  if (scopeType === 'INDIVIDUAL') scopeValue = scopeValue.replace(/\D/g, ''); // phone digits
+  // INDIVIDUAL: a mobile number OR an email address identifying the
+  // delegate. Digits-only stripping would destroy an email, so only a value
+  // that already looks like a phone is normalised that way; the POST handler
+  // resolves whichever it is to that delegate's account key before storing.
+  if (scopeType === 'INDIVIDUAL' && !isEmailValue(scopeValue)) scopeValue = scopeValue.replace(/\D/g, '');
   // An individual code is single-delegate by nature, so a usage cap is
   // irrelevant -- always store it as unlimited (the scope check limits use).
   const maxUses = scopeType === 'INDIVIDUAL' ? null
@@ -6027,7 +6046,9 @@ function validateDiscountFields(f) {
   if (!Number.isFinite(f.discountValue) || f.discountValue <= 0) return 'Discount value must be greater than zero.';
   if (f.discountType === 'PERCENT' && f.discountValue > 100) return 'A percentage discount cannot exceed 100.';
   if (f.scopeType === 'CATEGORY' && !f.scopeValue) return 'Choose a category for a category-scoped code.';
-  if (f.scopeType === 'INDIVIDUAL' && !/^\d{10}$/.test(f.scopeValue || '')) return 'Enter a valid 10-digit mobile number for an individual code.';
+  if (f.scopeType === 'INDIVIDUAL' && !isPhoneValue(f.scopeValue) && !isEmailValue(f.scopeValue)) {
+    return 'Enter the delegate\u2019s mobile number or email address for an individual code.';
+  }
   return null;
 }
 
@@ -6036,6 +6057,23 @@ app.post('/api/admin/discount-codes', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'
     const f = parseDiscountBody(req.body);
     const err = validateDiscountFields(f);
     if (err) return res.status(400).json({ success: false, error: err });
+
+    // scope_value for an INDIVIDUAL code is matched against the session's
+    // account key (see validateDiscountCode), so resolve whatever the admin
+    // typed -- mobile or email -- to that key before storing. For a
+    // phone-based account the two are the same value, which is why every
+    // code issued before email signup existed keeps working untouched.
+    if (f.scopeType === 'INDIVIDUAL') {
+      const found = await resolveAccountByIdentifier(f.scopeValue);
+      if (found.error === 'ambiguousEmail') {
+        return res.status(409).json({ success: false, error: 'More than one account uses that email address. Use the delegate\u2019s mobile number instead.' });
+      }
+      if (found.error) {
+        return res.status(404).json({ success: false, error: 'No delegate found with that mobile number or email address.' });
+      }
+      f.scopeValue = found.user.phone_number;
+    }
+
     const result = await dbRun(
       `INSERT INTO discount_codes (code, discount_type, discount_value, scope_type, scope_value, max_uses, expires_at, active, created_at, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
@@ -6106,8 +6144,13 @@ async function discountCodeLines(code) {
     const cat = await dbGet('SELECT label FROM fee_categories WHERE category_key = ?', [code.scope_value]);
     scopeLine = `Valid for the "${escapeHtml(cat ? cat.label : code.scope_value)}" category only.`;
   } else if (code.scope_type === 'INDIVIDUAL') {
-    const u = await dbGet('SELECT full_name FROM users WHERE phone_number = ?', [code.scope_value]);
-    scopeLine = `Reserved for ${escapeHtml(u ? u.full_name : 'this delegate')} (+91 ${escapeHtml(code.scope_value || '')}) only.`;
+    // scope_value is the delegate's account key, which is only a real
+    // number for phone-based accounts -- show the email for an email-only
+    // one rather than printing a synthetic key as "+91 u_...".
+    const u = await dbGet('SELECT full_name, phone, email FROM users WHERE phone_number = ?', [code.scope_value]);
+    const shownPhone = displayPhone({ ...(u || {}), phone_number: code.scope_value });
+    const contact = shownPhone ? `+91 ${shownPhone}` : ((u && u.email) || '');
+    scopeLine = `Reserved for ${escapeHtml(u ? u.full_name : 'this delegate')}${contact ? ` (${escapeHtml(contact)})` : ''} only.`;
   }
   const discountLine = code.discount_type === 'PERCENT' ? `${Number(code.discount_value)}% off` : `₹${inr(Number(code.discount_value))} off`;
   const expiryLine = code.expires_at ? `Valid through ${escapeHtml(formatDMY(code.expires_at))}.` : 'No expiry date set.';

@@ -709,12 +709,18 @@ function openAddGroupMember() {
   openModal('modal-group-add');
 }
 async function submitAddGroupMember() {
-  const phone = document.getElementById('group-add-phone').value.replace(/\D/g, '');
-  if (!/^\d{10}$/.test(phone)) return showToast('Enter a valid 10-digit mobile number.');
+  // Mobile or email -- strip formatting only when it isn't an email, which
+  // digits-only stripping would destroy. The server resolves either to the
+  // delegate's account.
+  const raw = document.getElementById('group-add-phone').value.trim();
+  const identifier = EMAIL_RE.test(raw) ? raw : raw.replace(/\D/g, '');
+  if (!/^\d{10}$/.test(identifier) && !EMAIL_RE.test(identifier)) {
+    return showToast('Enter a valid 10-digit mobile number or email address.');
+  }
   const gid = (await (await fetch('/api/groups/me')).json()).group?.id;
   if (!gid) return showToast('Group not found.');
   const data = await (await fetch(`/api/groups/${gid}/members`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier }),
   })).json();
   if (!data.success) return showToast(data.error || 'Could not add member.');
   showToast('Member added.', 'success');
@@ -4539,24 +4545,36 @@ function searchDiscDelegate(query) {
   document.getElementById('new-disc-scope-phone').value = '';
   document.getElementById('new-disc-delegate-selected').classList.add('hidden');
   if (!q) { box.classList.add('hidden'); return; }
+  // Searches email as well as name/mobile/reg-no, so an email-only delegate
+  // is reachable here at all. What gets STORED is still u.phone_number --
+  // the account key, which is what the server matches an INDIVIDUAL code
+  // against -- so nothing about the stored shape changes.
   const matches = (cachedUsers || [])
-    .filter((u) => `${u.full_name || ''} ${u.phone_number || ''} ${u.registration_number || ''}`.toLowerCase().includes(q))
+    .filter((u) => `${u.full_name || ''} ${delegateDisplayPhone(u)} ${u.email || ''} ${u.registration_number || ''}`.toLowerCase().includes(q))
     .slice(0, 8);
   box.innerHTML = matches.length
-    ? matches.map((u) => `<button type="button" class="w-full text-left px-3 py-2 hover:bg-indigo-50" onclick="pickDiscDelegate('${esc(u.phone_number)}', '${esc((u.full_name || '').replace(/'/g, "\\'"))}')">
+    ? matches.map((u) => `<button type="button" class="w-full text-left px-3 py-2 hover:bg-indigo-50" onclick="pickDiscDelegate('${esc(u.phone_number)}', '${esc((u.full_name || '').replace(/'/g, "\\'"))}', '${esc(discDelegateContact(u))}')">
         <p class="font-semibold text-slate-800 text-sm">${esc(u.full_name || '—')}</p>
-        <p class="text-[11px] text-slate-500">+91 ${esc(u.phone_number)}${u.registration_number ? ' · ' + esc(u.registration_number) : ''}</p>
+        <p class="text-[11px] text-slate-500">${esc(discDelegateContact(u))}${u.registration_number ? ' · ' + esc(u.registration_number) : ''}</p>
       </button>`).join('')
     : '<p class="text-xs text-slate-400 p-3">No matching delegate.</p>';
   box.classList.remove('hidden');
 }
 
-function pickDiscDelegate(phone, name) {
-  document.getElementById('new-disc-scope-phone').value = phone;
-  document.getElementById('new-disc-delegate-search').value = name || phone;
+// How to show a delegate's contact in the picker: their mobile when they
+// have one, otherwise their email -- never the raw account key, which is
+// synthetic for an email-only account.
+function discDelegateContact(u) {
+  const ph = delegateDisplayPhone(u);
+  return ph ? `+91 ${ph}` : (u.email || '');
+}
+
+function pickDiscDelegate(key, name, contact) {
+  document.getElementById('new-disc-scope-phone').value = key;
+  document.getElementById('new-disc-delegate-search').value = name || contact || key;
   document.getElementById('new-disc-delegate-results').classList.add('hidden');
   const sel = document.getElementById('new-disc-delegate-selected');
-  sel.textContent = `✓ ${name || ''} (+91 ${phone})`;
+  sel.textContent = `✓ ${name || ''}${contact ? ` (${contact})` : ''}`;
   sel.classList.remove('hidden');
 }
 
