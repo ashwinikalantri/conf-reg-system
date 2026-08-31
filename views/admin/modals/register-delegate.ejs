@@ -1,0 +1,117 @@
+  <!-- MODAL: REGISTER DELEGATE (admin-initiated, at the desk) -->
+  <!-- See POST /api/admin/registrations. Two states in one modal: the form
+       (#register-delegate-form) and a success panel
+       (#register-delegate-result) showing the registration number and, if
+       one was issued, a temporary password -- shown once, never persisted
+       in plaintext anywhere, so this is the only place an admin can read it
+       back to hand to the delegate. -->
+  <div id="modal-register-delegate" class="hidden fixed inset-0 bg-slate-900/60 flex justify-center items-center p-2 sm:p-4 z-50">
+    <div class="bg-white max-w-lg w-full rounded-2xl shadow-2xl relative max-h-[95vh] flex flex-col">
+      <button onclick="closeModal('modal-register-delegate')" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold z-10">✕</button>
+
+      <div class="p-6 pb-0 shrink-0">
+        <h3 class="text-lg font-bold text-slate-800 mb-1">Register Delegate</h3>
+        <p id="register-delegate-subtitle" class="text-xs text-slate-500">For a delegate registering in person at the desk — payment is recorded as already received, not left pending review.</p>
+      </div>
+
+      <form id="register-delegate-form" onsubmit="handleRegisterDelegateSubmit(event)" class="flex-1 min-h-0 overflow-y-auto p-6 pt-4 space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Mobile Number (+91)</label>
+          <input type="tel" id="rd-phone" maxlength="10" required autocomplete="off" class="w-full p-2.5 border rounded-lg text-sm font-mono outline-none">
+        </div>
+
+        <div id="rd-name-fields">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Full Name</label>
+            <input type="text" id="rd-name" required class="w-full p-2.5 border rounded-lg text-sm outline-none">
+            <p class="text-[11px] text-slate-400 mt-1">If this number already has an account, its existing name is used instead — this is only for a brand-new delegate.</p>
+          </div>
+          <div class="grid grid-cols-2 gap-3 mt-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Designation <span class="text-slate-400 font-normal">(optional)</span></label>
+              <input type="text" id="rd-designation" class="w-full p-2.5 border rounded-lg text-sm outline-none">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Institution <span class="text-slate-400 font-normal">(optional)</span></label>
+              <input type="text" id="rd-institute" class="w-full p-2.5 border rounded-lg text-sm outline-none">
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Delegate Category</label>
+          <select id="rd-category" required onchange="onRegisterDelegateCategoryChange()" class="w-full p-2.5 border rounded-lg text-sm bg-white outline-none">
+            <option value="">-- Select Category --</option>
+          </select>
+        </div>
+
+        <!-- Student ID: eyes-on-the-physical-card at the desk stands in for
+             the upload+OCR check the self-service form runs -- see
+             studentCategoryInfo/needsId in POST /api/admin/registrations. -->
+        <div id="rd-idverify-wrap" class="hidden bg-amber-50 border border-amber-200 rounded-lg p-3">
+          <label class="flex items-start gap-2 text-xs text-slate-700 cursor-pointer">
+            <input type="checkbox" id="rd-idverify-checkbox" class="mt-0.5 shrink-0">
+            <span>I have checked this delegate's physical student ID card and confirm it matches the selected category.</span>
+          </label>
+        </div>
+
+        <div id="rd-program-groups" class="space-y-3"></div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Promo Code <span class="text-slate-400 font-normal">(optional)</span></label>
+          <input type="text" id="rd-discount-code" placeholder="Leave blank if none" class="w-full p-2.5 border rounded-lg text-sm outline-none uppercase font-mono">
+        </div>
+
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-slate-500 uppercase tracking-wide">Fee Due</span>
+            <span id="rd-fee-display" class="text-xl font-extrabold text-indigo-600">₹0</span>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Payment Method</label>
+            <div class="flex gap-1.5 bg-slate-100 rounded-lg p-1 text-xs font-semibold">
+              <button type="button" id="rd-mode-cash-btn" onclick="setRegisterDelegateMode('CASH')" class="flex-1 py-2 rounded-md bg-white text-indigo-700 shadow-sm">Cash / At Desk</button>
+              <button type="button" id="rd-mode-bank-btn" onclick="setRegisterDelegateMode('BANK_TRANSFER')" class="flex-1 py-2 rounded-md text-slate-500">Existing Bank Transfer</button>
+            </div>
+          </div>
+
+          <div id="rd-mode-cash" class="space-y-2">
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Amount Received (₹)</label>
+            <input type="number" id="rd-cash-amount" min="0" step="0.01" class="w-full p-2.5 border rounded-lg text-sm outline-none">
+          </div>
+
+          <div id="rd-mode-bank" class="hidden space-y-2">
+            <p class="text-[11px] text-slate-500">Pick the credit this delegate already paid — nearest to the fee due is listed first.</p>
+            <div id="rd-bank-candidates" class="divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-40 overflow-y-auto bg-white"></div>
+            <div id="rd-bank-selected" class="hidden bg-emerald-50 border border-emerald-200 rounded-lg p-2 text-xs text-emerald-800"></div>
+          </div>
+
+          <p id="rd-partial-note" class="hidden text-[11px] text-orange-700 font-semibold">Amount is less than the fee due — this will be recorded as a partial payment, with the balance still owed.</p>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-1">
+          <button type="button" onclick="closeModal('modal-register-delegate')" class="px-4 py-2 border rounded-xl text-xs font-semibold text-slate-600">Cancel</button>
+          <button type="submit" id="rd-submit-btn" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-xs font-semibold shadow-md">Register &amp; Record Payment</button>
+        </div>
+      </form>
+
+      <div id="register-delegate-result" class="hidden flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
+        <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center">
+          <p class="text-3xl">✅</p>
+          <p class="font-bold text-emerald-800 mt-1">Registration confirmed</p>
+          <p class="text-xs font-mono text-emerald-700 mt-1" id="rd-result-regno"></p>
+          <p class="text-xs text-emerald-700 mt-2" id="rd-result-amount"></p>
+        </div>
+        <div id="rd-result-password-box" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <p class="text-xs font-bold text-amber-800 uppercase tracking-wide">Temporary Password</p>
+          <p class="text-[11px] text-amber-700 mt-0.5">Share this with the delegate now — it won't be shown again. They should change it via Set Password after logging in.</p>
+          <p id="rd-result-password" class="text-2xl font-mono font-black text-amber-900 tracking-widest text-center mt-2 select-all"></p>
+        </div>
+        <div class="flex justify-end gap-2">
+          <button type="button" onclick="closeModal('modal-register-delegate')" class="px-4 py-2 border rounded-xl text-xs font-semibold text-slate-600">Close</button>
+          <button type="button" onclick="resetRegisterDelegateForm()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-md">Register Another</button>
+        </div>
+      </div>
+    </div>
+  </div>

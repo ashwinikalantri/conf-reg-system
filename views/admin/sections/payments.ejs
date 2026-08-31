@@ -25,9 +25,17 @@
       </div>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <p class="text-xs text-slate-500">Showing registrations awaiting a decision. Once verified, a delegate drops off this list — see <button type="button" onclick="switchBackendTab('reports')" class="text-indigo-600 underline font-semibold">Reports</button> for the full verified list.</p>
-        <button id="rescan-flagged-btn" onclick="rescanFlaggedPayments()" class="shrink-0 px-3 py-1.5 bg-slate-700 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg">
-          🔄 Rescan Flagged
-        </button>
+        <div class="flex gap-2 shrink-0">
+          <!-- Visibility matches this endpoint's own role gate (Super Admin
+               + Finance Admin, which via ROLE_IMPLIES also covers Finance &
+               Academic) -- same isFinance the rest of this tab uses. -->
+          <button id="register-delegate-btn" onclick="openRegisterDelegateModal()" class="hidden px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">
+            + Register Delegate
+          </button>
+          <button id="rescan-flagged-btn" onclick="rescanFlaggedPayments()" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg">
+            🔄 Rescan Flagged
+          </button>
+        </div>
       </div>
 
       <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">

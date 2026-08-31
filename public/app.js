@@ -2060,6 +2060,12 @@ function applyRoleVisibility(role) {
   if (tabAbstracts) tabAbstracts.classList.toggle('hidden', !isReviewer);
   if (tabReports) tabReports.classList.toggle('hidden', !(isFinance || isReviewer || isOperations));
 
+  // POST /api/admin/registrations is requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
+  // -- same as isFinance, since ROLE_IMPLIES grants FINANCE_ACADEMIC the
+  // FINANCE_ADMIN role too (see server.js), so no narrower check is needed here.
+  const registerBtn = document.getElementById('register-delegate-btn');
+  if (registerBtn) registerBtn.classList.toggle('hidden', !isFinance);
+
   // Masters/Users/Reminders/Logs live in the header's Settings menu, not
   // the main tab bar. The menu button itself only shows if at least one
   // item would.
@@ -5515,6 +5521,213 @@ async function handleCreateUserSubmit(e) {
 
   closeModal('modal-create-user');
   initBackendPortal();
+}
+
+// --- REGISTER DELEGATE (admin, at the desk) -----------------------------
+// See POST /api/admin/registrations. Reuses the same fee-category and
+// program-group data the delegate's own payment form loads from
+// /api/fees and /api/program-options, so what's offered here can never
+// drift from what a self-service registration would see.
+let rdCategoriesCache = [];
+let rdGroupsCache = [];
+let rdSelectedOptionIds = new Set();
+let rdMode = 'CASH';
+let rdSelectedBankTxn = null;
+
+async function openRegisterDelegateModal() {
+  resetRegisterDelegateForm();
+  const [feesRes, groupsRes] = await Promise.all([fetch('/api/fees'), fetch('/api/program-options')]);
+  const feesData = feesRes.ok ? await feesRes.json() : {};
+  rdCategoriesCache = feesData.categories || [];
+  const sel = document.getElementById('rd-category');
+  if (sel) {
+    sel.innerHTML = '<option value="">-- Select Category --</option>' +
+      rdCategoriesCache.map((c) => `<option value="${esc(c.key)}">${esc(c.label)}${c.subtitle ? ' — ' + esc(c.subtitle) : ''} — ₹${inr(Number(c.fee))}</option>`).join('');
+  }
+  const groupsData = groupsRes.ok ? await groupsRes.json() : {};
+  rdGroupsCache = groupsData.groups || [];
+  renderRegisterDelegateGroups();
+  openModal('modal-register-delegate');
+}
+
+function resetRegisterDelegateForm() {
+  const form = document.getElementById('register-delegate-form');
+  const result = document.getElementById('register-delegate-result');
+  if (form) { form.reset(); form.classList.remove('hidden'); }
+  if (result) result.classList.add('hidden');
+  rdSelectedOptionIds = new Set();
+  rdSelectedBankTxn = null;
+  setRegisterDelegateMode('CASH');
+  const idWrap = document.getElementById('rd-idverify-wrap');
+  if (idWrap) idWrap.classList.add('hidden');
+  const idCheckbox = document.getElementById('rd-idverify-checkbox');
+  if (idCheckbox) idCheckbox.checked = false;
+  const partialNote = document.getElementById('rd-partial-note');
+  if (partialNote) partialNote.classList.add('hidden');
+  setText('rd-fee-display', '₹0');
+  const submitBtn = document.getElementById('rd-submit-btn');
+  if (submitBtn) submitBtn.disabled = false;
+}
+
+function onRegisterDelegateCategoryChange() {
+  const key = document.getElementById('rd-category').value;
+  const cat = rdCategoriesCache.find((c) => c.key === key);
+  const idWrap = document.getElementById('rd-idverify-wrap');
+  if (idWrap) idWrap.classList.toggle('hidden', !(cat && cat.requiresStudentId));
+  updateRegisterDelegateFee();
+}
+
+// One block per active program group, same single-select-vs-checkbox split
+// as the delegate's own loadProgramOptions() -- see there for why.
+function renderRegisterDelegateGroups() {
+  const box = document.getElementById('rd-program-groups');
+  if (!box) return;
+  box.innerHTML = rdGroupsCache.map((g) => {
+    const label = `${esc(g.name)}${g.required ? ' <span class="text-rose-500">*</span>' : ' <span class="font-normal text-slate-400">(optional)</span>'}`;
+    if (g.maxSelect <= 1) {
+      return `<div>
+        <label class="block text-xs font-semibold text-slate-700 mb-1">${label}</label>
+        <select class="rd-group-select w-full p-2.5 text-sm border rounded-lg bg-white outline-none" data-group-id="${g.id}" data-group-name="${esc(g.name)}" data-required="${g.required ? '1' : '0'}" onchange="updateRegisterDelegateFee()">
+          <option value="">-- Choose${g.required ? '' : ' (optional)'} --</option>
+          ${g.options.map((o) => `<option value="${o.id}" ${o.full ? 'disabled' : ''}>${esc(o.name)}${o.full ? ' — FULL' : ` (${o.remaining} left)`}${o.fee > 0 ? ` — +₹${inr(o.fee)}` : ''}</option>`).join('')}
+        </select>
+      </div>`;
+    }
+    return `<div>
+      <label class="block text-xs font-semibold text-slate-700 mb-1">${label} <span class="font-normal text-slate-400">(choose up to ${g.maxSelect})</span></label>
+      <div class="space-y-1">
+        ${g.options.map((o) => `<label class="flex items-center gap-2 text-sm ${o.full ? 'text-slate-400' : 'text-slate-700'}">
+          <input type="checkbox" class="rd-group-checkbox" data-group-id="${g.id}" value="${o.id}" ${o.full ? 'disabled' : ''} onchange="updateRegisterDelegateFee()">
+          ${esc(o.name)}${o.full ? ' — FULL' : ` (${o.remaining} left)`}${o.fee > 0 ? ` — +₹${inr(o.fee)}` : ''}
+        </label>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function collectRegisterDelegateOptionIds() {
+  const ids = [];
+  document.querySelectorAll('#rd-program-groups .rd-group-select').forEach((sel) => { if (sel.value) ids.push(Number(sel.value)); });
+  document.querySelectorAll('#rd-program-groups .rd-group-checkbox:checked').forEach((cb) => ids.push(Number(cb.value)));
+  return ids;
+}
+
+// Fee shown here is category + option fees only -- a promo code's actual
+// discount is only known once the server validates it, so this is a
+// pre-discount estimate the admin can still act on (default cash amount,
+// bank-credit search target); the real figure comes back in the response
+// after submit.
+function updateRegisterDelegateFee() {
+  const key = document.getElementById('rd-category').value;
+  const cat = rdCategoriesCache.find((c) => c.key === key);
+  const base = cat ? Number(cat.fee) || 0 : 0;
+  const optionsFee = collectRegisterDelegateOptionIds().reduce((sum, id) => {
+    const opt = rdGroupsCache.flatMap((g) => g.options).find((o) => o.id === id);
+    return sum + (opt ? Number(opt.fee) || 0 : 0);
+  }, 0);
+  const total = base + optionsFee;
+  setText('rd-fee-display', `₹${inr(total)}`);
+  const cashInput = document.getElementById('rd-cash-amount');
+  if (cashInput && (cashInput.value === '' || Number(cashInput.dataset.auto) === 1)) {
+    cashInput.value = total;
+    cashInput.dataset.auto = '1';
+  }
+  if (rdMode === 'BANK_TRANSFER') loadRegisterDelegateBankCandidates(total);
+  return total;
+}
+
+function setRegisterDelegateMode(mode) {
+  rdMode = mode;
+  const cashBtn = document.getElementById('rd-mode-cash-btn');
+  const bankBtn = document.getElementById('rd-mode-bank-btn');
+  const cashBox = document.getElementById('rd-mode-cash');
+  const bankBox = document.getElementById('rd-mode-bank');
+  const isCash = mode === 'CASH';
+  if (cashBtn) cashBtn.className = `flex-1 py-2 rounded-md ${isCash ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`;
+  if (bankBtn) bankBtn.className = `flex-1 py-2 rounded-md ${!isCash ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`;
+  if (cashBox) cashBox.classList.toggle('hidden', !isCash);
+  if (bankBox) bankBox.classList.toggle('hidden', isCash);
+  if (!isCash) loadRegisterDelegateBankCandidates(updateRegisterDelegateFee());
+}
+
+async function loadRegisterDelegateBankCandidates(targetAmount) {
+  const box = document.getElementById('rd-bank-candidates');
+  if (!box) return;
+  box.innerHTML = '<p class="text-[11px] text-slate-400 p-2">Loading…</p>';
+  const res = await fetch(`/api/admin/bank-credit-candidates?amount=${encodeURIComponent(targetAmount || 0)}`);
+  const rows = res.ok ? (await res.json()).transactions || [] : [];
+  box.innerHTML = rows.length ? rows.map((t) => `
+    <div class="flex items-center justify-between gap-2 p-2 text-[11px]">
+      <div class="min-w-0"><p class="font-semibold text-slate-700">${esc(t.post_date)} · ₹${inr(t.remaining)}${t.remaining !== t.credit ? ` of ₹${inr(t.credit)}` : ''} available</p><p class="text-slate-500 truncate">${esc(t.description)}</p></div>
+      <button type="button" class="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded" onclick='selectRegisterDelegateBankTxn(${JSON.stringify(t).replace(/'/g, "&#39;")})'>Select</button>
+    </div>`).join('') : '<p class="text-[11px] text-slate-400 p-2">No unclaimed credits in the statement.</p>';
+}
+
+function selectRegisterDelegateBankTxn(txn) {
+  rdSelectedBankTxn = txn;
+  const box = document.getElementById('rd-bank-selected');
+  if (box) {
+    box.classList.remove('hidden');
+    box.innerHTML = `Selected: ${esc(txn.post_date)} · ₹${inr(txn.remaining)} available <button type="button" onclick="rdSelectedBankTxn=null;document.getElementById('rd-bank-selected').classList.add('hidden')" class="ml-2 text-rose-600 hover:underline font-semibold">Change</button>`;
+  }
+}
+
+async function handleRegisterDelegateSubmit(e) {
+  e.preventDefault();
+  const phone = document.getElementById('rd-phone').value.trim();
+  if (!/^\d{10}$/.test(phone)) return showToast('Enter a valid 10-digit mobile number.');
+  const categoryKey = document.getElementById('rd-category').value;
+  if (!categoryKey) return showToast('Select a delegate category.');
+  const cat = rdCategoriesCache.find((c) => c.key === categoryKey);
+  if (cat && cat.requiresStudentId && !document.getElementById('rd-idverify-checkbox').checked) {
+    return showToast('Confirm the student ID card before continuing.');
+  }
+
+  const payload = {
+    phone,
+    name: document.getElementById('rd-name').value.trim(),
+    designation: document.getElementById('rd-designation').value.trim(),
+    institute: document.getElementById('rd-institute').value.trim(),
+    categoryKey,
+    optionIds: collectRegisterDelegateOptionIds(),
+    discountCode: document.getElementById('rd-discount-code').value.trim(),
+    idVerifiedByAdmin: cat && cat.requiresStudentId ? true : undefined,
+    paymentMode: rdMode,
+  };
+  if (rdMode === 'CASH') {
+    payload.amount = Number(document.getElementById('rd-cash-amount').value);
+  } else {
+    if (!rdSelectedBankTxn) return showToast('Select the bank credit this delegate already paid.');
+    payload.bankTxnId = rdSelectedBankTxn.id;
+  }
+
+  const submitBtn = document.getElementById('rd-submit-btn');
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const data = await (await fetch('/api/admin/registrations', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    })).json();
+    if (!data.success) { showToast(data.error || 'Could not register this delegate.'); return; }
+
+    document.getElementById('register-delegate-form').classList.add('hidden');
+    const result = document.getElementById('register-delegate-result');
+    if (result) result.classList.remove('hidden');
+    setText('rd-result-regno', `Registration No. ${data.registrationNumber}`);
+    const balance = Math.max(0, Number(data.expectedAmount) - Number(data.paidAmount));
+    setText('rd-result-amount', balance > 0
+      ? `₹${inr(data.paidAmount)} of ₹${inr(data.expectedAmount)} recorded · ₹${inr(balance)} balance due`
+      : `₹${inr(data.paidAmount)} recorded — fully paid`);
+    const pwBox = document.getElementById('rd-result-password-box');
+    if (data.tempPassword) {
+      if (pwBox) pwBox.classList.remove('hidden');
+      setText('rd-result-password', data.tempPassword);
+    } else if (pwBox) {
+      pwBox.classList.add('hidden');
+    }
+    renderBackendPayments();
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
 }
 
 // "Masters" groups Workshops & QI / Fees / Users under one nav entry with an

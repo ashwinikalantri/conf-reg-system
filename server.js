@@ -534,6 +534,21 @@ function omitPasswordHash(user) {
   return { ...rest, hasPassword: !!password_hash };
 }
 
+// A one-time password for a delegate registered at the desk (see POST
+// /api/admin/registrations) -- meant to be read out loud or written down,
+// not typed by anyone from a screenshot, so it deliberately excludes
+// characters that are easy to misread aloud or on paper (0/O, 1/l/I) rather
+// than drawing from the full alphanumeric range. Returned once in that
+// endpoint's response and never stored or logged in plaintext -- only its
+// scrypt hash (via hashPassword) ever reaches the database.
+const TEMP_PASSWORD_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+function generateTempPassword(length = 8) {
+  const bytes = crypto.randomBytes(length);
+  let out = '';
+  for (let i = 0; i < length; i++) out += TEMP_PASSWORD_ALPHABET[bytes[i] % TEMP_PASSWORD_ALPHABET.length];
+  return out;
+}
+
 // Escape a value for safe interpolation into server-rendered HTML.
 function escapeHtml(v) {
   return String(v == null ? '' : v)
@@ -4331,6 +4346,216 @@ app.post('/api/registrations/:id/admin-add-payment', requireRole('SUPER_ADMIN', 
   }
 });
 
+// Candidate statement credits for a brand-new admin-created registration --
+// unlinked rows nearest to a target amount, same shape/reasoning as
+// /api/payment-transactions/:txnId/candidates, but not anchored to an
+// existing payment_transactions row (there isn't one yet: this is used
+// while filling out the "Register Delegate" form, before the registration
+// itself exists). ?amount= is the fee being registered for; omit it to sort
+// by date instead.
+app.get('/api/admin/bank-credit-candidates', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const target = Number(req.query.amount) || 0;
+    const raw = await dbAll(
+      `SELECT * FROM bank_statement_transactions
+        WHERE credit IS NOT NULL AND credit > 0 AND is_non_registration = 0
+        ORDER BY ${target > 0 ? 'ABS(COALESCE(credit, 0) - ?) ASC, ' : ''}post_date DESC`,
+      target > 0 ? [target] : []);
+    const rows = [];
+    for (const t of raw) {
+      const { remaining } = await allocatedForBankTxn(t.id);
+      if (remaining > 0) rows.push({ ...t, remaining });
+      if (rows.length >= 50) break;
+    }
+    res.json({ transactions: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Register a delegate from the admin panel -- a walk-in at the desk, not the
+// self-service phone+OTP flow. Creates the account (if it doesn't already
+// exist) and the registration in one step, with the payment already
+// resolved rather than left PENDING for a later Review: either CASH (the
+// admin's own presence substitutes for the screenshot/OCR proof every other
+// mode requires -- there is deliberately no self-service path to this mode)
+// or BANK_TRANSFER, linking a credit the admin can already see in the
+// imported statement (see /api/admin/bank-credit-candidates above), the
+// same 1-to-1 link the Review modal uses, just made at creation time instead
+// of after a PENDING submission.
+//
+// Reuses every piece of the delegate's own submission logic (resolveFee,
+// resolveSelections, discount/group-discount resolution, assignUserRegNumber)
+// rather than reimplementing it, so a walk-in registration is priced and
+// validated identically to a self-service one -- same phase, same capacity
+// limits, same discount rules.
+app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+  try {
+    const phone = String(req.body.phone || '').trim();
+    if (!/^\d{10}$/.test(phone)) {
+      return res.status(400).json({ success: false, error: 'Invalid phone number.' });
+    }
+    const paymentMode = req.body.paymentMode;
+    if (!['CASH', 'BANK_TRANSFER'].includes(paymentMode)) {
+      return res.status(400).json({ success: false, error: 'Payment mode must be CASH or BANK_TRANSFER.' });
+    }
+
+    const existingUser = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
+    const existingReg = await dbGet('SELECT id FROM registrations WHERE phone_number = ?', [phone]);
+    if (existingReg) {
+      return res.status(409).json({ success: false, error: 'This delegate already has a registration.' });
+    }
+    const name = existingUser ? existingUser.full_name : String(req.body.name || '').trim();
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'Full name is required.' });
+    }
+
+    const feeInfo = await resolveFee(req.body.categoryKey);
+    if (!feeInfo) {
+      return res.status(400).json({ success: false, error: 'Invalid delegate category.' });
+    }
+
+    // Student ID: no upload here -- the admin is looking at the physical
+    // card at the desk, so a checkbox stands in for the OCR check the
+    // self-service form runs against an uploaded photo. Same gate as the
+    // one PUT /api/registrations/:id/status already enforces before letting
+    // any BANK_VERIFIED status through for a student category.
+    const needsId = !!(await studentCategoryInfo(req.body.categoryKey));
+    if (needsId && !req.body.idVerifiedByAdmin) {
+      return res.status(400).json({ success: false, error: 'Confirm the student ID card before registering this category.' });
+    }
+
+    const resolved = await resolveSelections(req.body.optionIds, null);
+    if (resolved.error) return res.status(400).json({ success: false, error: resolved.error });
+    const selections = resolved.selections;
+    const optionsFee = selections.reduce((sum, s) => sum + (Number(s.opt.fee) || 0), 0);
+
+    // Same discount resolution as the self-service path: a promo code the
+    // admin enters, or the delegate's group discount if they're already in a
+    // qualifying group -- whichever is larger, they don't stack.
+    let promoDiscount = 0, promoCode = null, promoCodeId = null;
+    if (req.body.discountCode && String(req.body.discountCode).trim()) {
+      const dv = await validateDiscountCode(req.body.discountCode, phone, req.body.categoryKey);
+      if (!dv.ok) return res.status(400).json({ success: false, error: dv.error });
+      promoDiscount = computeDiscountAmount(dv.code, feeInfo.amount);
+      promoCode = dv.code.code;
+      promoCodeId = dv.code.id;
+    }
+    let groupDiscount = 0;
+    const dgroup = await getDelegateGroup(phone);
+    if (dgroup && dgroup.qualifies && dgroup.group.category_key === req.body.categoryKey) {
+      groupDiscount = computeDiscountAmount(dgroup.rule, feeInfo.amount);
+    }
+    let discountAmount = 0, discountCodeApplied = null;
+    if (groupDiscount >= promoDiscount && groupDiscount > 0) {
+      discountAmount = groupDiscount; discountCodeApplied = 'GROUP';
+    } else if (promoDiscount > 0) {
+      discountAmount = promoDiscount; discountCodeApplied = promoCode;
+    }
+    const expectedAmount = feeInfo.amount - discountAmount + optionsFee;
+
+    // Resolve the payment itself before writing anything, so a bad bank
+    // link can't leave a half-created registration behind.
+    let bank = null;
+    let paidAmount;
+    if (paymentMode === 'BANK_TRANSFER') {
+      const bankTxnId = req.body.bankTxnId;
+      if (!bankTxnId) return res.status(400).json({ success: false, error: 'Select the bank credit this delegate already paid.' });
+      bank = await dbGet('SELECT * FROM bank_statement_transactions WHERE id = ?', [bankTxnId]);
+      if (!bank || !(bank.credit > 0)) return res.status(400).json({ success: false, error: 'That statement row has no credit amount.' });
+      if (bank.is_non_registration) return res.status(400).json({ success: false, error: 'This transaction is marked as non-registration.' });
+      const { remaining } = await allocatedForBankTxn(bankTxnId);
+      if (remaining <= 0) return res.status(409).json({ success: false, error: 'That bank transaction is already fully allocated.' });
+      paidAmount = req.body.amount !== undefined ? Number(req.body.amount) : Math.min(remaining, expectedAmount);
+      if (!Number.isFinite(paidAmount) || paidAmount <= 0) return res.status(400).json({ success: false, error: 'Enter a valid amount.' });
+      if (paidAmount > remaining + 0.5) return res.status(409).json({ success: false, error: `Only ₹${inr(remaining)} of that bank transaction is still unallocated.` });
+    } else {
+      paidAmount = req.body.amount !== undefined ? Number(req.body.amount) : expectedAmount;
+      if (expectedAmount > 0 && (!Number.isFinite(paidAmount) || paidAmount <= 0)) {
+        return res.status(400).json({ success: false, error: 'Enter a valid cash amount.' });
+      }
+      paidAmount = Math.max(0, paidAmount || 0);
+    }
+    // Fully covers the fee -> confirmed outright, same as the self-service
+    // free-registration path; short of it -> PARTIAL_PAYMENT, same meaning
+    // it already has everywhere else (something verified, balance still due).
+    const bankStatus = paidAmount >= expectedAmount ? 'BANK_VERIFIED' : 'PARTIAL_PAYMENT';
+
+    // Account: create it if this phone has never been seen before, including
+    // a temporary password so the delegate can log in today without waiting
+    // on an OTP -- they're expected to change it via Set Password. An
+    // account that already exists but has no password gets one too, for the
+    // same reason; one that already has a password is left untouched rather
+    // than silently overwritten.
+    let tempPassword = null;
+    if (!existingUser) {
+      tempPassword = generateTempPassword();
+      await dbRun(
+        'INSERT INTO users (phone_number, full_name, designation, institution, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [phone, name, req.body.designation || null, req.body.institute || null, 'DELEGATE', hashPassword(tempPassword), Date.now()]
+      );
+    } else if (!existingUser.password_hash) {
+      tempPassword = generateTempPassword();
+      await dbRun('UPDATE users SET password_hash = ? WHERE phone_number = ?', [hashPassword(tempPassword), phone]);
+    }
+
+    const now = Date.now();
+    const idMatch = needsId ? 1 : null;
+    const result = await dbRun(
+      `INSERT INTO registrations
+        (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number,
+         id_verified, id_verified_by, id_verified_at, ocr_id_match, bank_status, payment_mode, submitted_at,
+         discount_code, discount_amount)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [phone, name, req.body.categoryKey, feeInfo.label, expectedAmount, paidAmount,
+       bank ? (bank.extracted_ref || null) : null,
+       needsId ? 1 : 0, needsId ? (req.session.name || req.session.phone) : null, needsId ? now : null, idMatch,
+       bankStatus, paymentMode, now, discountCodeApplied, discountAmount]
+    );
+    const registrationId = result.lastID;
+    await saveRegistrationSelections(registrationId, selections);
+
+    const regNo = await assignUserRegNumber(phone);
+    await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
+
+    // Ledger row, same as every other payment path -- the Review modal's
+    // per-transaction reconciliation and the Payments report both assume
+    // every registration has one.
+    await dbRun(
+      `INSERT INTO payment_transactions
+        (registration_id, phone_number, amount, verified_amount, utr_number, payment_mode, txn_status, bank_txn_id, submitted_at, reviewed_by, reviewed_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'VERIFIED', ?, ?, ?, ?)`,
+      [registrationId, phone, paidAmount, paidAmount, bank ? (bank.extracted_ref || null) : null, paymentMode,
+       bank ? bank.id : null, now, req.session.name || req.session.phone, now]
+    );
+
+    await recordAudit({
+      req, entityType: 'registration', entityId: registrationId,
+      action: 'ADMIN_REGISTERED',
+      oldValue: null,
+      newValue: `${name} (${phone}) — ${feeInfo.label}, ₹${inr(paidAmount)} via ${PAYMENT_MODE_LABELS[paymentMode]}${bankStatus === 'PARTIAL_PAYMENT' ? ` (₹${inr(expectedAmount - paidAmount)} balance due)` : ''}`,
+    });
+
+    // No prior registration exists here (this endpoint refuses if one does),
+    // so any promo code applied is inherently a first use -- unlike the
+    // self-service path, there's no "resubmitting after rejection" case to
+    // guard against re-logging.
+    if (promoCodeId) {
+      writeAuditRow('discount_code', promoCodeId, 'DISCOUNT_CODE_USED', null, `${promoCode} used by ${name} (${phone}), reg ${regNo}`, phone, name, 'DELEGATE').catch(() => {});
+    }
+
+    notifyDelegate(phone, 'Registration confirmed',
+      emailWrap('Your registration is confirmed',
+        `<p>Dear ${escapeHtml(name)},</p>
+         <p>Your registration for the ${escapeHtml(CONFERENCE.name)} is <b>confirmed</b>.</p>
+         <p>Registration number: <b>${escapeHtml(regNo)}</b></p>`));
+
+    res.json({ success: true, registrationId, registrationNumber: regNo, tempPassword, expectedAmount, paidAmount, bankStatus });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Candidate statement debits for refunding one registration's excess --
 // unlinked debit rows, nearest to the outstanding overpaid amount first.
 // Same shape/reasoning as /api/payment-transactions/:txnId/candidates for
@@ -6392,7 +6617,14 @@ app.get('/api/admin/activity-log', requireRole('SUPER_ADMIN'), async (req, res, 
 // reports have a single unnamed section; the workshops report has one
 // section per workshop/QI practice option so each can be viewed or exported
 // on its own.
-const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT / RTGS' };
+// CASH and BANK_TRANSFER only ever appear on a registration created via
+// POST /api/admin/registrations (the delegate self-service form never
+// offers either) -- CASH because the admin's own presence at the desk
+// substitutes for the screenshot/OCR proof every other mode requires, and
+// BANK_TRANSFER because the admin is linking a credit already visible in
+// the imported statement rather than a specific UPI/NEFT method the
+// delegate declared themselves.
+const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT / RTGS', CASH: 'Cash / At Desk', BANK_TRANSFER: 'Bank Transfer (Admin-Linked)' };
 // Human-readable labels for a registration's bank_status, used everywhere it's
 // displayed (reports, etc.) instead of the raw DB constant (e.g. BANK_VERIFIED).
 const BANK_STATUS_LABELS = { PENDING: 'Pending', BANK_VERIFIED: 'Verified', REJECTED: 'Rejected', PARTIAL_PAYMENT: 'Partial Payment' };
