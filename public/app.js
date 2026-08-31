@@ -2872,11 +2872,13 @@ function openReviewModal(id) {
   // the previous delegate's blob: URLs first -- otherwise every review this
   // session leaks two of them.
   Object.values(reviewImageBlobUrls).forEach((u) => { if (u) URL.revokeObjectURL(u); });
-  reviewImageBlobUrls = { screenshot: '', idcard: '' };
+  reviewImageBlobUrls = { screenshot: '', idcard: '', txnslip: '' };
   reviewImageUrls = {
     screenshot: p.has_screenshot ? `/api/registrations/${encodeURIComponent(p.id)}/screenshot` : '',
     idcard: p.has_id_card ? `/api/registrations/${encodeURIComponent(p.id)}/id-card` : '',
+    txnslip: '', // filled in only when an admin opens a specific payment's slip
   };
+  reviewTxnSlipLabel = 'Slip';
   reviewImageZoomed = false;
   setReviewImage('screenshot');
   // Fetch both documents into memory (as blob: URLs) right away, in the
@@ -2959,11 +2961,16 @@ function openReviewModal(id) {
 // Both documents share the left pane behind a switcher. The ID card used to
 // render full-width inside the narrow right column, which made a document
 // you have to actually read effectively unreadable.
-let reviewImageUrls = { screenshot: '', idcard: '' };
+// Three evidence slots. screenshot/idcard come from the registration and
+// are prefetched on open; txnslip is populated on demand by showTxnSlip for
+// one specific ledger payment, and carries its own label (the payment's
+// date) since a partial + top-up produce two of them.
+let reviewImageUrls = { screenshot: '', idcard: '', txnslip: '' };
+let reviewTxnSlipLabel = 'Slip';
 // Blob: URLs for documents already fetched into memory this modal-open --
 // see prefetchReviewImages(). Falls back to the plain API url (a real
 // network fetch, same as before) until its prefetch resolves.
-let reviewImageBlobUrls = { screenshot: '', idcard: '' };
+let reviewImageBlobUrls = { screenshot: '', idcard: '', txnslip: '' };
 let reviewImageZoomed = false;
 let reviewImageWhich = 'screenshot';
 
@@ -2973,6 +2980,8 @@ let reviewImageWhich = 'screenshot';
 // works around. Fetching each into a blob: URL up front means the switch
 // itself is just swapping which already-downloaded image is shown.
 function prefetchReviewImages() {
+  // txnslip deliberately excluded -- it has no URL until an admin asks for
+  // a particular payment's slip, and there may be several to choose from.
   ['screenshot', 'idcard'].forEach((which) => {
     const url = reviewImageUrls[which];
     if (!url) return;
@@ -3001,15 +3010,29 @@ function setReviewImage(which) {
   const displayUrl = blobUrl || url;
 
   if (loading) loading.classList.toggle('hidden', !url || !!blobUrl);
+  if (empty) {
+    empty.textContent = 'No image on file.';
+    empty.classList.toggle('hidden', !!url);
+  }
   if (img) {
     img.classList.toggle('hidden', !displayUrl);
     if (displayUrl) {
       img.onload = () => { if (loading) loading.classList.add('hidden'); };
-      img.onerror = () => { if (loading) loading.classList.add('hidden'); };
+      // A referenced file that isn't on disk: 2 of the live ledger's slips
+      // are orphaned this way (the file was cleaned up on a resubmission
+      // while the row kept its name). Say so, rather than leaving an empty
+      // dark pane that looks like the app is still loading or broken.
+      img.onerror = () => {
+        if (loading) loading.classList.add('hidden');
+        img.classList.add('hidden');
+        if (empty) {
+          empty.textContent = 'This file is no longer on file — it was removed when the payment was resubmitted.';
+          empty.classList.remove('hidden');
+        }
+      };
       img.src = displayUrl;
     }
   }
-  if (empty) empty.classList.toggle('hidden', !!url);
   // Open ↗ always uses the real (session-authenticated) API url, never the
   // blob: one -- a blob: URL is only valid inside this tab and won't
   // resolve if opened in a new one.
@@ -3019,34 +3042,40 @@ function setReviewImage(which) {
   const zoomBtn = document.getElementById('review-img-zoom-btn');
   if (zoomBtn) zoomBtn.classList.toggle('hidden', !url);
 
-  // Two documents on file -> a real segmented toggle, its own prominent row
-  // (see review.ejs) rather than a small button buried next to Zoom/Open.
-  // One document (the common case: no ID card required) -> no toggle to
-  // show at all, just a plain label so the pane doesn't look broken.
-  const bothPresent = !!(reviewImageUrls.screenshot && reviewImageUrls.idcard);
+  // The switcher is a real toggle only when there's more than one document
+  // to choose between. With exactly one (the common case: no ID card
+  // required, no slip opened) it collapses to a plain label, so the pane
+  // never shows an inert single-option control.
+  const LABELS = { screenshot: '📷 Screenshot', idcard: '🪪 ID Card', txnslip: `📄 ${reviewTxnSlipLabel}` };
+  const present = ['screenshot', 'idcard', 'txnslip'].filter((k) => reviewImageUrls[k]);
+  const multi = present.length > 1;
   const switcher = document.getElementById('review-img-switcher');
   const soloLabel = document.getElementById('review-img-solo-label');
-  if (switcher) switcher.classList.toggle('hidden', !bothPresent);
-  if (switcher) switcher.classList.toggle('flex', bothPresent);
+  if (switcher) {
+    switcher.classList.toggle('hidden', !multi);
+    switcher.classList.toggle('flex', multi);
+  }
   if (soloLabel) {
-    const soloText = reviewImageUrls.screenshot ? '📷 Screenshot' : (reviewImageUrls.idcard ? '🪪 ID Card' : '');
+    const soloText = present.length === 1 ? LABELS[present[0]] : '';
     soloLabel.textContent = soloText;
-    soloLabel.classList.toggle('hidden', bothPresent || !soloText);
+    soloLabel.classList.toggle('hidden', multi || !soloText);
   }
   // Nudges a reviewer who's only looked at the screenshot to also check the
   // ID card -- the actual decision-relevant document for a student category
   // -- rather than letting it go unnoticed as a small inactive tab. Clears
-  // itself the moment they switch to it.
+  // itself the moment they switch away. Only about the ID card, so it stays
+  // quiet when the extra document is a payment slip they just opened.
   const hint = document.getElementById('review-img-switcher-hint');
-  if (hint) hint.classList.toggle('hidden', !bothPresent || which !== 'screenshot');
+  if (hint) hint.classList.toggle('hidden', !(reviewImageUrls.screenshot && reviewImageUrls.idcard) || which !== 'screenshot');
 
   // Active-tab styling, applied by hand rather than via a framework class
   // toggle so the inactive state stays legible on the dark pane.
-  ['screenshot', 'idcard'].forEach((k) => {
+  ['screenshot', 'idcard', 'txnslip'].forEach((k) => {
     const tab = document.getElementById(`review-img-tab-${k}`);
     if (!tab) return;
     const active = k === which;
-    const showThisTab = bothPresent && (k !== 'idcard' || reviewImageUrls.idcard);
+    const showThisTab = multi && !!reviewImageUrls[k];
+    if (k === 'txnslip') tab.textContent = LABELS.txnslip;
     tab.className = `${showThisTab ? 'flex' : 'hidden'} items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition ${
       active ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-300 hover:text-white hover:bg-slate-700'}`;
   });
@@ -3068,6 +3097,35 @@ function applyReviewImageZoom() {
     box.className = 'flex-1 min-h-0 overflow-auto flex items-center justify-center p-1';
   }
   if (btn) btn.textContent = reviewImageZoomed ? '🔍 Fit' : '🔍 Zoom';
+}
+
+// Loads ONE ledger payment's own slip into the evidence pane. Each payment
+// keeps its own (payment_transactions.screenshot), so after a partial
+// payment plus a top-up both remain viewable -- unlike the registration's
+// single screenshot column, which the later submission overwrote.
+function showTxnSlip(txnId, label) {
+  const url = `/api/payment-transactions/${encodeURIComponent(txnId)}/screenshot`;
+  // A different payment than the one already loaded: drop the old blob so
+  // the pane can't show the previous slip under the new one's label.
+  if (reviewImageUrls.txnslip !== url) {
+    if (reviewImageBlobUrls.txnslip) URL.revokeObjectURL(reviewImageBlobUrls.txnslip);
+    reviewImageBlobUrls.txnslip = '';
+  }
+  reviewImageUrls.txnslip = url;
+  reviewTxnSlipLabel = label ? `Slip · ${label}` : 'Slip';
+  setReviewImage('txnslip');
+  // Not part of the on-open prefetch (there may be several to choose from),
+  // so fetch this one now -- the spinner covers the wait.
+  if (!reviewImageBlobUrls.txnslip) {
+    fetch(url)
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error('fetch failed'))))
+      .then((blob) => {
+        if (reviewImageUrls.txnslip !== url) return; // moved on already
+        reviewImageBlobUrls.txnslip = URL.createObjectURL(blob);
+        if (reviewImageWhich === 'txnslip') setReviewImage('txnslip');
+      })
+      .catch(() => { /* the <img> falls back to loading the URL directly */ });
+  }
 }
 
 function toggleReviewImageZoom() {
@@ -3255,6 +3313,13 @@ function reviewTxnRowHtml(t) {
     : isRejected
       ? `<span class="text-slate-400">Rejected — not linked</span>`
       : `<span class="text-amber-700 font-semibold">⚠ Not acknowledged</span> <button type="button" class="text-indigo-600 hover:underline font-semibold ml-1" onclick="toggleTxnCandidates(${esc(t.id)})">Link &amp; acknowledge</button>`;
+  // Each payment keeps its OWN slip (payment_transactions.screenshot), unlike
+  // registrations.screenshot which the next submission overwrites -- so this
+  // is how the original partial payment's slip stays reachable after a
+  // top-up. Shown in the evidence pane on the left, same as the others.
+  const slipBtn = t.has_screenshot
+    ? `<button type="button" class="text-indigo-600 hover:underline font-semibold" onclick="showTxnSlip(${esc(t.id)}, '${esc(fmtAuditTime(t.submitted_at) || '')}')">📄 Payment Slip</button>`
+    : `<span class="text-slate-400">No slip on file</span>`;
   return `<div class="border border-slate-200 rounded-lg p-2 bg-white">
     <div class="flex items-center justify-between">
       <span class="font-mono text-slate-500">${esc(t.utr_number || '—')}</span>
@@ -3262,6 +3327,10 @@ function reviewTxnRowHtml(t) {
         <span class="font-semibold">₹${inr(Number(amt))}</span>
         <span class="font-bold ${TONE[t.txn_status] || 'text-slate-500'}">${esc(t.txn_status)}</span>
       </span>
+    </div>
+    <div class="mt-1 flex items-center justify-between gap-2 text-[10px]">
+      <span class="text-slate-400">${esc(fmtAuditTime(t.submitted_at) || '')}</span>
+      ${slipBtn}
     </div>
     <div class="mt-1 text-[10px]">${linkLine}</div>
     <div id="txn-candidates-${esc(t.id)}" class="hidden mt-2 divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-40 overflow-y-auto"></div>

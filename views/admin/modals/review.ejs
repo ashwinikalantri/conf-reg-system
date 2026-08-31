@@ -24,6 +24,12 @@
             <div class="flex gap-1 bg-slate-800 rounded-lg p-1">
               <button type="button" id="review-img-tab-screenshot" onclick="setReviewImage('screenshot')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition">📷 Screenshot</button>
               <button type="button" id="review-img-tab-idcard" onclick="setReviewImage('idcard')" class="hidden items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition">🪪 ID Card</button>
+              <!-- Third slot, populated on demand by showTxnSlip when an
+                   admin opens one specific payment's slip from the
+                   reconciliation list. Its label carries that payment's
+                   date, so two slips from a partial + top-up are
+                   distinguishable. -->
+              <button type="button" id="review-img-tab-txnslip" onclick="setReviewImage('txnslip')" class="hidden items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition">📄 Slip</button>
             </div>
             <span id="review-img-switcher-hint" class="hidden text-[10px] text-amber-300 font-semibold animate-pulse">← 2 documents, check both</span>
           </div>

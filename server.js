@@ -3914,6 +3914,43 @@ app.get('/api/registrations/:id/id-card', requireAuth, async (req, res, next) =>
   }
 });
 
+// Serve the payment slip attached to ONE ledger transaction, rather than the
+// single registrations.screenshot column, which each new submission
+// overwrites. A partial payment followed by a top-up therefore has two
+// slips, and this is the only way to see the earlier one -- see the
+// per-transaction "Slip" button in the review modal's reconciliation list.
+app.get('/api/payment-transactions/:txnId/screenshot', requireAuth, async (req, res, next) => {
+  try {
+    const txn = await dbGet('SELECT phone_number, screenshot FROM payment_transactions WHERE id = ?', [req.params.txnId]);
+    if (!txn || !txn.screenshot) {
+      return res.status(404).json({ success: false, error: 'No payment slip on file for this transaction.' });
+    }
+    // Same access rule as the registration-level screenshot above: finance
+    // staff, or the delegate whose own payment it is.
+    const isFinance = req.session.role === 'SUPER_ADMIN' || roleGrants(req.session.role).includes('FINANCE_ADMIN');
+    if (!isFinance && req.session.phone !== txn.phone_number) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to view this payment slip.' });
+    }
+
+    res.set('Cache-Control', 'private, no-store');
+    // Defensive fallback for any legacy base64 value that escaped migration.
+    if (/^data:image\//i.test(txn.screenshot)) {
+      const m = /^data:(image\/[a-z]+);base64,(.*)$/i.exec(txn.screenshot);
+      if (!m) return res.status(404).json({ success: false, error: 'Payment slip not found.' });
+      res.type(m[1]);
+      return res.send(Buffer.from(m[2], 'base64'));
+    }
+    const safeName = path.basename(txn.screenshot); // guard against traversal
+    const ext = path.extname(safeName).slice(1).toLowerCase();
+    if (EXT_MIME[ext]) res.type(EXT_MIME[ext]);
+    res.sendFile(path.join(UPLOAD_DIR, safeName), (err) => {
+      if (err && !res.headersSent) res.status(404).json({ success: false, error: 'Payment slip not found.' });
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Submit an abstract under the caller's own identity. Structured sections
 // (not a PDF upload) -- see sanitizeAbstractHtml/plainTextWordCount above,
 // and the ABSTRACT_MAX_WORDS cap.
