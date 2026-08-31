@@ -1907,11 +1907,7 @@ function openVerifyEmailModal() {
     : 'Add an email address and we\u2019ll send a 6-digit code to confirm it. You can then sign in with it as well as your mobile number.');
   const input = document.getElementById('verify-email-value');
   if (input) input.value = (me && me.email) || '';
-  const wrap = document.getElementById('verify-email-otp-wrap');
-  if (wrap) wrap.classList.add('hidden');
-  const otp = document.getElementById('verify-email-otp');
-  if (otp) otp.value = '';
-  setText('verify-email-hint', '');
+  unlockVerifyEmailAddress();
   openModal('modal-verify-email');
 }
 
@@ -1921,6 +1917,26 @@ function openVerifyEmailModal() {
 function dismissVerifyEmail() {
   sessionStorage.setItem('verifyEmailPromptDismissed', '1');
   closeModal('modal-verify-email');
+}
+
+// Back to "no code outstanding": address editable, OTP box hidden and
+// cleared. Clearing the code matters -- leaving a code from the previous
+// address in the box next to a newly-typed one is exactly the ambiguity the
+// lock exists to prevent.
+function unlockVerifyEmailAddress() {
+  const input = document.getElementById('verify-email-value');
+  if (input) input.disabled = false;
+  const sendBtn = document.getElementById('verify-email-send-btn');
+  if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Send Code'; }
+  const wrap = document.getElementById('verify-email-otp-wrap');
+  if (wrap) wrap.classList.add('hidden');
+  const otp = document.getElementById('verify-email-otp');
+  if (otp) otp.value = '';
+  const changeBtn = document.getElementById('verify-email-change-btn');
+  if (changeBtn) changeBtn.classList.add('hidden');
+  const hint = document.getElementById('verify-email-change-hint');
+  if (hint) hint.classList.remove('hidden');
+  setText('verify-email-hint', '');
 }
 
 async function requestVerifyEmailOTP() {
@@ -1934,6 +1950,17 @@ async function requestVerifyEmailOTP() {
       body: JSON.stringify({ channel: 'email', value }),
     })).json();
     if (!data.success) return showToast(data.error || 'Could not send the code.');
+    // Freeze the address now a code is out against it, so what gets
+    // confirmed is unambiguously what was sent to. (The server would refuse
+    // a mismatch anyway -- codes are keyed by destination -- but as a
+    // confusing "Incorrect OTP" rather than anything explicable.)
+    const input = document.getElementById('verify-email-value');
+    if (input) input.disabled = true;
+    btn.textContent = 'Code Sent';
+    const changeBtn = document.getElementById('verify-email-change-btn');
+    if (changeBtn) changeBtn.classList.remove('hidden');
+    const hint = document.getElementById('verify-email-change-hint');
+    if (hint) hint.classList.add('hidden');
     document.getElementById('verify-email-otp-wrap').classList.remove('hidden');
     if (data.devOtp) {
       setText('verify-email-hint', `Demo code: ${data.devOtp}`);
@@ -1943,12 +1970,17 @@ async function requestVerifyEmailOTP() {
       showToast(`A 6-digit code has been sent to ${value}.`, 'info');
     }
   } finally {
-    btn.disabled = false;
+    // Left disabled on success: a code is outstanding and the address is
+    // frozen, so there is nothing to re-send until they unlock. Re-enabled
+    // on failure so they can retry.
+    btn.disabled = !document.getElementById('verify-email-value').disabled;
   }
 }
 
 async function submitVerifyEmail(e) {
   e.preventDefault();
+  // Reads fine even while disabled -- .value is unaffected, only submission
+  // via native form encoding would be, and this posts JSON explicitly.
   const value = document.getElementById('verify-email-value').value.trim();
   const otp = document.getElementById('verify-email-otp').value.trim();
   if (!otp) return showToast('Enter the 6-digit code we sent you.');
@@ -2321,11 +2353,6 @@ async function initBackendPortal() {
   }
   activeAdminUser = (await meRes.json()).user;
   setText('active-admin-role-badge', activeAdminUser.full_name);
-  // Amber dot on the Settings menu item when this admin's own email is
-  // still unproven -- the only cue in the admin panel that there's
-  // something to do, since there's no dashboard banner here.
-  const emailDot = document.getElementById('admin-email-unverified-dot');
-  if (emailDot) emailDot.classList.toggle('hidden', !!activeAdminUser.email_verified);
 
   const { isSuper, isFinance, isReviewer, isOperations } = applyRoleVisibility(activeAdminUser.role);
 
@@ -3557,6 +3584,21 @@ function roleMarkBW(role) {
   return `<span class="text-slate-400 mr-1" title="${esc(roleLabel(role))}">${glyph}</span>`;
 }
 
+// Account-security marks for the Users table: verified mobile, verified
+// email, password set. Three fixed slots in a fixed order so the column
+// scans vertically -- a missing one reads as an absence at a glance rather
+// than shifting the others along. Greyed when absent rather than hidden,
+// for the same reason.
+function accountMarks(u) {
+  const mark = (on, glyph, onTitle, offTitle) =>
+    `<span class="${on ? 'text-emerald-600' : 'text-slate-300'}" title="${esc(on ? onTitle : offTitle)}">${glyph}</span>`;
+  return `<span class="inline-flex items-center gap-1.5 text-sm">
+    ${mark(u.phone_verified, '📱', `Mobile verified${delegateDisplayPhone(u) ? ` (${delegateDisplayPhone(u)})` : ''}`, delegateDisplayPhone(u) ? `Mobile not verified (${delegateDisplayPhone(u)})` : 'No mobile number on file')}
+    ${mark(u.email_verified, '✉️', `Email verified${u.email ? ` (${u.email})` : ''}`, u.email ? `Email not verified (${u.email})` : 'No email address on file')}
+    ${mark(u.hasPassword, '🔑', 'Password set', 'No password set — signs in by OTP only')}
+  </span>`;
+}
+
 // Fills the Designation and Institute filter <select>s from the distinct
 // values present in the current user list, preserving the current selection.
 function populateUserFilterOptions() {
@@ -3617,6 +3659,7 @@ function renderBackendUsers() {
       <td class="p-4 font-semibold text-slate-800">${roleMarkBW(u.role)}${u.salutation ? esc(u.salutation) + ' ' : ''}${esc(u.full_name)}</td>
       <td class="p-4 text-slate-600">${esc(u.designation || '—')}</td>
       <td class="p-4 text-slate-600">${esc(u.institution || '—')}</td>
+      <td class="p-4 whitespace-nowrap">${accountMarks(u)}</td>
       <td class="p-4">${u.registration_status
         ? `<span class="${REG_STATUS_STYLES[u.registration_status] || 'bg-slate-100 text-slate-600'} text-xs font-bold px-2 py-1 rounded-full">${esc(BANK_STATUS_LABELS[u.registration_status] || u.registration_status)}</span>`
         : `<span class="text-xs text-slate-400">Not registered</span>`}</td>
@@ -3624,7 +3667,7 @@ function renderBackendUsers() {
         <button type="button" onclick="event.stopPropagation();openUserDetail('${esc(u.phone_number)}')" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg">Details →</button>
       </td>
     </tr>
-  `).join('') : `<tr><td colspan="6" class="p-8 text-center text-sm text-slate-400">No users match these filters.</td></tr>`;
+  `).join('') : `<tr><td colspan="7" class="p-8 text-center text-sm text-slate-400">No users match these filters.</td></tr>`;
 }
 
 // State for the shared program-group change modal -- one modal, reused for

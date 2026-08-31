@@ -39,17 +39,6 @@
           <button id="settings-item-activity" onclick="selectSettingsTab('activity')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
             <span>📋 Logs</span>
           </button>
-          <!-- Own-account actions, available to every role (unlike everything
-               above, which applyRoleVisibility gates) -- these act only on the
-               signed-in admin's own record. -->
-          <div class="border-t border-slate-100 my-1.5"></div>
-          <button onclick="toggleSettingsMenu(); openSetPasswordModal(false)" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span>🔑 Set My Password</span>
-          </button>
-          <button onclick="toggleSettingsMenu(); openVerifyEmailModal()" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span>✉️ Verify My Email</span>
-            <span id="admin-email-unverified-dot" class="hidden ml-auto w-2 h-2 rounded-full bg-amber-500"></span>
-          </button>
         </div>
       </div>
       <div class="flex items-center bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">

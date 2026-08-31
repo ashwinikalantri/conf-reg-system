@@ -15,10 +15,14 @@
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-1">Email Address</label>
           <div class="flex gap-2">
-            <input type="email" id="verify-email-value" autocomplete="email" required class="flex-1 p-2.5 border rounded-lg text-sm outline-none">
+            <!-- Locked by requestVerifyEmailOTP once a code is out, so the
+                 address being confirmed is unambiguously the one it was sent
+                 to. "Use a different address" clears the code and unlocks. -->
+            <input type="email" id="verify-email-value" autocomplete="email" required class="flex-1 p-2.5 border rounded-lg text-sm outline-none disabled:bg-slate-100 disabled:text-slate-500">
             <button type="button" id="verify-email-send-btn" onclick="requestVerifyEmailOTP()" class="px-3 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shrink-0">Send Code</button>
           </div>
-          <p class="text-[11px] text-slate-400 mt-1">Not the right address? Change it here — the code goes to whatever you enter.</p>
+          <p id="verify-email-change-hint" class="text-[11px] text-slate-400 mt-1">Not the right address? Change it here — the code goes to whatever you enter.</p>
+          <button type="button" id="verify-email-change-btn" onclick="unlockVerifyEmailAddress()" class="hidden text-[11px] text-indigo-600 font-semibold hover:underline mt-1">Use a different address</button>
         </div>
 
         <div id="verify-email-otp-wrap" class="hidden space-y-2 pt-2 border-t border-slate-100">
