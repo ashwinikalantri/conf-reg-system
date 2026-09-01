@@ -174,6 +174,51 @@
           </button>
           <span class="text-[11px] text-slate-500">Queues a backup; it starts within about five minutes.</span>
         </div>
+
+        <!-- Google Drive linkage. The token is captured here but never kept
+             here: it is handed to the backup script and wiped as that script
+             installs it, which is why this is a paste field rather than a
+             sign-in button. -->
+        <div class="border-t border-slate-200 mt-4 pt-4">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <h4 class="text-sm font-bold text-slate-800">Google Drive</h4>
+            <div class="flex items-center gap-2">
+              <button type="button" id="drive-check-btn" onclick="checkDriveLink()" class="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg">Test connection</button>
+              <button type="button" id="drive-link-toggle" onclick="toggleDriveLinkForm()" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg">Link Google Drive</button>
+            </div>
+          </div>
+          <div id="drive-status" class="text-xs text-slate-600 mt-2">Checking…</div>
+
+          <div id="drive-link-form" class="hidden mt-3 bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-3">
+            <div>
+              <p class="text-xs font-semibold text-slate-700 mb-1">1. Get a token</p>
+              <p class="text-[11px] text-slate-500 mb-1.5">Run this on any computer with a browser — it doesn't have to be this server. It opens Google, asks you to sign in, and prints a token.</p>
+              <code id="drive-authorize-cmd" class="block bg-slate-900 text-slate-100 text-[11px] font-mono rounded-lg p-2.5 overflow-x-auto">rclone authorize "drive"</code>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">2. Paste the token here</label>
+              <textarea id="drive-token" rows="3" placeholder='{"access_token":"...","token_type":"Bearer","refresh_token":"...","expiry":"..."}' class="w-full p-2.5 border rounded-lg text-[11px] font-mono outline-none"></textarea>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Folder on Drive <span class="text-slate-400 font-normal">(optional)</span></label>
+              <input id="drive-folder" placeholder="NQOCN 2026 Backups" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+              <p class="text-[11px] text-slate-400 mt-1">Leave blank to keep the folder currently in use.</p>
+            </div>
+            <details class="text-[11px]">
+              <summary class="cursor-pointer text-slate-500 font-semibold">Using your own Google OAuth client?</summary>
+              <p class="text-slate-500 mt-1.5 mb-2">Only needed if you've created your own client in Google Cloud Console. Add <code class="bg-slate-200 px-1 rounded">--client-id … --client-secret …</code> to the command above, and enter the same values here. Leave blank to keep what's configured now.</p>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input id="drive-client-id" placeholder="Client ID" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-xs bg-white outline-none">
+                <input id="drive-client-secret" type="password" placeholder="Client secret" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-xs bg-white outline-none">
+              </div>
+            </details>
+            <div class="flex flex-wrap items-center gap-2">
+              <button type="button" id="drive-link-btn" onclick="submitDriveLink()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-xs rounded-lg shadow-sm">Link Drive</button>
+              <button type="button" onclick="toggleDriveLinkForm()" class="px-3 py-2 border border-slate-300 text-slate-600 text-xs font-semibold rounded-lg">Cancel</button>
+              <span class="text-[11px] text-slate-500">Applied within about five minutes, then tested automatically.</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Other Environment Variables -->

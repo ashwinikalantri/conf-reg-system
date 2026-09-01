@@ -51,19 +51,22 @@ DRY_RUN=0
 PRUNE_ONLY=0
 FORCE_MANUAL=0
 IF_REQUESTED=0
+CHECK_DRIVE=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run)    DRY_RUN=1 ;;
     --prune-only) PRUNE_ONLY=1 ;;
     --manual)     FORCE_MANUAL=1 ;;
     --if-requested) IF_REQUESTED=1 ;;
+    --check-drive)  CHECK_DRIVE=1 ;;
     -h|--help)
       echo "Usage: backup.sh [--dry-run] [--prune-only]"
       echo "  (no flags)    take a backup, upload it, then keep the newest $DRIVE_KEEP on Drive"
       echo "  --dry-run     never delete from Drive; log what would be deleted"
       echo "  --prune-only  don't back up, only apply Drive retention"
       echo "  --manual      label this run 'manual' in the log (implied by a terminal)"
-      echo "  --if-requested  run only if the admin panel has queued a backup, then clear it"
+      echo "  --if-requested  act on whatever the admin panel has queued (backup, Drive link, connection check)"
+      echo "  --check-drive   just test the Google Drive link and report to the panel"
       exit 0 ;;
     *) echo "Unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
@@ -91,8 +94,133 @@ volume_clear() { docker run --rm -v "$DATA_VOLUME":/data "$IMAGE" sh -c "rm -f /
 # the container reads EOF straight away and writes an empty file.
 volume_write() { docker run --rm -i -v "$DATA_VOLUME":/data "$IMAGE" sh -c "cat > /data/$1" >/dev/null 2>&1; }
 
+# Report the state of the Drive link back to the admin panel: whether the
+# remote answers, which folder it writes to, and how many backups are in it.
+# Written after every real run and after any link attempt, so Settings can
+# show something truthful without the app ever touching the credential.
+write_drive_status() {
+  local linked="$1" err="$2" count="${3:-0}" client_id="${4:-}"
+  printf '{"checkedAt":%s,"linked":%s,"remote":"%s","backupCount":%s,"keep":%s,"clientId":"%s","lastError":"%s"}' \
+    "$(date +%s000)" "$linked" "$DRIVE_REMOTE" "$count" "$DRIVE_KEEP" "$client_id" \
+    "$(printf '%s' "$err" | tr -d '"\\' | tr '\n' ' ' | cut -c1-300)" \
+    | volume_write .drive-status.json || true
+}
+
+# Ask Drive what it has. Also the connection test the panel's "Check
+# connection" button triggers.
+check_drive() {
+  local out cid
+  cid="$(sed -n 's/^client_id *= *//p' "$RCLONE_CONF" 2>/dev/null | head -1)"
+  if [ ! -f "$RCLONE_CONF" ]; then
+    write_drive_status false "Google Drive is not linked yet." 0 ""
+    return 1
+  fi
+  if out="$(docker run --rm \
+      -v "$RCLONE_CONF":/rclone.conf:ro \
+      "$IMAGE" \
+      sh -c 'cp /rclone.conf /tmp/rclone.conf && exec rclone --config /tmp/rclone.conf lsf --dirs-only "$0"' \
+      "$DRIVE_REMOTE" 2>&1)"; then
+    local n
+    n="$(printf '%s\n' "$out" | tr -d '\r' | sed 's:/*$::' | grep -cE '^[0-9]{8}-[0-9]{6}$' || true)"
+    write_drive_status true "" "$n" "$cid"
+    return 0
+  fi
+  write_drive_status false "$out" 0 "$cid"
+  return 1
+}
+
+# Install a Drive link the admin panel captured. The token reaches us through
+# the data volume because that is the only place the app and this script both
+# reach; it is written to the host config and wiped from the volume in the
+# same breath, so it never sits somewhere the web-facing container can read
+# it at rest.
+install_drive_link() {
+  local req="$1" token client_id client_secret folder
+  token="$(printf '%s' "$req" | sed -n 's/.*"token":"\(.*\)","clientId".*/\1/p')"
+  client_id="$(printf '%s' "$req" | sed -n 's/.*"clientId":"\([^"]*\)".*/\1/p')"
+  client_secret="$(printf '%s' "$req" | sed -n 's/.*"clientSecret":"\([^"]*\)".*/\1/p')"
+  folder="$(printf '%s' "$req" | sed -n 's/.*"folder":"\([^"]*\)".*/\1/p')"
+
+  # The request is consumed FIRST, whatever happens next: a credential must
+  # not be left lying in the volume because an install failed.
+  volume_clear .drive-link-request.json
+
+  if [ -z "$token" ]; then
+    log "Drive link request had no token -- ignored"
+    write_drive_status false "The token was empty." 0 ""
+    return 1
+  fi
+
+  # Keep the existing OAuth client when the form left those fields blank.
+  if [ -z "$client_id" ] && [ -f "$RCLONE_CONF" ]; then
+    client_id="$(sed -n 's/^client_id *= *//p' "$RCLONE_CONF" | head -1)"
+    client_secret="$(sed -n 's/^client_secret *= *//p' "$RCLONE_CONF" | head -1)"
+  fi
+  [ -n "$folder" ] && DRIVE_REMOTE="nqocn-db:$folder"
+
+  # Kept as a FILE, not a shell variable: $(cat) strips trailing newlines, so
+  # restoring through a variable would not give back byte-for-byte what was
+  # there. A credential file is the last thing to rewrite approximately.
+  local prev=""
+  if [ -f "$RCLONE_CONF" ]; then
+    prev="$(mktemp)"
+    cp "$RCLONE_CONF" "$prev"
+  fi
+  mkdir -p "$(dirname "$RCLONE_CONF")"
+  umask 077
+  {
+    echo "[nqocn-db]"
+    echo "type = drive"
+    echo "scope = drive"
+    echo "client_id = $client_id"
+    echo "client_secret = $client_secret"
+    echo "token = $token"
+    echo "team_drive = "
+  } > "$RCLONE_CONF"
+  chmod 600 "$RCLONE_CONF"
+
+  if check_drive; then
+    [ -n "$prev" ] && rm -f "$prev"
+    log "Google Drive linked successfully ($DRIVE_REMOTE)"
+    return 0
+  fi
+  # A bad token must not cost them a working link.
+  if [ -n "$prev" ]; then
+    cp "$prev" "$RCLONE_CONF"
+    chmod 600 "$RCLONE_CONF"
+    rm -f "$prev"
+    log "Drive link FAILED -- restored the previous configuration"
+    check_drive || true
+  else
+    rm -f "$RCLONE_CONF"
+    log "Drive link FAILED -- no previous configuration to restore"
+  fi
+  return 1
+}
+
+if [ "$CHECK_DRIVE" -eq 1 ]; then
+  log "Checking the Google Drive connection"
+  check_drive && log "Google Drive OK ($DRIVE_REMOTE)" || log "Google Drive check FAILED"
+  exit 0
+fi
+
 REQUESTED_BY=""
 if [ "$IF_REQUESTED" -eq 1 ]; then
+  # A link or connection-test request is handled on its own, without taking a
+  # backup: linking should feel immediate, not wait for a 103 MB upload.
+  LINK_JSON="$(volume_read .drive-link-request.json || true)"
+  if [ -n "$LINK_JSON" ]; then
+    log "Processing a Google Drive link request from the admin panel"
+    install_drive_link "$LINK_JSON" || true
+    exit 0
+  fi
+  if [ -n "$(volume_read .drive-check-request.json || true)" ]; then
+    volume_clear .drive-check-request.json
+    log "Checking the Google Drive connection at the panel's request"
+    check_drive || true
+    exit 0
+  fi
+
   REQUEST_JSON="$(volume_read .backup-request.json || true)"
   if [ -z "$REQUEST_JSON" ]; then
     exit 0   # nothing queued; stay silent so the log isn't a wall of no-ops
@@ -298,6 +426,8 @@ if [ "$PRUNE_ONLY" -eq 0 ]; then
     "$(date +%s000)" "$TIMESTAMP" "$RUN_KIND" \
     "$([ "$UPLOAD_OK" -eq 1 ] && echo true || echo false)" "$DB_BYTES" "$REQUESTED_BY" \
     | volume_write .backup-status.json || log "WARNING: could not write .backup-status.json"
+  # Keep the panel's view of Drive current without needing a separate check.
+  check_drive || true
 fi
 
 log "Backup complete."

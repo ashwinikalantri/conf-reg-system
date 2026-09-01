@@ -5258,6 +5258,79 @@ async function renderBackupStatus() {
   }
   box.innerHTML = lines.join('<br>');
   if (btn) btn.disabled = !!data.pending;
+  renderDriveStatus(data);
+}
+
+// Google Drive linkage. The panel captures the token and hands it to the
+// backup script; nothing here ever reads it back, and the status shown comes
+// from what that script reports after it tries to use it.
+function renderDriveStatus(data) {
+  const box = document.getElementById('drive-status');
+  const checkBtn = document.getElementById('drive-check-btn');
+  const cmd = document.getElementById('drive-authorize-cmd');
+  if (!box) return;
+  const d = data.drive;
+
+  if (data.drivePending) {
+    box.innerHTML = '<span class="text-indigo-700 font-semibold">⏳ Applying the Google Drive change — this takes up to five minutes.</span>';
+  } else if (!d) {
+    // No report yet: the script writes one on every run and after any link
+    // attempt, so this is a fresh deployment, not a broken link.
+    box.innerHTML = '<span class="text-slate-500">Not checked yet — run a backup or press <b>Test connection</b>.</span>';
+  } else if (d.linked) {
+    box.innerHTML = `<span class="text-emerald-700 font-semibold">✓ Linked</span> to <code class="bg-slate-100 px-1 rounded">${esc(d.remote || '')}</code>`
+      + ` · holds <b>${esc(String(d.backupCount || 0))}</b> backup${Number(d.backupCount) === 1 ? '' : 's'}`
+      + ` (oldest removed beyond ${esc(String(d.keep || 14))})`
+      + (d.checkedAt ? ` · checked ${esc(fmtAuditTime(d.checkedAt))}` : '');
+  } else {
+    box.innerHTML = `<span class="text-rose-700 font-semibold">✗ Not linked</span>`
+      + (d.lastError ? ` — ${esc(d.lastError)}` : '')
+      + (d.checkedAt ? ` <span class="text-slate-400">(checked ${esc(fmtAuditTime(d.checkedAt))})</span>` : '');
+  }
+  if (checkBtn) checkBtn.disabled = !!data.drivePending;
+  // Only show the client-id flags when this deployment actually uses its own
+  // OAuth client; with rclone's built-in one the bare command is correct.
+  if (cmd) cmd.textContent = d && d.clientId
+    ? `rclone authorize "drive" --client-id ${d.clientId} --client-secret YOUR_CLIENT_SECRET`
+    : 'rclone authorize "drive"';
+}
+
+function toggleDriveLinkForm() {
+  const form = document.getElementById('drive-link-form');
+  if (form) form.classList.toggle('hidden');
+}
+
+async function checkDriveLink() {
+  const data = await (await fetch('/api/admin/backup/drive-check', { method: 'POST' })).json();
+  if (!data.success) return showToast(data.error || 'Could not queue the check.');
+  showToast('Testing the Google Drive connection…', 'success');
+  await renderBackupStatus();
+}
+
+async function submitDriveLink() {
+  const token = (document.getElementById('drive-token').value || '').trim();
+  if (!token) return showToast('Paste the token that rclone printed.');
+  if (!(await showConfirm('Replace the Google Drive link with this token? Existing backups on Drive are not affected.'))) return;
+  const btn = document.getElementById('drive-link-btn');
+  if (btn) btn.disabled = true;
+  const data = await (await fetch('/api/admin/backup/drive-link', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token,
+      folder: (document.getElementById('drive-folder').value || '').trim(),
+      clientId: (document.getElementById('drive-client-id').value || '').trim(),
+      clientSecret: (document.getElementById('drive-client-secret').value || '').trim(),
+    }),
+  })).json();
+  if (btn) btn.disabled = false;
+  if (!data.success) return showToast(data.error || 'Could not submit the link.');
+  // Clear it immediately -- there is no reason for a live credential to sit
+  // in a form field once it has been handed over.
+  document.getElementById('drive-token').value = '';
+  document.getElementById('drive-client-secret').value = '';
+  toggleDriveLinkForm();
+  showToast('Google Drive link submitted — it will be applied and tested shortly.', 'success');
+  await renderBackupStatus();
 }
 
 async function requestBackupNow() {

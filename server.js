@@ -6359,6 +6359,9 @@ const BACKUP_DIR = (() => {
 })();
 const BACKUP_REQUEST_FILE = path.join(BACKUP_DIR, '.backup-request.json');
 const BACKUP_STATUS_FILE = path.join(BACKUP_DIR, '.backup-status.json');
+const DRIVE_LINK_FILE = path.join(BACKUP_DIR, '.drive-link-request.json');
+const DRIVE_CHECK_FILE = path.join(BACKUP_DIR, '.drive-check-request.json');
+const DRIVE_STATUS_FILE = path.join(BACKUP_DIR, '.drive-status.json');
 
 const readJsonFile = async (file) => {
   try { return JSON.parse(await fs.promises.readFile(file, 'utf8')); } catch { return null; }
@@ -6366,10 +6369,76 @@ const readJsonFile = async (file) => {
 
 app.get('/api/admin/backup/status', requireRole('SUPER_ADMIN'), async (req, res, next) => {
   try {
-    const [request, last] = await Promise.all([
+    const [request, last, drive, linkPending, checkPending] = await Promise.all([
       readJsonFile(BACKUP_REQUEST_FILE), readJsonFile(BACKUP_STATUS_FILE),
+      readJsonFile(DRIVE_STATUS_FILE), readJsonFile(DRIVE_LINK_FILE), readJsonFile(DRIVE_CHECK_FILE),
     ]);
-    res.json({ success: true, pending: !!request, request, last });
+    res.json({
+      success: true,
+      pending: !!request, request, last,
+      // The Drive picture is written by the backup script, which is the only
+      // thing here that holds the credential. Never includes the token.
+      drive, drivePending: !!linkPending || !!checkPending,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Link (or re-link) Google Drive from the panel.
+//
+// The token is obtained by the admin running `rclone authorize "drive"` on any
+// machine with a browser and pasting the result here. It is handed to the
+// backup script through the data volume and wiped as that script consumes it,
+// so the credential is never stored anywhere this container can read at rest
+// -- the same reason the app cannot take a backup itself.
+app.post('/api/admin/backup/drive-link', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const token = String(req.body.token || '').trim();
+    if (!token) return res.status(400).json({ success: false, error: 'Paste the token from rclone authorize.' });
+
+    // rclone prints a JSON object with an access/refresh token. Checking the
+    // shape here turns "the backup silently stopped working" into an error
+    // the admin sees while they still have the output on screen.
+    let parsed;
+    try { parsed = JSON.parse(token); } catch {
+      return res.status(400).json({ success: false, error: 'That does not look like the token JSON. Paste the whole {"access_token":...} block that rclone printed.' });
+    }
+    if (!parsed || typeof parsed !== 'object' || (!parsed.access_token && !parsed.refresh_token)) {
+      return res.status(400).json({ success: false, error: 'That JSON has no access_token or refresh_token in it.' });
+    }
+
+    const folder = String(req.body.folder || '').trim();
+    if (folder && /["\\]/.test(folder)) {
+      return res.status(400).json({ success: false, error: 'The folder name cannot contain quotes or backslashes.' });
+    }
+    const clientId = String(req.body.clientId || '').trim();
+    const clientSecret = String(req.body.clientSecret || '').trim();
+    if (/["\\]/.test(clientId) || /["\\]/.test(clientSecret)) {
+      return res.status(400).json({ success: false, error: 'The client ID and secret cannot contain quotes or backslashes.' });
+    }
+
+    await fs.promises.writeFile(DRIVE_LINK_FILE, JSON.stringify({
+      token: JSON.stringify(parsed), clientId, clientSecret, folder,
+      requestedAt: Date.now(), requestedBy: req.session.name || req.session.phone || 'admin',
+    }), { encoding: 'utf8', mode: 0o600 });
+
+    // The token itself is deliberately absent from the audit trail.
+    await recordAudit({
+      req, entityType: 'backup', entityId: 'google-drive', action: 'DRIVE_LINK_SUBMITTED',
+      oldValue: null, newValue: folder ? `Folder: ${folder}` : 'Google Drive link submitted',
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Ask the backup script to test the link and report back.
+app.post('/api/admin/backup/drive-check', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    await fs.promises.writeFile(DRIVE_CHECK_FILE, JSON.stringify({ requestedAt: Date.now() }), 'utf8');
+    res.json({ success: true });
   } catch (err) {
     next(err);
   }
