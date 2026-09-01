@@ -6418,12 +6418,25 @@ app.post('/api/admin/backup/drive-link', requireRole('SUPER_ADMIN'), async (req,
     const token = String(req.body.token || '').trim();
     if (!token) return res.status(400).json({ success: false, error: 'Paste the token from rclone authorize.' });
 
-    // rclone prints a JSON object with an access/refresh token. Checking the
-    // shape here turns "the backup silently stopped working" into an error
-    // the admin sees while they still have the output on screen.
-    let parsed;
-    try { parsed = JSON.parse(token); } catch {
-      return res.status(400).json({ success: false, error: 'That does not look like the token JSON. Paste the whole {"access_token":...} block that rclone printed.' });
+    // rclone prints the token between marker lines:
+    //
+    //   Paste the following into your remote machine --->
+    //   {"access_token":"...","refresh_token":"...","expiry":"..."}
+    //   <---End paste
+    //
+    // Anyone copying what they see will bring those markers along, so the
+    // object is lifted out of whatever was pasted rather than demanding
+    // exactly the JSON. Checking the shape at all turns "the backup quietly
+    // stopped working" into an error the admin sees while the output is still
+    // on their screen.
+    let parsed = null;
+    const firstBrace = token.indexOf('{');
+    const lastBrace = token.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      try { parsed = JSON.parse(token.slice(firstBrace, lastBrace + 1)); } catch { parsed = null; }
+    }
+    if (!parsed) {
+      return res.status(400).json({ success: false, error: 'No token found in that. Paste everything rclone printed, including the {"access_token":...} line.' });
     }
     if (!parsed || typeof parsed !== 'object' || (!parsed.access_token && !parsed.refresh_token)) {
       return res.status(400).json({ success: false, error: 'That JSON has no access_token or refresh_token in it.' });
