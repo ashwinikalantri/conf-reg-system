@@ -2503,7 +2503,24 @@ app.get('/setup', (req, res) => {
 app.get('/', async (req, res, next) => {
   try {
     if (await isSetupModeActive()) return res.render('setup');
-    res.render('index', { conferenceName: CONFERENCE.name });
+    // Hand the delegate's own registration to the page so the status chip is
+    // right on the first paint. The markup can only ship one status, and
+    // shipping a real one showed "Registration Pending" to everyone --
+    // including delegates confirmed weeks ago -- until the fetch came back.
+    // The page still fetches and re-applies this, so a stale copy corrects
+    // itself; this only removes the wrong-status flash.
+    let bootstrapReg;
+    if (req.session && req.session.phone) {
+      bootstrapReg = await ownRegistration(req.session.phone); // null = not registered yet
+      // Now personalised, so it must never sit in a shared cache.
+      res.set('Cache-Control', 'private, no-store');
+    }
+    res.render('index', {
+      conferenceName: CONFERENCE.name,
+      // undefined => not logged in, so the page leaves the chip neutral and
+      // waits for the fetch. null => logged in, no registration yet.
+      bootstrapReg: bootstrapReg === undefined ? undefined : bootstrapReg,
+    });
   } catch (err) {
     next(err);
   }
@@ -3567,23 +3584,29 @@ function withDelegateSalutation(row) {
 
 // Fetch the caller's own registration (replaces the old IDOR-prone
 // /api/registrations/user/:phone route).
+// One delegate's own registration, exactly as the portal consumes it. Shared
+// by /api/registrations/me and by the page itself, which embeds the same
+// object so the first paint already shows the right status instead of
+// correcting itself once the fetch lands. Returns null when they haven't
+// registered yet.
+async function ownRegistration(phone) {
+  const row = await dbGet(
+    `SELECT ${REGISTRATION_PUBLIC_COLUMNS} FROM registrations WHERE phone_number = ?`, [phone]);
+  if (!row) return null;
+  // Cumulative payment state so the dashboard can show the outstanding
+  // balance and decide whether to offer a top-up.
+  const summary = await getPaymentSummary(row.id, row.expected_amount);
+  const reg = withDelegateSalutation(row);
+  reg.verified_total = summary.verifiedTotal;
+  reg.remaining = summary.remaining;
+  reg.pending_txn_count = summary.txns.filter((t) => t.txn_status === 'PENDING').length;
+  reg.selections = await fetchRegistrationSelections(row.id);
+  return reg;
+}
+
 app.get('/api/registrations/me', requireAuth, async (req, res, next) => {
   try {
-    const row = await dbGet(
-      `SELECT ${REGISTRATION_PUBLIC_COLUMNS} FROM registrations WHERE phone_number = ?`,
-      [req.session.phone]
-    );
-    if (!row) return res.json({ registration: null });
-
-    // Cumulative payment state so the dashboard can show the outstanding
-    // balance and decide whether to offer a top-up.
-    const summary = await getPaymentSummary(row.id, row.expected_amount);
-    const reg = withDelegateSalutation(row);
-    reg.verified_total = summary.verifiedTotal;
-    reg.remaining = summary.remaining;
-    reg.pending_txn_count = summary.txns.filter((t) => t.txn_status === 'PENDING').length;
-    reg.selections = await fetchRegistrationSelections(row.id);
-    res.json({ registration: reg });
+    res.json({ registration: await ownRegistration(req.session.phone) });
   } catch (err) {
     next(err);
   }

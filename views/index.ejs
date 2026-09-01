@@ -23,6 +23,16 @@
 <%- include('portal/modals/verify-email') %>
 <%- include('portal/modals/confirm') %>
 
+  <!-- The delegate's own registration, so the dashboard's first paint shows
+       the real status rather than a placeholder it has to correct. Set only
+       for a logged-in session (see the / route); app.js applies it
+       synchronously and restoreSession re-applies the fetched copy after.
+       "<" is escaped so a value can never close this tag early. -->
+  <% if (typeof bootstrapReg !== 'undefined') { %>
+  <script>
+    window.__BOOTSTRAP_REG__ = <%- JSON.stringify(bootstrapReg).replace(/</g, '\\u003c') %>;
+  </script>
+  <% } %>
   <script src="app.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', restoreSession);

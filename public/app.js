@@ -631,14 +631,35 @@ async function loadDashboard() {
 
   renderVerifyEmailBanner();
 
+  const regRes = await fetch('/api/registrations/me');
+  const regData = await regRes.json();
+  applyRegistrationState(regData.registration);
+
+  await loadAbstractStatus();
+  await renderGroupSection();
+  navigateTo('dashboard-page');
+}
+
+// Paint every part of the dashboard that depends on the registration: the
+// status chip, the register/pay action, the confirmed block and the balance
+// banner.
+//
+// Split out of loadDashboard so it can run BEFORE the network. The markup
+// has to ship some status in the chip, and shipping a real one meant every
+// delegate saw "Registration Pending" until the fetch returned -- a wrong
+// status, briefly, for anyone already confirmed. The page now ships a
+// neutral "Checking..." and the server hands the delegate's own registration
+// to the page as __BOOTSTRAP_REG__, which is applied synchronously at the
+// bottom of this file. loadDashboard still calls this again with the fetched
+// copy, so a stale bootstrap corrects itself; the call is idempotent.
+//
+// `reg` is the registration, or null for a delegate who has not paid yet.
+function applyRegistrationState(reg) {
   const statusTag = document.getElementById('payment-status-tag');
   const confBtn = document.getElementById('register-conf-btn');
   const reverifyBanner = document.getElementById('reverify-banner');
   const confirmedBlock = document.getElementById('confirmed-block');
 
-  const regRes = await fetch('/api/registrations/me');
-  const regData = await regRes.json();
-  const reg = regData.registration;
   currentRegistration = reg;
 
   // Registration number, receipt, and the chosen workshop / QI practice are
@@ -742,9 +763,6 @@ async function loadDashboard() {
     reverifyBanner.classList.add('hidden');
   }
 
-  await loadAbstractStatus();
-  await renderGroupSection();
-  navigateTo('dashboard-page');
 }
 
 // --- GROUP REGISTRATION (delegate) ---
@@ -6986,4 +7004,26 @@ function filterMatchedRows() {
   body.innerHTML = list.length
     ? list.map((m, i) => matchedRowHtml(m, i + 1)).join('')
     : `<tr><td colspan="7" class="p-4 text-center text-slate-400 text-xs">${total ? 'No matches for this search.' : 'No matches yet — upload a statement above.'}</td></tr>`;
+}
+
+
+// --- FIRST PAINT -----------------------------------------------------------
+// Apply the registration the server embedded in the page, before any network
+// call, so the status chip is correct the moment the delegate sees it rather
+// than starting on a placeholder and correcting itself. restoreSession()
+// re-applies the freshly fetched copy a moment later, which is what makes a
+// stale bootstrap self-correcting.
+//
+// Deliberately at the very BOTTOM of this file: it runs during script
+// evaluation, so everything it touches has to be initialised already. Putting
+// it higher is how the portal broke before -- a `const` declared further down
+// threw a temporal-dead-zone error that killed the rest of the file. The
+// try/catch is the second line of defence.
+try {
+  if (typeof window !== 'undefined' && window.__BOOTSTRAP_REG__ !== undefined
+      && document.getElementById('payment-status-tag')) {
+    applyRegistrationState(window.__BOOTSTRAP_REG__);
+  }
+} catch (err) {
+  console.error('Could not apply the embedded registration; waiting for the fetch.', err);
 }

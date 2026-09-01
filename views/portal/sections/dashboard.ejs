@@ -61,8 +61,15 @@
         <div>
           <div class="flex justify-between items-center mb-2">
             <span class="text-xs font-bold text-indigo-600 uppercase tracking-wide">Step 1</span>
-            <span id="payment-status-tag" class="text-xs bg-amber-100 text-amber-800 font-bold px-2.5 py-1 rounded-full border border-amber-200">
-              Registration Pending
+            <!-- Neutral until the real status is known. This used to ship
+                 "Registration Pending", which meant a confirmed delegate was
+                 shown a wrong status until the fetch returned. The server
+                 normally replaces it on the first paint (see __BOOTSTRAP_REG__
+                 in the / route); this is what an anonymous visitor, or a
+                 delegate whose session the server could not resolve, sees
+                 while applyRegistrationState works it out. -->
+            <span id="payment-status-tag" class="text-xs bg-slate-100 text-slate-500 font-bold px-2.5 py-1 rounded-full border border-slate-200">
+              Checking&hellip;
             </span>
           </div>
           <h3 class="text-xl font-bold text-slate-800 mt-1">Conference Registration & Payment</h3>
@@ -83,7 +90,10 @@
           </div>
         </div>
 
-        <div id="payment-action-area" class="mt-6">
+        <!-- Hidden until the status is known, for the same reason as the chip
+             above: a confirmed delegate should never be shown a Register &
+             Pay button, however briefly. applyRegistrationState unhides it. -->
+        <div id="payment-action-area" class="mt-6 hidden">
           <div id="payment-action-note" class="mb-3 bg-white p-3 rounded-xl border border-amber-200 text-xs text-amber-900 leading-relaxed">
             <b>Note:</b> Registration remains <b>Pending</b> until payment is verified manually by the finance admin.
           </div>
