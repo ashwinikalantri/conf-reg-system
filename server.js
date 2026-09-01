@@ -4025,7 +4025,9 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
   .stub .rw:last-child { border-bottom:0; }
   .stub .rw .k { color:var(--muted); font-weight:500; }
   .stub .rw .v { font-weight:600; text-align:right; }
-  .stub .rw .v .sub { display:block; font-family:"IBM Plex Mono", monospace; font-size:10.5px; font-weight:400; color:var(--muted); margin-top:1px; }
+  /* Not monospace: this carries the venue, not a reference number. The mono
+     face is reserved for things you might have to read back digit by digit. */
+  .stub .rw .v .sub { display:block; font-size:11px; font-weight:500; color:var(--muted); margin-top:1px; }
   .stub .split { background:#F7F7FB; border-radius:11px; padding:12px 14px; display:flex; flex-direction:column; gap:8px; }
   .stub .split .hd { font-size:10px; font-weight:700; letter-spacing:.11em; text-transform:uppercase; color:var(--muted); }
   .stub .split .ln { display:flex; justify-content:space-between; gap:1rem; font-size:12px; }
