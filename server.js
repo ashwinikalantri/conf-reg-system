@@ -6335,6 +6335,73 @@ app.post('/api/admin/reminders/custom-send', requireRole('SUPER_ADMIN'), async (
   }
 });
 
+// --- BACKUPS (admin-triggered) --------------------------------------------
+//
+// The app does NOT take the backup itself, and deliberately cannot: the
+// Google Drive credential is kept out of this long-running, internet-facing
+// container (see scripts/backup.sh), and handing this process the Docker
+// socket to work around that would be strictly worse than the problem.
+//
+// So "Back up now" is a request, not an action. This writes a small file into
+// the data volume; a cron entry runs `backup.sh --if-requested` every few
+// minutes, sees it, takes a real backup and writes back a status file. The
+// credential stays where it is and the button costs a few minutes of latency.
+//
+// The handshake files sit beside the database, wherever that actually is.
+// Resolved by following conference.db's own symlink rather than testing for
+// /data: inside the container that resolves to the mounted volume (which is
+// what the backup script reads), and outside one it resolves to the working
+// copy. Testing for a /data directory would have been wrong on this host,
+// which has an unrelated /data of its own.
+const BACKUP_DIR = (() => {
+  try { return path.dirname(fs.realpathSync(path.join(__dirname, 'conference.db'))); }
+  catch { return __dirname; }
+})();
+const BACKUP_REQUEST_FILE = path.join(BACKUP_DIR, '.backup-request.json');
+const BACKUP_STATUS_FILE = path.join(BACKUP_DIR, '.backup-status.json');
+
+const readJsonFile = async (file) => {
+  try { return JSON.parse(await fs.promises.readFile(file, 'utf8')); } catch { return null; }
+};
+
+app.get('/api/admin/backup/status', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const [request, last] = await Promise.all([
+      readJsonFile(BACKUP_REQUEST_FILE), readJsonFile(BACKUP_STATUS_FILE),
+    ]);
+    res.json({ success: true, pending: !!request, request, last });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/admin/backup/request', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    // A second request while one is queued would just be the same backup, so
+    // say so rather than letting an impatient click look like it did nothing.
+    const existing = await readJsonFile(BACKUP_REQUEST_FILE);
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        error: 'A backup is already queued and will start within a few minutes.',
+        request: existing,
+      });
+    }
+    const request = {
+      requestedAt: Date.now(),
+      requestedBy: req.session.name || req.session.phone || 'admin',
+    };
+    await fs.promises.writeFile(BACKUP_REQUEST_FILE, JSON.stringify(request), 'utf8');
+    await recordAudit({
+      req, entityType: 'backup', entityId: String(request.requestedAt),
+      action: 'BACKUP_REQUESTED', oldValue: null, newValue: 'Manual backup requested from Settings',
+    });
+    res.json({ success: true, request });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- PROGRAM GROUPS ADMIN (Workshops, QI Practices, or any further group) --
 
 function validGroupInput({ name, required, maxSelect }, { partial } = {}) {

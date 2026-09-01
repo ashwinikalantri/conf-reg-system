@@ -5220,7 +5220,63 @@ function removeDigestRecipient(phone) {
   renderDigestChips();
 }
 
+// --- BACKUPS (Settings) ---
+// The button queues a backup rather than running one: the Drive credential is
+// deliberately absent from the app container, so scripts/backup.sh (cron,
+// every few minutes) is what actually does the work. See the endpoints in
+// server.js for why.
+async function renderBackupStatus() {
+  const box = document.getElementById('backup-status');
+  const btn = document.getElementById('backup-now-btn');
+  if (!box) return;
+  let data;
+  try {
+    data = await (await fetch('/api/admin/backup/status')).json();
+  } catch {
+    box.textContent = 'Could not read the backup status.';
+    return;
+  }
+  if (!data.success) { box.textContent = data.error || 'Could not read the backup status.'; return; }
+
+  const lines = [];
+  if (data.last && data.last.finishedAt) {
+    const when = fmtAuditTime(data.last.finishedAt);
+    const size = data.last.databaseBytes
+      ? ` · database ${(Number(data.last.databaseBytes) / 1048576).toFixed(1)} MB` : '';
+    const drive = data.last.uploadedToDrive
+      ? '<span class="text-emerald-700 font-semibold">copied to Google Drive</span>'
+      : '<span class="text-amber-700 font-semibold">not copied to Google Drive</span>';
+    lines.push(`<b>Last backup:</b> ${esc(when)} (${esc(data.last.kind || 'scheduled')})${esc(size)} — ${drive}`);
+  } else {
+    // Absent until the first run after this feature shipped -- say so plainly
+    // rather than implying no backup has ever been taken.
+    lines.push('<b>Last backup:</b> not recorded yet — the next run will report here.');
+  }
+  if (data.pending) {
+    const asked = data.request && data.request.requestedAt ? fmtAuditTime(data.request.requestedAt) : '';
+    lines.push(`<span class="text-indigo-700 font-semibold">⏳ A backup is queued${asked ? ` (requested ${esc(asked)})` : ''} and will start within a few minutes.</span>`);
+  }
+  box.innerHTML = lines.join('<br>');
+  if (btn) btn.disabled = !!data.pending;
+}
+
+async function requestBackupNow() {
+  if (!(await showConfirm('Queue a backup now? It will start within a few minutes and be copied to Google Drive.'))) return;
+  const btn = document.getElementById('backup-now-btn');
+  if (btn) btn.disabled = true;
+  const data = await (await fetch('/api/admin/backup/request', { method: 'POST' })).json();
+  if (!data.success) {
+    showToast(data.error || 'Could not queue a backup.');
+  } else {
+    showToast('Backup queued — it will start within a few minutes.', 'success');
+  }
+  await renderBackupStatus();
+}
+
 async function renderGeneralSettings() {
+  // Independent of the settings fetch below, so a backup-status hiccup can't
+  // stop the rest of the tab rendering.
+  renderBackupStatus();
   const res = await fetch('/api/admin/general-settings');
   if (!res.ok) return;
   const data = await res.json();

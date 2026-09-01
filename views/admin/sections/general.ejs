@@ -159,6 +159,23 @@
         </form>
       </div>
 
+      <!-- Backups. The app cannot take one itself: the Google Drive credential
+           is deliberately kept out of this container (see scripts/backup.sh),
+           so this queues a request that the backup cron picks up within a few
+           minutes. Super admin only, like the rest of this tab's write
+           actions. -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-800 mb-1">💾 Backups</h3>
+        <p class="text-xs text-slate-500 mb-3">A backup runs automatically every night at 02:00 and is copied to Google Drive, which keeps the most recent 14.</p>
+        <div id="backup-status" class="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-3 mb-3">Checking…</div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" id="backup-now-btn" onclick="requestBackupNow()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm rounded-xl shadow-md">
+            💾 Back Up Now
+          </button>
+          <span class="text-[11px] text-slate-500">Queues a backup; it starts within about five minutes.</span>
+        </div>
+      </div>
+
       <!-- Other Environment Variables -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <h3 class="text-lg font-bold text-slate-800 mb-1">🗄️ Other Environment Variables</h3>
