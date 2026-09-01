@@ -3960,14 +3960,23 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
     const issuer = [CONFERENCE.location, EMAIL.from].filter(Boolean);
     const confLine = [formatConferenceDates(), CONFERENCE.location].filter(Boolean).join(' · ');
 
-    res.set('Cache-Control', 'private, no-store');
-    res.type('html').send(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Payment Receipt — ${esc(reg.registration_number)}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Manrope:wght@500;600;700;800&display=swap">
-<style>
+    // ONE DOCUMENT PER AUDIENCE, rather than two layouts in one file behind
+    // a @media print swap.
+    //
+    // Safari builds the print preview from the live DOM but generates the
+    // actual print/PDF in a second pass, and in that pass it drops content
+    // whose visibility comes from the print stylesheet: the preview showed
+    // the statement correctly and the printed sheet came out blank. That was
+    // true whether the statement was hidden with display:none or with
+    // visibility -- the swap itself is what Safari mishandles. Chrome and
+    // Firefox print either version fine, which is what made it look like a
+    // CSS bug rather than a structural one.
+    //
+    // So there is no swap. The delegate gets the stub; Print / Save as PDF
+    // opens the statement at ?print=1, which is an ordinary document with
+    // nothing hidden in it and prints the same everywhere.
+    const wantsPrint = String(req.query.print || '') === '1';
+    const BASE_CSS = `
   /* One document, two layouts. The delegate reads the stub on a phone; the
      statement is what comes out of Print / Save as PDF, because that copy
      goes to a finance office and has to look like an accounting record.
@@ -3983,22 +3992,8 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
   body { margin:0; padding:2rem 1rem 3rem; background:var(--ground); color:var(--ink);
          font-family:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
          line-height:1.55; -webkit-font-smoothing:antialiased; }
-  .money { font-variant-numeric:tabular-nums; white-space:nowrap; }
-
-  /* The statement is NEVER display:none. Safari does not paginate content
-     that was display:none when it computes the print layout -- it gave the
-     statement zero height and printed a blank sheet. Keeping it in the
-     layout tree and hiding it with visibility instead is what makes Safari
-     reliable; position:fixed keeps a full-width A4 block from adding scroll
-     to the screen view, and print puts it back in normal flow. */
-  @media screen {
-    .print-only {
-      position:fixed; top:0; left:0; width:210mm; z-index:-1;
-      visibility:hidden; pointer-events:none;
-    }
-  }
-
-  /* ---------------- Stub (screen) ---------------- */
+  .money { font-variant-numeric:tabular-nums; white-space:nowrap; }`;
+    const STUB_CSS = `  /* ---------------- Stub (screen) ---------------- */
   .stub { width:380px; max-width:100%; margin:0 auto; border-radius:18px; overflow:hidden;
           background:var(--white); font-family:"Manrope", system-ui, sans-serif;
           box-shadow:0 1px 2px rgba(20,22,28,.06), 0 14px 36px rgba(20,22,28,.10); }
@@ -4044,9 +4039,8 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
                     border:0; border-radius:10px; padding:.7rem 1.5rem; cursor:pointer; }
   .actions button:hover { background:#332B92; }
   .actions p { margin:.6rem 0 0; font-size:.72rem; color:var(--muted); }
-  :focus-visible { outline:2px solid var(--indigo); outline-offset:3px; }
-
-  /* ---------------- Statement (print) ---------------- */
+  :focus-visible { outline:2px solid var(--indigo); outline-offset:3px; }`;
+    const STMT_CSS = `  /* ---------------- Statement (its own document) ---------------- */
   .stmt { width:100%; background:var(--white); font-family:"IBM Plex Sans", system-ui, sans-serif; color:var(--ink); }
   .stmt .bar { display:flex; justify-content:space-between; align-items:flex-start; gap:2rem;
                padding-bottom:16px; border-bottom:1px solid var(--rule); }
@@ -4088,80 +4082,35 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
                 padding:9px 11px; font-size:11px; border-radius:3px; }
   .stmt .foot { margin-top:22px; padding-top:12px; border-top:1px solid var(--rule); font-size:10.5px;
                 color:var(--muted); line-height:1.55; display:flex; justify-content:space-between; gap:1.5rem; }
-  .stmt .foot .r { text-align:right; }
+  .stmt .foot .r { text-align:right; }`;
 
+    const page = (css, body) => `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payment Receipt — ${esc(reg.registration_number)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Manrope:wght@500;600;700;800&display=swap">
+<style>${css}</style></head>
+<body>${body}</body></html>`;
+
+    res.set('Cache-Control', 'private, no-store');
+
+    if (wantsPrint) {
+      return res.type('html').send(page(`${BASE_CSS}
+${STMT_CSS}
+  /* This document exists to be printed, so it is the page -- no wrapper, no
+     card, no centring to fight the printer over. */
+  body { background:var(--white); padding:24px; max-width:210mm; margin:0 auto; }
+  .actions { text-align:center; margin-top:24px; }
+  .actions button { font:inherit; font-weight:600; font-size:.85rem; background:var(--indigo); color:var(--white);
+                    border:0; border-radius:8px; padding:.6rem 1.4rem; cursor:pointer; }
   @media print {
     @page { size:A4; margin:14mm; }
-    html, body { background:#fff; padding:0; margin:0; }
-    .screen-only { display:none; }
-    /* Back into normal flow, and visible. Mirrors every property the screen
-       rule set, so nothing is left over from the hidden state. */
-    .print-only {
-      position:static; top:auto; left:auto; width:auto; z-index:auto;
-      visibility:visible; pointer-events:auto;
-    }
-    /* Backgrounds carry meaning here (the paid pill, the excess note), so
-       don't let the browser drop them from the printed copy. */
+    html, body { background:#fff; padding:0; margin:0; max-width:none; }
+    .actions { display:none; }
+    /* The pill and the excess note carry meaning, so keep their fills. */
     * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-  }
-</style></head>
-<body>
-
-  <!-- What the delegate sees. -->
-  <div class="stub screen-only">
-    <div class="top">
-      <div class="kicker"><span>${esc(CONFERENCE.acronym)} · Receipt</span><span class="chip">${esc(statusLabel)}</span></div>
-      <div class="amt money">${esc(money(received))}</div>
-      <div class="amt-sub">${balance > 0 ? `${esc(money(balance))} still due` : 'Received in full'} · ${esc(fmtDay(verifiedRow && verifiedRow.created_at))}</div>
-    </div>
-    <div class="perf"><i></i></div>
-    <div class="body">
-      <div>
-        <div class="nm">${esc(delegateName)}</div>
-        ${roleLine ? `<div class="rl">${esc(roleLine)}</div>` : ''}
-      </div>
-
-      <div class="reg">
-        <span class="k">Registration</span>
-        <span class="v">${esc(reg.registration_number)}</span>
-      </div>
-
-      <div>
-        <div class="rw"><span class="k">Category</span><span class="v">${esc(reg.category_label)}</span></div>
-        ${selections.map((s) => `<div class="rw"><span class="k">${esc(s.group_name)}</span><span class="v">${esc(s.option_name)}</span></div>`).join('')}
-        <div class="rw"><span class="k">Conference</span><span class="v">${esc(formatConferenceDates())}<span class="sub">${esc(CONFERENCE.location)}</span></span></div>
-      </div>
-
-      ${showBreakdown ? `<div class="split">
-        <div class="hd">How the fee was worked out</div>
-        <div class="ln"><span class="l">${esc(reg.category_label)}</span><span class="m money">${esc(money(categoryFee))}</span></div>
-        ${paidOptions.map((o) => `<div class="ln"><span class="l">${esc(o.option_name)}</span><span class="m money">${esc(money(o.option_fee))}</span></div>`).join('')}
-        ${discount > 0 ? `<div class="ln"><span class="l">${esc(discountLabel)}</span><span class="m money neg">− ${esc(money(discount))}</span></div>` : ''}
-        <div class="ln" style="border-top:1px solid var(--rule);padding-top:7px;font-weight:700"><span class="l" style="color:var(--ink)">Payable</span><span class="m money">${esc(money(fee))}</span></div>
-      </div>` : ''}
-
-      ${items.length > 1 || refunds.length ? `<div class="split">
-        <div class="hd">${esc(items.length > 1 ? `Paid in ${items.length} instalments` : 'Payment')}</div>
-        ${items.map((i) => `<div class="ln"><span class="l">${esc(i.mode)}${i.ref ? `<em>${esc(i.ref)}</em>` : ''}</span><span class="m money">${esc(money(i.amount))}</span></div>`).join('')}
-        ${refunds.map((r) => `<div class="ln"><span class="l">Refunded${r.note ? `<em>${esc(r.note)}</em>` : ''}</span><span class="m money neg">− ${esc(money(r.amount))}</span></div>`).join('')}
-      </div>` : ''}
-
-      ${summary.overpaid > 0 ? `<div class="note">You paid ${esc(money(summary.overpaid))} more than the ${esc(money(summary.fee))} fee. The excess is due to be refunded — contact the organisers if you have not received it.</div>` : ''}
-
-      <div class="foot">
-        Issued by ${esc(issuer.join(' · '))}<br>
-        Quote ${esc(reg.registration_number)} in all correspondence.
-      </div>
-    </div>
-  </div>
-
-  <div class="actions screen-only">
-    <button type="button" onclick="window.print()">Print / Save as PDF</button>
-    <p>The printed copy is a full statement, suitable for a reimbursement claim.</p>
-  </div>
-
-  <!-- What comes out of the printer. -->
-  <div class="stmt print-only">
+  }`, `<div class="stmt">
     <div class="bar">
       <div>
         <span class="kd">Payment receipt</span>
@@ -4225,8 +4174,74 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
       <span class="r">${esc(CONFERENCE.acronym)}<br>${esc(CONFERENCE.location)}</span>
     </div>
   </div>
+  <div class="actions"><button type="button" onclick="window.print()">Print / Save as PDF</button></div>
+  <script>
+    // Print once the webfonts have settled, so the paginated output matches
+    // what was on screen; don't wait forever if they never resolve.
+    (function () {
+      var printed = false;
+      function go() { if (printed) return; printed = true; window.print(); }
+      if (document.fonts && document.fonts.ready) {
+        Promise.race([document.fonts.ready, new Promise(function (r) { setTimeout(r, 1500); })]).then(go);
+      } else { setTimeout(go, 400); }
+      // Only closes when this was opened by the receipt's button; a directly
+      // visited URL just stays put.
+      window.onafterprint = function () { window.close(); };
+    }());
+  <\/script>`));
+    }
 
-</body></html>`);
+    return res.type('html').send(page(`${BASE_CSS}
+${STUB_CSS}`, `<div class="stub">
+    <div class="top">
+      <div class="kicker"><span>${esc(CONFERENCE.acronym)} · Receipt</span><span class="chip">${esc(statusLabel)}</span></div>
+      <div class="amt money">${esc(money(received))}</div>
+      <div class="amt-sub">${balance > 0 ? `${esc(money(balance))} still due` : 'Received in full'} · ${esc(fmtDay(verifiedRow && verifiedRow.created_at))}</div>
+    </div>
+    <div class="perf"><i></i></div>
+    <div class="body">
+      <div>
+        <div class="nm">${esc(delegateName)}</div>
+        ${roleLine ? `<div class="rl">${esc(roleLine)}</div>` : ''}
+      </div>
+
+      <div class="reg">
+        <span class="k">Registration</span>
+        <span class="v">${esc(reg.registration_number)}</span>
+      </div>
+
+      <div>
+        <div class="rw"><span class="k">Category</span><span class="v">${esc(reg.category_label)}</span></div>
+        ${selections.map((s) => `<div class="rw"><span class="k">${esc(s.group_name)}</span><span class="v">${esc(s.option_name)}</span></div>`).join('')}
+        <div class="rw"><span class="k">Conference</span><span class="v">${esc(formatConferenceDates())}<span class="sub">${esc(CONFERENCE.location)}</span></span></div>
+      </div>
+
+      ${showBreakdown ? `<div class="split">
+        <div class="hd">How the fee was worked out</div>
+        <div class="ln"><span class="l">${esc(reg.category_label)}</span><span class="m money">${esc(money(categoryFee))}</span></div>
+        ${paidOptions.map((o) => `<div class="ln"><span class="l">${esc(o.option_name)}</span><span class="m money">${esc(money(o.option_fee))}</span></div>`).join('')}
+        ${discount > 0 ? `<div class="ln"><span class="l">${esc(discountLabel)}</span><span class="m money neg">− ${esc(money(discount))}</span></div>` : ''}
+        <div class="ln" style="border-top:1px solid var(--rule);padding-top:7px;font-weight:700"><span class="l" style="color:var(--ink)">Payable</span><span class="m money">${esc(money(fee))}</span></div>
+      </div>` : ''}
+
+      ${items.length > 1 || refunds.length ? `<div class="split">
+        <div class="hd">${esc(items.length > 1 ? `Paid in ${items.length} instalments` : 'Payment')}</div>
+        ${items.map((i) => `<div class="ln"><span class="l">${esc(i.mode)}${i.ref ? `<em>${esc(i.ref)}</em>` : ''}</span><span class="m money">${esc(money(i.amount))}</span></div>`).join('')}
+        ${refunds.map((r) => `<div class="ln"><span class="l">Refunded${r.note ? `<em>${esc(r.note)}</em>` : ''}</span><span class="m money neg">− ${esc(money(r.amount))}</span></div>`).join('')}
+      </div>` : ''}
+
+      ${summary.overpaid > 0 ? `<div class="note">You paid ${esc(money(summary.overpaid))} more than the ${esc(money(summary.fee))} fee. The excess is due to be refunded — contact the organisers if you have not received it.</div>` : ''}
+
+      <div class="foot">
+        Issued by ${esc(issuer.join(' · '))}<br>
+        Quote ${esc(reg.registration_number)} in all correspondence.
+      </div>
+    </div>
+  </div>
+  <div class="actions">
+    <button type="button" onclick="window.open('?print=1', '_blank')">Print / Save as PDF</button>
+    <p>Opens a full statement, suitable for a reimbursement claim.</p>
+  </div>`));
   } catch (err) {
     next(err);
   }
