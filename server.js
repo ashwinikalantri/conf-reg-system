@@ -2454,6 +2454,27 @@ app.use(express.urlencoded({ limit: '8mb', extended: true }));
 // index: false -- the delegate portal is a template now (views/index.ejs plus
 // its partials), served by the explicit GET / below. Without this, static
 // would try to auto-serve public/index.html for '/' and shadow that route.
+// Fingerprint for app.js, in its URL.
+//
+// This deployment sits behind Cloudflare, which caches /app.js for four hours
+// regardless of the max-age=0 the origin sends. A deploy therefore did not
+// reach anyone -- browser or edge -- until that expired, which is why fixes
+// here have needed a hard refresh to show up. Putting the file's own hash in
+// the URL makes each build a different resource: the new one is fetched
+// immediately because nothing has ever cached it, and the long cache lifetime
+// becomes a benefit rather than a delay.
+//
+// Computed once at startup: the file cannot change under a running process
+// (the image is rebuilt and the container replaced on every deploy).
+const ASSET_VERSION = (() => {
+  try {
+    return crypto.createHash('sha1')
+      .update(fs.readFileSync(path.join(__dirname, 'public', 'app.js')))
+      .digest('hex').slice(0, 10);
+  } catch { return String(Date.now()); }
+})();
+app.locals.assetVersion = ASSET_VERSION;
+
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 app.use(loadSession);
 app.use(maintenanceGate);
