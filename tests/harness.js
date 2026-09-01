@@ -131,11 +131,21 @@ function report() {
 const ADMIN_POOL_SIZE = 60;   // must match tests/seed.js
 const ADMIN_PW = 'harness-admin-pw';
 const DELEGATE_PW = 'harness-delegate-pw';
+//
+// By POSITION in the sorted list of test files, not by hashing the name. A
+// hash looked fine and was the cause of a flaky suite: 38 files over 60 slots
+// collided eight ways, and two files sharing an account seconds apart hit the
+// throttle. Position is collision-free by construction.
 const ADMIN = (() => {
-  const who = path.basename(process.argv[1] || 'unknown');
-  let n = 0;
-  for (const ch of who) n = (n * 31 + ch.charCodeAt(0)) % ADMIN_POOL_SIZE;
-  return `90001${String(n + 1).padStart(5, '0')}`;
+  const who = path.basename(process.argv[1] || '');
+  const files = fs.readdirSync(__dirname).filter((f) => /^t\d*\.js$/.test(f)).sort();
+  const idx = files.indexOf(who);
+  if (idx === -1) return `90001${String(1).padStart(5, '0')}`;   // run outside the suite
+  if (files.length > ADMIN_POOL_SIZE) {
+    throw new Error(`${files.length} test files but only ${ADMIN_POOL_SIZE} seeded admins — `
+      + 'raise ADMIN_POOL_SIZE here and in tests/seed.js.');
+  }
+  return `90001${String(idx + 1).padStart(5, '0')}`;
 })();
 
 // Sign in as this file's admin. Password rather than OTP: it is not what these

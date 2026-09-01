@@ -1,8 +1,7 @@
-const { call, check, report, ADMIN } = require('./harness');
+const { call, check, report, adminLogin } = require('./harness');
 ;
 (async()=>{
-let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
-r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
+let r = { cookie: await adminLogin() };
 const rec=await call('GET','/api/admin/bank-statement/reconcile',null,r.cookie);
 const hers=(rec.body.matched||[]).filter(m=>m.registration_number==='FIXCON20991002');
 

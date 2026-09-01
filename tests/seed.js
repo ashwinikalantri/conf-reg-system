@@ -17,7 +17,7 @@
 //
 // Everyone here is invented. No real delegate, number, or address appears.
 
-const { execFileSync, spawn } = require('child_process');
+const { spawn } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
@@ -51,9 +51,25 @@ const DELEGATE_PW = 'harness-delegate-pw';
 
 // --- 1. schema, straight from the application ------------------------------
 
-function buildEmptySchema() {
+// An OS-assigned free port. A random one from a fixed range meant two seeds
+// running at the same time could pick the same port; the second app then
+// failed to listen, and because the wait below ended on a timeout rather than
+// on readiness, it copied whatever the database looked like at that moment --
+// occasionally missing a late migration, which surfaced as a single
+// unexplained assertion failure much later.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const freePort = () => new Promise((resolve, reject) => {
+  const srv = require('net').createServer();
+  srv.on('error', reject);
+  srv.listen(0, '127.0.0.1', () => {
+    const { port } = srv.address();
+    srv.close(() => resolve(port));
+  });
+});
+
+async function buildEmptySchema() {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'nqocn-seed-'));
-  const port = 4400 + Math.floor(Math.random() * 500);
+  const port = await freePort();
   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: work,
     // DB_PATH, not cwd: the app resolves its database from its own directory
@@ -73,18 +89,21 @@ function buildEmptySchema() {
   // capture a half-built schema.
   let lastSize = -1;
   let stableFor = 0;
+  let ready = false;
   while (Date.now() < deadline) {
-    execFileSync('sleep', ['0.4']);
+    await sleep(300);
     if (!out.includes('Server running')) continue;
     if (!fs.existsSync(dbFile)) continue;
     const size = fs.statSync(dbFile).size;
     stableFor = size === lastSize ? stableFor + 1 : 0;
     lastSize = size;
-    if (stableFor >= 3) break;
+    if (stableFor >= 3) { ready = true; break; }
   }
   child.kill('SIGTERM');
-  if (!fs.existsSync(dbFile)) {
-    throw new Error(`The app did not create a database while seeding.\n${out}`);
+  // Running out of time is a failure, not a result. Copying the database at
+  // that point is how a half-migrated schema could escape into a fixture.
+  if (!ready) {
+    throw new Error(`The app never finished starting while seeding (port ${port}).\n${out}`);
   }
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.copyFileSync(dbFile, OUT);
@@ -276,7 +295,10 @@ async function seedRows() {
            is_flagged, rejection_reason)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
         [reg.lastID, d.phone, t.amount, t.verified === undefined ? null : t.verified, t.utr,
-          t.slip === false ? null : 'data:image/png;base64,iVBORw0KGgo=',
+          // Each slip is distinct: a delegate who paid twice has two different
+          // images, and a test that checks each payment serves its OWN slip
+          // needs them to differ.
+          t.slip === false ? null : `data:image/png;base64,${Buffer.from(`slip-${t.utr}`).toString('base64')}`,
           t.mode || 'UPI', t.status, t.bankTxnId || null, t.at || ago(20),
           t.status === 'PENDING' ? null : 'Ada Harness', t.status === 'PENDING' ? null : (t.at || ago(20)),
           t.rejection || null]);
@@ -432,6 +454,7 @@ const REQUIRED = [
   ['a user with no password', "SELECT 1 FROM users WHERE password_hash IS NULL"],
   ['an email-only account', "SELECT 1 FROM users WHERE phone_number LIKE 'u\\_%' ESCAPE '\\' AND email IS NOT NULL"],
   ['a payment with a slip', "SELECT 1 FROM payment_transactions WHERE screenshot IS NOT NULL"],
+  ['two payments of one registration with DIFFERENT slips', "SELECT 1 FROM payment_transactions a JOIN payment_transactions b ON a.registration_id=b.registration_id AND a.id<b.id WHERE a.screenshot IS NOT NULL AND b.screenshot IS NOT NULL AND a.screenshot<>b.screenshot"],
   ['a category that requires a student ID', "SELECT 1 FROM fee_categories WHERE requires_student_id=1 AND active=1"],
   ['an unclaimed bank credit', "SELECT 1 FROM bank_statement_transactions WHERE credit>0 AND id NOT IN (SELECT bank_txn_id FROM payment_transactions WHERE bank_txn_id IS NOT NULL)"],
   ['a bank debit to refund against', "SELECT 1 FROM bank_statement_transactions WHERE debit>0"],
@@ -466,7 +489,7 @@ async function verify() {
 
 (async () => {
   fs.rmSync(OUT, { force: true });
-  buildEmptySchema();
+  await buildEmptySchema();
   await seedRows();
   await verify();
 })().catch((err) => { console.error(err); process.exit(1); });

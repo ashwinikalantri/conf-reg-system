@@ -52,6 +52,29 @@ for(const bad of ['12345678','abc','+9','0000000000','+91123']){
 console.log('\n== Nobody is left without a verified channel ==');
 const stranded=(await all('SELECT COUNT(*) n FROM users WHERE phone_verified = 0 AND email_verified = 0'))[0].n;
 check('no account has zero verified channels', stranded===0, stranded);
+
+// An account key is not a phone number. Synthetic keys (u_<hex>) belong to
+// accounts with NO phone at all, and their leftover digits were once read as
+// one -- an account with no mobile displayed a fabricated one on reports and
+// receipts whenever exactly ten digits survived.
+{
+  const fs=require('fs');
+  const { appFile } = require('./harness');
+  for (const [file, label] of [[appFile('server.js'), 'server'], [appFile('public','app.js'), 'client']]) {
+    const src=fs.readFileSync(file,'utf8');
+    const i=src.indexOf('function toE164(');
+    const body=src.slice(i, src.indexOf('\n}', i)+2);
+    const fn=new Function('DEFAULT_PHONE_CC','E164_RE', body + '; return toE164;')('91', /^\+[1-9]\d{7,14}$/);
+    check(`${label}: a synthetic account key is not a phone number`,
+      fn('u_4602062370abcdef01')==='', fn('u_4602062370abcdef01'));
+    check(`${label}: nor is one whose digits look national`,
+      fn('u_1234567890abcdefff')==='', fn('u_1234567890abcdefff'));
+    check(`${label}: an email is not a phone number`, fn('someone@example.com')==='');
+    check(`${label}: a real number still normalises`, fn('09823900641')==='+919823900641', fn('09823900641'));
+    check(`${label}: and so does a formatted one`, fn('+91 98239 00641')==='+919823900641');
+  }
+}
+
 report();
 db.close();
 })();

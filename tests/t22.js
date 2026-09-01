@@ -1,4 +1,4 @@
-const { call, check, report, ADMIN } = require('./harness');
+const { call, check, report, adminLogin } = require('./harness');
 ; const fs=require('fs');
 (async()=>{
 const js=(await call('GET','/app.js',null,null)).raw;
@@ -25,8 +25,7 @@ check('outline is non-empty', outline.coordinates.length>0, outline.coordinates.
 check('every district carries stname', o.geometries.every(g=>g.properties&&g.properties.stname), 'ok');
 
 console.log('\n== Map data still serves ==');
-let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
-r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
+let r = { cookie: await adminLogin() };
 const map=await call('GET','/api/admin/delegate-locations',null,r.cookie);
 check('endpoint 200', map.status===200, map.status);
 check('locations present', Array.isArray(map.body.locations) && map.body.locations.length>0, (map.body.locations||[]).length);

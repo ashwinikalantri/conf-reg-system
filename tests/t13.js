@@ -1,25 +1,23 @@
-const { call, check, report, ADMIN } = require('./harness');
+const { call, check, report, adminLogin } = require('./harness');
 ;
 const sqlite3=require('sqlite3').verbose();
 const db=new sqlite3.Database(process.argv[2], sqlite3.OPEN_READONLY);
 const all=(q)=>new Promise((r,j)=>db.all(q,(e,x)=>e?j(e):r(x)));
 (async()=>{
-// A real registration with TWO ledger rows, both carrying their own slip.
-const fs=require('fs');
-const UP=process.argv[3];
-const cand=await all("SELECT registration_id, GROUP_CONCAT(id) ids, GROUP_CONCAT(screenshot) slips, GROUP_CONCAT(txn_status) st FROM payment_transactions WHERE screenshot IS NOT NULL GROUP BY registration_id HAVING COUNT(*)>1");
-// Only pairs whose files are actually present here -- a couple of live rows
-// reference files that were cleaned up on resubmission (covered separately).
-const reg=cand.find(c=>c.slips.split(',').every(f=>fs.existsSync(`${UP}/${f}`)));
-if(!reg){ console.log('no fully-present pair in this upload sample'); process.exit(0); }
+// A registration with TWO payments, each carrying its own slip. This used to
+// hunt the live uploads directory for a pair whose files still existed; the
+// slips live in the database, so ask it directly.
+const reg=(await all(`SELECT registration_id, GROUP_CONCAT(id) ids
+                        FROM payment_transactions
+                       WHERE screenshot IS NOT NULL
+                       GROUP BY registration_id HAVING COUNT(*)>1 LIMIT 1`))[0];
+check('found a registration with two payments that both have a slip', !!reg, reg);
 const [t1,t2]=reg.ids.split(',').map(Number);
-const [s1,s2]=reg.slips.split(',');
-console.log(`   registration ${reg.registration_id}: txns ${t1},${t2} (${reg.st})`);
-check('the two payments have DIFFERENT slips on file', s1!==s2, [s1,s2]);
+const slips=await all(`SELECT id, screenshot FROM payment_transactions WHERE id IN (${t1},${t2})`);
+check('the two payments have DIFFERENT slips on file',
+  slips[0].screenshot!==slips[1].screenshot);
 
-let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
-r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
-const ac=r.cookie;
+const ac=await adminLogin();
 
 console.log('\n== Each payment serves its OWN slip ==');
 const a=await call('GET',`/api/payment-transactions/${t1}/screenshot`,null,ac);
@@ -29,7 +27,8 @@ check('second slip served 200', b.status===200, b.status);
 check('first is an image', /^image\//.test(a.type||''), a.type);
 check('second is an image', /^image\//.test(b.type||''), b.type);
 check('the two images are genuinely different', !a.buf.equals(b.buf), [a.buf.length,b.buf.length]);
-check('not cached to disk', true);
+check('served with no-store, so payment evidence is not left in the browser cache',
+  /no-store/.test(a.headers['cache-control']||''), a.headers['cache-control']);
 
 console.log('\n== Access control ==');
 const anon=await call('GET',`/api/payment-transactions/${t1}/screenshot`,null,null);

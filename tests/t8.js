@@ -1,4 +1,4 @@
-const { call, check, report, ADMIN } = require('./harness');
+const { call, check, report, ADMIN, adminLogin } = require('./harness');
 ;
 // Unique per run -- these suites get re-run against the same DB copy, and a
 // reused number/address collides with the previous run's fixture.
@@ -22,8 +22,7 @@ const emailOnlyKey=r.body.user.phone_number;
 console.log('   (their account key is the synthetic', emailOnlyKey + ')');
 
 // Admin session
-r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
-r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
+r = { cookie: await adminLogin() };
 const ac=r.cookie;
 
 console.log('\n== PROMO CODE scoped to a delegate BY EMAIL ==');
@@ -46,8 +45,7 @@ check(`50% off ${r.body.baseFee} = ${r.body.baseFee/2}`,
   r.body.finalFee===r.body.baseFee/2 && r.body.discountAmount===r.body.baseFee/2, r.body);
 
 console.log('\n== And is refused for anyone else ==');
-r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
-r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
+r = { cookie: await adminLogin() };
 r=await call('POST','/api/discounts/validate',{code:('EMAILSCOPE1'+N),categoryKey:'faculty_mo'},r.cookie);
 check('refused for a different account', r.body.success===false, r.body);
 

@@ -1,4 +1,4 @@
-const { call, check, report, ADMIN } = require('./harness');
+const { call, check, report, adminLogin } = require('./harness');
 ;
 const sqlite3=require('sqlite3').verbose();
 const db=new sqlite3.Database(process.argv[2], sqlite3.OPEN_READONLY);
@@ -76,8 +76,7 @@ const anon=await call('GET','/api/registrations/me/receipt',null,null);
 check('anonymous refused', anon.status===401||anon.status===403, anon.status);
 
 console.log('\n== Menu rename ==');
-let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
-r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
+let r = { cookie: await adminLogin() };
 const admin=await call('GET','/admin',null,r.cookie);
 check('menu says "Users"', /<span>👤 Users<\/span>/.test(admin.raw));
 check('no longer "Users and Roles"', !/Users and Roles/.test(admin.raw));

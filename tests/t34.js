@@ -1,4 +1,4 @@
-const { call, check, report, appFile, ADMIN } = require('./harness');
+const { call, check, report, appFile, adminLogin } = require('./harness');
 // Custom Recipients templates: both announcements available from one picker,
 // each quoting the fee master's own early-bird date.
 const fs=require('fs'), vm=require('vm');
@@ -78,8 +78,7 @@ const CONF={ name:'International Conference on Healthcare Quality & Patient Safe
 
  console.log('\n== Wired into the page ==');
  const html=(await call('GET','/admin',null,await (async()=>{
-   let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
-   r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
+   let r = { cookie: await adminLogin() };
    return r.cookie; })())).raw;
  check('the picker is on the Custom Recipients card', html.includes('id="customreminder-template"'));
  check('it offers both templates',

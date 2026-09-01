@@ -1,12 +1,11 @@
-const { call, check, report, ADMIN } = require('./harness');
+const { call, check, report, adminLogin } = require('./harness');
 ;
 const sqlite3=require('sqlite3').verbose();
 const N=String(Date.now()).slice(-6);
 const db=new sqlite3.Database(process.argv[2], sqlite3.OPEN_READONLY);
 const one=(q)=>new Promise((r,j)=>db.get(q,(e,x)=>e?j(e):r(x)));
 (async()=>{
-let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
-r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
+let r = { cookie: await adminLogin() };
 const ac=r.cookie;
 
 console.log('\n== Student ID is still REQUIRED and still gates verification ==');

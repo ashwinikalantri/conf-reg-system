@@ -1,15 +1,29 @@
-const { call, ADMIN } = require('./harness');
-;
-(async()=>{
-let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
-r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
-const ac=r.cookie;
-const rep=await call('GET','/api/admin/reports/users?format=csv',null,ac);
-const lines=rep.raw.split('\n');
-console.log('HEADER:', lines[0]);
-console.log('\n-- email-only accounts as exported --');
-lines.filter(l=>/emailonly@example\.com|dupe@example\.com/.test(l)).forEach(l=>console.log('  ',l));
-console.log('\n-- a normal phone account, for contrast --');
-lines.filter(l=>/9000000001/.test(l)).slice(0,1).forEach(l=>console.log('  ',l));
-console.log('\nSynthetic keys anywhere in the export?', /u_[0-9a-f]{18}/.test(rep.raw) ? 'YES (BUG)' : 'no');
+const { call, check, report, adminLogin, openDb } = require('./harness');
+// A synthetic account key (u_<hex>) is an internal identifier for accounts
+// with no phone number. It must never leave the building -- not in an export,
+// not in a report. This was a script that printed the CSV and asked the
+// question in prose.
+const db = openDb({ readOnly: true });
+
+(async () => {
+  const ac = await adminLogin();
+  const csv = await call('GET', '/api/admin/reports/users?format=csv', null, ac);
+  check('the CSV export is served', csv.status === 200, csv.status);
+  check('it is actually CSV', /text\/csv|application\/octet-stream/.test(csv.type || ''), csv.type);
+
+  const synthetic = await db.get(
+    "SELECT phone_number FROM users WHERE phone_number LIKE 'u\\_%' ESCAPE '\\' LIMIT 1");
+  check('the fixture has an account with a synthetic key', !!synthetic, synthetic);
+
+  check('no synthetic key appears in the export', !/u_[0-9a-f]{18}/.test(csv.raw),
+    (csv.raw.match(/u_[0-9a-f]{18}/) || [])[0]);
+  check('that specific key is absent too', !csv.raw.includes(synthetic.phone_number));
+
+  // The same must hold for the on-screen report, not just the CSV.
+  const html = await call('GET', '/api/admin/reports/users', null, ac);
+  check('nor in the on-screen report', !/u_[0-9a-f]{18}/.test(html.raw),
+    (html.raw.match(/u_[0-9a-f]{18}/) || [])[0]);
+
+  db.close();
+  report();
 })();

@@ -1,4 +1,4 @@
-const { call, check, report, ADMIN } = require('./harness');
+const { call, check, report, adminLogin } = require('./harness');
 ;
 const sqlite3=require('sqlite3').verbose();
 const N=String(Date.now()).slice(-6);
@@ -7,8 +7,7 @@ const db=new sqlite3.Database(process.argv[2]);
 const run=(q,p=[])=>new Promise((r,j)=>db.run(q,p,function(e){e?j(e):r(this);}));
 const one=(q,p=[])=>new Promise((r,j)=>db.get(q,p,(e,x)=>e?j(e):r(x)));
 (async()=>{
-let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
-r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
+let r = { cookie: await adminLogin() };
 const ac=r.cookie;
 
 console.log('\n== Three cash walk-ins at the desk ==');

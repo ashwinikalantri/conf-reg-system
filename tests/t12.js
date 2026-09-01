@@ -1,8 +1,7 @@
-const { call, check, report, ADMIN } = require('./harness');
+const { call, check, report, adminLogin } = require('./harness');
 ;
 (async()=>{
-let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
-r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
+let r = { cookie: await adminLogin() };
 const ac=r.cookie;
 const admin=await call('GET','/admin',null,ac);
 const js=await call('GET','/app.js',null,ac);

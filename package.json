@@ -5,7 +5,9 @@
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node tests/run.js",
+    "seed": "node tests/seed.js"
   },
   "dependencies": {
     "@aws-sdk/client-sesv2": "^3.1106.0",

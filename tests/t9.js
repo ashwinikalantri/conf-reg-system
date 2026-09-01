@@ -1,4 +1,4 @@
-const { call, check, report, ADMIN } = require('./harness');
+const { call, check, report, adminLogin } = require('./harness');
 ;
 // Unique per run -- these suites get re-run against the same DB copy, and a
 // reused number/address collides with the previous run's fixture.
@@ -26,8 +26,7 @@ check('fixtures created', !!leader && !!emailMember && !!phoneMember);
 // This used to rely on one already existing in the database, which made the
 // suite fail the moment it ran against data where none did -- so it creates
 // its own and removes it again at the end.
-let admin=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
-admin=await call('POST','/api/auth/login',{identifier:ADMIN,otp:admin.body.devOtp});
+let admin = { cookie: await adminLogin() };
 const ac=admin.cookie;
 const preExisting=((await call('GET','/api/admin/group-rules',null,ac)).body.rules||[])
   .some((x)=>x.category_key==='faculty_mo');

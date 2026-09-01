@@ -1,4 +1,4 @@
-const { call, check, report, appFile, ADMIN } = require('./harness');
+const { call, check, report, appFile, adminLogin } = require('./harness');
 // Ledger rows identify a payment by the bank statement's own description of
 // the credit, not by the UTR the delegate typed in.
 fs=require('fs');
@@ -41,8 +41,7 @@ const row=new Function(`
  check('shows the not-yet-banked state', cash.includes('not yet banked'));
 
  console.log('\n== The server actually sends the description ==');
- let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
- r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
+ let r = { cookie: await adminLogin() };
  const regs=(await call('GET','/api/registrations',null,r.cookie)).body;
  const list=Array.isArray(regs)?regs:(regs.registrations||regs.payments||[]);
  const withTxns=list.filter(x=>(x.transactions||[]).some(t=>t.bank_txn_id!=null));

@@ -1,4 +1,4 @@
-const { call, check, report, ADMIN } = require('./harness');
+const { call, check, report, adminLogin } = require('./harness');
 ;
 // Unique per run -- these suites get re-run against the same DB copy, and a
 // reused number/address collides with the previous run's fixture.
@@ -6,8 +6,7 @@ const N = String(Date.now()).slice(-6);
 const P = (i) => '9' + N + String(i).padStart(3,'0');
 const E = (tag) => `${tag}-${N}@example.com`;
 (async()=>{
-let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
-r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
+let r = { cookie: await adminLogin() };
 const ac=r.cookie;
 
 console.log('\n== Admin-created staff account ==');

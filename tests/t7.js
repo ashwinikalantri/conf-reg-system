@@ -4,8 +4,13 @@ const sqlite3=require('sqlite3').verbose();
 const db=new sqlite3.Database(process.argv[2], sqlite3.OPEN_READONLY);
 const all=(q)=>new Promise((r,j)=>db.all(q,(e,x)=>e?j(e):r(x)));
 (async()=>{
-console.log('\n== Sample of 8 REAL pre-existing accounts can still log in by phone OTP ==');
-const users = await all("SELECT phone_number, full_name, password_hash FROM users WHERE phone_number GLOB '[0-9]*' AND phone_number NOT IN ('9222200011','9222200022') ORDER BY RANDOM() LIMIT 8");
+console.log('\n== Sample of 8 REAL pre-existing accounts can still log in by phone OTP ==\n');
+// Seeded accounts only, and never the harness admin pool. Other files create
+// accounts and sign them in during the same run; the OTP resend throttle is per
+// destination, so sampling one of those made this fail perhaps once in ten runs
+// for a reason that had nothing to do with what it checks. Seeded users are
+// ninety days old; anything from this run is minutes old.
+const users = await all("SELECT phone_number, full_name, password_hash FROM users WHERE phone_number GLOB '[0-9]*' AND phone_number NOT LIKE '90001%' AND phone_number NOT IN ('9222200011','9222200022') AND created_at < strftime('%s','now')*1000 - 3600000 ORDER BY RANDOM() LIMIT 8");
 for (const u of users) {
   let r = await call('POST','/api/auth/login-otp',{identifier:u.phone_number});
   if(!r.body.success){ check(`${u.phone_number} OTP issue`, false, r.body); continue; }
