@@ -205,25 +205,6 @@ function navigateTo(pageId) {
   updateAdminNav(pageId === 'dashboard-page' && isAdminUser());
 }
 
-// Delegate portal only (admin.html has no #dashboard-page). Shows the
-// dashboard immediately from the cached user, before restoreSession()'s
-// network round-trip resolves -- otherwise the login page is what's in the
-// HTML by default, and it flashes on screen for every returning delegate
-// until that fetch comes back. restoreSession() still re-validates against
-// the server afterwards and reverts to the login page if the session
-// turned out to be stale. (Placed here, after navigateTo/isAdminUser/
-// ADMIN_ROLES are defined, not at the top of the file -- calling
-// navigateTo() before ADMIN_ROLES's `const` initializer has run throws a
-// temporal-dead-zone ReferenceError that silently aborts the rest of this
-// script's top-level execution.)
-if (currentDelegate && document.getElementById('dashboard-page')) {
-  navigateTo('dashboard-page');
-  const displayName = currentDelegate.full_name || currentDelegate.name;
-  const nameEl = document.getElementById('user-display-name');
-  const subEl = document.getElementById('user-display-sub');
-  if (nameEl) nameEl.innerText = currentDelegate.salutation ? `${currentDelegate.salutation} ${displayName}` : displayName;
-  if (subEl) subEl.innerText = `${currentDelegate.designation} | ${currentDelegate.institution || currentDelegate.institute} (${delegateDisplayPhone(currentDelegate) || currentDelegate.email || ''})`;
-}
 
 function toggleAuth(view) {
   const regForm = document.getElementById('register-form');
@@ -413,6 +394,40 @@ function toE164(v, defaultCc = DEFAULT_PHONE_CC) {
   return E164_RE.test(withCc) ? withCc : '';
 }
 const isPhoneValue = (v) => !!toE164(v);
+
+// Delegate portal only (admin.html has no #dashboard-page). Shows the
+// dashboard immediately from the cached user, before restoreSession()'s
+// network round-trip resolves -- otherwise the login page is what's in the
+// HTML by default, and it flashes on screen for every returning delegate
+// until that fetch comes back. restoreSession() still re-validates against
+// the server afterwards and reverts to the login page if the session
+// turned out to be stale.
+//
+// POSITION MATTERS. This is top-level code, so it runs DURING this script's
+// evaluation and can only use bindings already initialised above it:
+// navigateTo/isAdminUser/ADMIN_ROLES, and -- since it prints the delegate's
+// phone -- delegateDisplayPhone's whole chain, toE164 / isPhoneValue /
+// DEFAULT_PHONE_CC. Reading a `const` declared further down throws a
+// temporal-dead-zone ReferenceError, and because this is top-level that
+// aborts the REST OF THE FILE: every constant below stays uninitialised and
+// the portal renders as raw HTML ("Registration Pending" with a
+// Register & Pay button) for every returning delegate. That is exactly what
+// happened when the phone helpers were added below it, so it now sits after
+// them -- and the try/catch makes a repeat cost a flash of the login page
+// instead of the whole app.
+try {
+  if (currentDelegate && document.getElementById('dashboard-page')) {
+    navigateTo('dashboard-page');
+    const displayName = currentDelegate.full_name || currentDelegate.name;
+    const nameEl = document.getElementById('user-display-name');
+    const subEl = document.getElementById('user-display-sub');
+    if (nameEl) nameEl.innerText = currentDelegate.salutation ? `${currentDelegate.salutation} ${displayName}` : displayName;
+    if (subEl) subEl.innerText = `${currentDelegate.designation} | ${currentDelegate.institution || currentDelegate.institute} (${delegateDisplayPhone(currentDelegate) || currentDelegate.email || ''})`;
+  }
+} catch (err) {
+  // Never let the optimistic paint take the rest of the script with it.
+  console.error('Early dashboard paint failed; falling back to restoreSession.', err);
+}
 const isIndianPhone = (v) => INDIAN_E164_RE.test(toE164(v));
 
 // Countries offered at signup. India first (the overwhelming majority and
