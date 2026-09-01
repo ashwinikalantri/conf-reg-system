@@ -3,7 +3,7 @@
 // Runs the whole suite.
 //
 //   npm test                 seed a fresh fixture, run everything
-//   npm test -- t31 t37      run only the files whose names match
+//   npm test -- receipt drive  run only the files whose names match
 //   KEEP=1 npm test          leave the workspace behind for inspection
 //
 // There is deliberately no "run against production data" mode yet. The tests
@@ -49,14 +49,13 @@ const freePort = () => new Promise((resolve, reject) => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Alphabetical: the names say what they cover, so grouping by subject reads
+// better than the order they happened to be written in.
 function testFiles() {
   return fs.readdirSync(__dirname)
-    .filter((f) => /^t\d*\.js$/.test(f))
+    .filter((f) => f.endsWith('.test.js'))
     .filter((f) => !filters.length || filters.some((q) => f.includes(q)))
-    .sort((a, b) => {
-      const n = (f) => Number((f.match(/^t(\d*)\.js$/) || [])[1] || 0);
-      return n(a) - n(b);
-    });
+    .sort();
 }
 
 async function waitForServer(port, child, log) {
@@ -146,7 +145,7 @@ async function waitForServer(port, child, log) {
     const crashed = res.status !== 0 && f === 0;
     if (crashed) broken.push(file);
 
-    const name = file.padEnd(10);
+    const name = file.replace(/\.test\.js$/, '').padEnd(32);
     if (crashed) console.log(`${red('✗')} ${name} ${red('crashed')}`);
     else if (f) console.log(`${red('✗')} ${name} ${green(`${p} passed`)}, ${red(`${f} failed`)}`);
     else if (p) console.log(`${green('✓')} ${name} ${p} passed`);

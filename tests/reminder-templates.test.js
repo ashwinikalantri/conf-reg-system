@@ -46,9 +46,11 @@ const CONF={ name:'International Conference on Healthcare Quality & Patient Safe
  check('it carries the conference dates and venue',
    body.includes('21 November 2026') && body.includes('Fixture Hall, Testville'));
  check('it lists the programme groups live', /<b>3<\/b> Workshops/.test(body) && /<b>2<\/b> QI Practices/.test(body));
+ // The only real addresses left in the suite, and deliberately so: this
+ // asserts the links the app puts in the email. The portal URL comes from the
+ // window stubbed above; the conference website is hardcoded in the template,
+ // so checking anything else would not be checking the template.
  check('both buttons are present',
-   // The portal URL comes from the stubbed window above; the conference
-// website is hardcoded in the template, so this asserts the real one.
    body.includes('https://registration.mgims.ac.in') && body.includes('https://nqocn2026.mgims.ac.in'));
  check('no fee table (per the standing instruction)', !/₹|Rs\.?\s*\d|early_fee/i.test(body));
  // Strip comments first: a date in a doc comment explaining the formatter is

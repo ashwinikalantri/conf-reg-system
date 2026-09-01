@@ -138,7 +138,7 @@ const DELEGATE_PW = 'harness-delegate-pw';
 // throttle. Position is collision-free by construction.
 const ADMIN = (() => {
   const who = path.basename(process.argv[1] || '');
-  const files = fs.readdirSync(__dirname).filter((f) => /^t\d*\.js$/.test(f)).sort();
+  const files = fs.readdirSync(__dirname).filter((f) => f.endsWith('.test.js')).sort();
   const idx = files.indexOf(who);
   if (idx === -1) return `90001${String(1).padStart(5, '0')}`;   // run outside the suite
   if (files.length > ADMIN_POOL_SIZE) {
