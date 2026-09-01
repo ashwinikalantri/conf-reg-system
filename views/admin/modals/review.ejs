@@ -69,6 +69,29 @@
             <p id="review-demographics" class="text-xs text-slate-500 mt-1"></p>
           </div>
 
+          <!-- DECISION STRIP: what was owed, what's actually in, and exactly
+               what's still blocking Accept & Verify. Sits ABOVE both sections
+               rather than inside Payment Verification, because its
+               "Before you can verify" checklist spans them both -- one line
+               about linking payments, one about confirming the student ID --
+               so filing it under the money section put half its content
+               above the section it was about. It's also the first thing a
+               reviewer should read: it says what, if anything, is still
+               outstanding. Rendered by renderReviewStatusStrip(); the gate
+               list is refreshed live by updateReviewAcceptGate() so ticking
+               the ID box updates it without a re-open. -->
+          <div id="review-status-strip" class="rounded-lg border p-3">
+            <div class="flex items-center justify-between gap-3 flex-wrap">
+              <div class="flex items-baseline gap-3 text-xs">
+                <span class="text-slate-500">Fee <b id="review-strip-fee" class="text-slate-800 text-sm"></b></span>
+                <span class="text-slate-500">Paid <b id="review-strip-paid" class="text-slate-800 text-sm"></b></span>
+                <span id="review-strip-balance-wrap" class="hidden text-slate-500">Balance <b id="review-strip-balance" class="text-orange-700 text-sm"></b></span>
+              </div>
+              <span id="review-strip-verdict" class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"></span>
+            </div>
+            <div id="review-gate-list" class="mt-2 space-y-0.5 text-[11px]"></div>
+          </div>
+
           <!-- SECTION 1 of 2: ID VERIFICATION. Hidden wholesale (header and
                all) for categories that don't require a student ID, in which
                case Payment Verification is simply the only section -- see
@@ -104,22 +127,6 @@
           <section class="space-y-3">
             <h4 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b border-slate-200 pb-1.5">Payment Verification</h4>
 
-          <!-- DECISION STRIP: what was owed, what's actually in, and exactly
-               what's still blocking Accept & Verify. Rendered by
-               renderReviewStatusStrip(); the gate list is refreshed live by
-               updateReviewAcceptGate() so ticking the ID box updates it
-               without a re-open. -->
-          <div id="review-status-strip" class="rounded-lg border p-3">
-            <div class="flex items-center justify-between gap-3 flex-wrap">
-              <div class="flex items-baseline gap-3 text-xs">
-                <span class="text-slate-500">Fee <b id="review-strip-fee" class="text-slate-800 text-sm"></b></span>
-                <span class="text-slate-500">Paid <b id="review-strip-paid" class="text-slate-800 text-sm"></b></span>
-                <span id="review-strip-balance-wrap" class="hidden text-slate-500">Balance <b id="review-strip-balance" class="text-orange-700 text-sm"></b></span>
-              </div>
-              <span id="review-strip-verdict" class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"></span>
-            </div>
-            <div id="review-gate-list" class="mt-2 space-y-0.5 text-[11px]"></div>
-          </div>
 
           <!-- The automated screenshot checks used to sit in a separate
                "Automated Checks" pill row, which made the reviewer match a
