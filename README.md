@@ -105,7 +105,8 @@ secrets like the SMS API key back into it), `conference.db`, `uploads/`,
 `bank-statements/`, and the OCR language-model cache — lives on one named
 Docker volume (`data`, mounted at `/data` and symlinked from inside the
 image; see the Dockerfile) so all of it survives `docker compose down` and
-an image rebuild together. It's gone only after `docker compose down -v`.
+an image rebuild together. It's gone only after `docker compose down -v`. Backups of that volume — what's in
+them, what isn't, and how to restore one — are below.
 
 To add or rotate a credential directly (rather than through Settings →
 General once the admin panel is up): `docker compose exec app sh -c "echo
@@ -117,6 +118,146 @@ host's.
 This is packaging only — it doesn't replace or affect any non-Docker
 deployment of this app; a `pm2`-managed instance and a Docker Compose
 instance are independent, each with their own `.env`/database/uploads.
+
+## Backups
+
+`scripts/backup.sh` on the host, from cron:
+
+```
+0 2 * * *    scripts/backup.sh                 # the nightly backup
+*/5 * * * *  scripts/backup.sh --if-requested  # acts on what the admin panel queued
+```
+
+Each run writes `nqocn-backups/<YYYYMMDD-HHMMSS>/` next to the checkout —
+outside it, since backups hold delegate PII (phone numbers, UTRs, payment
+screenshots, ID cards) and nothing that `git clean` could sweep up should:
+
+- `conference.db` — taken with `VACUUM INTO`, not a file copy, so it is
+  transactionally consistent even though it's taken while the app is live and
+  mid-write
+- `uploads.tar.gz`, `bank-statements.tar.gz`
+
+`.env` is deliberately *not* in the backup. It holds the SES and SMS
+credentials in plaintext, and a copy of it on Google Drive is a copy of every
+secret this app has. It is also the one file you don't need from a backup: it
+lives on the data volume, which survives everything short of `down -v`.
+
+The work happens inside a throwaway container built from the app image, with
+the data volume mounted **read-only** — the backup path must never be able to
+damage live data. It's `docker run` off the image rather than `compose exec`
+into the running container for two reasons, both about this being the
+disaster-recovery path: a backup must still run when the app is crashed or
+stopped (which is exactly when you want one), and it keeps the Google Drive
+credential out of the long-running, internet-facing container.
+
+Then the finished directory is copied off-site with `rclone copy` — `copy`,
+never `sync`, so nothing on Drive is ever deleted as a side effect of what is
+or isn't here.
+
+### Retention
+
+Local: directories older than 14 days, by mtime. Off-site: the newest **14**,
+by count. Count and not age, because age-based pruning off-site would empty
+the remote during any stretch where backups had stopped running — precisely
+when the old ones are the only ones you have.
+
+Deleting from the off-site copy is the one irreversible thing the script does,
+so it's fenced in. It runs only after *this* run's upload succeeded (a spell
+of failing uploads can't quietly eat the history); only directories named
+exactly `YYYYMMDD-HHMMSS` are ever candidates, so anything else in that Drive
+folder is untouched; and if it ever proposes deleting more than 50 at once it
+refuses and says so, on the assumption that the listing isn't what it thinks
+it is.
+
+### Flags
+
+| Flag | What it does |
+| --- | --- |
+| *(none)* | back up, upload, then apply Drive retention |
+| `--dry-run` | never delete from Drive; log what it would have deleted |
+| `--prune-only` | don't back up, only apply Drive retention |
+| `--manual` | label the run `manual` in the log (a terminal implies it) |
+| `--if-requested` | act on whatever the panel queued, then exit |
+| `--check-drive` | just test the Drive link and report to the panel |
+
+Everything lands in `nqocn-backups/backup.log`. An `--if-requested` poll with
+nothing queued exits silently before any side effect — it runs 288 times a
+day, so anything it did unconditionally it would do 288 times.
+
+### Settings → General → Backups
+
+The app does not take backups itself and deliberately cannot: the Drive
+credential is kept out of this container, and handing the web process the
+Docker socket to work around that would be strictly worse than the problem it
+solves. So **Back Up Now** is a *request*, not an action. It writes
+`.backup-request.json` into the data volume; the `--if-requested` cron sees it
+within about five minutes, takes a real backup, and writes
+`.backup-status.json` back for the panel to report. Five handshake dot-files
+live beside the database, and are the only things either side writes there:
+
+| File | Written by | Meaning |
+| --- | --- | --- |
+| `.backup-request.json` | app | back up now, please |
+| `.backup-status.json` | script | when the last backup ran, and whether it worked |
+| `.drive-link-request.json` | app | a captured Drive token to install |
+| `.drive-check-request.json` | app | test the Drive connection |
+| `.drive-status.json` | script | linked or not, folder, backup count, Google account |
+
+A queued request is cleared **before** the work rather than after, so a run
+that dies halfway spends the request instead of retrying it forever on every
+poll. A link request is consumed first of all, whatever happens next: a
+credential must not be left lying in the volume because an install failed.
+
+### Linking Google Drive
+
+The panel's **Connect Google Drive** button needs a one-time Google Cloud
+step, and there's no way around it. `rclone authorize "drive"` can't be driven
+from the panel — rclone's built-in OAuth client redirects to
+`http://127.0.0.1:53682/`, which on a remote server is the admin's own laptop,
+not the app. Only a client you own can name this app as the place Google sends
+the browser back to.
+
+In [Google Cloud Console](https://console.cloud.google.com/apis/credentials):
+enable the **Google Drive API**, create an **OAuth client ID** of type **Web
+application**, and add `<PORTAL_URL>/api/admin/backup/drive-callback` as an
+authorised redirect URI (the panel prints the exact address to copy). Paste
+the client ID and secret into **Set up sign-in** — they're stored as
+`DRIVE_CLIENT_ID` / `DRIVE_CLIENT_SECRET` — and the Connect button appears.
+
+Signing in yields a token which the app hands to the backup script through the
+volume and which the script wipes as it installs, so it is never at rest
+anywhere the web-facing container can read it. The installed config is written
+to `/root/.config/rclone/rclone.conf` on the **host**, mounted read-only into
+the backup container only, and only for the seconds that container lives. If a
+new token turns out not to work, the previous config is restored byte for
+byte — a bad paste must not cost you a working link.
+
+**Paste a token** does the same thing from the output of `rclone authorize
+"drive"` run on a machine with a browser, for a deployment that would rather
+not create an OAuth client. **Test connection** reports whether the remote
+answers, how many backups are in it, and which Google account they're going
+to — that last one asks the Drive API directly, since rclone 1.60 has no
+command that will tell you.
+
+### Restoring
+
+Backups are only as good as the last time someone restored one. This is that
+procedure, run against a throwaway volume:
+
+```bash
+docker compose stop app
+docker run --rm -v nqocn_data:/data -v /home/ashwinikalantri/nqocn-backups/20260101-020001:/restore:ro nqocn-app sh -c 'cp /restore/conference.db /data/conference.db && for f in uploads bank-statements; do [ -f "/restore/$f.tar.gz" ] && tar -xzf "/restore/$f.tar.gz" -C /data; done'
+docker compose start app
+```
+
+The tarballs extract **over** what's there rather than replacing it, so a file
+deleted since the backup comes back and one added since survives. That is
+usually what you want. For an exact replica of the backed-up state, empty
+`/data/uploads` and `/data/bank-statements` first. `.env` is untouched either
+way, which is why it doesn't need to be in the backup.
+
+To restore somewhere else entirely, the same command against a fresh volume
+is enough: the app rebuilds nothing from `/data` that isn't in these files.
 
 ## Tests
 
@@ -276,6 +417,9 @@ to require editing code and redeploying:
   number is actually persisted.
 - **Maintenance Mode** — close the portal to everyone except super admins,
   with an editable notice. See Maintenance mode below.
+- **Backups** — when the last backup ran, a **Back Up Now** button, and the
+  Google Drive link (connect, test, and which account it's going to). See
+  Backups above.
 - **Other Environment Variables** — a read-only reference showing every other
   env var the server reads (`PORT`, `PORTAL_URL`, `NODE_ENV`, `COOKIE_NAME`,
   `COOKIE_SECURE`, `OTP_ECHO`), its effective value, and whether it came from
@@ -822,6 +966,47 @@ card with a checkbox, the same standing the desk has for vouching a phone
 number. A brand-new account (or an existing one with no password) is issued a
 **temporary password, shown once** and never stored in plaintext — only its
 scrypt hash reaches the database — for the admin to hand over.
+
+### Cash at the desk → bank deposit
+
+Desk cash is verified the moment it's taken — the admin's presence is the
+proof — but it is not *banked*. It sits with no `bank_txn_id`, unaccounted for
+against the statement, until someone walks a day's takings to the bank as one
+deposit covering many registrations.
+
+That deposit arrives in the statement as a single credit, so the link is many
+payments → one credit, which is why this can't go through the per-delegate
+review modal. It happens in one place: the **Cash in Hand** panel on the
+Payments tab's reconciliation view (`GET /api/admin/cash-in-hand`), which
+lists every verified, unbanked cash collection with a running total. The panel
+hides itself when there's nothing in hand, which is most of a conference's
+life.
+
+Tick the collections that went in together, pick the credit they landed as
+from the dropdown (offered only from the statement's genuinely unallocated
+credits), and link them (`POST /api/admin/cash-deposit`). It is
+all-or-nothing: either every selected payment is attached or none is, so a
+half-applied batch can't leave the desk's books half-reconciled. Each row is
+re-checked server-side at that moment — still cash, still verified, still
+unbanked — since the list may have been rendered before another admin banked
+some of it. The deposit also has to be big enough to hold what's being
+attributed to it, and if it's bigger, the shortfall is named in the audit
+entry: *₹X of the deposit still unaccounted*.
+
+Linking cash records **where it was banked and nothing else**. It deliberately
+does not reuse the bank-payment link (`PUT
+/api/payment-transactions/:txnId/link`), which overwrites `verified_amount`
+with `min(amount, remaining)`. That is right for a bank payment — linking *is*
+the acknowledgement, and you can only acknowledge what actually arrived — and
+wrong for cash. The delegate handed over their fee in full; if less than that
+is banked later, the discrepancy belongs to the cash handling, not to the
+delegate, and must not quietly reduce what a fully-paid delegate is recorded
+as having paid.
+
+Unlinking (`POST /api/admin/cash-deposit/unlink`) returns the collections to
+unbanked, still verified — the money was still collected; only the claim about
+where it was banked is undone. Both directions are audited under
+`CASH_DEPOSIT_LINK` / `CASH_DEPOSIT_UNLINK` against the bank transaction.
 
 ## Rejection workflow
 
