@@ -99,11 +99,52 @@ volume_write() { docker run --rm -i -v "$DATA_VOLUME":/data "$IMAGE" sh -c "cat 
 # Written after every real run and after any link attempt, so Settings can
 # show something truthful without the app ever touching the credential.
 write_drive_status() {
-  local linked="$1" err="$2" count="${3:-0}" client_id="${4:-}"
-  printf '{"checkedAt":%s,"linked":%s,"remote":"%s","backupCount":%s,"keep":%s,"clientId":"%s","lastError":"%s"}' \
+  local linked="$1" err="$2" count="${3:-0}" client_id="${4:-}" account="${5:-}"
+  printf '{"checkedAt":%s,"linked":%s,"remote":"%s","backupCount":%s,"keep":%s,"clientId":"%s","account":"%s","lastError":"%s"}' \
     "$(date +%s000)" "$linked" "$DRIVE_REMOTE" "$count" "$DRIVE_KEEP" "$client_id" \
+    "$(printf '%s' "$account" | tr -d '"\\' | tr -d '\n' | cut -c1-200)" \
     "$(printf '%s' "$err" | tr -d '"\\' | tr '\n' ' ' | cut -c1-300)" \
     | volume_write .drive-status.json || true
+}
+
+# Which Google account the backups are actually going to.
+#
+# rclone 1.60 has no command for this -- `config userinfo` is unsupported for
+# Drive and `about` only reports quota -- so it asks the Drive API directly.
+# The stored access token is usually expired, so a real rclone operation runs
+# first purely to make rclone refresh it into the throwaway config copy, and
+# the refreshed token is read back out of that.
+#
+# Best-effort by design: knowing the folder is reachable is what matters, and
+# a link that works but cannot name its owner is still a working link.
+drive_account() {
+  cat <<'NODE' | docker run --rm -i \
+      -v "$RCLONE_CONF":/rclone.conf:ro \
+      "$IMAGE" \
+      sh -c "cp /rclone.conf /tmp/r.conf && rclone --config /tmp/r.conf lsd '$DRIVE_REMOTE' >/dev/null 2>&1; node -" 2>/dev/null
+const fs = require('fs'), https = require('https');
+let tok;
+try {
+  const line = (fs.readFileSync('/tmp/r.conf', 'utf8').match(/^token *= *(.*)$/m) || [])[1];
+  tok = JSON.parse(line);
+} catch { process.exit(0); }
+if (!tok || !tok.access_token) process.exit(0);
+https.get({
+  host: 'www.googleapis.com',
+  path: '/drive/v3/about?fields=user(displayName,emailAddress)',
+  headers: { Authorization: 'Bearer ' + tok.access_token },
+}, (r) => {
+  let d = '';
+  r.on('data', (c) => { d += c; });
+  r.on('end', () => {
+    if (r.statusCode !== 200) process.exit(0);
+    try {
+      const u = JSON.parse(d).user || {};
+      if (u.emailAddress) process.stdout.write(u.emailAddress);
+    } catch { /* leave it blank */ }
+  });
+}).on('error', () => process.exit(0));
+NODE
 }
 
 # Ask Drive what it has. Also the connection test the panel's "Check
@@ -112,7 +153,7 @@ check_drive() {
   local out cid
   cid="$(sed -n 's/^client_id *= *//p' "$RCLONE_CONF" 2>/dev/null | head -1)"
   if [ ! -f "$RCLONE_CONF" ]; then
-    write_drive_status false "Google Drive is not linked yet." 0 ""
+    write_drive_status false "Google Drive is not linked yet." 0 "" ""
     return 1
   fi
   if out="$(docker run --rm \
@@ -120,12 +161,13 @@ check_drive() {
       "$IMAGE" \
       sh -c 'cp /rclone.conf /tmp/rclone.conf && exec rclone --config /tmp/rclone.conf lsf --dirs-only "$0"' \
       "$DRIVE_REMOTE" 2>&1)"; then
-    local n
+    local n acct
     n="$(printf '%s\n' "$out" | tr -d '\r' | sed 's:/*$::' | grep -cE '^[0-9]{8}-[0-9]{6}$' || true)"
-    write_drive_status true "" "$n" "$cid"
+    acct="$(drive_account || true)"
+    write_drive_status true "" "$n" "$cid" "$acct"
     return 0
   fi
-  write_drive_status false "$out" 0 "$cid"
+  write_drive_status false "$out" 0 "$cid" ""
   return 1
 }
 
@@ -147,7 +189,7 @@ install_drive_link() {
 
   if [ -z "$token" ]; then
     log "Drive link request had no token -- ignored"
-    write_drive_status false "The token was empty." 0 ""
+    write_drive_status false "The token was empty." 0 "" ""
     return 1
   fi
 

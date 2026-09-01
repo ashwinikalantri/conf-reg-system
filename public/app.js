@@ -5278,7 +5278,12 @@ function renderDriveStatus(data) {
     // attempt, so this is a fresh deployment, not a broken link.
     box.innerHTML = '<span class="text-slate-500">Not checked yet — run a backup or press <b>Test connection</b>.</span>';
   } else if (d.linked) {
-    box.innerHTML = `<span class="text-emerald-700 font-semibold">✓ Linked</span> to <code class="bg-slate-100 px-1 rounded">${esc(d.remote || '')}</code>`
+    // The account matters: it is whose Drive these backups are sitting in, and
+    // the one thing you cannot infer from the folder name if the wrong person
+    // linked it.
+    box.innerHTML = `<span class="text-emerald-700 font-semibold">✓ Linked</span>`
+      + (d.account ? ` as <b>${esc(d.account)}</b>` : '')
+      + ` · <code class="bg-slate-100 px-1 rounded">${esc(d.remote || '')}</code>`
       + ` · holds <b>${esc(String(d.backupCount || 0))}</b> backup${Number(d.backupCount) === 1 ? '' : 's'}`
       + ` (oldest removed beyond ${esc(String(d.keep || 14))})`
       + (d.checkedAt ? ` · checked ${esc(fmtAuditTime(d.checkedAt))}` : '');

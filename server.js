@@ -6443,12 +6443,12 @@ app.post('/api/admin/backup/drive-link', requireRole('SUPER_ADMIN'), async (req,
     }
 
     const folder = String(req.body.folder || '').trim();
-    if (folder && /["\\]/.test(folder)) {
+    if (folder && /["'\\]/.test(folder)) {
       return res.status(400).json({ success: false, error: 'The folder name cannot contain quotes or backslashes.' });
     }
     const clientId = String(req.body.clientId || '').trim();
     const clientSecret = String(req.body.clientSecret || '').trim();
-    if (/["\\]/.test(clientId) || /["\\]/.test(clientSecret)) {
+    if (/["'\\]/.test(clientId) || /["'\\]/.test(clientSecret)) {
       return res.status(400).json({ success: false, error: 'The client ID and secret cannot contain quotes or backslashes.' });
     }
 
