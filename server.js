@@ -2127,6 +2127,12 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function toE164(v, defaultCc = DEFAULT_PHONE_CC) {
   let raw = String(v || '').trim().replace(/[\s()\-.]/g, '');
   if (!raw) return '';
+  // A phone number never contains letters, and stripping them out rather than
+  // rejecting the value was dangerous: an account key like u_4602062370abcd
+  // has its letters removed, and whatever digits remain are read as a number.
+  // When exactly ten survive, an account with NO phone at all displays a
+  // fabricated mobile in reports and on its receipt.
+  if (/[a-z]/i.test(raw)) return '';
   if (raw.startsWith('+')) return E164_RE.test(raw) ? raw : '';
   raw = raw.replace(/\D/g, '');
   if (!raw) return '';

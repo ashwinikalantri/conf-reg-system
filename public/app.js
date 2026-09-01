@@ -392,6 +392,10 @@ const INDIAN_E164_RE = /^\+91[6-9]\d{9}$/;
 function toE164(v, defaultCc = DEFAULT_PHONE_CC) {
   let raw = String(v || '').trim().replace(/[\s()\-.]/g, '');
   if (!raw) return '';
+  // Letters mean this is not a phone number -- most importantly a synthetic
+  // account key, whose leftover digits would otherwise be read as one. Mirrors
+  // the same guard in server.js.
+  if (/[a-z]/i.test(raw)) return '';
   if (raw.startsWith('+')) return E164_RE.test(raw) ? raw : '';
   raw = raw.replace(/\D/g, '');
   if (!raw) return '';
