@@ -100,14 +100,18 @@ async function buildEmptySchema() {
     if (stableFor >= 3) { ready = true; break; }
   }
   child.kill('SIGTERM');
-  // Running out of time is a failure, not a result. Copying the database at
-  // that point is how a half-migrated schema could escape into a fixture.
-  if (!ready) {
-    throw new Error(`The app never finished starting while seeding (port ${port}).\n${out}`);
+  try {
+    // Running out of time is a failure, not a result. Copying the database at
+    // that point is how a half-migrated schema could escape into a fixture.
+    if (!ready) {
+      throw new Error(`The app never finished starting while seeding (port ${port}).\n${out}`);
+    }
+    fs.mkdirSync(path.dirname(OUT), { recursive: true });
+    fs.copyFileSync(dbFile, OUT);
+  } finally {
+    // Cleared on the way out either way, so a failed seed leaves no litter.
+    fs.rmSync(work, { recursive: true, force: true });
   }
-  fs.mkdirSync(path.dirname(OUT), { recursive: true });
-  fs.copyFileSync(dbFile, OUT);
-  fs.rmSync(work, { recursive: true, force: true });
 }
 
 // --- 2. rows ---------------------------------------------------------------

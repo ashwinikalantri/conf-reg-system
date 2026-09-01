@@ -118,6 +118,103 @@ This is packaging only — it doesn't replace or affect any non-Docker
 deployment of this app; a `pm2`-managed instance and a Docker Compose
 instance are independent, each with their own `.env`/database/uploads.
 
+## Tests
+
+```bash
+npm test                      # the whole suite
+npm test -- receipt drive     # only files whose names contain these
+KEEP=1 npm test               # leave the workspace behind to poke at
+```
+
+Around 680 assertions across 38 files, in roughly fifteen seconds. Exit code
+is 0 or 1, so it works as a gate.
+
+Each run builds a fresh SQLite fixture, starts the app against a throwaway
+copy of it on a free port, runs every `tests/*.test.js` as its own process,
+then stops the server and deletes the workspace. Nothing is left behind and
+nothing touches your checkout — the app is given `DB_PATH`, and its database,
+`.env` and backup handshake files all live beside it in the temporary
+directory. A run that is killed rather than finished never reaches its own
+cleanup, so each run also sweeps workspaces more than two hours old.
+
+The files run **sequentially**. They share one server, and the OTP resend
+throttle is per destination, so running them at once makes the suite fail for
+reasons that have nothing to do with what it tests.
+
+### The fixture
+
+`tests/seed.js` builds the database. It does **not** contain a copy of the
+schema: it boots the app against an empty directory, lets the app create its
+own tables, and then writes rows. A fixture therefore cannot drift from the
+real schema, and starting from nothing is how three genuine bugs surfaced —
+a column the Users report selected but no migration created, a database
+resolved from the working directory while everything else resolved from the
+app's own, and `.env` being written into the checkout.
+
+It seeds a cast covering every shape the tests look for: staff in each role,
+a delegate who paid once, one who paid a deposit and topped up, one with a
+promo discount, one whose earlier payment was rejected, a pending
+registration, student registrations with the ID both confirmed and not, a
+signed-up-but-never-registered account, an unverified email, an account with
+no password, an email-only (international) account, bank credits to
+reconcile against, an unclaimed credit and a debit to refund from.
+
+Two details worth knowing:
+
+- **Dates are relative to today.** Early-bird pricing is always in effect in
+  the fixture. A fixed date once quietly went past and took a test with it.
+- **The seed checks itself.** It asserts 25 required shapes are present and
+  fails loudly if one is missing. Before this, an absent fixture just made a
+  test pass without testing anything — ten assertions were doing exactly
+  that.
+
+Everyone in the fixture is invented. No real delegate, number or address
+appears anywhere in `tests/`.
+
+### Writing a test
+
+```js
+const { call, check, report, adminLogin, openDb } = require('./harness');
+
+(async () => {
+  const cookie = await adminLogin();
+  const res = await call('GET', '/api/admin/fees', null, cookie);
+  check('the fee categories are served', res.status === 200, res.status);
+  check('and there is at least one', (res.body.categories || []).length > 0, res.body);
+  report();
+})();
+```
+
+Name the file after what it covers — `receipt.test.js`, `drive-oauth.test.js`
+— and the runner picks it up. `tests/harness.js` provides:
+
+| | |
+|---|---|
+| `call(method, path, body, cookie)` | one request; `.body` is parsed JSON or the response text, plus `.raw`, `.buf`, `.status`, `.headers`, `.cookie` |
+| `check(name, ok, detail)` | one assertion; `detail` is printed only on failure |
+| `report()` | prints the tally and sets the exit code |
+| `adminLogin()` / `loginOtp()` / `loginPassword()` | sign in |
+| `openDb()` | the fixture database, for setting up or confirming state |
+| `appFile(...parts)` | a path into the application, for tests that read its source |
+| `dataDir()` | where the running instance keeps its files |
+
+`adminLogin()` signs in as **this file's own** super admin, taken from a pool
+of 60 seeded accounts by position in the sorted file list. That is not
+incidental: the OTP throttle is per destination, and files sharing an account
+throttle each other. Sign admins in by password unless the OTP path is the
+thing under test.
+
+### What it does not do
+
+There is no "run against a copy of production" mode. The tests address
+fixture identities by name, so pointing them at real data fails around 160
+assertions purely because those people are not there — no signal. Making that
+mode useful means layering fixtures on top of real rows, tolerating the
+categories and programme groups already present, which is a piece of work
+rather than a flag. Worth having: real data catches things a fixture never
+will, such as a duplicated email address or a delegate whose institution
+field holds their job title.
+
 ## SMS OTP (Vynttra)
 
 OTPs are delivered by SMS via the Vynttra JSON API using a registered DLT

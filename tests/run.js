@@ -82,6 +82,18 @@ async function waitForServer(port, child, log) {
     process.exit(1);
   }
 
+  // Sweep workspaces left by runs that were killed rather than finishing --
+  // an interrupted run never reaches its own cleanup. Two hours old, so a
+  // concurrent run's directory is never touched.
+  try {
+    const cutoff = Date.now() - 2 * 60 * 60 * 1000;
+    for (const name of fs.readdirSync(os.tmpdir())) {
+      if (!/^nqocn-(test|seed)-/.test(name)) continue;
+      const dir = path.join(os.tmpdir(), name);
+      if (fs.statSync(dir).mtimeMs < cutoff) fs.rmSync(dir, { recursive: true, force: true });
+    }
+  } catch { /* best effort; never block a run over tidying */ }
+
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'nqocn-test-'));
   const dbPath = path.join(work, 'conference.db');
 
