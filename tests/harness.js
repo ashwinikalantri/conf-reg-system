@@ -123,6 +123,25 @@ function report() {
 }
 
 // --- sign-in ---------------------------------------------------------------
+// Each test file gets its own super admin out of the seeded pool. The OTP
+// resend throttle is per destination: if every file signed in as the same
+// person they would throttle each other, which is exactly what happened when
+// the suite first ran against a fixture. Chosen from the file name so a given
+// test always gets the same account, whatever order the runner uses.
+const ADMIN_POOL_SIZE = 60;   // must match tests/seed.js
+const ADMIN_PW = 'harness-admin-pw';
+const DELEGATE_PW = 'harness-delegate-pw';
+const ADMIN = (() => {
+  const who = path.basename(process.argv[1] || 'unknown');
+  let n = 0;
+  for (const ch of who) n = (n * 31 + ch.charCodeAt(0)) % ADMIN_POOL_SIZE;
+  return `90001${String(n + 1).padStart(5, '0')}`;
+})();
+
+// Sign in as this file's admin. Password rather than OTP: it is not what these
+// tests are checking, and it does not consume the OTP throttle.
+const adminLogin = () => loginPassword(ADMIN, ADMIN_PW);
+
 // Both routes into the app, returning the session cookie or null. Null rather
 // than throwing because several tests deliberately probe accounts that cannot
 // log in, and because the OTP resend throttle can legitimately refuse.
@@ -158,4 +177,4 @@ function openDb({ readOnly = false } = {}) {
   };
 }
 
-module.exports = { BASE, HOST, PORT, ROOT, appFile, dataDir, call, req, check, counts, report, loginOtp, loginPassword, openDb };
+module.exports = { BASE, HOST, PORT, ROOT, appFile, dataDir, ADMIN, ADMIN_PW, DELEGATE_PW, adminLogin, call, req, check, counts, report, loginOtp, loginPassword, openDb };

@@ -1,4 +1,4 @@
-const { call, check, report } = require('./harness');
+const { call, check, report, ADMIN } = require('./harness');
 ;
 const sqlite3=require('sqlite3').verbose();
 const N=String(Date.now()).slice(-6);
@@ -26,8 +26,8 @@ r=await call('POST','/api/auth/register',{...base,country:'United Kingdom',email
 check('email-only signup still works (international)', r.body.success===true, r.body.error);
 
 console.log('\n== ADMIN create-user requires an email ==');
-r=await call('POST','/api/auth/login-otp',{identifier:'7440977777'});
-r=await call('POST','/api/auth/login',{identifier:'7440977777',otp:r.body.devOtp});
+r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
+r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
 const ac=r.cookie;
 r=await call('POST','/api/users',{name:'No Email Staff',phone:P(4),role:'OPERATIONS',designation:'C',institute:'M'},ac);
 check('no email refused', r.status===400 && /email address is required/i.test(r.body.error||''), [r.status,r.body&&r.body.error]);

@@ -1,12 +1,12 @@
-const { call, check, report } = require('./harness');
+const { call, check, report, ADMIN } = require('./harness');
 ;
 const sqlite3=require('sqlite3').verbose();
 const N=String(Date.now()).slice(-6);
 const db=new sqlite3.Database(process.argv[2], sqlite3.OPEN_READONLY);
 const one=(q)=>new Promise((r,j)=>db.get(q,(e,x)=>e?j(e):r(x)));
 (async()=>{
-let r=await call('POST','/api/auth/login-otp',{identifier:'7440977777'});
-r=await call('POST','/api/auth/login',{identifier:'7440977777',otp:r.body.devOtp});
+let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
+r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
 const ac=r.cookie;
 const base={salutation:'Dr',name:'edit target',age:'30',gender:'Male',designation:'X',institute:'Y',pincode:'442102',state:'Maharashtra',district:'Wardha'};
 const mail=`edit-${N}@example.com`;

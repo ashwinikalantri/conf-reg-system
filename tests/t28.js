@@ -1,4 +1,4 @@
-const { call, check, report, appFile } = require('./harness');
+const { call, check, report, appFile, ADMIN } = require('./harness');
 // Ledger rows identify a payment by the bank statement's own description of
 // the credit, not by the UTR the delegate typed in.
 fs=require('fs');
@@ -41,8 +41,8 @@ const row=new Function(`
  check('shows the not-yet-banked state', cash.includes('not yet banked'));
 
  console.log('\n== The server actually sends the description ==');
- let r=await call('POST','/api/auth/login-otp',{identifier:'7440977777'});
- r=await call('POST','/api/auth/login',{identifier:'7440977777',otp:r.body.devOtp});
+ let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
+ r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
  const regs=(await call('GET','/api/registrations',null,r.cookie)).body;
  const list=Array.isArray(regs)?regs:(regs.registrations||regs.payments||[]);
  const withTxns=list.filter(x=>(x.transactions||[]).some(t=>t.bank_txn_id!=null));
@@ -50,10 +50,10 @@ const row=new Function(`
  const linkedTxns=withTxns.flatMap(x=>x.transactions).filter(t=>t.bank_txn_id!=null);
  check('every linked payment carries bank_txn_description',
    linkedTxns.every(t=>t.bank_txn_description), `${linkedTxns.filter(t=>!t.bank_txn_description).length} missing of ${linkedTxns.length}`);
- const pri=list.find(x=>x.registration_number==='NQOCN20261164');
+ const pri=list.find(x=>x.registration_number==='FIXCON20991002');
  if (pri) {
    const descs=(pri.transactions||[]).map(t=>t.bank_txn_description);
-   console.log('   NQOCN20261164 rows now read:', JSON.stringify(descs));
+   console.log('   FIXCON20991002 rows now read:', JSON.stringify(descs));
    check('her two rows are told apart by their statement lines',
      descs.length===2 && descs[0]!==descs[1] && descs.every(Boolean));
  }

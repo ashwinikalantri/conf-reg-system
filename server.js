@@ -203,7 +203,20 @@ function formatDMY(dateStr) {
 // other secret in this app already lives -- one source of truth, and
 // nothing sensitive ever lands in conference.db or a backup of it. Updates
 // process.env immediately too, so the change takes effect without a restart.
-const ENV_PATH = path.join(__dirname, '.env');
+//
+// Everything this process persists lives in ONE directory, resolved here:
+// the database, .env, and the backup handshake files. DB_PATH overrides it so
+// a test instance can be pointed at a fixture without writing into the
+// checkout -- which is exactly what happened before this existed: a test run
+// put Google Drive credentials into the repository's own .env.
+//
+// In the container all three resolve to /data anyway (conference.db and .env
+// are symlinks into the volume), so nothing changes in production.
+const DB_FILE = process.env.DB_PATH || path.join(__dirname, 'conference.db');
+const DATA_DIR = (() => {
+  try { return path.dirname(fs.realpathSync(DB_FILE)); } catch { return path.dirname(DB_FILE); }
+})();
+const ENV_PATH = path.join(DATA_DIR, '.env');
 function writeEnvVar(key, value) {
   // A value with an embedded newline/CR would break out of its `KEY=...` line
   // and inject arbitrary extra lines (i.e. arbitrary new env vars) into .env.
@@ -1074,7 +1087,7 @@ function parseCookies(req) {
 }
 
 // --- DATABASE -----------------------------------------------------------
-const db = new sqlite3.Database('./conference.db', (err) => {
+const db = new sqlite3.Database(DB_FILE, (err) => {
   if (err) console.error('Error connecting to SQLite:', err);
   else console.log('Connected to SQLite database.');
 });
@@ -1167,6 +1180,11 @@ db.serialize(() => {
    // address fields alone can't distinguish them, and neither can the
    // reports. Every account predating international support is Indian.
    'ALTER TABLE users ADD COLUMN country TEXT',
+   // Present in long-running deployments but never created anywhere, so a
+   // FRESH install had no such column while the Users report selected it --
+   // that report would have failed on any new deployment. Found by building a
+   // database from scratch for the test fixtures.
+   'ALTER TABLE users ADD COLUMN post_office TEXT',
   ].forEach((sql) => db.run(sql, () => {}));
 
   db.run("UPDATE users SET country = 'India' WHERE country IS NULL OR country = ''", () => {});
@@ -6374,10 +6392,7 @@ app.post('/api/admin/reminders/custom-send', requireRole('SUPER_ADMIN'), async (
 // what the backup script reads), and outside one it resolves to the working
 // copy. Testing for a /data directory would have been wrong on this host,
 // which has an unrelated /data of its own.
-const BACKUP_DIR = (() => {
-  try { return path.dirname(fs.realpathSync(path.join(__dirname, 'conference.db'))); }
-  catch { return __dirname; }
-})();
+const BACKUP_DIR = DATA_DIR;
 const BACKUP_REQUEST_FILE = path.join(BACKUP_DIR, '.backup-request.json');
 const BACKUP_STATUS_FILE = path.join(BACKUP_DIR, '.backup-status.json');
 const DRIVE_LINK_FILE = path.join(BACKUP_DIR, '.drive-link-request.json');

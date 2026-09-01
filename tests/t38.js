@@ -1,4 +1,4 @@
-const { call, check, report, appFile, dataDir } = require('./harness');
+const { call, check, report, appFile, dataDir, ADMIN } = require('./harness');
 // "Connect Google Drive": the app runs the OAuth flow itself, because rclone's
 // loopback redirect cannot reach a server from someone else's browser.
 fs=require('fs'), path=require('path'), sqlite3=require('sqlite3');
@@ -14,7 +14,7 @@ const rm=(f)=>{try{fs.unlinkSync(f)}catch{}};
 
 (async()=>{
  rm(F_LINK);
- const admin=await login('7440977777');
+ const admin=await login(ADMIN);
 
  console.log('\n== Access ==');
  for (const p of ['/api/admin/backup/drive-oauth/start','/api/admin/backup/drive-callback','/api/admin/backup/drive-oauth/config']) {

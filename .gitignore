@@ -44,3 +44,6 @@ npm-debug.log*
 
 # Local DB snapshots taken before risky migrations (PII; see note above)
 backups/
+
+# Seeded test database (rebuilt by tests/seed.js)
+tests/fixture.db

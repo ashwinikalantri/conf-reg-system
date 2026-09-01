@@ -1,8 +1,8 @@
-const { call } = require('./harness');
+const { call, ADMIN } = require('./harness');
 ;
 (async()=>{
-let r=await call('POST','/api/auth/login-otp',{identifier:'7440977777'});
-r=await call('POST','/api/auth/login',{identifier:'7440977777',otp:r.body.devOtp});
+let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
+r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
 const ac=r.cookie;
 const rep=await call('GET','/api/admin/reports/users',null,ac);
 console.log('report shape:', Object.keys(rep.body||{}), 'status', rep.status);
@@ -13,6 +13,6 @@ console.log('Email-only accounts as they appear in the Users report:');
 rows.forEach(row=>console.log('   Name=%j  Mobile=%j  Email=%j', row[iName], row[iMob], row[iEmail]));
 console.log(rows.length? 'FOUND in report — Mobile blank, Email present.' : 'NOT FOUND (would be a bug)');
 // And a normal phone account for contrast
-const norm=sec.rows.find(row=>row[iMob]==='7440977777');
+const norm=sec.rows.find(row=>row[iMob]===ADMIN);
 console.log('Contrast, a phone account: Name=%j Mobile=%j', norm&&norm[iName], norm&&norm[iMob]);
 })();

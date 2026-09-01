@@ -1,4 +1,4 @@
-const { call, check, report, appFile, dataDir } = require('./harness');
+const { call, check, report, appFile, dataDir, ADMIN } = require('./harness');
 // "Back up now" queues a request the backup cron picks up. The app never runs
 // the backup itself -- the Drive credential is deliberately not in here.
 fs=require('fs'), path=require('path'), sqlite3=require('sqlite3');
@@ -17,14 +17,14 @@ const rm=(f)=>{try{fs.unlinkSync(f)}catch{}};
 
 (async()=>{
  rm(REQ); rm(STAT);
- const admin=await login('7440977777');
+ const admin=await login(ADMIN);
 
  console.log('\n== Only a super admin can see or queue backups ==');
  const anon=await call('GET','/api/admin/backup/status',null,null);
  check('anonymous is refused', anon.status===401||anon.status===403, anon.status);
  const anonPost=await call('POST','/api/admin/backup/request',{},null);
  check('anonymous cannot queue one', anonPost.status===401||anonPost.status===403, anonPost.status);
- const delegate=await login('8600202692');
+ const delegate=await login('9000001002');
  if (delegate) {
    check('a delegate is refused', (await call('GET','/api/admin/backup/status',null,delegate)).status===403);
    check('a delegate cannot queue one', (await call('POST','/api/admin/backup/request',{},delegate)).status===403);
@@ -63,7 +63,7 @@ const rm=(f)=>{try{fs.unlinkSync(f)}catch{}};
  console.log('\n== Reporting a finished backup ==');
  rm(REQ);
  fs.writeFileSync(STAT, JSON.stringify({ finishedAt: Date.now(), timestamp:'20260901-121857',
-   kind:'manual', uploadedToDrive:true, databaseBytes:684032, requestedBy:'Dr Ashwini Kalantri' }));
+   kind:'manual', uploadedToDrive:true, databaseBytes:684032, requestedBy:'Dr Ada Harness' }));
  st=await call('GET','/api/admin/backup/status',null,admin);
  check('the panel can read the last run', st.body.last && st.body.last.timestamp==='20260901-121857', st.body.last);
  check('including whether Drive got it', st.body.last.uploadedToDrive===true);

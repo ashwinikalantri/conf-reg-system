@@ -3,6 +3,7 @@ const { call, check, report } = require('./harness');
 sqlite3=require('sqlite3');
 const db=new sqlite3.Database(process.argv[2]);
 const all=(s,p=[])=>new Promise(r=>db.all(s,p,(e,x)=>r(e?[]:x)));
+const get=(s,p=[])=>new Promise(r=>db.get(s,p,(e,x)=>r(x)));
 
 const login=async(id)=>{let r=await call('POST','/api/auth/login-otp',{identifier:id});
   if(!r.body||!r.body.success) return null;
@@ -20,8 +21,8 @@ const receipt=async(id)=>{const c=await login(id); if(!c) return null;
 const between=(h,a,b)=>h.slice(h.indexOf(a), b?h.indexOf(b):undefined);
 
 (async()=>{
- // Priyanka: verified, two instalments -- the interesting case.
- const r=await receipt('8600202692');
+ // Two Payments: verified, two instalments -- the interesting case.
+ const r=await receipt('9000001002');
  check('receipt is served', r && r.status===200, r&&r.status);
  const h=r.html;
  const stub=between(h,'<div class="stub">','<div class="actions');
@@ -52,13 +53,27 @@ const between=(h,a,b)=>h.slice(h.indexOf(a), b?h.indexOf(b):undefined);
  console.log('\n== Stub (what the delegate sees) ==');
  check('amount is the hero', /class="amt money">₹2,000</.test(stub));
  check('status chip reads Paid in full', /class="chip">Paid in full</.test(stub));
- check('delegate name with salutation', stub.includes('Ms Priyanka A. Pothare'));
- check('registration number', stub.includes('NQOCN20261164'));
- check('category', stub.includes('Nurse / Community Health Officer'));
- check('both programme selections', stub.includes('Leadership in Nursing care') && stub.includes('Student Parliament for Quality Improvement'));
+ // Read from the fixture rather than hardcoded: the point is that the receipt
+ // shows the delegate's stored name with their salutation, not that any
+ // particular person is in the database.
+ const who=await get(`select u.salutation, u.full_name, u.phone, r.category_label
+                        from users u join registrations r on r.phone_number=u.phone_number
+                       where u.phone_number='9000001002'`);
+ check('delegate name with salutation', stub.includes(`${who.salutation} ${who.full_name}`),
+   `${who.salutation} ${who.full_name}`);
+ check('registration number', stub.includes('FIXCON20991002'));
+ check('category', stub.includes(who.category_label), who.category_label);
+ const opts=(await all(`select o.name from registration_options ro
+                          join program_options o on o.id=ro.option_id
+                          join registrations r on r.id=ro.registration_id
+                         where r.phone_number='9000001002'`)).map(o=>o.name);
+ check('both programme selections', opts.length>1 && opts.every(n=>stub.includes(n)), opts);
  check('two instalments itemised', /Paid in 2 instalments/.test(stub) && stub.includes('₹750') && stub.includes('₹1,250'));
- check('each instalment carries its reference', stub.includes('128217278187') && stub.includes('128796792813'));
- check('issuer named', stub.includes('MGIMS, Sevagram, Wardha') && stub.includes('nqocn2026@mgims.ac.in'));
+ const refs=(await all(`select p.utr_number from payment_transactions p
+                          join registrations r on r.id=p.registration_id
+                         where r.phone_number='9000001002' and p.txn_status='VERIFIED'`)).map(p=>p.utr_number);
+ check('each instalment carries its reference', refs.length===2 && refs.every(u=>stub.includes(u)), refs);
+ check('issuer named', stub.includes('Fixture Hall, Testville') && stub.includes('fixcon@example.test'));
 
  console.log('\n== Statement (what prints) ==');
  check('fee and received stated in one sentence',
@@ -66,16 +81,23 @@ const between=(h,a,b)=>h.slice(h.indexOf(a), b?h.indexOf(b):undefined);
  check('total received line', /Total received<\/span><span class="m money">₹2,000</.test(stmt));
  check('balance due is spelled out', /Balance due<\/span><span class="m money">₹0</.test(stmt));
  check('payments are dated ledger lines', (stmt.match(/class="ln">/g)||[]).length>=2);
- check('mobile is grouped, not a run-on', stmt.includes('+91 86002 02692'), (stmt.match(/\+91[\d ]+/)||[])[0]);
- check('verified timestamp present, IST', /\d{1,2} \w{3} 2026, \d{2}:\d{2} IST/.test(stmt));
- check('issuer block present', /Issued by<\/div>[\s\S]{0,120}MGIMS, Sevagram, Wardha/.test(stmt));
- check('conference named in full', stmt.includes('International Conference on Healthcare Quality'));
+ // Grouped as +91 XXXXX XXXXX, whatever the number is.
+ check('mobile is grouped, not a run-on', /\+91 \d{5} \d{5}/.test(stmt), (stmt.match(/\+91[\d ]*/)||[])[0]);
+ check('verified timestamp present, IST', /\d{1,2} \w{3} \d{4}, \d{2}:\d{2} IST/.test(stmt),
+   (stmt.match(/Verified on[\s\S]{0,120}/)||[])[0]);
+ check('issuer block present', /Issued by<\/div>[\s\S]{0,120}Fixture Hall, Testville/.test(stmt));
+ const confName=(await get(`select value from schema_meta where key='conference_name'`)).value;
+ // Compared against the page with entities decoded: the name contains an
+ // ampersand, which the receipt escapes, and this is asserting that the name
+ // is present -- not how HTML spells it.
+ const stmtText=stmt.replace(/&amp;/g,'&').replace(/&#39;/g,"'").replace(/&quot;/g,'"');
+ check('conference named in full', stmtText.includes(confName), confName);
  check('valid-without-signature note', stmt.includes('valid without signature'));
 
  console.log('\n== Dates are IST and unambiguous ==');
  // Never M/D/YYYY -- this Node build's ICU silently returns US ordering.
  check('no slash-formatted dates anywhere', !/\d{1,2}\/\d{1,2}\/\d{4}/.test(r.both), (r.both.match(/\d{1,2}\/\d{1,2}\/\d{4}/)||[])[0]);
- check('dates are written with a month name', /31 Aug 2026/.test(stmt));
+ check('dates are written with a month name', /\d{1,2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4}/.test(stmt));
 
  console.log('\n== Gate and other delegates ==');
  const unver=(await all(`select phone_number from registrations where bank_status!='BANK_VERIFIED' limit 1`))[0];

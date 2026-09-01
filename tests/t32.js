@@ -50,9 +50,9 @@ function evaluate(storedUser, opts) {
   return {evalError, probed, sandbox};
 }
 
-const delegate={ full_name:'Ms Priyanka A. Pothare', name:'Priyanka A. Pothare', salutation:'Ms',
-  designation:'Assistant Professor', institution:'MGIMS', phone:'+918600202692',
-  phone_number:'8600202692', email:'p@example.com', role:'DELEGATE' };
+const delegate={ full_name:'Ms Two Payments', name:'Two Payments', salutation:'Ms',
+  designation:'Assistant Professor', institution:'MGIMS', phone:'+919000001002',
+  phone_number:'9000001002', email:'p@example.com', role:'DELEGATE' };
 
 console.log('\n== A returning delegate (cached session) ==');
 {

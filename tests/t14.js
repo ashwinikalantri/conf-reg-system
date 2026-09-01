@@ -1,4 +1,4 @@
-const { call, check, report } = require('./harness');
+const { call, check, report, ADMIN } = require('./harness');
 ;
 const sqlite3=require('sqlite3').verbose();
 const N=String(Date.now()).slice(-6);
@@ -30,8 +30,8 @@ check("refused someone else's slip (403)", theirs.status===403, [theirs.status, 
 check('and no image bytes returned', !/^image\//.test(theirs.type||''), theirs.type);
 
 console.log('\n== Finance admin may ==');
-r=await call('POST','/api/auth/login-otp',{identifier:'7440977777'});
-r=await call('POST','/api/auth/login',{identifier:'7440977777',otp:r.body.devOtp});
+r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
+r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
 const fin=await call('GET',`/api/payment-transactions/${owner.id}/screenshot`,null,r.cookie);
 check('admin gets the slip', fin.status===200, fin.status);
 

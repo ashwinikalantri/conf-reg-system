@@ -1,4 +1,4 @@
-const { call, check, report, appFile, dataDir } = require('./harness');
+const { call, check, report, appFile, dataDir, ADMIN } = require('./harness');
 // Linking Google Drive from the UI. The panel captures the token; the backup
 // script installs it. The app must never keep or expose the credential.
 fs=require('fs'), path=require('path'), sqlite3=require('sqlite3');
@@ -18,11 +18,11 @@ const TOKEN={access_token:'ya29.EXAMPLE',token_type:'Bearer',refresh_token:'1//E
 
 (async()=>{
  [F_LINK,F_CHECK,F_STAT].forEach(rm);
- const admin=await login('7440977777');
+ const admin=await login(ADMIN);
 
  console.log('\n== Only a super admin can touch the link ==');
  check('anonymous cannot link', [401,403].includes((await call('POST','/api/admin/backup/drive-link',{token:JSON.stringify(TOKEN)},null)).status));
- const delegate=await login('8600202692');
+ const delegate=await login('9000001002');
  if (delegate) check('a delegate cannot link',
    (await call('POST','/api/admin/backup/drive-link',{token:JSON.stringify(TOKEN)},delegate)).status===403);
  else check('(delegate login throttled)', true);
@@ -62,12 +62,12 @@ const TOKEN={access_token:'ya29.EXAMPLE',token_type:'Bearer',refresh_token:'1//E
 
  console.log('\n== A good token is handed to the backup script ==');
  const ok=await call('POST','/api/admin/backup/drive-link',
-   {token:JSON.stringify(TOKEN), folder:'NQOCN 2026 Backups'},admin);
+   {token:JSON.stringify(TOKEN), folder:'FIXCON 2099 Backups'},admin);
  check('accepted', ok.status===200 && ok.body.success, ok.body);
  check('written where the backup script looks', fs.existsSync(F_LINK));
  const req=JSON.parse(fs.readFileSync(F_LINK,'utf8'));
  check('carrying the token', JSON.parse(req.token).refresh_token===TOKEN.refresh_token);
- check('and the folder', req.folder==='NQOCN 2026 Backups');
+ check('and the folder', req.folder==='FIXCON 2099 Backups');
  check('and who submitted it', !!req.requestedBy);
  const mode=(fs.statSync(F_LINK).mode & 0o777).toString(8);
  check('not world-readable while it waits', mode==='600', mode);
@@ -83,12 +83,12 @@ const TOKEN={access_token:'ya29.EXAMPLE',token_type:'Bearer',refresh_token:'1//E
  console.log('\n== Reporting what the script found ==');
  rm(F_LINK);
  fs.writeFileSync(F_STAT, JSON.stringify({checkedAt:Date.now(),linked:true,
-   remote:'nqocn-db:NQOCN 2026 Backups',backupCount:14,keep:14,clientId:'',
-   account:'ashwini@mgims.ac.in',lastError:''}));
+   remote:'nqocn-db:FIXCON 2099 Backups',backupCount:14,keep:14,clientId:'',
+   account:'ada@example.test',lastError:''}));
  const st2=await call('GET','/api/admin/backup/status',null,admin);
  check('linked status is surfaced', st2.body.drive && st2.body.drive.linked===true);
  check('with the backup count', st2.body.drive.backupCount===14);
- check('and which Google account holds them', st2.body.drive.account==='ashwini@mgims.ac.in', st2.body.drive);
+ check('and which Google account holds them', st2.body.drive.account==='ada@example.test', st2.body.drive);
  check('and nothing pending now', st2.body.drivePending===false);
  const js=fs.readFileSync(appFile('public','app.js'),'utf8');
  check('the panel renders the account', /Linked<\/span>`[\s\S]{0,200}d\.account/.test(js));

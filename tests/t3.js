@@ -1,4 +1,4 @@
-const { call, check, report } = require('./harness');
+const { call, check, report, ADMIN } = require('./harness');
 (async()=>{
 // Log in the email-only delegate
 // Self-contained: creates its own email-only (international) delegate
@@ -22,9 +22,9 @@ check('/api/program-options works', Array.isArray(r.body.groups), r.status);
 
 // Submit a free (fully-discounted) registration is hard; use admin path instead.
 // Log in as super admin and check the reports render.
-r = await call('POST','/api/auth/login-otp', {identifier:'7440977777'});
+r = await call('POST','/api/auth/login-otp', {identifier:ADMIN});
 const otp = r.body.devOtp;
-r = await call('POST','/api/auth/login', {identifier:'7440977777', otp});
+r = await call('POST','/api/auth/login', {identifier:ADMIN, otp});
 const ac = r.cookie;
 check('admin logged in', r.body.success===true, r.body.error);
 

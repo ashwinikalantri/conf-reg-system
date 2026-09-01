@@ -1,10 +1,10 @@
-const { call, check, report, appFile } = require('./harness');
+const { call, check, report, appFile, ADMIN } = require('./harness');
 // Review modal restructure: flagged badge in the header, check marks in
 // front of the fields they judge, two top-level sections.
 fs=require('fs');
 (async()=>{
- let r=await call('POST','/api/auth/login-otp',{identifier:'7440977777'});
- r=await call('POST','/api/auth/login',{identifier:'7440977777',otp:r.body.devOtp});
+ let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
+ r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
  const h=(await call('GET','/admin',null,r.cookie)).body;
  const js=fs.readFileSync(appFile('public','app.js'),'utf8');
 

@@ -1,10 +1,10 @@
-const { call, check, report } = require('./harness');
+const { call, check, report, ADMIN } = require('./harness');
 ;
 const N=String(Date.now()).slice(-6);
 const base={salutation:'Dr',name:'map tester',age:'40',gender:'Male',designation:'Consultant',institute:'X'};
 (async()=>{
-let r=await call('POST','/api/auth/login-otp',{identifier:'7440977777'});
-r=await call('POST','/api/auth/login',{identifier:'7440977777',otp:r.body.devOtp});
+let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
+r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
 const ac=r.cookie;
 
 console.log('\n== Baseline before any international delegate ==');

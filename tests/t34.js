@@ -1,4 +1,4 @@
-const { call, check, report, appFile } = require('./harness');
+const { call, check, report, appFile, ADMIN } = require('./harness');
 // Custom Recipients templates: both announcements available from one picker,
 // each quoting the fee master's own early-bird date.
 const fs=require('fs'), vm=require('vm');
@@ -29,8 +29,8 @@ function build(earlyUntil, conf) {
     CUSTOM_REMINDER_TEMPLATES;`;
   return vm.runInContext(src, sandbox);
 }
-const CONF={ name:'International Conference on Healthcare Quality & Patient Safety 2026', acronym:'NQOCN 2026',
-  startDate:'2026-11-21', endDate:'2026-11-22', location:'MGIMS, Sevagram, Wardha' };
+const CONF={ name:'International Conference on Healthcare Quality & Patient Safety 2026', acronym:'FIXCON 2099',
+  startDate:'2026-11-21', endDate:'2026-11-22', location:'Fixture Hall, Testville' };
 
 (async()=>{
  console.log('\n== The extension template ==');
@@ -39,14 +39,16 @@ const CONF={ name:'International Conference on Healthcare Quality & Patient Safe
  const subj=await T['early-bird-extended'].subject();
  const body=await T['early-bird-extended'].body();
  console.log('   subject:', subj);
- check('the subject names the new date', subj==='Early Bird Registration for NQOCN 2026 Extended to 5 September 2026', subj);
+ check('the subject names the new date', subj==='Early Bird Registration for FIXCON 2099 Extended to 5 September 2026', subj);
  check('the deadline is shown with its weekday', body.includes('Saturday, 5 September 2026'), (body.match(/\w+day, \d+ \w+ \d{4}/)||[])[0]);
  check('it says the deadline moved', /extended/i.test(body));
  check('it reassures people who already registered', /already registered/i.test(body));
  check('it carries the conference dates and venue',
-   body.includes('21 November 2026') && body.includes('MGIMS, Sevagram, Wardha'));
+   body.includes('21 November 2026') && body.includes('Fixture Hall, Testville'));
  check('it lists the programme groups live', /<b>3<\/b> Workshops/.test(body) && /<b>2<\/b> QI Practices/.test(body));
  check('both buttons are present',
+   // The portal URL comes from the stubbed window above; the conference
+// website is hardcoded in the template, so this asserts the real one.
    body.includes('https://registration.mgims.ac.in') && body.includes('https://nqocn2026.mgims.ac.in'));
  check('no fee table (per the standing instruction)', !/₹|Rs\.?\s*\d|early_fee/i.test(body));
  // Strip comments first: a date in a doc comment explaining the formatter is
@@ -76,8 +78,8 @@ const CONF={ name:'International Conference on Healthcare Quality & Patient Safe
 
  console.log('\n== Wired into the page ==');
  const html=(await call('GET','/admin',null,await (async()=>{
-   let r=await call('POST','/api/auth/login-otp',{identifier:'7440977777'});
-   r=await call('POST','/api/auth/login',{identifier:'7440977777',otp:r.body.devOtp});
+   let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
+   r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
    return r.cookie; })())).raw;
  check('the picker is on the Custom Recipients card', html.includes('id="customreminder-template"'));
  check('it offers both templates',

@@ -40,7 +40,7 @@ r=await call('POST','/api/auth/login-otp',{identifier:A1});
 check('the old address no longer works', r.body.notRegistered===true || r.status>=400, [r.status,r.body]);
 
 console.log('\n== Still cannot claim someone else\'s address ==');
-r=await call('POST','/api/auth/verify-contact/request',{channel:'email',value:'ashwini@mgims.ac.in'},dc);
+r=await call('POST','/api/auth/verify-contact/request',{channel:'email',value:'ada@example.test'},dc);
 check('taken address -> 409', r.status===409, [r.status,r.body.error]);
 report();
 })();

@@ -1,4 +1,4 @@
-const { call, check, report } = require('./harness');
+const { call, check, report, ADMIN } = require('./harness');
 ;
 // Unique per run -- these suites get re-run against the same DB copy, and a
 // reused number/address collides with the previous run's fixture.
@@ -22,8 +22,8 @@ const emailOnlyKey=r.body.user.phone_number;
 console.log('   (their account key is the synthetic', emailOnlyKey + ')');
 
 // Admin session
-r=await call('POST','/api/auth/login-otp',{identifier:'7440977777'});
-r=await call('POST','/api/auth/login',{identifier:'7440977777',otp:r.body.devOtp});
+r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
+r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
 const ac=r.cookie;
 
 console.log('\n== PROMO CODE scoped to a delegate BY EMAIL ==');
@@ -46,8 +46,8 @@ check(`50% off ${r.body.baseFee} = ${r.body.baseFee/2}`,
   r.body.finalFee===r.body.baseFee/2 && r.body.discountAmount===r.body.baseFee/2, r.body);
 
 console.log('\n== And is refused for anyone else ==');
-r=await call('POST','/api/auth/login-otp',{identifier:'7440977777'});
-r=await call('POST','/api/auth/login',{identifier:'7440977777',otp:r.body.devOtp});
+r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
+r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
 r=await call('POST','/api/discounts/validate',{code:('EMAILSCOPE1'+N),categoryKey:'faculty_mo'},r.cookie);
 check('refused for a different account', r.body.success===false, r.body);
 
@@ -56,7 +56,7 @@ r=await call('POST','/api/admin/discount-codes',{code:('NOSUCH1'+N),discountType
 check('unknown email -> 404', r.status===404, [r.status,r.body.error]);
 r=await call('POST','/api/admin/discount-codes',{code:('AMBIG1'+N),discountType:'PERCENT',discountValue:10,scopeType:'INDIVIDUAL',scopeValue:AMBIG_EMAIL},ac);
 check('ambiguous email -> 409', r.status===409, [r.status,r.body.error]);
-r=await call('POST','/api/admin/discount-codes',{code:('BYPHONE1'+N),discountType:'PERCENT',discountValue:10,scopeType:'INDIVIDUAL',scopeValue:'7440977777'},ac);
+r=await call('POST','/api/admin/discount-codes',{code:('BYPHONE1'+N),discountType:'PERCENT',discountValue:10,scopeType:'INDIVIDUAL',scopeValue:ADMIN},ac);
 check('still works by mobile (regression)', r.body.success===true, r.body.error);
 report();
 })();

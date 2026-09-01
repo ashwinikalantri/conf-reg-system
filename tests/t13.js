@@ -1,4 +1,4 @@
-const { call, check, report } = require('./harness');
+const { call, check, report, ADMIN } = require('./harness');
 ;
 const sqlite3=require('sqlite3').verbose();
 const db=new sqlite3.Database(process.argv[2], sqlite3.OPEN_READONLY);
@@ -17,8 +17,8 @@ const [s1,s2]=reg.slips.split(',');
 console.log(`   registration ${reg.registration_id}: txns ${t1},${t2} (${reg.st})`);
 check('the two payments have DIFFERENT slips on file', s1!==s2, [s1,s2]);
 
-let r=await call('POST','/api/auth/login-otp',{identifier:'7440977777'});
-r=await call('POST','/api/auth/login',{identifier:'7440977777',otp:r.body.devOtp});
+let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
+r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
 const ac=r.cookie;
 
 console.log('\n== Each payment serves its OWN slip ==');

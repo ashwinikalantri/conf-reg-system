@@ -15,8 +15,8 @@ const src=fs.readFileSync(appFile('server.js'),'utf8');
 const _i=src.indexOf("WHERE entity_type = 'reminder_email' AND action = 'CUSTOM_REMINDER_SENT'");
 const SQL=src.slice(src.lastIndexOf('SELECT DISTINCT entity_id FROM audit_log', _i), src.indexOf('`', _i));
 
-const ENDS='Early Bird Registration for NQOCN 2026 Ends Today';
-const EXT ='Early Bird Registration for NQOCN 2026 Extended to 5 September 2026';
+const ENDS='Early Bird Registration for FIXCON 2099 Ends Today';
+const EXT ='Early Bird Registration for FIXCON 2099 Extended to 5 September 2026';
 const A='cooldown-a@example.com', B='cooldown-b@example.com';
 const since=()=>Date.now()-24*60*60*1000;
 const blockedFor=async(subject)=>(await all(SQL,[since(), subject.trim().toLowerCase()])).map(r=>r.entity_id);

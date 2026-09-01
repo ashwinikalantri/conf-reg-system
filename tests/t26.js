@@ -1,16 +1,18 @@
-const { call, check, report } = require('./harness');
+const { call, check, report, ADMIN } = require('./harness');
 ;
 (async()=>{
-let r=await call('POST','/api/auth/login-otp',{identifier:'7440977777'});
-r=await call('POST','/api/auth/login',{identifier:'7440977777',otp:r.body.devOtp});
+let r=await call('POST','/api/auth/login-otp',{identifier:ADMIN});
+r=await call('POST','/api/auth/login',{identifier:ADMIN,otp:r.body.devOtp});
 const rec=await call('GET','/api/admin/bank-statement/reconcile',null,r.cookie);
-const hers=(rec.body.matched||[]).filter(m=>m.registration_number==='NQOCN20261164');
+const hers=(rec.body.matched||[]).filter(m=>m.registration_number==='FIXCON20991002');
 
-console.log('\n== NQOCN20261164 in the statement view ==');
+console.log('\n== FIXCON20991002 in the statement view ==');
 hers.forEach(m=>console.log(`   credit #${m.transaction.id} ${m.transaction.post_date} ₹${m.transaction.credit} -> her portion ₹${m.linkedAmount} | amountOk=${m.amountOk}`));
 check('both her credits appear', hers.length===2, hers.length);
-const c518=hers.find(m=>m.transaction.id===518);
-const c2158=hers.find(m=>m.transaction.id===2158);
+// By amount, not row id: the ids were whatever production happened to
+// assign, which means nothing in a fixture.
+const c518=hers.find(m=>Number(m.transaction.credit)===750);
+const c2158=hers.find(m=>Number(m.transaction.credit)===1250);
 check('₹750 credit shows ₹750 allocated to her (was ₹2,000)', c518 && Number(c518.linkedAmount)===750, c518&&c518.linkedAmount);
 check('₹750 credit is no longer flagged as a mismatch', c518 && c518.amountOk===true, c518&&c518.amountOk);
 check('₹1,250 credit shows ₹1,250', c2158 && Number(c2158.linkedAmount)===1250, c2158&&c2158.linkedAmount);
