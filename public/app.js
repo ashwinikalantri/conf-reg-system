@@ -5293,6 +5293,21 @@ function renderDriveStatus(data) {
       + (d.checkedAt ? ` <span class="text-slate-400">(checked ${esc(fmtAuditTime(d.checkedAt))})</span>` : '');
   }
   if (checkBtn) checkBtn.disabled = !!data.drivePending;
+
+  // The Connect button only works once an OAuth client exists, so it appears
+  // only then; until that point the setup panel is the way in.
+  const oauth = data.driveOauth || {};
+  const connectBtn = document.getElementById('drive-connect-btn');
+  const setupBtn = document.getElementById('drive-setup-toggle');
+  const redirectEl = document.getElementById('drive-redirect-uri');
+  if (redirectEl) redirectEl.textContent = oauth.redirectUri || '';
+  if (connectBtn) {
+    connectBtn.classList.toggle('hidden', !oauth.configured);
+    connectBtn.textContent = d && d.linked ? 'Reconnect Google Drive' : 'Connect Google Drive';
+  }
+  if (setupBtn) setupBtn.textContent = oauth.configured ? 'Change sign-in setup' : 'Set up sign-in';
+  const idField = document.getElementById('drive-oauth-id');
+  if (idField && oauth.clientId && !idField.value) idField.value = oauth.clientId;
   // Only show the client-id flags when this deployment actually uses its own
   // OAuth client; with rclone's built-in one the bare command is correct.
   if (cmd) cmd.textContent = d && d.clientId
@@ -5303,6 +5318,38 @@ function renderDriveStatus(data) {
 function toggleDriveLinkForm() {
   const form = document.getElementById('drive-link-form');
   if (form) form.classList.toggle('hidden');
+}
+
+function toggleDriveSetupForm() {
+  const form = document.getElementById('drive-setup-form');
+  if (form) form.classList.toggle('hidden');
+}
+
+function copyDriveRedirectUri() {
+  const el = document.getElementById('drive-redirect-uri');
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent.trim())
+    .then(() => showToast('Redirect URI copied.', 'success'))
+    .catch(() => showToast('Could not copy — select it and copy by hand.'));
+}
+
+async function saveDriveOauthClient() {
+  const clientId = (document.getElementById('drive-oauth-id').value || '').trim();
+  const clientSecret = (document.getElementById('drive-oauth-secret').value || '').trim();
+  if (!clientId || !clientSecret) return showToast('Both the client ID and the secret are needed.');
+  const btn = document.getElementById('drive-oauth-save-btn');
+  if (btn) btn.disabled = true;
+  const data = await (await fetch('/api/admin/backup/drive-oauth/config', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId, clientSecret }),
+  })).json();
+  if (btn) btn.disabled = false;
+  if (!data.success) return showToast(data.error || 'Could not save the OAuth client.');
+  // Don't leave the secret sitting in the form once it is stored.
+  document.getElementById('drive-oauth-secret').value = '';
+  toggleDriveSetupForm();
+  showToast('Saved — you can now connect with the button.', 'success');
+  await renderBackupStatus();
 }
 
 async function checkDriveLink() {

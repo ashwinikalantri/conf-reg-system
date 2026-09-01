@@ -184,12 +184,52 @@
             <h4 class="text-sm font-bold text-slate-800">Google Drive</h4>
             <div class="flex items-center gap-2">
               <button type="button" id="drive-check-btn" onclick="checkDriveLink()" class="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg">Test connection</button>
-              <button type="button" id="drive-link-toggle" onclick="toggleDriveLinkForm()" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg">Link Google Drive</button>
+              <!-- Shown only once an OAuth client exists; without one Google
+                   has nowhere to send the browser back to. -->
+              <a id="drive-connect-btn" href="/api/admin/backup/drive-oauth/start" class="hidden px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Connect Google Drive</a>
+              <button type="button" id="drive-setup-toggle" onclick="toggleDriveSetupForm()" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg">Set up sign-in</button>
+              <button type="button" id="drive-link-toggle" onclick="toggleDriveLinkForm()" class="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-600 text-xs font-semibold rounded-lg">Paste a token</button>
             </div>
           </div>
           <div id="drive-status" class="text-xs text-slate-600 mt-2">Checking…</div>
 
+          <!-- One-time Google Cloud step. This cannot be avoided: to finish a
+               sign-in in the admin's own browser, Google has to redirect back
+               to this app, and only an OAuth client we own can name that
+               address. rclone's built-in client redirects to 127.0.0.1, which
+               is the admin's laptop, not this server. -->
+          <div id="drive-setup-form" class="hidden mt-3 bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-3">
+            <p class="text-xs text-slate-600 leading-relaxed">
+              To sign in with a button, this app needs its own Google OAuth client — a one-time step in
+              <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" class="text-indigo-600 underline font-semibold">Google Cloud Console</a>:
+            </p>
+            <ol class="text-[11px] text-slate-600 list-decimal pl-4 space-y-1">
+              <li>Enable the <b>Google Drive API</b> for your project.</li>
+              <li>Create credentials → <b>OAuth client ID</b> → application type <b>Web application</b>.</li>
+              <li>Under <b>Authorised redirect URIs</b>, add exactly this address:</li>
+            </ol>
+            <div class="flex items-center gap-2">
+              <code id="drive-redirect-uri" class="flex-1 bg-slate-900 text-slate-100 text-[11px] font-mono rounded-lg p-2.5 overflow-x-auto"></code>
+              <button type="button" onclick="copyDriveRedirectUri()" class="shrink-0 px-2.5 py-2 border border-slate-300 hover:bg-white text-slate-600 text-[11px] font-semibold rounded-lg">Copy</button>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">Client ID</label>
+                <input id="drive-oauth-id" placeholder="…apps.googleusercontent.com" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-xs bg-white outline-none font-mono">
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">Client secret</label>
+                <input id="drive-oauth-secret" type="password" autocomplete="new-password" placeholder="GOCSPX-…" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-xs bg-white outline-none font-mono">
+              </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button type="button" id="drive-oauth-save-btn" onclick="saveDriveOauthClient()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-xs rounded-lg shadow-sm">Save &amp; enable the button</button>
+              <button type="button" onclick="toggleDriveSetupForm()" class="px-3 py-2 border border-slate-300 text-slate-600 text-xs font-semibold rounded-lg">Cancel</button>
+            </div>
+          </div>
+
           <div id="drive-link-form" class="hidden mt-3 bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-3">
+            <p class="text-[11px] text-slate-500">Alternative to signing in: authorise on your own machine and paste the result. Needs rclone installed there, but no Google Cloud setup.</p>
             <div>
               <p class="text-xs font-semibold text-slate-700 mb-1">1. Get a token</p>
               <p class="text-[11px] text-slate-500 mb-1.5">Run this on any computer with a browser — it doesn't have to be this server. It opens a Google sign-in window automatically; approve it, and rclone prints the token back in the terminal. Over SSH on a machine with no browser, add <code class="bg-slate-200 px-1 rounded">--auth-no-open-browser</code> and it prints a link to open instead.</p>

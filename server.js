@@ -6400,6 +6400,13 @@ app.get('/api/admin/backup/status', requireRole('SUPER_ADMIN'), async (req, res,
       // The Drive picture is written by the backup script, which is the only
       // thing here that holds the credential. Never includes the token.
       drive, drivePending: !!linkPending || !!checkPending,
+      // What the Connect button needs to know: whether an OAuth client is
+      // configured, and the redirect URI to register against it.
+      driveOauth: {
+        configured: driveOauthConfigured(),
+        clientId: process.env.DRIVE_CLIENT_ID || '',   // not a secret
+        redirectUri: driveRedirectUri(),
+      },
     });
   } catch (err) {
     next(err);
@@ -6465,6 +6472,160 @@ app.post('/api/admin/backup/drive-link', requireRole('SUPER_ADMIN'), async (req,
     res.json({ success: true });
   } catch (err) {
     next(err);
+  }
+});
+
+// --- GOOGLE DRIVE OAUTH (the "Connect" button) -----------------------------
+//
+// Why the app does the OAuth itself rather than driving `rclone authorize`:
+// rclone's redirect URI is hardcoded to http://127.0.0.1:53682/, a loopback
+// address. Google always sends the browser back to whatever machine the
+// browser is on, so an admin clicking a button here would have their consent
+// redirected to their own laptop, where nothing is listening. Running rclone
+// on the server cannot receive that. The only way to finish the flow in a
+// remote browser is to own the redirect URI, which means our own OAuth client.
+//
+// The client secret is not itself a Drive credential -- it is useless without
+// a user completing consent -- so it lives in .env like the other secrets.
+// The refresh token that IS a credential still goes straight to the backup
+// script and is never stored here.
+const driveOauthConfigured = () => !!process.env.DRIVE_CLIENT_ID && !!process.env.DRIVE_CLIENT_SECRET;
+const driveRedirectUri = () => `${String(PORTAL_URL || '').replace(/\/+$/, '')}/api/admin/backup/drive-callback`;
+
+// Exchange an authorization code for tokens. Uses the node-fetch already in
+// this file rather than global fetch, so it behaves the same on the Node 16 a
+// test instance may run and the Node 24 in the image.
+async function driveExchangeCode(code) {
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code,
+      client_id: process.env.DRIVE_CLIENT_ID,
+      client_secret: process.env.DRIVE_CLIENT_SECRET,
+      redirect_uri: driveRedirectUri(),
+      grant_type: 'authorization_code',
+    }).toString(),
+  });
+  let parsed = null;
+  try { parsed = await res.json(); } catch { /* handled below */ }
+  if (!res.ok || !parsed) {
+    throw new Error((parsed && (parsed.error_description || parsed.error)) || `Google returned ${res.status}`);
+  }
+  return parsed;
+}
+
+// Save the OAuth client. Kept out of the database with the other secrets.
+app.post('/api/admin/backup/drive-oauth/config', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const clientId = String(req.body.clientId || '').trim();
+    const clientSecret = String(req.body.clientSecret || '').trim();
+    if (!clientId || !clientSecret) {
+      return res.status(400).json({ success: false, error: 'Both the client ID and the client secret are needed.' });
+    }
+    if (/[\r\n]/.test(clientId) || /[\r\n]/.test(clientSecret)) {
+      return res.status(400).json({ success: false, error: 'Those values cannot contain line breaks.' });
+    }
+    writeEnvVar('DRIVE_CLIENT_ID', clientId);
+    writeEnvVar('DRIVE_CLIENT_SECRET', clientSecret);
+    await recordAudit({
+      req, entityType: 'backup', entityId: 'google-drive', action: 'DRIVE_OAUTH_CLIENT_SET',
+      oldValue: null, newValue: `Client ID ${clientId.slice(0, 12)}…`,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Send the admin to Google. A browser navigation, not a fetch, so the session
+// cookie rides along and the callback can tell it is the same person.
+app.get('/api/admin/backup/drive-oauth/start', requireRole('SUPER_ADMIN'), (req, res) => {
+  if (!driveOauthConfigured()) {
+    return res.status(400).send(driveResultPage('Google Drive is not set up yet', 'Add the OAuth client ID and secret in Settings first.', false));
+  }
+  const state = crypto.randomBytes(16).toString('hex');
+  req.session.driveOauthState = state;
+  const url = 'https://accounts.google.com/o/oauth2/auth?' + new URLSearchParams({
+    client_id: process.env.DRIVE_CLIENT_ID,
+    redirect_uri: driveRedirectUri(),
+    response_type: 'code',
+    scope: 'https://www.googleapis.com/auth/drive',
+    // offline + consent so Google always returns a refresh token; without it a
+    // second authorisation of the same account returns none, and rclone cannot
+    // renew access once the first hour is up.
+    access_type: 'offline',
+    prompt: 'consent',
+    state,
+  }).toString();
+  res.redirect(url);
+});
+
+// A plain page, because this is a browser landing rather than an API call.
+function driveResultPage(title, detail, ok) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title></head>
+<body style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#f1f5f9;margin:0;padding:3rem 1rem;color:#0f172a">
+  <div style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:2rem;text-align:center">
+    <div style="font-size:2.5rem">${ok ? '✅' : '⚠️'}</div>
+    <h1 style="font-size:1.15rem;margin:.75rem 0 .5rem">${escapeHtml(title)}</h1>
+    <p style="font-size:.9rem;color:#475569;line-height:1.6;margin:0 0 1.5rem">${escapeHtml(detail)}</p>
+    <a href="/admin#general" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;font-weight:700;font-size:.85rem;padding:.7rem 1.4rem;border-radius:10px">Back to Settings</a>
+  </div>
+</body></html>`;
+}
+
+// Google returns the admin here as a top-level GET from accounts.google.com.
+// That is cross-site, so this route only sees the session because the cookie
+// is sameSite:'lax' -- lax sends cookies on top-level navigations. Tightening
+// that to 'strict' would make this 403 with no obvious cause.
+app.get('/api/admin/backup/drive-callback', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    if (req.query.error) {
+      return res.status(400).send(driveResultPage('Google Drive was not connected',
+        `Google reported: ${req.query.error}. Nothing has changed.`, false));
+    }
+    const state = req.session.driveOauthState;
+    delete req.session.driveOauthState;
+    if (!state || state !== String(req.query.state || '')) {
+      return res.status(400).send(driveResultPage('That link has expired',
+        'Start again from Settings so the request can be matched to your session.', false));
+    }
+    const code = String(req.query.code || '');
+    if (!code) return res.status(400).send(driveResultPage('Google sent no authorisation code', 'Nothing has changed. Try again from Settings.', false));
+
+    const tok = await driveExchangeCode(code);
+    if (!tok.refresh_token) {
+      return res.status(400).send(driveResultPage('Google did not return a refresh token',
+        'Backups need one to keep working after the first hour. Remove this app from your Google account permissions and connect again.', false));
+    }
+
+    // The shape rclone stores. expiry is RFC3339, which is what Go parses.
+    const token = {
+      access_token: tok.access_token,
+      token_type: tok.token_type || 'Bearer',
+      refresh_token: tok.refresh_token,
+      expiry: new Date(Date.now() + (Number(tok.expires_in) || 3600) * 1000).toISOString(),
+    };
+    await fs.promises.writeFile(DRIVE_LINK_FILE, JSON.stringify({
+      token: JSON.stringify(token),
+      clientId: process.env.DRIVE_CLIENT_ID,
+      clientSecret: process.env.DRIVE_CLIENT_SECRET,
+      folder: '',
+      requestedAt: Date.now(),
+      requestedBy: req.session.name || req.session.phone || 'admin',
+    }), { encoding: 'utf8', mode: 0o600 });
+
+    await recordAudit({
+      req, entityType: 'backup', entityId: 'google-drive', action: 'DRIVE_LINK_SUBMITTED',
+      oldValue: null, newValue: 'Connected through Google sign-in',
+    });
+    res.send(driveResultPage('Google Drive connected',
+      'The backup job will apply and test it within a few minutes. Settings will then show which account it is using.', true));
+  } catch (err) {
+    // Never leak the exchange error verbatim into a page; log it and say enough.
+    console.error('Drive OAuth exchange failed:', err.message);
+    res.status(400).send(driveResultPage('Could not complete the connection', err.message, false));
   }
 });
 
