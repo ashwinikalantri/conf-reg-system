@@ -3575,8 +3575,15 @@ function reviewTxnRowHtml(t) {
       </span>
     </div>
     <div class="mt-1 text-[10px] text-slate-400">${esc(fmtAuditTime(t.submitted_at) || '')}</div>
-    <div class="mt-1 text-[10px]">${linkLine}</div>
-    <div class="mt-2 flex justify-end">${slipBtn}</div>
+    <!-- The slip button shares the reconciliation row rather than taking one
+         of its own: on its own it was right-aligned against an empty half-row,
+         which read as a gap in the card. The link line is the only thing it
+         could sit beside, and min-w-0 lets that line truncate rather than
+         push the button off. -->
+    <div class="mt-2 flex items-center justify-between gap-2">
+      <div class="text-[10px] min-w-0">${linkLine}</div>
+      ${slipBtn}
+    </div>
     <div id="txn-candidates-${esc(t.id)}" class="hidden mt-2 divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-40 overflow-y-auto"></div>
   </div>`;
 }
