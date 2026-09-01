@@ -6296,11 +6296,24 @@ app.post('/api/admin/reminders/custom-send', requireRole('SUPER_ADMIN'), async (
       return res.status(400).json({ success: false, error: 'None of the entered addresses look valid.' });
     }
 
+    // The 24h cooldown is PER ANNOUNCEMENT, not per address: it exists to stop
+    // the same message going out twice to someone, not to stop a person
+    // hearing two different things in one day. Scoping it to the address alone
+    // meant an "early bird extended" notice was silently dropped for everyone
+    // who had been sent "early bird ends today" the day before -- exactly the
+    // people who most needed the correction.
+    //
+    // The subject is the identity of the announcement here: it is what the
+    // audit trail records, and the templates put the deadline in it, so a
+    // genuinely different message is a genuinely different subject. Matched
+    // case-insensitively and trimmed, since that is how it is deduped
+    // elsewhere.
     const since = Date.now() - 24 * 60 * 60 * 1000;
     const sentRecentlyRows = await dbAll(
       `SELECT DISTINCT entity_id FROM audit_log
-        WHERE entity_type = 'reminder_email' AND action = 'CUSTOM_REMINDER_SENT' AND created_at >= ?`,
-      [since]
+        WHERE entity_type = 'reminder_email' AND action = 'CUSTOM_REMINDER_SENT' AND created_at >= ?
+          AND LOWER(TRIM(COALESCE(new_value, ''))) = ?`,
+      [since, String(subject).trim().toLowerCase()]
     );
     const sentRecentlySet = new Set(sentRecentlyRows.map((r) => (r.entity_id || '').toLowerCase()));
 

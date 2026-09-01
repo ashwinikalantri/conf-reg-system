@@ -6028,7 +6028,9 @@ async function sendCustomReminders() {
   } else {
     const skipNotes = [
       data.skippedInvalid ? `${data.skippedInvalid} not a valid address` : null,
-      data.skippedSentRecently ? `${data.skippedSentRecently} sent within the last 24h` : null,
+      // Custom sends throttle per announcement, not per address -- a different
+      // subject to the same person goes through -- so name the message.
+      data.skippedSentRecently ? `${data.skippedSentRecently} already sent this message in the last 24h` : null,
     ].filter(Boolean).join(', ');
     const msg = `Sent to ${data.sent} of ${data.total}${skipNotes ? ` (${skipNotes})` : ''}.`;
     if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
