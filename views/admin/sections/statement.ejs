@@ -106,6 +106,32 @@
         </div>
       </div>
 
+      <!-- Debits. Everything else on this page walks the statement's CREDITS,
+           which is right for "has every rupee in been accounted for" but
+           leaves money going OUT with no view at all -- a debit only ever
+           surfaced inside one registration's refund picker. A debit is either
+           a refund we made or something that needs explaining, and this shows
+           both. Hidden when the statement has no debits. -->
+      <div id="debits-panel" class="hidden">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
+          <h3 class="text-sm font-bold text-slate-600 uppercase tracking-wide">Debits — Money Out</h3>
+          <p class="text-xs text-slate-500">
+            <span id="debit-count" class="font-bold text-slate-700">0</span> debit(s) ·
+            <span id="debit-total" class="font-bold text-slate-700">₹0</span> out ·
+            <span id="debit-refunded" class="font-bold text-slate-700">₹0</span> as refunds
+          </p>
+        </div>
+        <p class="text-xs text-slate-500 mb-2">Every debit in the imported statement. A row linked to a refund is money paid back to a delegate; anything else is a bank charge or a transfer out that this app knows nothing about — worth a look before the books are closed.</p>
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+          <table class="w-full text-left border-collapse sm:min-w-[820px] text-sm">
+            <thead class="hidden sm:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+              <th class="py-3 px-4">Date</th><th class="py-3 px-4">Description</th><th class="py-3 px-4">Debit ₹</th><th class="py-3 px-4">Applied To</th>
+            </tr></thead>
+            <tbody id="rec-debits-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
       <div>
         <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
           <h3 class="text-sm font-bold text-emerald-700 uppercase tracking-wide">Matched <span id="rec-matched-count" class="text-slate-400 font-normal normal-case"></span></h3>

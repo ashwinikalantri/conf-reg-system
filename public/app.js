@@ -2633,6 +2633,14 @@ function paymentRowHtml(p) {
     ? `<span class="text-[10px] text-rose-600 font-semibold">${esc(REJECTION_LABELS[p.rejection_reason] || p.rejection_reason)}${p.rejection_note ? ': ' + esc(p.rejection_note) : ''}</span>`
     : '';
   const reviewBtn = `<button class="review-btn px-3 py-1.5 ${p.is_flagged ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white font-semibold rounded-lg text-xs shadow-sm" data-id="${esc(p.id)}">${p.is_flagged ? 'Review (Force Verify)' : 'Review'}</button>`;
+  // The delegate's own receipt, opened in a new tab -- the exact document
+  // they see, so the desk can answer "what does my receipt say" and reprint
+  // one without reading it off their phone. Only on verified rows: a receipt
+  // for an unverified payment doesn't exist, and the server refuses one.
+  const receiptBtn = p.bank_status === 'BANK_VERIFIED'
+    ? `<a href="/api/registrations/${esc(p.id)}/receipt" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold rounded-lg text-xs">🧾 Receipt</a>`
+    : '';
+  const rowActions = `<div class="flex flex-wrap items-center gap-2 sm:justify-end">${reviewBtn}${receiptBtn}</div>`;
 
   return `
     <tr class="border-b border-slate-100 ${p.is_flagged ? 'bg-red-50/50' : ''}">
@@ -2650,7 +2658,7 @@ function paymentRowHtml(p) {
           ${p.is_flagged ? `<span class="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">⚠️ Flagged</span>` : ''}
           ${statusPill}${reviseHint}${balancePill}${overpaidPill}${rejectionNote}${linkedPill}${idPill}
         </div>
-        <div class="mt-3">${reviewBtn}</div>
+        <div class="mt-3">${rowActions}</div>
       </td>
       <!-- Desktop columns -->
       <td class="p-4 font-bold text-sm hidden sm:table-cell">
@@ -2671,7 +2679,7 @@ function paymentRowHtml(p) {
         ${idPill ? `<br>${idPill}` : ''}
       </td>
       <td class="p-4 text-right hidden sm:table-cell">
-        ${reviewBtn}
+        ${rowActions}
       </td>
     </tr>
   `;
@@ -7233,8 +7241,63 @@ async function loadReconciliation() {
       </tr>`).join('') : `<tr><td colspan="4" class="p-4 text-center text-slate-400 text-xs">No transactions marked non-registration.</td></tr>`;
   }
 
+  renderDebits(data.debits || [], data.summary || {});
+
   cachedMatched = data.matched || [];
   filterMatchedRows();
+}
+
+// Debits -- the money-out side of the statement, which nothing else on this
+// page looks at. A debit is either a refund this app made (and can therefore
+// name the delegate for) or it is unexplained, and unexplained is the whole
+// point of showing them: bank charges, a transfer out, a refund someone paid
+// by hand without recording it here. Hidden entirely when the statement has
+// no debits, which is the normal case for most of a conference.
+function renderDebits(debits, summary) {
+  const panel = document.getElementById('debits-panel');
+  const body = document.getElementById('rec-debits-body');
+  if (!panel || !body) return;
+
+  panel.classList.toggle('hidden', debits.length === 0);
+  if (!debits.length) return;
+
+  setText('debit-count', String(debits.length));
+  setText('debit-total', `₹${inr(summary.debitTotal || 0)}`);
+  setText('debit-refunded', `₹${inr(summary.refundedDebitTotal || 0)}`);
+
+  // What a debit was for, in one cell. A refund names its delegate and links
+  // through to them; anything else says so plainly rather than showing an
+  // empty cell, which reads as "not loaded yet" rather than "nobody knows".
+  const appliedTo = (d) => {
+    if (!d.refund) return '<span class="text-slate-400">Not a recorded refund</span>';
+    // Text, not a link: nothing else on this page clicks through to a
+    // registration, and one lone link here would look like the others are
+    // broken. The reg number is what you search the Registrations tab with.
+    const who = d.refund.registrationNumber
+      ? `<span class="font-semibold text-slate-700">${esc(d.refund.delegateName || '—')}</span>`
+        + `<span class="text-slate-400"> · ${esc(d.refund.registrationNumber)}</span>`
+      : '<span class="text-slate-400">a deleted registration</span>';
+    const note = d.refund.note ? `<br><span class="text-[11px] text-slate-400">${esc(d.refund.note)}</span>` : '';
+    return `<span class="text-[11px] font-bold text-violet-700 uppercase">Refund</span> ${who}${note}`;
+  };
+
+  body.innerHTML = debits.map((d) => `
+    <tr class="${d.refund ? '' : 'bg-amber-50/30'}">
+      <td class="p-3 block sm:hidden">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="text-sm text-slate-700 truncate">${esc(d.description)}</p>
+            <p class="text-[11px] text-slate-400">${esc(d.post_date)}</p>
+          </div>
+          <p class="font-semibold text-rose-600 shrink-0">₹${inr(esc(d.debit))}</p>
+        </div>
+        <p class="mt-1.5 text-xs">${appliedTo(d)}</p>
+      </td>
+      <td class="p-3 hidden sm:table-cell">${esc(d.post_date)}</td>
+      <td class="p-3 hidden sm:table-cell">${esc(d.description)}</td>
+      <td class="p-3 font-semibold text-rose-600 hidden sm:table-cell">₹${inr(esc(d.debit))}</td>
+      <td class="p-3 text-xs hidden sm:table-cell">${appliedTo(d)}</td>
+    </tr>`).join('');
 }
 
 // Mark/unmark a statement credit as not belonging to any registration. The

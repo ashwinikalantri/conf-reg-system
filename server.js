@@ -3932,19 +3932,31 @@ async function revokeGroupDiscountIfBelowThreshold(groupId) {
   }
 }
 
-// Printable payment receipt for the caller's own registration. Only available
-// once the payment has been verified.
-app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => {
+// Printable payment receipt. Only available once the payment has been
+// verified.
+//
+// Two ways in, one document. A delegate reads their own (/me/receipt); the
+// desk is regularly asked to reprint or re-send one, and until now the only
+// way to see a delegate's receipt was over their shoulder. Deliberately the
+// SAME renderer rather than an admin-flavoured copy: the point of looking is
+// to see exactly what the delegate sees, and two renderers would drift.
+const renderReceipt = async (req, res, next) => {
   try {
-    const reg = await dbGet('SELECT * FROM registrations WHERE phone_number = ?', [req.session.phone]);
+    // :id is the admin route (role-gated below); no :id means the caller's
+    // own, keyed on the session rather than anything the client supplied.
+    const reg = req.params.id
+      ? await dbGet('SELECT * FROM registrations WHERE id = ?', [req.params.id])
+      : await dbGet('SELECT * FROM registrations WHERE phone_number = ?', [req.session.phone]);
     if (!reg) {
       return res.status(404).send('<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;text-align:center;margin-top:4rem">No registration found.</body>');
     }
     if (reg.bank_status !== 'BANK_VERIFIED') {
-      return res.status(403).send('<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;text-align:center;margin-top:4rem"><h2>Receipt not available yet</h2><p>Your receipt will be available once the finance team verifies your payment.</p><p><a href="/">Return to portal</a></p></body>');
+      return res.status(403).send('<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;text-align:center;margin-top:4rem"><h2>Receipt not available yet</h2><p>A receipt is issued once the finance team verifies the payment.</p><p><a href="/">Return to portal</a></p></body>');
     }
 
-    const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [req.session.phone]);
+    // From the registration, not the session: the admin route's caller is not
+    // the delegate whose details belong on this document.
+    const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [reg.phone_number]);
     const verifiedRow = await dbGet(
       `SELECT created_at FROM audit_log
         WHERE entity_type = 'registration' AND entity_id = ? AND new_value = 'BANK_VERIFIED'
@@ -4313,7 +4325,11 @@ ${STUB_CSS}`, `<div class="stub">
   } catch (err) {
     next(err);
   }
-});
+};
+
+// 'me' first, so the literal path is never swallowed by :id.
+app.get('/api/registrations/me/receipt', requireAuth, renderReceipt);
+app.get('/api/registrations/:id/receipt', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), renderReceipt);
 
 // Serve a payment screenshot to the owning delegate or a finance admin.
 app.get('/api/registrations/:id/screenshot', requireAuth, async (req, res, next) => {
@@ -8160,6 +8176,47 @@ app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINAN
       matched.push({ ...reg, transaction: t, amountOk, linkedAmount: t.credit });
     }
 
+    // Debits -- money OUT. The reconciliation above is credit-centric by
+    // design (it answers "has every rupee in been accounted for"), which
+    // means nothing on this page has ever shown a debit at all: they are
+    // imported from the statement and then only ever surface inside one
+    // registration's refund picker. So a bank charge, a wrong transfer, or a
+    // refund paid out against a delegate who was later deleted is money that
+    // has left the account with no view that admits it exists.
+    //
+    // A debit is either a refund we made (linked 1-to-1 to a payment_refunds
+    // row -- see the UNIQUE index on bank_txn_id) or it is something else,
+    // and "something else" is exactly what is worth showing. The LEFT JOIN
+    // keeps unlinked debits rather than dropping them, since those are the
+    // ones that need an explanation.
+    const debitRows = await dbAll(`
+      SELECT bt.*,
+             pr.id AS refund_id, pr.amount AS refund_amount, pr.reference_note,
+             pr.refunded_by, pr.refunded_at,
+             r.id AS refund_registration_id, r.registration_number, r.delegate_name
+        FROM bank_statement_transactions bt
+        LEFT JOIN payment_refunds pr ON pr.bank_txn_id = bt.id
+        LEFT JOIN registrations r ON r.id = pr.registration_id
+       WHERE bt.debit IS NOT NULL AND bt.debit > 0
+       ORDER BY bt.post_date DESC, bt.id DESC`);
+    const debits = debitRows.map((d) => ({
+      id: d.id, post_date: d.post_date, value_date: d.value_date,
+      description: d.description, debit: d.debit, balance: d.balance,
+      extracted_ref: d.extracted_ref,
+      // A refund whose registration has since been deleted still shows as a
+      // refund -- the money left the account either way. The delegate is
+      // reported as null rather than the row being demoted to unexplained.
+      refund: d.refund_id ? {
+        id: d.refund_id, amount: d.refund_amount, note: d.reference_note,
+        refundedBy: d.refunded_by, refundedAt: d.refunded_at,
+        registrationId: d.refund_registration_id,
+        registrationNumber: d.registration_number, delegateName: d.delegate_name,
+      } : null,
+    }));
+    const debitTotal = debits.reduce((sum, d) => sum + (Number(d.debit) || 0), 0);
+    const refundedDebitTotal = debits.reduce(
+      (sum, d) => sum + (d.refund ? Number(d.debit) || 0 : 0), 0);
+
     // Registrations (non-rejected, with a reference) that didn't match any credit.
     const unmatched = allRegs
       .filter((r) => r.bank_status !== 'REJECTED' && !matchedRegIds.has(r.id))
@@ -8170,6 +8227,7 @@ app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINAN
       unmatched,
       unmatchedCredits,
       nonRegistrationCredits,
+      debits,
       summary: {
         registrations: allRegs.filter((r) => r.bank_status !== 'REJECTED').length,
         matched: matched.length,
@@ -8178,6 +8236,11 @@ app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINAN
         unmatchedCredits: unmatchedCredits.length,
         nonRegistrationCredits: nonRegistrationCredits.length,
         credits: txns.length,
+        debits: debits.length,
+        debitTotal,
+        refundedDebits: debits.filter((d) => d.refund).length,
+        refundedDebitTotal,
+        unexplainedDebits: debits.filter((d) => !d.refund).length,
       },
     });
   } catch (err) {

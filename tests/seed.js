@@ -430,6 +430,29 @@ async function seedRows() {
   await mkCredit({ ref: '900000000001', amount: 2500, desc: 'UPI/RRN 900000000001/UPI_UNCLAIMED' });
   await mkCredit({ ref: '900000000002', debit: 500, amount: null, desc: 'NEFT OUT/REFUND FIXTURE' });
 
+  // 12. Overpaid, then refunded. Added last, after every other delegate, so
+  //     the registration ids the earlier cases got -- and that a test or two
+  //     addresses directly -- don't shift.
+  //
+  //     This is the only fixture where money leaves the account for a reason
+  //     the app knows about, which is what separates a refund debit from a
+  //     bank charge in the statement view. Both debits now exist: this one
+  //     with a payment_refunds row behind it, the ₹500 above with none.
+  const c12 = await mkCredit({ ref: '120000000001', amount: 4000, desc: 'UPI/RRN 120000000001/UPI_OVERPAID' });
+  const overpaidReg = await mkDelegate({
+    phone: '9000001012', name: 'Over Paid', email: 'over.paid@example.test', regNo: nextRegNo(),
+    category: 'faculty_mo', expected: 3000, paid: 4000, status: 'BANK_VERIFIED', utr: '120000000001',
+    payments: [{ amount: 4000, verified: 4000, utr: '120000000001', status: 'VERIFIED', bankTxnId: c12 }],
+  });
+  const refundDebit = await mkCredit({
+    ref: '120000000002', debit: 1000, amount: null, date: ymd(-5),
+    desc: 'NEFT OUT/REFUND OVER PAID',
+  });
+  await db.run(
+    `INSERT INTO payment_refunds (registration_id, amount, reference_note, refunded_by, refunded_at, bank_txn_id)
+     VALUES (?, 1000, 'Excess fee returned', 'Ada Harness', ?, ?)`,
+    [overpaidReg, ago(4), refundDebit]);
+
   // Keep registration numbers from colliding with anything issued later.
   await db.run('INSERT OR REPLACE INTO reg_seq (id) VALUES (?)', [regCounter + 100]);
 
@@ -461,7 +484,8 @@ const REQUIRED = [
   ['two payments of one registration with DIFFERENT slips', "SELECT 1 FROM payment_transactions a JOIN payment_transactions b ON a.registration_id=b.registration_id AND a.id<b.id WHERE a.screenshot IS NOT NULL AND b.screenshot IS NOT NULL AND a.screenshot<>b.screenshot"],
   ['a category that requires a student ID', "SELECT 1 FROM fee_categories WHERE requires_student_id=1 AND active=1"],
   ['an unclaimed bank credit', "SELECT 1 FROM bank_statement_transactions WHERE credit>0 AND id NOT IN (SELECT bank_txn_id FROM payment_transactions WHERE bank_txn_id IS NOT NULL)"],
-  ['a bank debit to refund against', "SELECT 1 FROM bank_statement_transactions WHERE debit>0"],
+  ['a bank debit to refund against', "SELECT 1 FROM bank_statement_transactions WHERE debit>0 AND id NOT IN (SELECT bank_txn_id FROM payment_refunds WHERE bank_txn_id IS NOT NULL)"],
+  ['a debit that IS a recorded refund', "SELECT 1 FROM bank_statement_transactions b JOIN payment_refunds r ON r.bank_txn_id=b.id WHERE b.debit>0"],
   ['programme groups with options', "SELECT 1 FROM program_groups g JOIN program_options o ON o.group_id=g.id GROUP BY g.id HAVING COUNT(*)>1"],
   ['a paid programme option', "SELECT 1 FROM program_options WHERE fee>0"],
   ['an active promo code', "SELECT 1 FROM discount_codes WHERE active=1 AND expires_at >= date('now')"],
