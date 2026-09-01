@@ -44,6 +44,17 @@ function formatFullDate(isoDate) {
   return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}`;
 }
 
+// "Saturday, 5 September 2026" -- the weekday matters on a deadline, since it
+// tells the reader how much time they actually have. Computed from the date
+// parts rather than toLocaleDateString so it can't be reordered by a locale.
+function formatFullDateWithDay(isoDate) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate || '');
+  if (!m) return '';
+  const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return `${DAYS[d.getUTCDay()]}, ${formatFullDate(isoDate)}`;
+}
+
 // "28 Aug 2026" from a YYYY-MM-DD string -- same short-month style as the
 // server's formatDMY() (server.js), used for the discount-code voucher and
 // WhatsApp share message so both read the same way.
@@ -5811,11 +5822,8 @@ async function buildEarlyBirdReminderBody() {
   const end = formatFullDate(c.endDate);
   const dateRange = (start && end && c.startDate !== c.endDate) ? `${start} &ndash; ${end}` : (start || end);
 
-  let deadlineLine = '';
-  try {
-    const fees = await (await fetch('/api/fees')).json();
-    if (fees.earlyUntil) deadlineLine = ` (${esc(formatFullDate(fees.earlyUntil))})`;
-  } catch { /* best-effort -- the email still makes sense without the exact date */ }
+  const until = await earlyBirdDeadline();
+  const deadlineLine = until ? ` (${esc(formatFullDate(until))})` : '';
 
   let programLine = '';
   try {
@@ -5840,20 +5848,119 @@ ${programLine ? `<p>Alongside the main conference, there are ${programLine}</p>`
 <p>If you've already registered, please disregard this email.</p>`;
 }
 
+// The configured early-bird cutoff (YYYY-MM-DD), or '' if it can't be read.
+// Every template quotes this rather than a date typed into the copy, so an
+// email can never announce a deadline the fee master disagrees with.
+async function earlyBirdDeadline() {
+  try {
+    const fees = await (await fetch('/api/fees')).json();
+    return fees.earlyUntil || '';
+  } catch { return ''; }
+}
+
+// Announcement that the early-bird cutoff has moved. Same shape as the
+// "ending soon" template above so the two read as a pair, and built from the
+// same live sources -- the deadline comes from the fee master, so this cannot
+// promise a date the app won't actually honour.
+async function buildEarlyBirdExtensionBody() {
+  const c = conferenceInfo;
+  const start = formatFullDate(c.startDate);
+  const end = formatFullDate(c.endDate);
+  const dateRange = (start && end && c.startDate !== c.endDate) ? `${start} &ndash; ${end}` : (start || end);
+  const until = await earlyBirdDeadline();
+  const deadline = until ? formatFullDateWithDay(until) : '';
+
+  let programLine = '';
+  try {
+    const programs = await (await fetch('/api/program-options')).json();
+    const groups = (programs.groups || []).filter((g) => (g.options || []).length);
+    if (groups.length) {
+      programLine = groups.map((g) => `<b>${g.options.length}</b> ${esc(g.name)}`).join(' and ') + ' to choose from.';
+    }
+  } catch { /* best-effort -- the email still makes sense without this line */ }
+
+  return `<p>Dear Colleague,</p>
+<p>The response to <b>${esc(c.name || 'the conference')}</b> has been overwhelming, and we have had a steady stream of requests for more time. In response, <b>early bird registration has been extended</b>.</p>
+${deadline ? `<div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:1rem 1.25rem;margin:1.25rem 0">
+  <div style="font-size:.7rem;letter-spacing:.09em;text-transform:uppercase;color:#4338ca;font-weight:700">New early bird deadline</div>
+  <div style="font-size:1.2rem;font-weight:800;color:#312e81;margin-top:.25rem">${esc(deadline)}</div>
+  <div style="font-size:.78rem;color:#4338ca;margin-top:.4rem">Register <i>and</i> complete payment on or before this date to pay the early bird rate. Registrations after it are charged the regular rate.</div>
+</div>` : '<p><b>Early bird registration has been extended.</b> Register and complete payment before the new deadline to pay the early bird rate.</p>'}
+<p>If you have already registered, nothing changes and no action is needed &mdash; this is simply a longer window for colleagues who have not yet completed theirs. Do pass it on to anyone in your department who meant to register and has not got around to it.</p>
+${dateRange || c.location ? `<table style="width:100%;margin:1rem 0;font-size:.85rem">
+  ${dateRange ? `<tr><td style="padding:.2rem 0;color:#64748b;width:90px">📅 Dates</td><td style="padding:.2rem 0;font-weight:600">${dateRange}</td></tr>` : ''}
+  ${c.location ? `<tr><td style="padding:.2rem 0;color:#64748b">📍 Venue</td><td style="padding:.2rem 0;font-weight:600">${esc(c.location)}</td></tr>` : ''}
+</table>` : ''}
+${programLine ? `<p>Alongside the main conference, there are ${programLine}</p>` : ''}
+<p style="text-align:center;margin:1.5rem 0">
+  <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">Register Now</a>
+  <a href="https://nqocn2026.mgims.ac.in" style="background:#fff;color:#4f46e5;border:2px solid #4f46e5;padding:.65rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">Visit Conference Website</a>
+</p>
+<p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
+}
+
+// The announcements this card gets used for, in one place so the picker and
+// the initial seed can't drift apart. Subjects are async too, because the
+// "ending soon" one has to know whether the cutoff is actually today.
+const CUSTOM_REMINDER_TEMPLATES = {
+  'early-bird-ending': {
+    label: 'Early bird — ending soon',
+    async subject() {
+      const until = await earlyBirdDeadline();
+      const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
+      // "Ends Today" is only true on the cutoff date itself; any other day it
+      // is a claim the fee master contradicts.
+      if (until && until === istDateString()) return `Early Bird Registration${who} Ends Today`;
+      return until
+        ? `Early Bird Registration${who} Ends on ${formatFullDate(until)}`
+        : `Early Bird Registration${who} Is Ending Soon`;
+    },
+    body: buildEarlyBirdReminderBody,
+  },
+  'early-bird-extended': {
+    label: 'Early bird — deadline extended',
+    async subject() {
+      const until = await earlyBirdDeadline();
+      const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
+      return until
+        ? `Early Bird Registration${who} Extended to ${formatFullDate(until)}`
+        : `Early Bird Registration${who} Has Been Extended`;
+    },
+    body: buildEarlyBirdExtensionBody,
+  },
+};
+
+// Fill the subject and body from a template. Anything already typed is
+// confirmed over first -- these are long fields and losing a half-written
+// announcement to a stray click would be worse than an extra prompt.
+async function applyCustomReminderTemplate(key) {
+  const picker = document.getElementById('customreminder-template');
+  if (!key) return;
+  const tpl = CUSTOM_REMINDER_TEMPLATES[key];
+  if (picker) picker.value = '';
+  if (!tpl) return;
+  const subjectInput = document.getElementById('customreminder-subject');
+  const bodyBox = document.getElementById('customreminder-body');
+  const hasContent = (subjectInput && subjectInput.value.trim()) || (bodyBox && bodyBox.value.trim());
+  if (hasContent && !(await showConfirm(`Replace the subject and body with the "${tpl.label}" template?`))) return;
+  if (subjectInput) subjectInput.value = await tpl.subject();
+  if (bodyBox) bodyBox.value = await tpl.body();
+  showToast(`Loaded the "${tpl.label}" template.`, 'success');
+}
+
 let customReminderInitialized = false;
 async function initCustomReminderCard() {
   updateCustomReminderCount();
   if (customReminderInitialized) return;
   customReminderInitialized = true;
 
+  // Seeded from the same registry the picker uses, so the card never starts
+  // on wording the picker would never produce.
+  const seed = CUSTOM_REMINDER_TEMPLATES['early-bird-ending'];
   const subjectInput = document.getElementById('customreminder-subject');
   const bodyBox = document.getElementById('customreminder-body');
-  if (subjectInput && !subjectInput.value.trim()) {
-    subjectInput.value = conferenceInfo.acronym ? `Early Bird Registration for ${conferenceInfo.acronym} Ends Today` : 'Early Bird Registration Ends Today';
-  }
-  if (bodyBox && !bodyBox.value.trim()) {
-    bodyBox.value = await buildEarlyBirdReminderBody();
-  }
+  if (subjectInput && !subjectInput.value.trim()) subjectInput.value = await seed.subject();
+  if (bodyBox && !bodyBox.value.trim()) bodyBox.value = await seed.body();
 }
 
 function parseCustomReminderEmails() {
