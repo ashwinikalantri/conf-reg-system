@@ -1,0 +1,61 @@
+const { call, check, report } = require('./harness');
+;
+const sqlite3=require('sqlite3').verbose();
+const N=String(Date.now()).slice(-6);
+const db=new sqlite3.Database(process.argv[2], sqlite3.OPEN_READONLY);
+const one=(q)=>new Promise((r,j)=>db.get(q,(e,x)=>e?j(e):r(x)));
+const US_NUM='+1202'+String(Date.now()).slice(-7);
+const base={salutation:'Dr',name:'intl tester',age:'40',gender:'Male',designation:'Consultant',institute:'St Mary'};
+(async()=>{
+console.log('\n== INTERNATIONAL signup: email-verified, no phone ==');
+let r=await call('POST','/api/otp/request',{destination:`uk-${N}@example.com`});
+r=await call('POST','/api/auth/register',{...base,country:'United Kingdom',email:`uk-${N}@example.com`,emailOtp:r.body.devOtp,password:'testpass123',district:'London',state:'Greater London'});
+check('registered with no phone at all', r.body.success===true, r.body.error);
+const uk=r.body.user;
+check('  synthetic account key', /^u_[0-9a-f]{18}$/.test(uk.phone_number||''), uk.phone_number);
+check('  country recorded', uk.country==='United Kingdom', uk.country);
+check('  city/region kept', uk.district==='London' && uk.state==='Greater London', [uk.district,uk.state]);
+check('  no pincode', !uk.pincode, uk.pincode);
+check('  email verified, phone not', uk.email_verified===1 && uk.phone_verified===0, [uk.email_verified,uk.phone_verified]);
+
+console.log('\n== INTERNATIONAL signup WITH a phone (optional, unverifiable) ==');
+r=await call('POST','/api/otp/request',{destination:`us-${N}@example.com`});
+r=await call('POST','/api/auth/register',{...base,country:'United States',phone:US_NUM,email:`us-${N}@example.com`,emailOtp:r.body.devOtp,password:'testpass123',district:'Boston'});
+check('accepted', r.body.success===true, r.body.error);
+check('  phone stored as E.164', r.body.user.phone===US_NUM, r.body.user.phone);
+check('  key still synthetic (number is editable)', /^u_/.test(r.body.user.phone_number), r.body.user.phone_number);
+check('  phone NOT verified (no SMS path)', r.body.user.phone_verified===0);
+r=await call('POST','/api/auth/login-otp',{identifier:US_NUM});
+check('  and cannot be used to sign in', r.status===403, [r.status,r.body&&r.body.error]);
+r=await call('POST','/api/auth/login-password',{identifier:`us-${N}@example.com`,password:'testpass123'});
+check('  but password login works', r.body.success===true, r.body.error);
+
+console.log('\n== INDIA still requires a phone, unchanged ==');
+r=await call('POST','/api/otp/request',{destination:`in-${N}@example.com`});
+r=await call('POST','/api/auth/register',{...base,country:'India',email:`in-${N}@example.com`,emailOtp:r.body.devOtp,password:'testpass123'});
+check('no phone -> refused', r.status===400 && /mobile number is required/i.test(r.body.error||''), [r.status,r.body&&r.body.error]);
+const inPh='9'+N+'321';
+r=await call('POST','/api/otp/request',{destination:inPh});
+r=await call('POST','/api/auth/register',{...base,country:'India',phone:inPh,phoneOtp:r.body.devOtp,email:`in2-${N}@example.com`,password:'testpass123',pincode:'442102',state:'Maharashtra',district:'Wardha'});
+check('with phone -> accepted', r.body.success===true, r.body.error);
+check('  key IS the bare number (unchanged behaviour)', r.body.user.phone_number===inPh, r.body.user.phone_number);
+check('  phone stored E.164', r.body.user.phone===`+91${inPh}`, r.body.user.phone);
+check('  country India', r.body.user.country==='India', r.body.user.country);
+
+console.log('\n== Mismatched country/number is caught ==');
+r=await call('POST','/api/otp/request',{destination:`mm-${N}@example.com`});
+r=await call('POST','/api/auth/register',{...base,country:'United Kingdom',phone:'9812345678',email:`mm-${N}@example.com`,emailOtp:r.body.devOtp,password:'testpass123'});
+check('Indian number under a foreign country -> refused', r.status===400 && /set your country to India/i.test(r.body.error||''), [r.status,r.body&&r.body.error]);
+r=await call('POST','/api/otp/request',{destination:`mm2-${N}@example.com`});
+r=await call('POST','/api/auth/register',{...base,country:'India',phone:'+447700900199',email:`mm2-${N}@example.com`,emailOtp:r.body.devOtp,password:'testpass123'});
+check('foreign number under India -> refused', r.status===400, [r.status,r.body&&r.body.error]);
+
+console.log('\n== Form markup ==');
+const portal=await call('GET','/',null,null);
+check('country selector present', /id="reg-country"/.test(portal.raw));
+check('india address block', /id="reg-address-india"/.test(portal.raw));
+check('international address block', /id="reg-address-intl"/.test(portal.raw));
+check('pincode no longer hard-required', !/id="reg-pincode"[^>]*\srequired/.test(portal.raw));
+report();
+db.close();
+})();
