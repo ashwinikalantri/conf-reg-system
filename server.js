@@ -3984,7 +3984,19 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
          font-family:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
          line-height:1.55; -webkit-font-smoothing:antialiased; }
   .money { font-variant-numeric:tabular-nums; white-space:nowrap; }
-  .print-only { display:none; }
+
+  /* The statement is NEVER display:none. Safari does not paginate content
+     that was display:none when it computes the print layout -- it gave the
+     statement zero height and printed a blank sheet. Keeping it in the
+     layout tree and hiding it with visibility instead is what makes Safari
+     reliable; position:fixed keeps a full-width A4 block from adding scroll
+     to the screen view, and print puts it back in normal flow. */
+  @media screen {
+    .print-only {
+      position:fixed; top:0; left:0; width:210mm; z-index:-1;
+      visibility:hidden; pointer-events:none;
+    }
+  }
 
   /* ---------------- Stub (screen) ---------------- */
   .stub { width:380px; max-width:100%; margin:0 auto; border-radius:18px; overflow:hidden;
@@ -4078,9 +4090,17 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
 
   @media print {
     @page { size:A4; margin:14mm; }
-    body { background:#fff; padding:0; }
-    .screen-only { display:none !important; }
-    .print-only { display:block !important; }
+    html, body { background:#fff; padding:0; margin:0; }
+    .screen-only { display:none; }
+    /* Back into normal flow, and visible. Mirrors every property the screen
+       rule set, so nothing is left over from the hidden state. */
+    .print-only {
+      position:static; top:auto; left:auto; width:auto; z-index:auto;
+      visibility:visible; pointer-events:auto;
+    }
+    /* Backgrounds carry meaning here (the paid pill, the excess note), so
+       don't let the browser drop them from the printed copy. */
+    * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   }
 </style></head>
 <body>
