@@ -3882,114 +3882,290 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
         ORDER BY id DESC LIMIT 1`,
       [String(reg.id)]
     );
-    const verifiedOn = verifiedRow
-      ? new Date(verifiedRow.created_at).toLocaleString('en-IN', { dateStyle: 'long', timeStyle: 'short' })
-      : '—';
-
-    const row = (label, value) =>
-      `<tr><td class="k">${escapeHtml(label)}</td><td class="v">${escapeHtml(value)}</td></tr>`;
     const selections = await fetchRegistrationSelections(reg.id);
-
-    // Itemise every payment rather than printing one amount and one UTR.
-    // A delegate who paid a partial and then topped up has two (or more)
-    // real transactions, each with its own date, mode and reference; a
-    // receipt showing only the registration's single utr_number column --
-    // whichever submission happened to write it last -- doesn't account for
-    // what they actually paid.
     const summary = await getPaymentSummary(reg.id, reg.expected_amount);
     const paidTxns = summary.txns.filter((t) => t.txn_status === 'VERIFIED');
-    const fmtWhen = (ts) => (ts ? new Date(ts).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
-    const txnRows = paidTxns.map((t) => {
-      const amt = t.verified_amount != null ? t.verified_amount : t.amount;
-      const mode = PAYMENT_MODE_LABELS[t.payment_mode] || t.payment_mode || '';
-      const ref = t.utr_number ? ` · ${t.utr_number}` : '';
-      return `<tr>
-        <td class="k">${escapeHtml(fmtWhen(t.reviewed_at || t.submitted_at))}<span class="sub">${escapeHtml(mode + ref)}</span></td>
-        <td class="v">₹${escapeHtml(inr(Number(amt)))}</td>
-      </tr>`;
-    }).join('');
-    // Refunds are netted on the receipt too -- a document stating what was
-    // received shouldn't ignore money that went back.
-    const refundRows = (summary.refunds || []).map((r) => `<tr>
-        <td class="k">${escapeHtml(fmtWhen(r.refunded_at))}<span class="sub">Refunded${r.reference_note ? ' · ' + r.reference_note : ''}</span></td>
-        <td class="v neg">− ₹${escapeHtml(inr(Number(r.amount)))}</td>
-      </tr>`).join('');
+
+    // Dates are formatted by hand from IST parts rather than through
+    // toLocaleDateString: this Node build's ICU is limited and silently
+    // returns US month-first ordering, which on a financial document is a
+    // real ambiguity (03/09 is two different days depending on who reads it).
+    const istParts = (ts) => {
+      const d = new Date(Number(ts) + IST_OFFSET_MS);
+      return {
+        day: d.getUTCDate(), mon: SHORT_MONTHS[d.getUTCMonth()], year: d.getUTCFullYear(),
+        hh: String(d.getUTCHours()).padStart(2, '0'), mm: String(d.getUTCMinutes()).padStart(2, '0'),
+      };
+    };
+    const fmtDay = (ts) => { if (!ts) return '—'; const p = istParts(ts); return `${p.day} ${p.mon} ${p.year}`; };
+    const fmtStamp = (ts) => { if (!ts) return '—'; const p = istParts(ts); return `${p.day} ${p.mon} ${p.year}, ${p.hh}:${p.mm} IST`; };
+    const verifiedOn = verifiedRow ? fmtStamp(verifiedRow.created_at) : '—';
+
+    const { salutation: embedded, name: cleanName } = splitSalutation(reg.delegate_name);
+    const sal = (user && user.salutation) || embedded;
+    const delegateName = sal ? `${sal} ${cleanName}` : cleanName;
+    const roleLine = [user && user.designation, user && user.institution].filter(Boolean).join(' · ');
+
+    const fee = Number(reg.expected_amount != null ? reg.expected_amount : reg.paid_amount) || 0;
+    const received = Number(summary.netVerifiedTotal) || 0;
+    const balance = Math.max(0, fee - received);
+    const statusLabel = balance > 0 ? 'Part paid' : 'Paid in full';
+
+    const items = paidTxns.map((t) => ({
+      when: t.reviewed_at || t.submitted_at,
+      mode: PAYMENT_MODE_LABELS[t.payment_mode] || t.payment_mode || '',
+      ref: t.utr_number || '',
+      amount: Number(t.verified_amount != null ? t.verified_amount : t.amount) || 0,
+    }));
+    const refunds = (summary.refunds || []).map((r) => ({
+      when: r.refunded_at, note: r.reference_note || '', amount: Number(r.amount) || 0,
+    }));
+
+    const money = (n) => `₹${inr(Number(n) || 0)}`;
+    const esc = escapeHtml;
+    // A phone number on a printed document should be readable, so group the
+    // Indian ones the way they're written (+91 86002 02692). Other country
+    // codes are left exactly as stored: their grouping conventions differ and
+    // guessing at one would be worse than not grouping at all.
+    const prettyPhone = (e164) => {
+      const m = /^\+91(\d{5})(\d{5})$/.exec(String(e164 || ''));
+      return m ? `+91 ${m[1]} ${m[2]}` : String(e164 || '');
+    };
+    // Issuer identity, from Settings. There is no separate accounts address or
+    // receipt-number sequence in the data model yet -- until there is, the
+    // registration number is the document's reference and the conference
+    // contact is the address of record.
+    const issuer = [CONFERENCE.location, EMAIL.from].filter(Boolean);
+    const confLine = [formatConferenceDates(), CONFERENCE.location].filter(Boolean).join(' · ');
 
     res.set('Cache-Control', 'private, no-store');
     res.type('html').send(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Payment Receipt — ${escapeHtml(reg.registration_number)}</title>
+<title>Payment Receipt — ${esc(reg.registration_number)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Manrope:wght@500;600;700;800&display=swap">
 <style>
-  :root { color-scheme: light; }
-  * { box-sizing: border-box; }
-  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:#f1f5f9; margin:0; padding:2rem; color:#0f172a; }
-  .receipt { max-width: 640px; margin: 0 auto; background:#fff; border:1px solid #e2e8f0; border-radius:16px; overflow:hidden; box-shadow:0 10px 30px rgba(2,6,23,.08); }
-  .head { background:#312e81; color:#fff; padding:1.75rem 2rem; }
-  .head .tag { font-size:.7rem; letter-spacing:.12em; text-transform:uppercase; color:#c7d2fe; }
-  .head h1 { font-size:1.15rem; margin:.35rem 0 0; line-height:1.3; }
-  .head p { margin:.35rem 0 0; font-size:.8rem; color:#c7d2fe; }
-  .body { padding:1.5rem 2rem 2rem; }
-  .num { display:flex; justify-content:space-between; align-items:center; background:#eef2ff; border:1px solid #c7d2fe; border-radius:12px; padding:1rem 1.25rem; margin-bottom:1.5rem; }
-  .num .label { font-size:.7rem; text-transform:uppercase; letter-spacing:.1em; color:#4338ca; font-weight:700; }
-  .num .value { font-size:1.35rem; font-weight:800; font-family:ui-monospace, monospace; color:#312e81; }
-  .status { display:inline-block; background:#dcfce7; color:#166534; font-size:.7rem; font-weight:800; padding:.25rem .65rem; border-radius:999px; text-transform:uppercase; letter-spacing:.06em; }
-  table { width:100%; border-collapse:collapse; font-size:.9rem; }
-  td { padding:.6rem 0; border-bottom:1px solid #f1f5f9; vertical-align:top; }
-  td.k { color:#64748b; width:60%; }
-  td.v { font-weight:600; text-align:right; white-space:nowrap; }
-  td.k .sub { display:block; font-size:.72rem; color:#94a3b8; margin-top:.15rem; word-break:break-all; }
-  td.v.neg { color:#b91c1c; }
-  .sect { margin:1.5rem 0 .25rem; font-size:.7rem; font-weight:800; letter-spacing:.1em; text-transform:uppercase; color:#4338ca; }
-  tr.tot td { border-bottom:0; border-top:2px solid #c7d2fe; padding-top:.7rem; font-weight:800; }
-  tr.tot td.k { color:#0f172a; }
-  .note { margin-top:.75rem; background:#fffbeb; border:1px solid #fde68a; color:#92400e; font-size:.75rem; border-radius:8px; padding:.6rem .75rem; line-height:1.45; }
-  .foot { margin-top:1.5rem; font-size:.72rem; color:#94a3b8; text-align:center; line-height:1.5; }
+  /* One document, two layouts. The delegate reads the stub on a phone; the
+     statement is what comes out of Print / Save as PDF, because that copy
+     goes to a finance office and has to look like an accounting record.
+     Neither is a resized version of the other -- they are different
+     documents, so each is authored separately and CSS picks one. */
+  :root {
+    color-scheme: light;
+    --white:#FFFFFF; --ink:#16181D; --soft:#494E5C; --muted:#767C8C;
+    --rule:#DDDFE7; --rule-2:#EDEEF3; --indigo:#3B33A8; --indigo-2:#EDECFA;
+    --green:#146B3E; --green-2:#E5F3EA; --ground:#EEF0F4; --red:#B3261E;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:2rem 1rem 3rem; background:var(--ground); color:var(--ink);
+         font-family:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+         line-height:1.55; -webkit-font-smoothing:antialiased; }
+  .money { font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .print-only { display:none; }
+
+  /* ---------------- Stub (screen) ---------------- */
+  .stub { width:380px; max-width:100%; margin:0 auto; border-radius:18px; overflow:hidden;
+          background:var(--white); font-family:"Manrope", system-ui, sans-serif;
+          box-shadow:0 1px 2px rgba(20,22,28,.06), 0 14px 36px rgba(20,22,28,.10); }
+  .stub .top { background:var(--indigo); color:var(--white); padding:22px 26px 26px; }
+  .stub .kicker { display:flex; justify-content:space-between; align-items:center; gap:1rem;
+                  font-size:10.5px; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:#C9C6F2; }
+  .stub .kicker .chip { background:rgba(255,255,255,.16); color:var(--white); border-radius:99px; padding:3px 9px; letter-spacing:.1em; }
+  .stub .amt { font-size:44px; font-weight:800; letter-spacing:-.03em; margin-top:16px; line-height:1; }
+  .stub .amt-sub { font-size:12.5px; font-weight:600; color:#C9C6F2; margin-top:7px; }
+  .stub .perf { position:relative; height:22px; background:var(--indigo); }
+  .stub .perf::before, .stub .perf::after { content:""; position:absolute; top:0; width:22px; height:22px;
+                                            border-radius:50%; background:var(--ground); }
+  .stub .perf::before { left:-11px; } .stub .perf::after { right:-11px; }
+  .stub .perf i { position:absolute; left:16px; right:16px; top:10px; border-top:2px dashed rgba(255,255,255,.42); }
+  .stub .body { padding:22px 26px 24px; display:flex; flex-direction:column; gap:18px; }
+  .stub .nm { font-size:17px; font-weight:800; letter-spacing:-.01em; }
+  .stub .rl { font-size:12.5px; color:var(--soft); font-weight:500; margin-top:3px; }
+  .stub .reg { display:flex; justify-content:space-between; align-items:center; gap:1rem;
+               background:var(--indigo-2); border-radius:11px; padding:11px 14px; }
+  .stub .reg .k { font-size:10px; font-weight:700; letter-spacing:.11em; text-transform:uppercase; color:var(--indigo); }
+  .stub .reg .v { font-family:"IBM Plex Mono", ui-monospace, monospace; font-size:14px; font-weight:600; color:var(--indigo); }
+  .stub .rw { display:flex; justify-content:space-between; gap:1rem; padding:8px 0;
+              border-bottom:1px solid var(--rule-2); font-size:12.5px; }
+  .stub .rw:last-child { border-bottom:0; }
+  .stub .rw .k { color:var(--muted); font-weight:500; }
+  .stub .rw .v { font-weight:600; text-align:right; }
+  .stub .rw .v .sub { display:block; font-family:"IBM Plex Mono", monospace; font-size:10.5px; font-weight:400; color:var(--muted); margin-top:1px; }
+  .stub .split { background:#F7F7FB; border-radius:11px; padding:12px 14px; display:flex; flex-direction:column; gap:8px; }
+  .stub .split .hd { font-size:10px; font-weight:700; letter-spacing:.11em; text-transform:uppercase; color:var(--muted); }
+  .stub .split .ln { display:flex; justify-content:space-between; gap:1rem; font-size:12px; }
+  .stub .split .ln .l { color:var(--soft); }
+  .stub .split .ln .l em { font-style:normal; display:block; font-family:"IBM Plex Mono", monospace; font-size:10.5px; color:var(--muted); }
+  .stub .split .ln .m { font-family:"IBM Plex Mono", monospace; font-weight:600; }
+  .stub .split .ln .m.neg { color:var(--red); }
+  .stub .note { background:#FBF1E0; border:1px solid #E4C489; color:#7A4B05; border-radius:10px;
+                padding:10px 12px; font-size:11.5px; line-height:1.5; }
+  .stub .foot { font-size:10.5px; color:var(--muted); line-height:1.5; text-align:center;
+                border-top:1px solid var(--rule-2); padding-top:14px; }
   .actions { text-align:center; margin-top:1.5rem; }
-  button { background:#4f46e5; color:#fff; border:0; border-radius:10px; padding:.65rem 1.5rem; font-size:.85rem; font-weight:700; cursor:pointer; }
-  @media print { body { background:#fff; padding:0; } .receipt { box-shadow:none; border:none; } .actions { display:none; } }
+  .actions button { font:inherit; font-weight:700; font-size:.85rem; background:var(--indigo); color:var(--white);
+                    border:0; border-radius:10px; padding:.7rem 1.5rem; cursor:pointer; }
+  .actions button:hover { background:#332B92; }
+  .actions p { margin:.6rem 0 0; font-size:.72rem; color:var(--muted); }
+  :focus-visible { outline:2px solid var(--indigo); outline-offset:3px; }
+
+  /* ---------------- Statement (print) ---------------- */
+  .stmt { width:100%; background:var(--white); font-family:"IBM Plex Sans", system-ui, sans-serif; color:var(--ink); }
+  .stmt .bar { display:flex; justify-content:space-between; align-items:flex-start; gap:2rem;
+               padding-bottom:16px; border-bottom:1px solid var(--rule); }
+  .stmt .bar .kd { font-family:"IBM Plex Mono", monospace; font-size:10px; letter-spacing:.15em;
+                   text-transform:uppercase; color:var(--indigo); font-weight:600; }
+  .stmt .bar .cf { font-size:15px; font-weight:600; line-height:1.3; max-width:36ch; margin-top:4px; }
+  .stmt .bar .dt { font-family:"IBM Plex Mono", monospace; font-size:11px; color:var(--muted); margin-top:3px; }
+  .stmt .bar .rgt { text-align:right; }
+  .stmt .bar .rgt .k { font-family:"IBM Plex Mono", monospace; font-size:9.5px; letter-spacing:.12em;
+                       text-transform:uppercase; color:var(--muted); display:block; }
+  .stmt .bar .rgt .v { font-family:"IBM Plex Mono", monospace; font-size:14px; font-weight:600; display:block; margin-top:2px; }
+  .stmt .bar .rgt .pill { display:inline-block; margin-top:6px; font-family:"IBM Plex Mono", monospace;
+                          font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; font-weight:600;
+                          background:var(--green-2); color:var(--green); padding:3px 8px; border-radius:3px; }
+  .stmt .hero { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+                padding:20px 0; border-bottom:1px solid var(--rule); }
+  .stmt .hero .big { font-size:32px; font-weight:600; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
+  .stmt .hero .cap { font-size:12.5px; color:var(--soft); }
+  .stmt .hero .cap b { font-weight:600; color:var(--ink); }
+  .stmt .grid { display:grid; grid-template-columns:118px 1fr; }
+  .stmt .grid .k { font-family:"IBM Plex Mono", monospace; font-size:9.5px; letter-spacing:.1em;
+                   text-transform:uppercase; color:var(--muted); padding:10px 0; border-bottom:1px solid var(--rule-2); }
+  .stmt .grid .v { font-size:13px; padding:10px 0; border-bottom:1px solid var(--rule-2); }
+  .stmt .grid .v .sub { display:block; font-size:11.5px; color:var(--muted); }
+  .stmt .grid .v.mono { font-family:"IBM Plex Mono", monospace; }
+  .stmt .lines { padding-top:18px; }
+  .stmt .lines .hd { font-family:"IBM Plex Mono", monospace; font-size:9.5px; letter-spacing:.12em;
+                     text-transform:uppercase; color:var(--muted); padding-bottom:9px; }
+  .stmt .ln { display:grid; grid-template-columns:78px 1fr auto; gap:14px; align-items:baseline;
+              padding:9px 0; border-top:1px solid var(--rule-2); font-size:12.5px; }
+  .stmt .ln .d { font-family:"IBM Plex Mono", monospace; font-size:11px; color:var(--muted); }
+  .stmt .ln .w .rf { font-family:"IBM Plex Mono", monospace; font-size:10.5px; color:var(--muted); }
+  .stmt .ln .m { font-family:"IBM Plex Mono", monospace; font-weight:600; text-align:right; }
+  .stmt .ln .m.neg { color:var(--red); }
+  .stmt .ln.sum { border-top:1.5px solid var(--ink); margin-top:3px; font-size:13.5px; font-weight:600; }
+  .stmt .bal { display:flex; justify-content:space-between; padding-top:9px; font-size:12px; color:var(--soft); }
+  .stmt .bal .m { font-family:"IBM Plex Mono", monospace; }
+  .stmt .note { margin-top:14px; border:1px solid #E4C489; background:#FBF1E0; color:#7A4B05;
+                padding:9px 11px; font-size:11px; border-radius:3px; }
+  .stmt .foot { margin-top:22px; padding-top:12px; border-top:1px solid var(--rule); font-size:10.5px;
+                color:var(--muted); line-height:1.55; display:flex; justify-content:space-between; gap:1.5rem; }
+  .stmt .foot .r { text-align:right; }
+
+  @media print {
+    @page { size:A4; margin:14mm; }
+    body { background:#fff; padding:0; }
+    .screen-only { display:none !important; }
+    .print-only { display:block !important; }
+  }
 </style></head>
 <body>
-  <div class="receipt">
-    <div class="head">
-      <div class="tag">${escapeHtml(CONFERENCE.acronym)} · Payment Receipt</div>
-      <h1>${escapeHtml(CONFERENCE.name)}</h1>
-      <p>${escapeHtml([formatConferenceDates(), CONFERENCE.location].filter(Boolean).join(' · '))}</p>
-    </div>
-    <div class="body">
-      <div class="num">
-        <span class="label">Registration No.</span>
-        <span class="value">${escapeHtml(reg.registration_number)}</span>
-      </div>
-      <table>
-        ${row('Status', 'Confirmed — Payment Verified')}
-        ${row('Delegate', (() => {
-          const { salutation: embedded, name: clean } = splitSalutation(reg.delegate_name);
-          const sal = (user && user.salutation) || embedded;
-          return sal ? `${sal} ${clean}` : clean;
-        })())}
-        ${row('Designation', user ? user.designation : '')}
-        ${row('Institution', user ? user.institution : '')}
-        ${displayPhone(reg) ? row('Mobile', displayPhone(reg)) : ''}
-        ${row('Category', reg.category_label)}
-        ${selections.map((s) => row(s.group_name, s.option_name)).join('')}
-        ${row('Fee', '₹' + inr(reg.expected_amount != null ? reg.expected_amount : reg.paid_amount))}
-        ${row('Verified On', verifiedOn)}
-      </table>
 
-      <p class="sect">${paidTxns.length > 1 ? `Payments Received (${paidTxns.length})` : 'Payment Received'}</p>
-      <table>
-        ${txnRows || row('—', 'No itemised transactions on record')}
-        ${refundRows}
-        <tr class="tot">
-          <td class="k">Total Paid</td>
-          <td class="v">₹${escapeHtml(inr(summary.netVerifiedTotal))}</td>
-        </tr>
-      </table>
-      ${summary.overpaid > 0 ? `<p class="note">Paid ₹${escapeHtml(inr(summary.overpaid))} more than the ₹${escapeHtml(inr(summary.fee))} fee. The excess is due to be refunded — please contact the organisers if you have not received it.</p>` : ''}
-      <div class="actions"><button onclick="window.print()">Print / Save as PDF</button></div>
-      <p class="foot">This is a computer-generated receipt for conference registration.<br>Registration number <b>${escapeHtml(reg.registration_number)}</b> — please quote it in all correspondence.</p>
+  <!-- What the delegate sees. -->
+  <div class="stub screen-only">
+    <div class="top">
+      <div class="kicker"><span>${esc(CONFERENCE.acronym)} · Receipt</span><span class="chip">${esc(statusLabel)}</span></div>
+      <div class="amt money">${esc(money(received))}</div>
+      <div class="amt-sub">${balance > 0 ? `${esc(money(balance))} still due` : 'Received in full'} · ${esc(fmtDay(verifiedRow && verifiedRow.created_at))}</div>
+    </div>
+    <div class="perf"><i></i></div>
+    <div class="body">
+      <div>
+        <div class="nm">${esc(delegateName)}</div>
+        ${roleLine ? `<div class="rl">${esc(roleLine)}</div>` : ''}
+      </div>
+
+      <div class="reg">
+        <span class="k">Registration</span>
+        <span class="v">${esc(reg.registration_number)}</span>
+      </div>
+
+      <div>
+        <div class="rw"><span class="k">Category</span><span class="v">${esc(reg.category_label)}</span></div>
+        ${selections.map((s) => `<div class="rw"><span class="k">${esc(s.group_name)}</span><span class="v">${esc(s.option_name)}</span></div>`).join('')}
+        <div class="rw"><span class="k">Conference</span><span class="v">${esc(formatConferenceDates())}<span class="sub">${esc(CONFERENCE.location)}</span></span></div>
+      </div>
+
+      ${items.length > 1 || refunds.length ? `<div class="split">
+        <div class="hd">${esc(items.length > 1 ? `Paid in ${items.length} instalments` : 'Payment')}</div>
+        ${items.map((i) => `<div class="ln"><span class="l">${esc(i.mode)}${i.ref ? `<em>${esc(i.ref)}</em>` : ''}</span><span class="m money">${esc(money(i.amount))}</span></div>`).join('')}
+        ${refunds.map((r) => `<div class="ln"><span class="l">Refunded${r.note ? `<em>${esc(r.note)}</em>` : ''}</span><span class="m money neg">− ${esc(money(r.amount))}</span></div>`).join('')}
+      </div>` : ''}
+
+      ${summary.overpaid > 0 ? `<div class="note">You paid ${esc(money(summary.overpaid))} more than the ${esc(money(summary.fee))} fee. The excess is due to be refunded — contact the organisers if you have not received it.</div>` : ''}
+
+      <div class="foot">
+        Issued by ${esc(issuer.join(' · '))}<br>
+        Quote ${esc(reg.registration_number)} in all correspondence.
+      </div>
     </div>
   </div>
+
+  <div class="actions screen-only">
+    <button type="button" onclick="window.print()">Print / Save as PDF</button>
+    <p>The printed copy is a full statement, suitable for a reimbursement claim.</p>
+  </div>
+
+  <!-- What comes out of the printer. -->
+  <div class="stmt print-only">
+    <div class="bar">
+      <div>
+        <span class="kd">Payment receipt</span>
+        <div class="cf">${esc(CONFERENCE.name)}</div>
+        <div class="dt">${esc(confLine)}</div>
+      </div>
+      <div class="rgt">
+        <span class="k">Registration no.</span>
+        <span class="v">${esc(reg.registration_number)}</span>
+        <span class="pill">${esc(statusLabel)}</span>
+      </div>
+    </div>
+
+    <div class="hero">
+      <span class="big money">${esc(money(received))}</span>
+      <span class="cap">received against a fee of <b>${esc(money(fee))}</b> · ${balance > 0 ? `<b>${esc(money(balance))}</b> outstanding` : 'nothing outstanding'}</span>
+    </div>
+
+    <div class="grid">
+      <div class="k">Delegate</div>
+      <div class="v">${esc(delegateName)}${roleLine ? `<span class="sub">${esc(roleLine)}</span>` : ''}</div>
+      ${displayPhone(reg) ? `<div class="k">Mobile</div><div class="v mono">${esc(prettyPhone(displayPhone(reg)))}</div>` : ''}
+      ${user && user.email ? `<div class="k">Email</div><div class="v mono">${esc(user.email)}</div>` : ''}
+      <div class="k">Category</div>
+      <div class="v">${esc(reg.category_label)}</div>
+      ${selections.length ? `<div class="k">Includes</div><div class="v">${selections.map((s, i) => i === 0 ? esc(s.option_name) : `<span class="sub">${esc(s.option_name)}</span>`).join('')}</div>` : ''}
+      <div class="k">Issued by</div>
+      <div class="v">${esc(CONFERENCE.location)}${EMAIL.from ? `<span class="sub">${esc(EMAIL.from)}</span>` : ''}</div>
+      <div class="k">Verified on</div>
+      <div class="v mono">${esc(verifiedOn)}</div>
+    </div>
+
+    <div class="lines">
+      <div class="hd">Payments received</div>
+      ${items.length ? items.map((i) => `<div class="ln">
+        <span class="d">${esc(fmtDay(i.when))}</span>
+        <span class="w">${esc(i.mode)}${i.ref ? ` <span class="rf">${esc(i.ref)}</span>` : ''}</span>
+        <span class="m money">${esc(money(i.amount))}</span>
+      </div>`).join('') : `<div class="ln"><span class="d">—</span><span class="w">No itemised transactions on record</span><span class="m">—</span></div>`}
+      ${refunds.map((r) => `<div class="ln">
+        <span class="d">${esc(fmtDay(r.when))}</span>
+        <span class="w">Refunded${r.note ? ` <span class="rf">${esc(r.note)}</span>` : ''}</span>
+        <span class="m money neg">− ${esc(money(r.amount))}</span>
+      </div>`).join('')}
+      <div class="ln sum"><span class="d"></span><span class="w">Total received</span><span class="m money">${esc(money(received))}</span></div>
+      <div class="bal"><span>Balance due</span><span class="m money">${esc(money(balance))}</span></div>
+    </div>
+
+    ${summary.overpaid > 0 ? `<div class="note">Paid ${esc(money(summary.overpaid))} more than the ${esc(money(summary.fee))} fee. The excess is due to be refunded.</div>` : ''}
+
+    <div class="foot">
+      <span>Computer-generated receipt; valid without signature.<br>Quote ${esc(reg.registration_number)} in all correspondence.</span>
+      <span class="r">${esc(CONFERENCE.acronym)}<br>${esc(CONFERENCE.location)}</span>
+    </div>
+  </div>
+
 </body></html>`);
   } catch (err) {
     next(err);
