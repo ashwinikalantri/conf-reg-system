@@ -924,7 +924,8 @@ async function saveRegistrationSelections(registrationId, selections) {
 // Ordered by group sort_order so it reads the same way everywhere.
 async function fetchRegistrationSelections(registrationId) {
   return dbAll(
-    `SELECT g.id AS group_id, g.name AS group_name, o.id AS option_id, o.name AS option_name, ro.is_faculty
+    `SELECT g.id AS group_id, g.name AS group_name, o.id AS option_id, o.name AS option_name, ro.is_faculty,
+            o.fee AS option_fee
        FROM registration_options ro
        JOIN program_options o ON o.id = ro.option_id
        JOIN program_groups g ON g.id = ro.group_id
@@ -3911,6 +3912,27 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
     const balance = Math.max(0, fee - received);
     const statusLabel = balance > 0 ? 'Part paid' : 'Paid in full';
 
+    // How the payable amount was arrived at. expected_amount is stored NET --
+    // category fee, less any discount, plus any paid programme options (see
+    // the registration submit handler) -- so a discounted delegate's receipt
+    // otherwise showed only the reduced figure and said nothing about the
+    // concession they were given. Six verified registrations currently carry a
+    // 1,000 promo discount and had no record of it on their receipt.
+    //
+    // The list price isn't stored, so it's reconstructed by reversing that
+    // arithmetic. Option fees are read from the options actually selected;
+    // they are added AFTER the discount because a promo applies to the
+    // category fee only, never to a paid workshop.
+    const discount = Number(reg.discount_amount) || 0;
+    const optionsFee = selections.reduce((sum, o) => sum + (Number(o.option_fee) || 0), 0);
+    const categoryFee = fee + discount - optionsFee;
+    const discountLabel = reg.discount_code === 'GROUP'
+      ? 'Group discount'
+      : (reg.discount_code ? `Promo code ${reg.discount_code}` : 'Discount');
+    // Only worth showing when there is actually something to break down.
+    const showBreakdown = discount > 0 || optionsFee > 0;
+    const paidOptions = selections.filter((o) => Number(o.option_fee) > 0);
+
     const items = paidTxns.map((t) => ({
       when: t.reviewed_at || t.submitted_at,
       mode: PAYMENT_MODE_LABELS[t.payment_mode] || t.payment_mode || '',
@@ -4088,6 +4110,14 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
         <div class="rw"><span class="k">Conference</span><span class="v">${esc(formatConferenceDates())}<span class="sub">${esc(CONFERENCE.location)}</span></span></div>
       </div>
 
+      ${showBreakdown ? `<div class="split">
+        <div class="hd">How the fee was worked out</div>
+        <div class="ln"><span class="l">${esc(reg.category_label)}</span><span class="m money">${esc(money(categoryFee))}</span></div>
+        ${paidOptions.map((o) => `<div class="ln"><span class="l">${esc(o.option_name)}</span><span class="m money">${esc(money(o.option_fee))}</span></div>`).join('')}
+        ${discount > 0 ? `<div class="ln"><span class="l">${esc(discountLabel)}</span><span class="m money neg">− ${esc(money(discount))}</span></div>` : ''}
+        <div class="ln" style="border-top:1px solid var(--rule);padding-top:7px;font-weight:700"><span class="l" style="color:var(--ink)">Payable</span><span class="m money">${esc(money(fee))}</span></div>
+      </div>` : ''}
+
       ${items.length > 1 || refunds.length ? `<div class="split">
         <div class="hd">${esc(items.length > 1 ? `Paid in ${items.length} instalments` : 'Payment')}</div>
         ${items.map((i) => `<div class="ln"><span class="l">${esc(i.mode)}${i.ref ? `<em>${esc(i.ref)}</em>` : ''}</span><span class="m money">${esc(money(i.amount))}</span></div>`).join('')}
@@ -4125,7 +4155,7 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
 
     <div class="hero">
       <span class="big money">${esc(money(received))}</span>
-      <span class="cap">received against a fee of <b>${esc(money(fee))}</b> · ${balance > 0 ? `<b>${esc(money(balance))}</b> outstanding` : 'nothing outstanding'}</span>
+      <span class="cap">received against ${showBreakdown ? 'a payable amount of' : 'a fee of'} <b>${esc(money(fee))}</b>${discount > 0 ? ` (after a ${esc(money(discount))} discount)` : ''} · ${balance > 0 ? `<b>${esc(money(balance))}</b> outstanding` : 'nothing outstanding'}</span>
     </div>
 
     <div class="grid">
@@ -4141,6 +4171,14 @@ app.get('/api/registrations/me/receipt', requireAuth, async (req, res, next) => 
       <div class="k">Verified on</div>
       <div class="v mono">${esc(verifiedOn)}</div>
     </div>
+
+    ${showBreakdown ? `<div class="lines">
+      <div class="hd">Fee</div>
+      <div class="ln"><span class="d"></span><span class="w">${esc(reg.category_label)}</span><span class="m money">${esc(money(categoryFee))}</span></div>
+      ${paidOptions.map((o) => `<div class="ln"><span class="d"></span><span class="w">${esc(o.option_name)}</span><span class="m money">${esc(money(o.option_fee))}</span></div>`).join('')}
+      ${discount > 0 ? `<div class="ln"><span class="d"></span><span class="w">${esc(discountLabel)}</span><span class="m money neg">− ${esc(money(discount))}</span></div>` : ''}
+      <div class="ln sum"><span class="d"></span><span class="w">Amount payable</span><span class="m money">${esc(money(fee))}</span></div>
+    </div>` : ''}
 
     <div class="lines">
       <div class="hd">Payments received</div>
