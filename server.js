@@ -1064,8 +1064,32 @@ async function getGroupDiscountAmount(phone, baseFee) {
 async function assignUserRegNumber(phone) {
   const u = await dbGet('SELECT registration_number FROM users WHERE phone_number = ?', [phone]);
   if (u && u.registration_number) return u.registration_number;
+
+  // No prefix, no number.
+  //
+  // On 28 August 2026 a deploy blanked the hardcoded conference defaults so
+  // the app wouldn't be tied to one event, expecting first-run setup to
+  // refill them. On an already-running instance nothing had ever written the
+  // prefix to schema_meta, so for the four hours until Settings was saved
+  // this concatenated an empty prefix and issued '1274' and '1275' to two
+  // real delegates -- numbers that looked assigned, were carried onto their
+  // receipts and confirmation emails, and had to be repaired by hand.
+  //
+  // Leaving it unassigned is the recoverable failure: the sequence is not
+  // consumed, nothing wrong is stored, and the next call -- the next signup,
+  // or this delegate submitting their registration -- issues a correct number
+  // the moment a prefix exists. A bare sequence number repairs itself never,
+  // and the boot-time backfills skip it because it isn't empty.
+  const prefix = String(CONFERENCE.regPrefix || '').trim();
+  if (!prefix) {
+    console.error('[reg-number] No registration-number prefix is configured '
+      + '(Settings -> General -> Conference Details). Leaving this delegate unnumbered '
+      + 'rather than issuing a bare sequence number.');
+    return null;
+  }
+
   const seq = await dbRun('INSERT INTO reg_seq DEFAULT VALUES');
-  const number = CONFERENCE.regPrefix + String(seq.lastID).padStart(4, '0');
+  const number = prefix + String(seq.lastID).padStart(4, '0');
   await dbRun(
     "UPDATE users SET registration_number = ? WHERE phone_number = ? AND (registration_number IS NULL OR registration_number = '')",
     [number, phone]
@@ -3306,7 +3330,10 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
       if (prev && prev.id_card && prev.id_card !== idFilename) await deleteScreenshotFile(prev.id_card);
 
       const regNo = await assignUserRegNumber(phone);
-      await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
+      // `if`: assignUserRegNumber returns null when no prefix is configured
+      // (see there), and stamping that over the row's existing number would
+      // turn a misconfiguration into data loss.
+      if (regNo) await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
 
       if (isFirstUseOfPromo) {
         writeAuditRow('discount_code', promoCodeId, 'DISCOUNT_CODE_USED', null, `${promoCode} used by ${name} (${phone}), reg ${regNo}`, phone, name, 'DELEGATE').catch(() => {});
@@ -3415,7 +3442,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 
     // Stamp the registration with the delegate's signup-assigned number.
     const regNo = await assignUserRegNumber(phone);
-    await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
+    if (regNo) await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
 
     if (isFirstUseOfPromo) {
       writeAuditRow('discount_code', promoCodeId, 'DISCOUNT_CODE_USED', null, `${promoCode} used by ${name} (${phone}), reg ${regNo}`, phone, name, 'DELEGATE').catch(() => {});
@@ -5533,7 +5560,7 @@ app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
     await saveRegistrationSelections(registrationId, selections);
 
     const regNo = await assignUserRegNumber(phone);
-    await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
+    if (regNo) await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
 
     // Ledger row, same as every other payment path -- the Review modal's
     // per-transaction reconciliation and the Payments report both assume
