@@ -62,7 +62,13 @@ const EXT_MIME = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 
 // restart, and every currently-issued session cookie stops being recognized
 // the moment it does (see the PUT handler's change note for this field).
 let COOKIE_NAME = process.env.COOKIE_NAME || 'nqocn_sid';
-const OTP_TTL_MS = 5 * 60 * 1000;        // OTP valid for 5 minutes
+// 15, not 5. A login OTP is typed within seconds of arriving, but signup
+// asks for TWO codes and then a page of details -- country, address, age,
+// designation, institution, a password -- and the first code has to survive
+// all of it. At five minutes it routinely did not: the phone code expired
+// while the form was still being filled, and the delegate was told to
+// request an OTP they had already requested.
+const OTP_TTL_MS = 15 * 60 * 1000;       // OTP valid for 15 minutes
 const OTP_RESEND_MS = 30 * 1000;         // min gap between OTP requests
 const OTP_MAX_ATTEMPTS = 5;              // wrong tries before OTP is burned
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // sessions last 12 hours
@@ -1446,7 +1452,7 @@ db.serialize(() => {
   // column. Replace it in place, ONCE -- detected by looking for the old
   // column rather than dropping unconditionally, which would wipe live
   // in-flight codes on every restart. Nothing durable is lost either way:
-  // OTPs live 5 minutes (OTP_TTL_MS) and are single-use, so at worst someone
+  // OTPs are short-lived (OTP_TTL_MS) and single-use, so at worst someone
   // mid-login when this first deploys requests a fresh code.
   db.all('PRAGMA table_info(otp_codes)', (err, cols) => {
     if (err || !cols || !cols.some((c) => c.name === 'phone_number')) return;
@@ -2469,9 +2475,15 @@ async function issueOtp(destination) {
   return { ok: true, delivered, devOtp: OTP_ECHO && !delivered ? otp : undefined };
 }
 
-// Validate and burn an OTP for one destination. Returns { ok, channel } or
+// Validate an OTP without spending it. Returns { ok, channel } or
 // { ok: false, error }.
-async function consumeOtp(destination, otp) {
+//
+// Separate from burning it because signup checks two codes and then several
+// other things that can fail. Burning the phone code before the email code
+// was even looked at meant any later failure -- a mistyped email code, an
+// account that already exists -- destroyed a perfectly good verification and
+// told the delegate to "request an OTP first" on their next attempt.
+async function verifyOtp(destination, otp) {
   const channel = channelOf(destination);
   // Canonicalised EXACTLY as issueOtp does -- a code issued to
   // "9823900641" is stored under "+919823900641", so looking it up by the
@@ -2480,11 +2492,17 @@ async function consumeOtp(destination, otp) {
   // first".
   const dest = channel === 'email' ? normalizeEmail(destination) : (toE164(destination) || String(destination || '').trim());
   const row = await dbGet('SELECT * FROM otp_codes WHERE destination = ?', [dest]);
-  if (!row) return { ok: false, error: 'Please request an OTP first.' };
+  // True whichever way we got here: never requested, already used, or swept
+  // after expiring. The old wording asserted the first, which was usually
+  // the one thing that had not happened.
+  if (!row) return { ok: false, error: 'That code is no longer valid. Please request a new one.' };
 
+  // Deliberately NOT deleted here. Removing the row made the very next
+  // attempt report "Please request an OTP first" -- telling someone who had
+  // just been told their code expired that they never asked for one. The
+  // hourly sweep clears it, and a new request overwrites it.
   if (Date.now() > row.expires_at) {
-    await dbRun('DELETE FROM otp_codes WHERE destination = ?', [dest]);
-    return { ok: false, error: 'OTP expired. Please request a new one.' };
+    return { ok: false, error: 'That code has expired. Please request a new one.' };
   }
   if (row.attempts >= OTP_MAX_ATTEMPTS) {
     await dbRun('DELETE FROM otp_codes WHERE destination = ?', [dest]);
@@ -2495,8 +2513,22 @@ async function consumeOtp(destination, otp) {
     return { ok: false, error: 'Incorrect OTP.' };
   }
 
-  await dbRun('DELETE FROM otp_codes WHERE destination = ?', [dest]); // single use
   return { ok: true, channel: row.channel };
+}
+
+// Spend an OTP. Single use: once this returns, the code is gone.
+async function burnOtp(destination) {
+  const channel = channelOf(destination);
+  const dest = channel === 'email' ? normalizeEmail(destination) : (toE164(destination) || String(destination || '').trim());
+  await dbRun('DELETE FROM otp_codes WHERE destination = ?', [dest]);
+}
+
+// Verify and spend in one step, for the flows that have nothing left to fail
+// after the code checks out.
+async function consumeOtp(destination, otp) {
+  const result = await verifyOtp(destination, otp);
+  if (result.ok) await burnOtp(destination);
+  return result;
 }
 
 // Issue a session and attach its cookie to the response.
@@ -2976,13 +3008,15 @@ app.post('/api/auth/register', async (req, res, next) => {
     const phoneCode = phoneOtp || otp;
     let phoneOk = false;
     let emailOk = false;
+    // Verified, not yet spent -- see verifyOtp. Both codes, and every check
+    // below them, have to pass before either is burned.
     if (phoneVal && phoneCode) {
-      const c = await consumeOtp(phoneVal, phoneCode);
+      const c = await verifyOtp(phoneVal, phoneCode);
       if (!c.ok) return res.status(400).json({ success: false, error: `Mobile OTP: ${c.error}` });
       phoneOk = true;
     }
     if (emailVal && emailOtp) {
-      const c = await consumeOtp(emailVal, emailOtp);
+      const c = await verifyOtp(emailVal, emailOtp);
       if (!c.ok) return res.status(400).json({ success: false, error: `Email OTP: ${c.error}` });
       emailOk = true;
     }
@@ -3066,6 +3100,13 @@ app.post('/api/auth/register', async (req, res, next) => {
       [userKey, phoneVal ? toE164(phoneVal) : null, phoneVerified, emailVerified, salutationVal, nameVal, designation, institute,
        countryVal, pincode || null, state || null, district || null, ageNum, genderVal, emailVal, passwordHash, Date.now()]
     );
+
+    // The account exists now, so the codes have done their job. Spent here
+    // rather than at the top: everything that could reject this registration
+    // has already run, and a rejected attempt must leave the delegate's codes
+    // usable for the retry.
+    if (phoneOk) await burnOtp(phoneVal);
+    if (emailOk) await burnOtp(emailVal);
 
     await assignUserRegNumber(userKey); // ensure a registration number exists
     const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [userKey]);
