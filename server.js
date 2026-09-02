@@ -4822,10 +4822,30 @@ async function readStoredUpload(value) {
 // cleans up the flag/check data behind it.
 app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
+    // `all` re-judges every registration that has a screenshot, not only the
+    // ones currently flagged. Approving a registration clears is_flagged, so
+    // a flagged-only rescan cannot reach the check results sitting behind an
+    // already-approved row -- which is exactly what needs refreshing after
+    // the matching logic changes, since those results are what the review
+    // modal shows.
+    const all = !!req.body.all;
+    // slip_amount, not expected_amount. registrations.screenshot is ONE
+    // payment's slip, and a delegate who paid a 2,000 fee in instalments of
+    // 750 and 1,250 has a slip that says 1,250 -- comparing it against the
+    // full fee reports a discrepancy on a perfectly good screenshot. Five
+    // registrations were flagged that way. The ledger row that owns this
+    // screenshot knows what it was for; fall back to the fee only when no
+    // row claims it (a legacy submission that predates the ledger).
     const rows = await dbAll(
-      `SELECT id, registration_number, category_key, expected_amount, paid_amount, utr_number,
-              screenshot, payment_mode
-         FROM registrations WHERE is_flagged = 1`);
+      `SELECT r.id, r.registration_number, r.category_key, r.expected_amount, r.paid_amount,
+              r.utr_number, r.screenshot, r.payment_mode,
+              COALESCE(
+                (SELECT COALESCE(pt.verified_amount, pt.amount) FROM payment_transactions pt
+                  WHERE pt.registration_id = r.id AND pt.screenshot = r.screenshot
+                  ORDER BY pt.id DESC LIMIT 1),
+                r.expected_amount) AS slip_amount
+         FROM registrations r
+        WHERE ${all ? "r.screenshot IS NOT NULL AND r.screenshot != ''" : 'r.is_flagged = 1'}`);
 
     let rescanned = 0;
     let unflagged = 0;
@@ -4836,7 +4856,7 @@ app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', '
       const buffer = await readStoredUpload(reg.screenshot);
       if (!buffer) { skippedNoFile++; continue; }
 
-      const checks = await runOcrChecks(buffer, { expectedAmount: reg.expected_amount, utr: reg.utr_number });
+      const checks = await runOcrChecks(buffer, { expectedAmount: reg.slip_amount, utr: reg.utr_number });
       if (reg.payment_mode === 'NEFT_RTGS') checks.vpa = true;
 
       // Only the payment screenshot is machine-checked; a student ID card is
@@ -4858,7 +4878,7 @@ app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', '
       if (flagged) stillFlagged++; else unflagged++;
     }
 
-    res.json({ success: true, totalFlagged: rows.length, rescanned, unflagged, stillFlagged, skippedNoFile });
+    res.json({ success: true, scope: all ? 'all' : 'flagged', totalFlagged: rows.length, rescanned, unflagged, stillFlagged, skippedNoFile });
   } catch (err) {
     next(err);
   }
