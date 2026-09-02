@@ -2433,6 +2433,26 @@ function reviewCheckMark(val, what) {
     : `<span class="text-rose-600 font-bold" title="${esc(what)} does not match the payment screenshot">✗</span>`;
 }
 
+// The amount has a third outcome the other checks don't: the slip may simply
+// be unreadable. Most payment apps render the amount as large light text on a
+// dark background, which OCR erases while still reading the smaller body
+// text, so on about a fifth of slips there is nothing to compare. That is not
+// a discrepancy, and showing it as a red cross had admins chasing amounts
+// that were correct all along.
+function reviewAmountMark(status, legacyVal) {
+  if (status === 'unreadable') {
+    return '<span class="text-amber-500 font-bold" title="The amount could not be read from this screenshot — nothing to compare, not a discrepancy. Check it against the slip yourself.">?</span>';
+  }
+  if (status === 'match') {
+    return '<span class="text-emerald-600 font-bold" title="The amount on the screenshot matches the fee">✓</span>';
+  }
+  if (status === 'mismatch') {
+    return '<span class="text-rose-600 font-bold" title="The screenshot shows an amount, and it is not the one expected">✗</span>';
+  }
+  // Checked before the three-state result existed: fall back to the old flag.
+  return reviewCheckMark(legacyVal, 'The amount');
+}
+
 // Format an epoch-ms audit timestamp for display; '' when absent.
 function fmtAuditTime(ms) {
   if (!ms) return '';
@@ -3150,7 +3170,7 @@ function openReviewModal(id) {
   // Automated check verdicts, shown against the field each one is about.
   // NEFT/RTGS slips carry no VPA to read, so Mode gets no mark at all there
   // -- a dash would imply a check that could have run and didn't.
-  setHTML('review-amount-check', reviewCheckMark(p.ocr_amount_match, 'The amount'));
+  setHTML('review-amount-check', reviewAmountMark(p.ocr_amount_status, p.ocr_amount_match));
   setHTML('review-utr-check', reviewCheckMark(p.ocr_utr_match, 'The transaction ID'));
   setHTML('review-mode-check', p.payment_mode === 'NEFT_RTGS' ? '' : reviewCheckMark(p.ocr_vpa_match, 'The UPI ID'));
 

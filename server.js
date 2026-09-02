@@ -694,75 +694,180 @@ function getOcrWorker() {
 // OCR a screenshot buffer and check it against the expected values. Every
 // check is advisory; a failure to read the image yields all-false (flagged),
 // never an error that blocks submission. Returns { amount, vpa, utr } booleans.
-async function runOcrChecks(buffer, { expectedAmount, utr }) {
-  let text = '';
+// How the amount on a slip compares with what was expected. Three outcomes,
+// not two, because "the slip says something else" and "nothing legible was
+// found" are different claims and only the first is evidence of a problem.
+//
+// Measured over all 190 approved slips: the old two-state check put a red
+// cross on 37 of them (20%) whose amounts were perfectly correct, because a
+// failure to read was indistinguishable from a mismatch. Most were Google Pay
+// receipts in DARK MODE -- the amount is large light-grey text on near-black,
+// which Tesseract's default binarisation erases while still reading the
+// smaller body text around it.
+const AMOUNT_MATCH = 'match';
+const AMOUNT_MISMATCH = 'mismatch';
+const AMOUNT_UNREADABLE = 'unreadable';
+
+// OCR routinely reads "0" as "O" and "1" as "l"/"I" in the bold amount font;
+// fix those look-alikes inside any digit-ish run so the zeroes count.
+const normDigits = (s) => s.replace(/[0-9OolI]+/g, (run) => run.replace(/[OoIl]/g, (c) => (c === 'I' || c === 'l' ? '1' : '0')));
+
+// Every money-shaped token in the text, with whether the slip presents it AS
+// the amount. Scoped to a single line: nothing is joined across a line break,
+// which is what used to let the matcher assemble the expected figure out of
+// three unrelated numbers and call it a match.
+function amountCandidates(text) {
+  const out = [];
+  const lines = normDigits(text).split('\n');
+  const nonEmpty = lines.filter((l) => l.trim()).length;
+  let seen = 0;
+  for (const line of lines) {
+    if (line.trim()) seen++;
+    const bare = line.trim();
+    const hasMarker = /₹|rs\.?|inr/i.test(line);
+    // These receipts put the amount in the upper part of the screen, above
+    // the bank and reference block.
+    const high = seen <= Math.max(4, Math.ceil(nonEmpty * 0.4));
+    // Digits, optionally grouped by commas or a space before a group of
+    // three, optionally with one or two decimals.
+    const toks = line.match(/[0-9](?:[0-9,]|[ ](?=[0-9]{3}\b))*(?:\.[0-9]{1,2})?/g) || [];
+    for (const t of toks) {
+      const int = t.split('.')[0].replace(/[^0-9]/g, '');
+      if (!int || int.length > 7) continue;
+      // "Alone" means the line holds nothing but this number and at most a
+      // currency marker -- no letters. Stripping every non-digit instead was
+      // wrong: it made "Bank of Baroda 3183" look like a line holding only
+      // 3183, so account tails were read as amounts.
+      const rest = bare.replace(/₹|rs\.?|inr/ig, '').replace(t, '').trim();
+      const alone = !/[a-z]/i.test(rest) && rest.replace(/[^0-9]/g, '') === '';
+      const feeShaped = int.length >= 3 && Number(int) >= 100 && !/^20\d\d$/.test(int);
+      out.push({ int, confident: feeShaped && (hasMarker || (alone && high)) });
+    }
+  }
+  return out;
+}
+
+// Amounts written out in words -- "Three Thousand Rupees", "Rupees Seven
+// Hundred Fifty Only". Bank and Paytm receipts print this under the figure,
+// and it survives OCR far better than the stylised digits above it: one
+// approved slip reads a perfectly clear "₹3,000" as "5000" and would still
+// be flagged without this. Twelve of the 190 approved slips carry it, and
+// every one of them parses to exactly the amount paid.
+const WORD_VALUES = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50,
+  sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+const WORD_SCALES = { hundred: 100, thousand: 1000, lakh: 100000, lac: 100000, million: 1000000 };
+
+function amountsInWords(text) {
+  const found = [];
+  let running = 0;   // total across scales
+  let current = 0;   // the group being built, before its scale word
+  const flush = () => {
+    const total = running + current;
+    if (total > 0) found.push(total);
+    running = 0; current = 0;
+  };
+  for (const word of String(text).toLowerCase().split(/[^a-z]+/)) {
+    if (!word) continue;
+    if (word in WORD_VALUES) { current += WORD_VALUES[word]; continue; }
+    if (word in WORD_SCALES) {
+      const scale = WORD_SCALES[word];
+      if (scale === 100) current *= 100;
+      else { running += (current || 1) * scale; current = 0; }
+      continue;
+    }
+    // "and" joins a number; "rupees"/"only" bracket it; anything else ends it.
+    if (word === 'and') continue;
+    flush();
+  }
+  flush();
+  return found;
+}
+
+// Does any candidate read as the expected amount?
+function amountAppears(candidates, expectedAmount) {
+  const E = String(expectedAmount);
+  return candidates.some(({ int }) => (
+    int === E
+    // The rupee glyph fused onto the front of the number: "₹750" -> "2750".
+    // Leading position only -- allowing the stray digit anywhere is what let
+    // 850 satisfy 8500.
+    || (int.length === E.length + 1 && int.slice(1) === E)
+    // A trailing ".00" that lost its point: "750.00" -> "75000".
+    || (int.length === E.length + 2 && int.slice(0, E.length) === E && int.slice(E.length) === '00')
+  ));
+}
+
+async function recognizeText(buffer, params) {
+  const worker = await getOcrWorker();
+  if (params) await worker.setParameters(params);
   try {
-    const worker = await getOcrWorker();
     // Bound the wait: a corrupt image can make the worker throw out-of-band
     // and never settle this promise, which would otherwise hang the request.
     const result = await Promise.race([
       worker.recognize(buffer),
       new Promise((_, reject) => setTimeout(() => reject(new Error('OCR timed out')), 15000)),
     ]);
-    text = (result && result.data && result.data.text) || '';
+    return (result && result.data && result.data.text) || '';
+  } finally {
+    // Always restore the defaults; the worker is shared across requests and a
+    // sparse-text/digits-only pass would wreck the next slip's VPA and UTR.
+    if (params) await worker.setParameters(OCR_DEFAULT_PARAMS).catch(() => {});
+  }
+}
+
+const OCR_DEFAULT_PARAMS = { tessedit_pageseg_mode: '3', tessedit_char_whitelist: '', thresholding_method: '0' };
+// Sparse text, Sauvola thresholding, digits only. Reads the big amount on a
+// dark-mode receipt that the default pass renders as "EE" or "| sol |";
+// recovers the amount on ~28 of the 37 slips the single pass misses. Digits
+// only because this pass exists solely to find a number -- it is never used
+// for the UPI id or the transaction reference.
+const OCR_AMOUNT_PARAMS = { tessedit_pageseg_mode: '11', thresholding_method: '2', tessedit_char_whitelist: '0123456789.,₹' };
+
+async function runOcrChecks(buffer, { expectedAmount, utr }) {
+  let text = '';
+  try {
+    text = await recognizeText(buffer);
   } catch (err) {
     console.error('OCR failed:', err.message);
     ocrWorkerPromise = null; // drop a possibly-dead worker
-    return { amount: false, vpa: false, utr: false };
+    return { amount: false, amountStatus: AMOUNT_UNREADABLE, vpa: false, utr: false };
   }
 
   const compact = text.replace(/\s+/g, '').toLowerCase();
   const digitsOnly = text.replace(/[^0-9]/g, '');
   const enteredUtrDigits = String(utr || '').replace(/[^0-9]/g, '');
 
-  // Amount detection. Two prongs, because the amount is the single hardest
-  // thing to OCR on a payment receipt -- it's shown in a big, bold,
-  // stylized font that Tesseract mangles far more than the plain body text.
-  const expectedAmountStr = String(expectedAmount);
-  // OCR routinely reads the "0" digit as the letter "O" and "1" as "l"/"I"
-  // in that bold amount font; fix those look-alikes inside any digit-ish run
-  // so the zeroes count as digits.
-  const normDigits = (s) => s.replace(/[0-9OolI]+/g, (run) => run.replace(/[OoIl]/g, (c) => (c === 'I' || c === 'l' ? '1' : '0')));
+  let candidates = amountCandidates(text);
+  // Words are their own evidence, and confident evidence: a slip that spells
+  // out an amount is stating it, not incidentally printing a number.
+  const inWords = amountsInWords(text).map((n) => ({ int: String(n), confident: true }));
+  candidates = candidates.concat(inWords);
+  let found = amountAppears(candidates, expectedAmount);
 
-  let amount = false;
-
-  // Prong 1 (currency-anchored, high confidence): when a rupee marker is
-  // read intact -- the ₹ glyph, "Rs", or "INR" -- the number right after it
-  // is the amount. Take its integer part (before any decimal), drop commas,
-  // and compare. This is the case the "look next to the ₹ symbol" ask is
-  // about, and it's unambiguous when the symbol survives OCR.
-  const anchorRe = /(?:₹|rs\.?|inr)\s*([0-9OolI][0-9OolI.,\s]*)/gi;
-  let m;
-  while (!amount && (m = anchorRe.exec(text)) !== null) {
-    const intPart = normDigits(m[1]).split('.')[0].replace(/[^0-9]/g, '');
-    if (intPart === expectedAmountStr) amount = true;
-  }
-
-  // Prong 2 (digit-run matching, tolerant): the ₹ glyph is frequently NOT
-  // read cleanly -- it gets dropped, or fused onto the number as a stray
-  // leading digit (e.g. "₹3,000.00" -> "33,000.00"), or a comma is read as
-  // a digit (e.g. "₹2,000" -> "2 9 0 0 0"). Concatenate adjacent digit runs
-  // into candidate numbers and match the expected amount either exactly, or
-  // allowing exactly ONE spurious character to be deleted (the misread
-  // symbol/comma). The length guard (candidate is exactly one digit longer
-  // than expected) is what keeps this from matching a 12-digit UTR or an
-  // account number -- only a number one digit off from the fee can match.
-  const deletable = (cand, target) => {
-    if (cand.length !== target.length + 1) return false;
-    for (let i = 0; i < cand.length; i++) {
-      if (cand.slice(0, i) + cand.slice(i + 1) === target) return true;
-    }
-    return false;
-  };
-  const amountTokens = normDigits(text).split(/[^0-9]+/).filter(Boolean);
-  for (let i = 0; !amount && i < amountTokens.length; i++) {
-    let acc = '';
-    for (let j = i; j < amountTokens.length; j++) {
-      acc += amountTokens[j];
-      if (acc.length > expectedAmountStr.length + 1) break;
-      if (acc === expectedAmountStr || deletable(acc, expectedAmountStr)) { amount = true; break; }
+  // Second pass, only when the first could not find the amount -- so the cost
+  // falls on the ~20% of slips that need it, not on every upload.
+  if (!found) {
+    try {
+      const retry = await recognizeText(buffer, OCR_AMOUNT_PARAMS);
+      const more = amountCandidates(retry);
+      candidates = candidates.concat(more);
+      found = amountAppears(more, expectedAmount);
+    } catch (err) {
+      console.error('OCR amount pass failed:', err.message);
+      ocrWorkerPromise = null;
     }
   }
+
+  // Not found. A number the slip presents AS the amount, but a different one,
+  // is a real discrepancy; no such number at all means the check simply could
+  // not read it, and saying "the amount is wrong" on that basis is what put a
+  // cross on 37 correct slips.
+  const amountStatus = found ? AMOUNT_MATCH
+    : (candidates.some((c) => c.confident) ? AMOUNT_MISMATCH : AMOUNT_UNREADABLE);
 
   // VPA: the conference UPI id appears (compare ignoring whitespace/case).
   const vpa = compact.includes(UPI.id.replace(/\s+/g, '').toLowerCase());
@@ -770,7 +875,7 @@ async function runOcrChecks(buffer, { expectedAmount, utr }) {
   // UTR: the entered UTR digits appear in the image text.
   const utrMatch = enteredUtrDigits.length >= 6 && digitsOnly.includes(enteredUtrDigits);
 
-  return { amount, vpa, utr: utrMatch };
+  return { amount: found, amountStatus, vpa, utr: utrMatch };
 }
 
 
@@ -1738,6 +1843,11 @@ db.serialize(() => {
     const pending = [];
     if (!names.includes('expected_amount')) pending.push(alter('ALTER TABLE registrations ADD COLUMN expected_amount REAL'));
     if (!names.includes('ocr_amount_match')) pending.push(alter('ALTER TABLE registrations ADD COLUMN ocr_amount_match INTEGER'));
+    // 'match' | 'mismatch' | 'unreadable'. ocr_amount_match stays as it was
+    // (1 only for a match) so nothing reading the old column changes meaning;
+    // this says WHY it is not 1, which is the difference between a slip that
+    // contradicts the fee and one whose amount simply could not be read.
+    if (!names.includes('ocr_amount_status')) pending.push(alter("ALTER TABLE registrations ADD COLUMN ocr_amount_status TEXT"));
     if (!names.includes('ocr_vpa_match')) pending.push(alter('ALTER TABLE registrations ADD COLUMN ocr_vpa_match INTEGER'));
     if (!names.includes('ocr_utr_match')) pending.push(alter('ALTER TABLE registrations ADD COLUMN ocr_utr_match INTEGER'));
     if (!names.includes('registration_number')) pending.push(alter('ALTER TABLE registrations ADD COLUMN registration_number TEXT'));
@@ -3363,7 +3473,11 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     // PUT /api/registrations/:id/verify-id), which was always the real gate.
     const checks = await runOcrChecks(decoded.buffer, { expectedAmount, utr });
     if (mode === 'NEFT_RTGS') checks.vpa = true;
-    const allChecksPass = checks.amount && checks.vpa && checks.utr;
+    // `amountStatus !== 'mismatch'` rather than `checks.amount`: an amount
+    // nobody could read is not a failed check, it is an absent one. Treating
+    // the two the same is what put a red cross on 37 of 190 approved slips
+    // whose amounts were correct.
+    const allChecksPass = checks.amountStatus !== AMOUNT_MISMATCH && checks.vpa && checks.utr;
 
     // If any check failed and the delegate hasn't acknowledged the warning,
     // don't commit -- let the client warn and re-submit with acknowledged=true.
@@ -3385,8 +3499,8 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 
     const result = await dbRun(
       `INSERT INTO registrations
-        (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL, ?, ?, ?, ?)
+        (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_amount_status, ocr_vpa_match, ocr_utr_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL, ?, ?, ?, ?)
         ON CONFLICT(phone_number) DO UPDATE SET
           delegate_name = excluded.delegate_name,
           category_key = excluded.category_key,
@@ -3397,6 +3511,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
           screenshot = excluded.screenshot,
           id_card = excluded.id_card,
           ocr_amount_match = excluded.ocr_amount_match,
+          ocr_amount_status = excluded.ocr_amount_status,
           ocr_vpa_match = excluded.ocr_vpa_match,
           ocr_utr_match = excluded.ocr_utr_match,
           is_flagged = excluded.is_flagged,
@@ -3409,7 +3524,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
           discount_amount = excluded.discount_amount`,
       [phone, name, effectiveCategoryKey, categoryLabel,
         expectedAmount, paidAmount, utr, filename, idFilename,
-        checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, flagged, mode, Date.now(), discountCodeApplied, discountAmount]
+        checks.amount ? 1 : 0, checks.amountStatus, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, flagged, mode, Date.now(), discountCodeApplied, discountAmount]
     );
 
     if (prev && prev.screenshot && prev.screenshot !== filename) {
@@ -3499,7 +3614,11 @@ app.post('/api/registrations/topup', requireAuth, async (req, res, next) => {
     // this payment should be for), plus the usual VPA/UTR checks.
     const checks = await runOcrChecks(decoded.buffer, { expectedAmount: summary.remaining, utr });
     if (mode === 'NEFT_RTGS') checks.vpa = true;
-    const allChecksPass = checks.amount && checks.vpa && checks.utr;
+    // `amountStatus !== 'mismatch'` rather than `checks.amount`: an amount
+    // nobody could read is not a failed check, it is an absent one. Treating
+    // the two the same is what put a red cross on 37 of 190 approved slips
+    // whose amounts were correct.
+    const allChecksPass = checks.amountStatus !== AMOUNT_MISMATCH && checks.vpa && checks.utr;
     if (!allChecksPass && !acknowledged) {
       return res.json({ success: false, needsConfirmation: true, checks, expectedAmount: summary.remaining });
     }
@@ -3590,7 +3709,7 @@ app.post('/api/registrations/me/correct', requireAuth, async (req, res, next) =>
       return res.status(400).json({ success: false, error: 'Please enter the corrected transaction reference.' });
     }
 
-    const flagged = !(checks.amount && checks.vpa && checks.utr) ? 1 : 0;
+    const flagged = !(checks.amountStatus !== AMOUNT_MISMATCH && checks.vpa && checks.utr) ? 1 : 0;
     await dbRun(
       `UPDATE payment_transactions
           SET utr_number = ?, screenshot = ?, payment_mode = ?, txn_status = 'PENDING',
@@ -3636,7 +3755,7 @@ const DELEGATE_SALUTATION_COLUMN =
 const REGISTRATION_PUBLIC_COLUMNS =
   `registrations.id, registrations.registration_number, registrations.phone_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, category_key, category_label,
    expected_amount, paid_amount, utr_number, is_flagged, bank_status,
-   ocr_amount_match, ocr_vpa_match, ocr_utr_match, rejection_reason, rejection_note,
+   ocr_amount_match, ocr_amount_status, ocr_vpa_match, ocr_utr_match, rejection_reason, rejection_note,
    payment_mode, submitted_at, id_verified, id_verified_by, id_verified_at, category_locked,
    (screenshot IS NOT NULL AND screenshot != '') AS has_screenshot,
    (id_card IS NOT NULL AND id_card != '') AS has_id_card`;
@@ -4723,13 +4842,16 @@ app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', '
       // Only the payment screenshot is machine-checked; a student ID card is
       // confirmed by an approver, not by OCR, so a rescan has nothing to
       // re-judge about it.
-      const allChecksPass = checks.amount && checks.vpa && checks.utr;
+      //
+      // `amountStatus !== 'mismatch'` rather than `checks.amount`: an amount
+      // nobody could read is not a failed check, it is an absent one.
+      const allChecksPass = checks.amountStatus !== AMOUNT_MISMATCH && checks.vpa && checks.utr;
       const amountTampered = reg.paid_amount == null || Math.round(reg.paid_amount) !== reg.expected_amount;
       const flagged = !allChecksPass || amountTampered ? 1 : 0;
 
       await dbRun(
-        `UPDATE registrations SET ocr_amount_match = ?, ocr_vpa_match = ?, ocr_utr_match = ?, is_flagged = ? WHERE id = ?`,
-        [checks.amount ? 1 : 0, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, flagged, reg.id]
+        `UPDATE registrations SET ocr_amount_match = ?, ocr_amount_status = ?, ocr_vpa_match = ?, ocr_utr_match = ?, is_flagged = ? WHERE id = ?`,
+        [checks.amount ? 1 : 0, checks.amountStatus, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, flagged, reg.id]
       );
 
       rescanned++;
