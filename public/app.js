@@ -2895,6 +2895,23 @@ async function renderDelegateMap() {
   drawDelegateMap();
 }
 
+// A district is identified by its STATE and its name, never by name alone.
+// Six names in the shapefile belong to two states each -- Hamirpur, Bilaspur,
+// Pratapgarh, Balrampur, Aurangabad and Raigarh -- so a bare name is not a
+// district, and using one as the key had two consequences: a delegate could
+// be drawn on the wrong state's district, and both same-named polygons got
+// shaded with the combined count (Aurangabad, Bihar was showing Aurangabad,
+// Maharashtra's four delegates).
+//
+// Built from the feature's own properties on both sides -- the map's key and
+// the delegate's resolved key always come from the same source -- so the
+// tolerant state matching below never has to produce a key, only compare.
+const districtKey = (f) => `${normalizeStateName(f.properties.stname)}|${String(f.properties.dtname || '').toLowerCase().trim()}`;
+
+// The shapefile shouts its state names ("UTTAR PRADESH"); a tooltip shouldn't.
+const titleCaseState = (v) => String(v == null ? '' : v).toLowerCase()
+  .replace(/\b[a-z]/g, (c) => c.toUpperCase());
+
 // Deliberately loose: this only has to catch a coordinate landing in a wholly
 // different state, so it tolerates the two sources spelling the same state
 // differently. India Post writes "Chattisgarh" where the shapefile writes
@@ -2923,9 +2940,21 @@ function sameState(a, b) {
 function resolveDelegateDistrict(loc, feat, featBoxes, pinCoords) {
   const rawName = String(loc.district || '').trim();
   const named = rawName.toLowerCase();
-  const key = DISTRICT_NAME_ALIASES[named] || named;
-  if (key && feat.features.some((f) => String(f.properties.dtname || '').toLowerCase().trim() === key)) {
-    return { key, rawName };
+  const name = DISTRICT_NAME_ALIASES[named] || named;
+  if (name) {
+    const candidates = feat.features.filter((f) => String(f.properties.dtname || '').toLowerCase().trim() === name);
+    // The overwhelmingly common case: the name belongs to exactly one
+    // district in the country, so the state adds nothing.
+    if (candidates.length === 1) return { key: districtKey(candidates[0]), rawName };
+    if (candidates.length > 1) {
+      // Shared name. The delegate's own state decides which one it is.
+      const inState = candidates.filter((f) => sameState(loc.state, f.properties.stname));
+      if (inState.length === 1) return { key: districtKey(inState[0]), rawName };
+      // Still ambiguous -- the delegate gave no state, or one that matches
+      // both spellings. Deliberately NOT a coin flip between two real
+      // districts a thousand kilometres apart: fall through to the PIN code,
+      // which places them exactly, and leave them unmapped if there isn't one.
+    }
   }
 
   const coord = pinCoords[String(loc.pincode || '').trim()];
@@ -2939,7 +2968,7 @@ function resolveDelegateDistrict(loc, feat, featBoxes, pinCoords) {
     // district is an acceptable fallback, but landing in a different state
     // means the coordinate is simply wrong -- leave it unmapped instead.
     if (!sameState(loc.state, f.properties.stname)) return null;
-    return { key: String(f.properties.dtname || '').toLowerCase().trim(), rawName: rawName || f.properties.dtname };
+    return { key: districtKey(f), rawName: rawName || f.properties.dtname };
   }
   return null;
 }
@@ -3002,9 +3031,14 @@ function drawDelegateMap() {
   const colors = DELEGATE_MAP_COLORS[metricKey];
 
   const districts = data.feat.features.map((f) => {
-    const key = String(f.properties.dtname || '').toLowerCase().trim();
+    const key = districtKey(f);
     const rec = data.byKey.get(key);
-    return { f, key, name: f.properties.dtname, rec, value: rec ? rec[metricKey] : 0, host: key === 'wardha' };
+    return {
+      f, key, name: f.properties.dtname, rec, value: rec ? rec[metricKey] : 0,
+      // The host district, by name -- Wardha is unique, and this is about
+      // marking the venue rather than matching a delegate to a polygon.
+      host: String(f.properties.dtname || '').toLowerCase().trim() === 'wardha',
+    };
   });
   const maxVal = Math.max(1, ...districts.map((d) => d.value));
   // Sqrt scale (not linear): with a handful of very high districts and many
@@ -3021,7 +3055,9 @@ function drawDelegateMap() {
     .on('mousemove', (ev, d) => {
       if (!d.rec) return;
       const b = host.getBoundingClientRect();
-      tip.style('opacity', 1).html(`<b>${esc(d.rec.rawName || d.name)}</b><br>${d.rec.registered} registered · ${d.rec.signedup} signed up`)
+      // State on the tooltip too: with six names shared between two states,
+      // "Aurangabad" alone doesn't say which Aurangabad you're hovering.
+      tip.style('opacity', 1).html(`<b>${esc(d.rec.rawName || d.name)}</b><br><span style="color:#64748b">${esc(titleCaseState(d.f.properties.stname))}</span><br>${d.rec.registered} registered · ${d.rec.signedup} signed up`)
         .style('left', (ev.clientX - b.left + 12) + 'px').style('top', (ev.clientY - b.top - 6) + 'px');
     })
     .on('mouseleave', () => tip.style('opacity', 0));

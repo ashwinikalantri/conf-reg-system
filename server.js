@@ -4541,6 +4541,12 @@ app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
 // code's coordinates when that name isn't in the shapefile (see
 // renderDelegateMap). A blank district is no longer filtered out here -- the
 // PIN code alone is enough to place those delegates.
+//
+// State is grouped, not just selected. Six district names belong to two
+// states each (Aurangabad, Bilaspur, Hamirpur, Pratapgarh, Balrampur,
+// Raigarh), and the client needs the state to tell them apart -- so it has to
+// be a real property of the group rather than whichever row SQLite happened
+// to pick for a bare column.
 app.get('/api/admin/delegate-locations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
   try {
     const rows = await dbAll(`
@@ -4551,7 +4557,7 @@ app.get('/api/admin/delegate-locations', requireRole('SUPER_ADMIN', 'FINANCE_ADM
       LEFT JOIN registrations r ON r.phone_number = u.phone_number
       WHERE u.pincode IS NOT NULL AND TRIM(u.pincode) != ''
         AND (u.country IS NULL OR TRIM(u.country) = '' OR LOWER(TRIM(u.country)) = 'india')
-      GROUP BY TRIM(u.pincode), LOWER(TRIM(u.district))`);
+      GROUP BY TRIM(u.pincode), LOWER(TRIM(u.district)), LOWER(TRIM(u.state))`);
 
     // The choropleth is an Indian district map, so an international delegate
     // has nowhere to be drawn -- and the pincode filter above would drop
