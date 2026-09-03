@@ -1,5 +1,5 @@
   <!-- AUTHENTICATION / PHONE + OTP CREATION (the delegate portal starts here) -->
-  <section id="auth-page" class="w-full max-w-xl bg-white shadow-card rounded-2xl p-8 border border-slate-200">
+  <section id="auth-page" class="w-full max-w-xl md:max-w-2xl lg:max-w-3xl bg-white shadow-card rounded-2xl p-8 border border-slate-200">
 
     <!-- Login Form (Visible by Default) -->
     <form id="login-form" onsubmit="handleLogin(event)" class="space-y-4">
@@ -65,40 +65,52 @@
       </p>
     </form>
 
-    <!-- Registration Form (Hidden by Default) -->
+    <!-- Registration Form (Hidden by Default). Five visible steps, but every
+         field lives in the DOM the whole time -- this is a presentation
+         layer only. handleRegistration() reads every field by id regardless
+         of which step revealed it, so the wizard can only gate what's
+         VISIBLE, never what gets submitted. -->
     <form id="register-form" onsubmit="handleRegistration(event)" class="space-y-4 hidden">
       <h2 class="text-xl font-bold text-slate-800 mb-1">Delegate Registration</h2>
-      <p class="text-xs text-slate-500 mb-4">Verification via 6-digit Mobile OTP required.</p>
-      
-      <div class="flex gap-3">
-        <div class="w-28 shrink-0">
-          <label class="block text-sm font-medium text-slate-700">Salutation</label>
-          <select id="reg-salutation" class="w-full mt-1 p-3 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none appearance-none bg-no-repeat bg-[right_0.75rem_center] bg-[length:1rem] bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22%2364748b%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M5.23%207.21a.75.75%200%20011.06.02L10%2011.168l3.71-3.938a.75.75%200%20111.08%201.04l-4.25%204.5a.75.75%200%2001-1.08%200l-4.25-4.5a.75.75%200%2001.02-1.06z%22%20clip-rule%3D%22evenodd%22%2F%3E%3C%2Fsvg%3E')]">
-            <option value="">—</option>
-            <option value="Mr">Mr</option>
-            <option value="Mrs">Mrs</option>
-            <option value="Ms">Ms</option>
-            <option value="Dr">Dr</option>
-            <option value="Prof">Prof</option>
-          </select>
+      <p class="text-xs text-slate-500 mb-1">Verification via 6-digit Mobile OTP required.</p>
+
+      <div class="pb-1">
+        <div class="flex justify-between items-baseline mb-2">
+          <span id="reg-step-label" class="text-xs font-bold text-indigo-700 uppercase tracking-wide">Step 1 of 5 &middot; Name</span>
         </div>
-        <div class="flex-1">
-          <label class="block text-sm font-medium text-slate-700">Full Name</label>
-          <input type="text" id="reg-name" required class="w-full mt-1 p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none">
+        <div class="flex gap-1">
+          <div class="reg-step-dot h-1.5 flex-1 rounded-full bg-indigo-600" data-step="1"></div>
+          <div class="reg-step-dot h-1.5 flex-1 rounded-full bg-slate-200" data-step="2"></div>
+          <div class="reg-step-dot h-1.5 flex-1 rounded-full bg-slate-200" data-step="3"></div>
+          <div class="reg-step-dot h-1.5 flex-1 rounded-full bg-slate-200" data-step="4"></div>
+          <div class="reg-step-dot h-1.5 flex-1 rounded-full bg-slate-200" data-step="5"></div>
         </div>
       </div>
-      <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">⚠️ Enter your name (without any title/salutation) exactly as you want it printed on your certificate.</p>
 
-      <!-- Contact & verification. Either channel alone is enough to create
-           an account, but at least one must be OTP-verified -- the server
-           enforces that (see POST /api/auth/register); this block just makes
-           the state obvious as you go. -->
-      <div class="bg-indigo-50/60 p-4 rounded-xl border border-indigo-100 space-y-4">
-        <div class="flex items-start justify-between gap-2">
-          <label class="block text-xs font-bold text-indigo-800 uppercase tracking-wide">Contact &amp; Verification</label>
-          <span id="reg-verify-status" class="text-[11px] font-bold text-amber-700 shrink-0">Verify mobile or email</span>
+      <!-- STEP 1: Name -->
+      <div id="reg-step-1" class="reg-step space-y-4">
+        <div class="flex gap-3">
+          <div class="w-28 shrink-0">
+            <label class="block text-sm font-medium text-slate-700">Salutation</label>
+            <select id="reg-salutation" class="w-full mt-1 p-3 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none appearance-none bg-no-repeat bg-[right_0.75rem_center] bg-[length:1rem] bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22%2364748b%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M5.23%207.21a.75.75%200%20011.06.02L10%2011.168l3.71-3.938a.75.75%200%20111.08%201.04l-4.25%204.5a.75.75%200%2001-1.08%200l-4.25-4.5a.75.75%200%2001.02-1.06z%22%20clip-rule%3D%22evenodd%22%2F%3E%3C%2Fsvg%3E')]">
+              <option value="">—</option>
+              <option value="Mr">Mr</option>
+              <option value="Mrs">Mrs</option>
+              <option value="Ms">Ms</option>
+              <option value="Dr">Dr</option>
+              <option value="Prof">Prof</option>
+            </select>
+          </div>
+          <div class="flex-1">
+            <label class="block text-sm font-medium text-slate-700">Full Name</label>
+            <input type="text" id="reg-name" required class="w-full mt-1 p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none">
+          </div>
         </div>
+        <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">⚠️ Enter your name (without any title/salutation) exactly as you want it printed on your certificate.</p>
+      </div>
 
+      <!-- STEP 2: Contact -->
+      <div id="reg-step-2" class="reg-step space-y-4 hidden">
         <div>
           <!-- Country drives the rest of the form: whether a phone number is
                required and what shape it takes, and whether the address block
@@ -110,119 +122,150 @@
 
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-1.5" id="reg-phone-label">Mobile Number</label>
-          <div class="flex gap-2">
-            <div class="relative flex-1">
-              <span id="reg-phone-cc" class="absolute left-3 top-3 text-sm text-slate-500 font-bold">+91</span>
-              <input type="tel" id="reg-phone" name="phone" inputmode="tel" autocomplete="tel" maxlength="10" placeholder="10-digit Mobile No." class="w-full p-2.5 pl-12 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono">
-            </div>
-            <button type="button" id="btn-send-reg-otp" onclick="requestSignupOTP('phone')" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shrink-0">
-              Send OTP
-            </button>
-          </div>
-          <div id="reg-otp-container" class="hidden space-y-2 pt-2 mt-2 border-t border-indigo-100">
-            <div class="flex justify-between items-center">
-              <label class="block text-xs font-semibold text-slate-700">Mobile OTP</label>
-              <span id="reg-otp-hint" class="text-[11px] text-indigo-600 font-mono font-bold"></span>
-            </div>
-            <input type="text" id="reg-otp" maxlength="6" oninput="updateSignupVerifyStatus()" placeholder="e.g. 123456" class="w-full p-2.5 border rounded-lg bg-white text-center font-mono tracking-widest text-lg">
+          <div class="relative">
+            <span id="reg-phone-cc" class="absolute left-3 top-3 text-sm text-slate-500 font-bold">+91</span>
+            <input type="tel" id="reg-phone" name="phone" inputmode="tel" autocomplete="tel" maxlength="10" placeholder="10-digit Mobile No." class="w-full p-2.5 pl-12 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono">
           </div>
         </div>
 
-        <div class="pt-1 border-t border-indigo-100">
+        <div>
           <!-- Mandatory: it's how receipts and every notification reach a
                delegate. Only VERIFYING it is optional (an Indian delegate
                may verify by SMS instead) -- see POST /api/auth/register. -->
-          <label class="block text-xs font-semibold text-slate-700 mb-1.5 mt-2">Email Address</label>
-          <div class="flex gap-2">
-            <input type="email" id="reg-email" autocomplete="email" required placeholder="you@example.com" class="flex-1 p-2.5 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
-            <button type="button" id="btn-send-reg-email-otp" onclick="requestSignupOTP('email')" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shrink-0">
-              Send OTP
-            </button>
+          <label class="block text-xs font-semibold text-slate-700 mb-1.5">Email Address</label>
+          <input type="email" id="reg-email" autocomplete="email" required placeholder="you@example.com" class="w-full p-2.5 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm">
+        </div>
+      </div>
+
+      <!-- STEP 3: Verify. Either channel alone is enough to create an
+           account, but at least one must be OTP-verified -- the server
+           enforces that (see POST /api/auth/register); this step just makes
+           the state obvious as you go. -->
+      <div id="reg-step-3" class="reg-step space-y-4 hidden">
+        <div class="bg-indigo-50/60 p-4 rounded-xl border border-indigo-100 space-y-4">
+          <div class="flex items-start justify-between gap-2">
+            <p id="reg-contact-recap" class="text-xs text-indigo-800 font-medium leading-snug">Sending a code to your mobile number or email.</p>
+            <span id="reg-verify-status" class="text-[11px] font-bold text-amber-700 shrink-0">Verify mobile or email</span>
           </div>
-          <div id="reg-email-otp-container" class="hidden space-y-2 pt-2 mt-2 border-t border-indigo-100">
-            <div class="flex justify-between items-center">
+
+          <div id="reg-phone-otp-block">
+            <div class="flex items-center justify-between">
+              <label class="block text-xs font-semibold text-slate-700">Mobile OTP</label>
+              <button type="button" id="btn-send-reg-otp" onclick="requestSignupOTP('phone')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shrink-0">
+                Send OTP
+              </button>
+            </div>
+            <div id="reg-otp-container" class="hidden space-y-2 pt-2 mt-2 border-t border-indigo-100">
+              <div class="flex justify-between items-center">
+                <label class="block text-xs font-semibold text-slate-700">Enter 6-digit code</label>
+                <span id="reg-otp-hint" class="text-[11px] text-indigo-600 font-mono font-bold"></span>
+              </div>
+              <input type="text" id="reg-otp" maxlength="6" oninput="updateSignupVerifyStatus()" placeholder="e.g. 123456" class="w-full p-2.5 border rounded-lg bg-white text-center font-mono tracking-widest text-lg">
+            </div>
+          </div>
+
+          <div class="pt-3 border-t border-indigo-100">
+            <div class="flex items-center justify-between">
               <label class="block text-xs font-semibold text-slate-700">Email OTP</label>
-              <span id="reg-email-otp-hint" class="text-[11px] text-indigo-600 font-mono font-bold"></span>
+              <button type="button" id="btn-send-reg-email-otp" onclick="requestSignupOTP('email')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shrink-0">
+                Send OTP
+              </button>
             </div>
-            <input type="text" id="reg-email-otp" maxlength="6" oninput="updateSignupVerifyStatus()" placeholder="e.g. 123456" class="w-full p-2.5 border rounded-lg bg-white text-center font-mono tracking-widest text-lg">
+            <div id="reg-email-otp-container" class="hidden space-y-2 pt-2 mt-2 border-t border-indigo-100">
+              <div class="flex justify-between items-center">
+                <label class="block text-xs font-semibold text-slate-700">Enter 6-digit code</label>
+                <span id="reg-email-otp-hint" class="text-[11px] text-indigo-600 font-mono font-bold"></span>
+              </div>
+              <input type="text" id="reg-email-otp" maxlength="6" oninput="updateSignupVerifyStatus()" placeholder="e.g. 123456" class="w-full p-2.5 border rounded-lg bg-white text-center font-mono tracking-widest text-lg">
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-slate-700">Age</label>
-          <input type="number" id="reg-age" min="1" max="120" placeholder="e.g., 28" required class="w-full mt-1 p-3 border rounded-lg outline-none">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-slate-700">Gender</label>
-          <select id="reg-gender" required class="w-full mt-1 p-3 border rounded-lg bg-white outline-none appearance-none bg-no-repeat bg-[right_0.75rem_center] bg-[length:1rem] bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22%2364748b%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M5.23%207.21a.75.75%200%20011.06.02L10%2011.168l3.71-3.938a.75.75%200%20111.08%201.04l-4.25%204.5a.75.75%200%2001-1.08%200l-4.25-4.5a.75.75%200%2001.02-1.06z%22%20clip-rule%3D%22evenodd%22%2F%3E%3C%2Fsvg%3E')]">
-            <option value="">Select</option>
-            <option value="Male">Male</option>
-            <option value="Female">Female</option>
-            <option value="Other">Other</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-slate-700">Designation</label>
-          <input type="text" id="reg-designation" list="designation-options" autocomplete="off" placeholder="e.g., Resident, Professor" required class="w-full mt-1 p-3 border rounded-lg outline-none">
-          <datalist id="designation-options"></datalist>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-slate-700">Institute / Organization</label>
-          <input type="text" id="reg-institute" list="institute-options" autocomplete="off" required class="w-full mt-1 p-3 border rounded-lg outline-none">
-          <datalist id="institute-options"></datalist>
-        </div>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-slate-700">Password <span class="text-xs text-slate-400">(required, at least 8 characters)</span></label>
-        <input type="password" id="reg-password" autocomplete="new-password" required minlength="8" placeholder="At least 8 characters" class="w-full mt-1 p-3 border rounded-lg outline-none">
-        <p class="text-[11px] text-slate-400 mt-1">Lets you sign in without waiting for an OTP. You can change it later from your dashboard.</p>
-      </div>
-
-      <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
-        <label class="block text-sm font-semibold text-slate-800">Address Details</label>
-
-        <!-- India: PIN code drives a lookup that fills state and district,
-             which is why both are readonly. Anywhere else that lookup means
-             nothing, so the fields below are plain text instead. -->
-        <div id="reg-address-india" class="space-y-3">
+      <!-- STEP 4: Details -->
+      <div id="reg-step-4" class="reg-step space-y-4 hidden">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label class="block text-xs font-medium text-slate-600">PIN Code</label>
-            <input type="text" id="reg-pincode" maxlength="6" oninput="fetchAddressDetails(this.value)" placeholder="Enter 6-digit PIN" class="w-full mt-1 p-2.5 border rounded-lg bg-white outline-none">
-            <span id="pincode-status" class="text-xs text-indigo-600 font-medium mt-1 block"></span>
+            <label class="block text-sm font-medium text-slate-700">Age</label>
+            <input type="number" id="reg-age" min="1" max="120" placeholder="e.g., 28" required class="w-full mt-1 p-3 border rounded-lg outline-none">
           </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700">Gender</label>
+            <select id="reg-gender" required class="w-full mt-1 p-3 border rounded-lg bg-white outline-none appearance-none bg-no-repeat bg-[right_0.75rem_center] bg-[length:1rem] bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22%2364748b%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M5.23%207.21a.75.75%200%20011.06.02L10%2011.168l3.71-3.938a.75.75%200%20111.08%201.04l-4.25%204.5a.75.75%200%2001-1.08%200l-4.25-4.5a.75.75%200%2001.02-1.06z%22%20clip-rule%3D%22evenodd%22%2F%3E%3C%2Fsvg%3E')]">
+              <option value="">Select</option>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+        </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-slate-700">Designation</label>
+            <input type="text" id="reg-designation" list="designation-options" autocomplete="off" placeholder="e.g., Resident, Professor" required class="w-full mt-1 p-3 border rounded-lg outline-none">
+            <datalist id="designation-options"></datalist>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700">Institute / Organization</label>
+            <input type="text" id="reg-institute" list="institute-options" autocomplete="off" required class="w-full mt-1 p-3 border rounded-lg outline-none">
+            <datalist id="institute-options"></datalist>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Password <span class="text-xs text-slate-400">(required, at least 8 characters)</span></label>
+          <input type="password" id="reg-password" autocomplete="new-password" required minlength="8" placeholder="At least 8 characters" class="w-full mt-1 p-3 border rounded-lg outline-none">
+          <p class="text-[11px] text-slate-400 mt-1">Lets you sign in without waiting for an OTP. You can change it later from your dashboard.</p>
+        </div>
+      </div>
+
+      <!-- STEP 5: Address -->
+      <div id="reg-step-5" class="reg-step space-y-4 hidden">
+        <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+          <label class="block text-sm font-semibold text-slate-800">Address Details</label>
+
+          <!-- India: PIN code drives a lookup that fills state and district,
+               which is why both are readonly. Anywhere else that lookup means
+               nothing, so the fields below are plain text instead. -->
+          <div id="reg-address-india" class="space-y-3">
             <div>
-              <label class="block text-xs font-medium text-slate-600">State</label>
-              <input type="text" id="reg-state" readonly class="w-full mt-1 p-2.5 border rounded-lg bg-slate-100 text-slate-600 focus:outline-none">
+              <label class="block text-xs font-medium text-slate-600">PIN Code</label>
+              <input type="text" id="reg-pincode" maxlength="6" oninput="fetchAddressDetails(this.value)" placeholder="Enter 6-digit PIN" class="w-full mt-1 p-2.5 border rounded-lg bg-white outline-none">
+              <span id="pincode-status" class="text-xs text-indigo-600 font-medium mt-1 block"></span>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-600">State</label>
+                <input type="text" id="reg-state" readonly class="w-full mt-1 p-2.5 border rounded-lg bg-slate-100 text-slate-600 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-600">District</label>
+                <input type="text" id="reg-district" readonly class="w-full mt-1 p-2.5 border rounded-lg bg-slate-100 text-slate-600 focus:outline-none">
+              </div>
+            </div>
+          </div>
+
+          <div id="reg-address-intl" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-slate-600">City</label>
+              <input type="text" id="reg-city" placeholder="e.g. London" class="w-full mt-1 p-2.5 border rounded-lg bg-white outline-none">
             </div>
             <div>
-              <label class="block text-xs font-medium text-slate-600">District</label>
-              <input type="text" id="reg-district" readonly class="w-full mt-1 p-2.5 border rounded-lg bg-slate-100 text-slate-600 focus:outline-none">
+              <label class="block text-xs font-medium text-slate-600">State / Region <span class="text-slate-400">(optional)</span></label>
+              <input type="text" id="reg-region" placeholder="e.g. Greater London" class="w-full mt-1 p-2.5 border rounded-lg bg-white outline-none">
             </div>
-          </div>
-        </div>
-
-        <div id="reg-address-intl" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label class="block text-xs font-medium text-slate-600">City</label>
-            <input type="text" id="reg-city" placeholder="e.g. London" class="w-full mt-1 p-2.5 border rounded-lg bg-white outline-none">
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-slate-600">State / Region <span class="text-slate-400">(optional)</span></label>
-            <input type="text" id="reg-region" placeholder="e.g. Greater London" class="w-full mt-1 p-2.5 border rounded-lg bg-white outline-none">
           </div>
         </div>
       </div>
 
-      <button type="submit" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl shadow-md">Verify OTP & Create Account</button>
-      
+      <div class="flex gap-3 pt-1">
+        <button type="button" id="reg-back-btn" onclick="prevSignupStep()" class="hidden flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl">Back</button>
+        <button type="button" id="reg-next-btn" onclick="nextSignupStep()" class="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl shadow-md">Next</button>
+        <button type="submit" id="reg-submit-btn" disabled class="hidden flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl shadow-md">Create Account</button>
+      </div>
+
       <p class="text-center text-sm text-slate-600 mt-4">
         Already have an account? <a href="#" onclick="toggleAuth('login'); return false;" class="text-indigo-600 font-bold hover:underline">Login here</a>
       </p>

@@ -233,6 +233,7 @@ function toggleAuth(view) {
     // shown, so the phone/address fields are never briefly in the wrong shape.
     populateSignupCountries();
     onSignupCountryChange();
+    resetSignupWizard();
     regForm.classList.remove('hidden');
     loginForm.classList.add('hidden');
   } else {
@@ -480,7 +481,6 @@ function onSignupCountryChange() {
   const india = signupCountryIsIndia();
   const phone = document.getElementById('reg-phone');
   const cc = document.getElementById('reg-phone-cc');
-  const otpBtn = document.getElementById('btn-send-reg-otp');
 
   if (cc) cc.classList.toggle('hidden', !india);
   if (phone) {
@@ -491,8 +491,11 @@ function onSignupCountryChange() {
   }
   setText('reg-phone-label', india ? 'Mobile Number' : 'Mobile Number (optional)');
   // We can only SMS Indian numbers, so there is no OTP to send anywhere
-  // else -- an international delegate verifies by email instead.
-  if (otpBtn) otpBtn.classList.toggle('hidden', !india);
+  // else -- an international delegate verifies by email instead. Hides the
+  // whole "Mobile OTP" block in the Verify step, not just its button, so
+  // there's no dangling label with nothing to press.
+  const phoneOtpBlock = document.getElementById('reg-phone-otp-block');
+  if (phoneOtpBlock) phoneOtpBlock.classList.toggle('hidden', !india);
   const otpBox = document.getElementById('reg-otp-container');
   if (!india && otpBox) { otpBox.classList.add('hidden'); const o = document.getElementById('reg-otp'); if (o) o.value = ''; }
 
@@ -503,36 +506,124 @@ function onSignupCountryChange() {
   updateSignupVerifyStatus();
 }
 
+// --- SIGNUP WIZARD ---
+// Five visible steps over the one form above; every field stays in the DOM
+// throughout; handleRegistration() below reads all of them by id regardless
+// of step, so this is a pure presentation layer. Per-step checks are a UX
+// nicety only -- the server is the real gate on submit either way.
+const SIGNUP_STEP_LABELS = ['Name', 'Contact', 'Verify', 'Details', 'Address'];
+let signupStep = 1;
+
+function resetSignupWizard() {
+  showSignupStep(1);
+}
+
+function showSignupStep(n) {
+  signupStep = n;
+  for (let i = 1; i <= 5; i++) {
+    const el = document.getElementById(`reg-step-${i}`);
+    if (el) el.classList.toggle('hidden', i !== n);
+  }
+  document.querySelectorAll('.reg-step-dot').forEach((dot) => {
+    const i = Number(dot.dataset.step);
+    dot.classList.toggle('bg-indigo-600', i <= n);
+    dot.classList.toggle('bg-slate-200', i > n);
+  });
+  setText('reg-step-label', `Step ${n} of 5 · ${SIGNUP_STEP_LABELS[n - 1]}`);
+  const backBtn = document.getElementById('reg-back-btn');
+  const nextBtn = document.getElementById('reg-next-btn');
+  const submitBtn = document.getElementById('reg-submit-btn');
+  if (backBtn) backBtn.classList.toggle('hidden', n === 1);
+  if (nextBtn) nextBtn.classList.toggle('hidden', n === 5);
+  if (submitBtn) { submitBtn.classList.toggle('hidden', n !== 5); submitBtn.disabled = n !== 5; }
+  if (n === 3) updateSignupContactRecap();
+  const firstField = document.getElementById(`reg-step-${n}`)?.querySelector('input, select');
+  if (firstField) firstField.focus({ preventScroll: true });
+}
+
+function nextSignupStep() {
+  const err = validateSignupStep(signupStep);
+  if (err) return showToast(err);
+  showSignupStep(Math.min(signupStep + 1, 5));
+}
+
+function prevSignupStep() {
+  showSignupStep(Math.max(signupStep - 1, 1));
+}
+
+function updateSignupContactRecap() {
+  const el = document.getElementById('reg-contact-recap');
+  if (!el) return;
+  const india = signupCountryIsIndia();
+  const phone = document.getElementById('reg-phone').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const parts = [];
+  if (phone) parts.push(india ? `+91 ${phone}` : phone);
+  if (email) parts.push(email);
+  el.textContent = parts.length ? `Sending a code to ${parts.join(' and ')}.` : 'Enter a mobile number or email to receive a code.';
+}
+
+// Shared by the Contact step's Next gate and handleRegistration's own
+// pre-flight check, so the two can't drift apart.
+function validateSignupContact() {
+  const phone = document.getElementById('reg-phone').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const india = signupCountryIsIndia();
+  if (india && !phone) return 'A mobile number is required.';
+  if (india && phone && !isIndianPhone(phone)) {
+    return 'Enter a valid 10-digit Indian mobile number, or change your country.';
+  }
+  if (phone && !isPhoneValue(phone)) return 'Please enter a valid mobile number, including the country code.';
+  if (!india && phone && isIndianPhone(phone)) {
+    return 'That looks like an Indian mobile number — please set your country to India.';
+  }
+  if (!email) return 'An email address is required.';
+  if (!EMAIL_RE.test(email)) return 'Please enter a valid email address.';
+  return null;
+}
+
+function validateSignupStep(n) {
+  if (n === 1) {
+    if (!document.getElementById('reg-name').value.trim()) return 'Please enter your full name.';
+    return null;
+  }
+  if (n === 2) return validateSignupContact();
+  if (n === 3) {
+    const phoneOtp = document.getElementById('reg-otp').value.trim();
+    const emailOtp = document.getElementById('reg-email-otp').value.trim();
+    if (!phoneOtp && !emailOtp) {
+      return signupCountryIsIndia()
+        ? 'Verify your mobile number or your email address with an OTP to continue.'
+        : 'Verify your email address with an OTP to continue — we can only send SMS to Indian numbers.';
+    }
+    return null;
+  }
+  if (n === 4) {
+    if (!document.getElementById('reg-age').value) return 'Please enter your age.';
+    if (!document.getElementById('reg-gender').value) return 'Please select your gender.';
+    if (!document.getElementById('reg-designation').value.trim()) return 'Please enter your designation.';
+    if (!document.getElementById('reg-institute').value.trim()) return 'Please enter your institute or organization.';
+    const pw = document.getElementById('reg-password').value;
+    if (!pw || pw.length < 8) return 'Please set a password of at least 8 characters.';
+    return null;
+  }
+  return null;
+}
+
 async function handleRegistration(e) {
   e.preventDefault();
+  for (let step = 1; step <= 4; step++) {
+    const err = validateSignupStep(step);
+    if (err) return showToast(err);
+  }
+
   const phone = document.getElementById('reg-phone').value.trim();
   const email = document.getElementById('reg-email').value.trim();
   const phoneOtp = document.getElementById('reg-otp').value.trim();
   const emailOtp = document.getElementById('reg-email-otp').value.trim();
-
   const country = (document.getElementById('reg-country') || {}).value || 'India';
   const india = signupCountryIsIndia();
-  if (india && !phone) return showToast('A mobile number is required.');
-  if (india && phone && !isIndianPhone(phone)) {
-    return showToast('Enter a valid 10-digit Indian mobile number, or change your country.');
-  }
-  if (phone && !isPhoneValue(phone)) return showToast('Please enter a valid mobile number, including the country code.');
-  if (!india && phone && isIndianPhone(phone)) {
-    return showToast('That looks like an Indian mobile number — please set your country to India.');
-  }
-  if (email && !EMAIL_RE.test(email)) return showToast('Please enter a valid email address.');
-  // The server is the real gate (it burns the OTP); this just avoids a
-  // pointless round trip and gives a clearer message.
-  if (!phoneOtp && !emailOtp) {
-    return showToast(india
-      ? 'Verify your mobile number or your email address with an OTP to continue.'
-      : 'Verify your email address with an OTP to continue — we can only send SMS to Indian numbers.');
-  }
-
   const password = document.getElementById('reg-password').value;
-  if (!password || password.length < 8) {
-    return showToast('Please set a password of at least 8 characters.');
-  }
 
   const payload = {
     phone,
@@ -603,10 +694,13 @@ async function handleLogin(e) {
     loadDashboard();
     runPostLoginPrompts();
   } else if (data.notRegistered) {
-    // New identifier — switch to sign-up, carrying it across.
+    // New identifier — switch to sign-up, carrying it across. Land on the
+    // Contact step so the carried-over value is immediately visible rather
+    // than tucked away behind the Name step.
     toggleAuth('register');
     const isEmail = EMAIL_RE.test(identifier);
     document.getElementById(isEmail ? 'reg-email' : 'reg-phone').value = identifier;
+    showSignupStep(2);
     showToast("That isn't registered yet — please complete the sign-up form to create your account.", 'info');
   } else {
     showToast(data.error || "Login failed.");
