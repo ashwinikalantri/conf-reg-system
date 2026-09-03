@@ -21,7 +21,8 @@ const fetch = require('node-fetch');
 // What each admin route needs, and which roles hold it. One file rather than
 // a role list repeated at every route -- see permissions.js.
 const {
-  PERMISSION_KEYS, ROUTE_PERMISSIONS, REPORT_PERMISSIONS, roleCan, permissionsForRole,
+  PERMISSION_KEYS, ROUTE_PERMISSIONS, REPORT_PERMISSIONS, SYSTEM_ROLES,
+  roleCan, permissionsForRole,
 } = require('./permissions');
 const multer = require('multer');
 const XLSX = require('xlsx');
@@ -1981,6 +1982,42 @@ db.serialize(() => {
   // left missing -- currentPhase() already treats null *_until fields as
   // "spot pricing", a safe default until the operator sets real phase dates.
   db.run('INSERT OR IGNORE INTO fee_config (id, early_until, regular_until, late_until) VALUES (1, NULL, NULL, NULL)');
+
+  // --- ROLES -------------------------------------------------------------
+  // A role stops being a constant and becomes a row. What a role may DO is
+  // still the catalogue's business (permissions.js): the permission keys are
+  // code, because each one has to correspond to a guard the server actually
+  // applies. Which of them a role holds is data, because that is the part
+  // worth editing without a deploy.
+  //
+  // grants_all is Super Admin's alone: it holds every permission including
+  // ones added after it was written, which is what makes it the way back in
+  // when another role is misconfigured. It is stored as a flag rather than as
+  // 43 rows so that a permission added next year is covered without a
+  // migration.
+  //
+  // event_id is null and unused today. The deferred multi-event work moves
+  // roles per event, and one nullable column now is a great deal cheaper than
+  // a second migration over the same table later.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS roles (
+      key TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      description TEXT,
+      is_system INTEGER NOT NULL DEFAULT 0,
+      grants_all INTEGER NOT NULL DEFAULT 0,
+      event_id INTEGER,
+      created_at INTEGER,
+      updated_at INTEGER
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS role_permissions (
+      role_key TEXT NOT NULL,
+      permission TEXT NOT NULL,
+      PRIMARY KEY (role_key, permission)
+    )
+  `);
 });
 
 // One-time-ever backfill: normalise stored person names to Title Case. Guarded
@@ -2086,6 +2123,98 @@ async function migrateProgramGroupsOnBoot() {
   }
 
   await dbRun("INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('program_groups_migrated', ?)", [String(Date.now())]);
+}
+
+// --- ROLE RESOLUTION ------------------------------------------------------
+//
+// Roles live in the database now, so every permission check would otherwise
+// be a query. They are read once into memory and re-read whenever they
+// change. Single process, so there is no cross-node invalidation problem --
+// that assumption is written down here because it stops being true the day
+// this runs as two containers, and the fix then is to key the cache on a
+// version column rather than to hope.
+let roleCache = null;   // Map<roleKey, { grantsAll, permissions:Set }>
+
+async function loadRoles() {
+  const rows = await dbAll('SELECT key, label, description, is_system, grants_all FROM roles');
+  const perms = await dbAll('SELECT role_key, permission FROM role_permissions');
+  const next = new Map();
+  for (const r of rows) {
+    next.set(r.key, {
+      key: r.key,
+      label: r.label,
+      description: r.description,
+      isSystem: !!r.is_system,
+      grantsAll: !!r.grants_all,
+      permissions: new Set(),
+    });
+  }
+  for (const p of perms) {
+    const role = next.get(p.role_key);
+    // A permission naming a role that no longer exists, or a key that has
+    // been retired from the catalogue, is ignored rather than trusted.
+    if (role && PERMISSION_KEYS.includes(p.permission)) role.permissions.add(p.permission);
+  }
+  roleCache = next;
+  return next;
+}
+
+// Seed the five built-in roles from the catalogue.
+//
+// Only ever inserts a role that is absent. Re-seeding an existing one every
+// boot would silently undo an admin's edit the next time the app restarted,
+// which is the sort of thing nobody notices until a role has quietly been
+// wrong for a week.
+async function seedRolesOnBoot() {
+  const now = Date.now();
+  let created = 0;
+  for (const role of SYSTEM_ROLES) {
+    const existing = await dbGet('SELECT key FROM roles WHERE key = ?', [role.key]);
+    if (existing) continue;
+    await dbRun(
+      `INSERT INTO roles (key, label, description, is_system, grants_all, event_id, created_at, updated_at)
+       VALUES (?, ?, ?, 1, ?, NULL, ?, ?)`,
+      [role.key, role.label, role.description, role.all ? 1 : 0, now, now]);
+    for (const permission of role.permissions || []) {
+      await dbRun('INSERT OR IGNORE INTO role_permissions (role_key, permission) VALUES (?, ?)',
+        [role.key, permission]);
+    }
+    created++;
+  }
+  await loadRoles();
+  if (created) console.log(`Seeded ${created} built-in role(s) from the catalogue.`);
+  return created;
+}
+
+// May this role do this? The only permission question the app asks.
+//
+// Falls back to the code catalogue when the cache is EMPTY -- meaning the
+// load failed or the tables are missing -- because denying everything in
+// that case would take the whole admin panel down mid-conference over a
+// migration hiccup, and the answer the catalogue gives is the one the app
+// shipped with. A role that is simply absent from a cache that DID load is
+// denied: that is a role someone deleted, not a database that is broken, and
+// the two must not be treated alike.
+function can(roleKey, permission) {
+  if (!roleCache || roleCache.size === 0) {
+    if (!can.warned) {
+      console.error('[roles] No roles loaded from the database -- falling back to the built-in catalogue.');
+      can.warned = true;
+    }
+    return roleCan(roleKey, permission);
+  }
+  const role = roleCache.get(roleKey);
+  if (!role) return false;
+  if (role.grantsAll) return PERMISSION_KEYS.includes(permission);
+  return role.permissions.has(permission);
+}
+
+// Everything a role holds, for the browser and for the role editor.
+function permissionsOf(roleKey) {
+  if (!roleCache || roleCache.size === 0) return permissionsForRole(roleKey);
+  const role = roleCache.get(roleKey);
+  if (!role) return [];
+  return role.grantsAll ? PERMISSION_KEYS.slice() : [...role.permissions];
 }
 
 // One-time-ever: the signup form used to have no separate salutation field,
@@ -2681,7 +2810,7 @@ function requirePermission(permission) {
   }
   const guard = (req, res, next) => {
     if (!req.session) return res.status(401).json({ success: false, error: 'Login required.' });
-    if (!roleCan(req.session.role, permission)) {
+    if (!can(req.session.role, permission)) {
       return res.status(403).json({ success: false, error: 'You do not have permission for this action.' });
     }
     next();
@@ -4592,7 +4721,7 @@ app.get('/api/registrations/:id/screenshot', requireAuth, async (req, res, next)
 
     // Whoever may read payments may read the evidence behind them; everyone
     // else only their own. Same set as before -- see permissions.js.
-    const isFinance = roleCan(req.session.role, 'payments.view');
+    const isFinance = can(req.session.role, 'payments.view');
     if (!isFinance && req.session.phone !== row.phone_number) {
       return res.status(403).json({ success: false, error: 'You do not have permission to view this screenshot.' });
     }
@@ -4627,7 +4756,7 @@ app.get('/api/registrations/:id/id-card', requireAuth, async (req, res, next) =>
     }
     // Whoever may read payments may read the evidence behind them; everyone
     // else only their own. Same set as before -- see permissions.js.
-    const isFinance = roleCan(req.session.role, 'payments.view');
+    const isFinance = can(req.session.role, 'payments.view');
     if (!isFinance && req.session.phone !== row.phone_number) {
       return res.status(403).json({ success: false, error: 'You do not have permission to view this ID card.' });
     }
@@ -4658,7 +4787,7 @@ app.get('/api/payment-transactions/:txnId/screenshot', requireAuth, async (req, 
     // staff, or the delegate whose own payment it is.
     // Whoever may read payments may read the evidence behind them; everyone
     // else only their own. Same set as before -- see permissions.js.
-    const isFinance = roleCan(req.session.role, 'payments.view');
+    const isFinance = can(req.session.role, 'payments.view');
     if (!isFinance && req.session.phone !== txn.phone_number) {
       return res.status(403).json({ success: false, error: 'You do not have permission to view this payment slip.' });
     }
@@ -6199,6 +6328,26 @@ app.get('/api/registrations/:id/audit', requirePermission('payments.view'), asyn
 });
 
 // User administration (super admin only).
+// Re-read the roles from the database.
+//
+// Every permission check answers from an in-memory copy, so a role changed
+// underneath the app -- by the editor in a later phase, or by hand during an
+// incident -- takes effect when this is called. The editor will call it
+// itself; it exists separately because "the database is right and the app is
+// stale" is a real situation someone has to be able to fix without a restart.
+app.post('/api/admin/roles/reload', requirePermission('users.manage_roles'), async (req, res, next) => {
+  try {
+    const loaded = await loadRoles();
+    await recordAudit({
+      req, entityType: 'role', entityId: 'all', action: 'ROLES_RELOADED',
+      oldValue: null, newValue: `${loaded.size} role(s) re-read from the database`,
+    });
+    res.json({ success: true, roles: loaded.size });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get('/api/users', requirePermission('users.view'), async (req, res, next) => {
   try {
     const rows = await dbAll(
@@ -8910,7 +9059,7 @@ function reportHtml(rep) {
 // this report too, but can't see the masters tab).
 app.get('/api/admin/reports/workshops/options', requireAuth, async (req, res, next) => {
   try {
-    if (!roleCan(req.session.role, REPORT_PERMISSIONS.workshops)) {
+    if (!can(req.session.role, REPORT_PERMISSIONS.workshops)) {
       return res.status(403).json({ success: false, error: 'You do not have permission for this report.' });
     }
     const groups = await fetchProgramGroups({ activeOnly: false });
@@ -8926,7 +9075,7 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
     const type = req.params.type;
     const permission = REPORT_PERMISSIONS[type];
     if (!permission) return res.status(404).json({ success: false, error: 'Unknown report.' });
-    if (!roleCan(req.session.role, permission)) {
+    if (!can(req.session.role, permission)) {
       return res.status(403).json({ success: false, error: 'You do not have permission for this report.' });
     }
     if (type === 'workshops' && !req.query.optionId) {
@@ -9103,6 +9252,10 @@ registrationsMigrationReady.then(retitleNamesOnBoot)
   .then(() => loadNotificationToggles().catch((err) => console.error('Notification-toggle load failed (continuing to start):', err.message)))
   .then(() => loadMaintenanceMode().catch((err) => console.error('Maintenance-mode load failed (continuing to start):', err.message)))
   .then(() => loadGeneralSettings().catch((err) => console.error('General-settings load failed (continuing to start):', err.message)))
+  // Before the server accepts a request: every permission check reads this
+  // cache, and an empty one falls back to the built-in catalogue with a loud
+  // line in the log rather than refusing everybody.
+  .then(() => seedRolesOnBoot().catch((err) => console.error('Role seed failed (falling back to the built-in catalogue):', err.message)))
   // COOKIE_SECURE may have just been overlaid from schema_meta above, so this
   // has to run after loadGeneralSettings(), not at module-load time.
   .then(() => { if (COOKIE_SECURE) app.set('trust proxy', 1); })
@@ -9165,8 +9318,10 @@ function auditRoutePermissions() {
 function startServer() {
 const guardedRoutes = auditRoutePermissions();
 app.listen(PORT, () => {
+  const roleCount = roleCache ? roleCache.size : 0;
   console.log(`Access control: ${guardedRoutes} routes guarded by permission, `
-    + `${PERMISSION_KEYS.length} permissions, ${permissionsForRole('SUPER_ADMIN').length} held by Super Admin`);
+    + `${PERMISSION_KEYS.length} permissions, ${roleCount} role(s) loaded`
+    + (roleCount ? '' : ' — FALLING BACK to the built-in catalogue'));
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`SMS OTP: ${smsEnabled() ? 'ENABLED (Vynttra)' : 'disabled (no SMS_API_KEY)'}`);
   console.log(`Email: ${emailEnabled() ? `ENABLED (SES, from ${EMAIL.from})` : 'disabled (no AWS/SES config)'}`);

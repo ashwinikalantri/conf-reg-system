@@ -73,6 +73,7 @@ const PERMISSIONS = [
   ['users.create', 'users', 'Create a user', 'Add a staff or delegate account directly.'],
   ['users.edit', 'users', 'Edit a user', 'Change a person’s name, contact details or demography.'],
   ['users.assign_role', 'users', 'Assign a role', 'Change which role an account holds.'],
+  ['users.manage_roles', 'users', 'Manage roles', 'Create and edit the roles themselves, and what each one may do.'],
 
   // --- Masters ---
   ['masters.fees_view', 'masters', 'View fees', 'Read the fee categories and date tiers.'],
@@ -154,6 +155,7 @@ const ROUTE_PERMISSIONS = {
   'POST /api/users': 'users.create',
   'PUT /api/users/:phone': 'users.edit',
   'PUT /api/users/:phone/role': 'users.assign_role',
+  'POST /api/admin/roles/reload': 'users.manage_roles',
 
   // Masters -- fees
   'GET /api/admin/fees': 'masters.fees_view',

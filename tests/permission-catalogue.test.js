@@ -88,7 +88,9 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   const shapeOf = (route) => ROLES.filter((role) => BASELINE.roles[role].routes.includes(route)).join('+');
   const coarse = [];
   for (const [key, routes] of byKey) {
-    const shapes = setOf(routes.map(shapeOf));
+    const known = routes.filter((r) => BASELINE.roles.SUPER_ADMIN.routes.includes(r));
+    if (!known.length) continue;   // added since the baseline; nothing to compare against
+    const shapes = setOf(known.map(shapeOf));
     if (shapes.size > 1) coarse.push({ key, shapes: [...shapes] });
   }
   check('each permission covers one guard shape', coarse.length === 0, coarse.slice(0, 4));
@@ -99,14 +101,25 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     wrong.length === 0, wrong.slice(0, 6));
 
   console.log('\n== Every role reaches exactly what it reached before ==');
-  check('the baseline covers the same routes the app now guards',
-    BASELINE.routeCount === ROUTES.length, [BASELINE.routeCount, ROUTES.length]);
+  // Routes added after the baseline was frozen are legitimate -- the app
+  // keeps growing -- but each one has to be named here, with what it is and
+  // who may reach it. An unlisted new route fails, so widening access by
+  // adding a route is as visible as widening it by editing a role.
+  const ADDED_SINCE_BASELINE = {
+    'POST /api/admin/roles/reload': 'Phase 2. Re-reads roles from the database. Super Admin only.',
+  };
+  const added = ROUTES.map((r) => r.route).filter((r) => !BASELINE.roles.SUPER_ADMIN.routes.includes(r));
+  check('every route added since the baseline is accounted for',
+    added.every((r) => ADDED_SINCE_BASELINE[r]), added.filter((r) => !ADDED_SINCE_BASELINE[r]));
+  check('the baseline still covers the rest',
+    BASELINE.routeCount === ROUTES.length - added.length, [BASELINE.routeCount, ROUTES.length, added.length]);
+
   let mismatched = 0;
   for (const role of ROLES) {
     const held = setOf(perms.permissionsForRole(role));
     const before = setOf(BASELINE.roles[role].routes);
     const nowReach = setOf(ROUTES.filter((r) => held.has(r.permission)).map((r) => r.route));
-    const gained = diff(nowReach, before);
+    const gained = diff(nowReach, before).filter((r) => !ADDED_SINCE_BASELINE[r]);
     const lost = diff(before, nowReach);
     const ok = gained.length === 0 && lost.length === 0;
     if (!ok) mismatched++;
