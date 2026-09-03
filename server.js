@@ -18,6 +18,11 @@ const { createWorker } = require('tesseract.js');
 const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 // Node 16 has no global fetch; node-fetch (v2, CommonJS) provides it for SMS.
 const fetch = require('node-fetch');
+// What each admin route needs, and which roles hold it. One file rather than
+// a role list repeated at every route -- see permissions.js.
+const {
+  PERMISSION_KEYS, ROUTE_PERMISSIONS, REPORT_PERMISSIONS, roleCan, permissionsForRole,
+} = require('./permissions');
 const multer = require('multer');
 const XLSX = require('xlsx');
 
@@ -108,18 +113,16 @@ let COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
-// OPERATIONS is deliberately not in ROLE_IMPLIES below -- it grants exactly
-// two things (all reports, Users & Roles), not the Payments/Bank
-// Statement/Abstracts actions FINANCE_ADMIN or ACADEMIC_REVIEWER carry.
+// Which roles may reach the admin panel at all. What each one may DO there
+// is permissions.js's business, not this list's.
 const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC', 'OPERATIONS'];
 
-// Some roles imply others for permission checks. FINANCE_ACADEMIC is a combined
-// role that grants both finance-admin and academic-reviewer access; every other
-// role grants only itself. (SUPER_ADMIN is listed explicitly where it applies.)
-const ROLE_IMPLIES = { FINANCE_ACADEMIC: ['FINANCE_ADMIN', 'ACADEMIC_REVIEWER'] };
-function roleGrants(role) {
-  return [role, ...(ROLE_IMPLIES[role] || [])];
-}
+// ROLE_IMPLIES used to live here: FINANCE_ACADEMIC expanded into
+// FINANCE_ADMIN + ACADEMIC_REVIEWER at every permission check, because a role
+// was a string and the only way to say "both" was to say it at each guard.
+// With roles held as permission sets, "both" is simply the union of the two
+// sets, which is what the compound always meant -- so the special case is
+// gone rather than reimplemented. See SYSTEM_ROLES in permissions.js.
 
 // --- FIRST-RUN SETUP ------------------------------------------------------
 // A brand-new deployment has zero admin users and no code path to create one:
@@ -2662,15 +2665,31 @@ function maintenanceGate(req, res, next) {
   return res.status(503).json({ success: false, maintenance: true, error: maintenance.message });
 }
 
-function requireRole(...roles) {
-  return (req, res, next) => {
+
+// What a route needs, said as a capability rather than as a list of who
+// happens to hold it today. Roles still come from the hardcoded catalogue
+// (permissions.js), so this changes nothing about who can do what -- it
+// changes where that fact is written down, from 83 separate lines to one
+// file. Roles become editable rows in the next phase, and this middleware
+// does not change again when they do.
+function requirePermission(permission) {
+  if (!PERMISSION_KEYS.includes(permission)) {
+    // A typo here would silently guard a route with a permission nobody can
+    // ever hold -- locked out rather than exposed, but still wrong, and
+    // discovered by a user rather than by a deploy. Fail at load instead.
+    throw new Error(`Unknown permission '${permission}' -- see permissions.js`);
+  }
+  const guard = (req, res, next) => {
     if (!req.session) return res.status(401).json({ success: false, error: 'Login required.' });
-    const granted = roleGrants(req.session.role);
-    if (!roles.some((r) => granted.includes(r))) {
+    if (!roleCan(req.session.role, permission)) {
       return res.status(403).json({ success: false, error: 'You do not have permission for this action.' });
     }
     next();
   };
+  // Read back by the boot audit below, so it can report which routes it
+  // checked and catch one that carries no permission at all.
+  guard.permission = permission;
+  return guard;
 }
 
 // --- MIDDLEWARE ---------------------------------------------------------
@@ -4561,7 +4580,7 @@ ${STUB_CSS}`, `<div class="stub">
 
 // 'me' first, so the literal path is never swallowed by :id.
 app.get('/api/registrations/me/receipt', requireAuth, renderReceipt);
-app.get('/api/registrations/:id/receipt', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), renderReceipt);
+app.get('/api/registrations/:id/receipt', requirePermission('payments.view'), renderReceipt);
 
 // Serve a payment screenshot to the owning delegate or a finance admin.
 app.get('/api/registrations/:id/screenshot', requireAuth, async (req, res, next) => {
@@ -4571,7 +4590,9 @@ app.get('/api/registrations/:id/screenshot', requireAuth, async (req, res, next)
       return res.status(404).json({ success: false, error: 'Screenshot not found.' });
     }
 
-    const isFinance = req.session.role === 'SUPER_ADMIN' || roleGrants(req.session.role).includes('FINANCE_ADMIN');
+    // Whoever may read payments may read the evidence behind them; everyone
+    // else only their own. Same set as before -- see permissions.js.
+    const isFinance = roleCan(req.session.role, 'payments.view');
     if (!isFinance && req.session.phone !== row.phone_number) {
       return res.status(403).json({ success: false, error: 'You do not have permission to view this screenshot.' });
     }
@@ -4604,7 +4625,9 @@ app.get('/api/registrations/:id/id-card', requireAuth, async (req, res, next) =>
     if (!row || !row.id_card) {
       return res.status(404).json({ success: false, error: 'ID card not found.' });
     }
-    const isFinance = req.session.role === 'SUPER_ADMIN' || roleGrants(req.session.role).includes('FINANCE_ADMIN');
+    // Whoever may read payments may read the evidence behind them; everyone
+    // else only their own. Same set as before -- see permissions.js.
+    const isFinance = roleCan(req.session.role, 'payments.view');
     if (!isFinance && req.session.phone !== row.phone_number) {
       return res.status(403).json({ success: false, error: 'You do not have permission to view this ID card.' });
     }
@@ -4633,7 +4656,9 @@ app.get('/api/payment-transactions/:txnId/screenshot', requireAuth, async (req, 
     }
     // Same access rule as the registration-level screenshot above: finance
     // staff, or the delegate whose own payment it is.
-    const isFinance = req.session.role === 'SUPER_ADMIN' || roleGrants(req.session.role).includes('FINANCE_ADMIN');
+    // Whoever may read payments may read the evidence behind them; everyone
+    // else only their own. Same set as before -- see permissions.js.
+    const isFinance = roleCan(req.session.role, 'payments.view');
     if (!isFinance && req.session.phone !== txn.phone_number) {
       return res.status(403).json({ success: false, error: 'You do not have permission to view this payment slip.' });
     }
@@ -4779,7 +4804,7 @@ app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
 // Raigarh), and the client needs the state to tell them apart -- so it has to
 // be a real property of the group rather than whichever row SQLite happened
 // to pick for a bare column.
-app.get('/api/admin/delegate-locations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/delegate-locations', requirePermission('payments.view'), async (req, res, next) => {
   try {
     const rows = await dbAll(`
       SELECT TRIM(u.pincode) AS pincode, LOWER(TRIM(u.district)) AS district, TRIM(u.state) AS state,
@@ -4812,7 +4837,7 @@ app.get('/api/admin/delegate-locations', requireRole('SUPER_ADMIN', 'FINANCE_ADM
   }
 });
 
-app.get('/api/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/registrations', requirePermission('payments.view'), async (req, res, next) => {
   try {
     const rows = await dbAll(`
       SELECT ${REGISTRATION_PUBLIC_COLUMNS},
@@ -4919,7 +4944,7 @@ function amountShortOfFee(claimedTotal, paidAmount, expectedAmount) {
 // negative. Only touches the ocr_*_match/is_flagged columns, never
 // bank_status -- an approval or rejection already made stays made; this just
 // cleans up the flag/check data behind it.
-app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/registrations/rescan-flagged', requirePermission('payments.rescan'), async (req, res, next) => {
   try {
     // `all` re-judges every registration that has a screenshot, not only the
     // ones currently flagged. Approving a registration clears is_flagged, so
@@ -5013,7 +5038,7 @@ app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', '
 });
 
 // Finance reconciliation: update bank verification status (audited).
-app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.put('/api/registrations/:id/status', requirePermission('payments.decide'), async (req, res, next) => {
   try {
     const { bankStatus, rejectionReason, rejectionNote } = req.body;
     const allowed = ['PENDING', 'BANK_VERIFIED', 'REJECTED', 'PARTIAL_PAYMENT'];
@@ -5195,7 +5220,7 @@ app.put('/api/registrations/:id/status', requireRole('SUPER_ADMIN', 'FINANCE_ADM
 // stays consistent with the registration's status. Keeps the assigned
 // registration_number so any receipt/reference already shared stays stable if
 // it's later re-approved.
-app.put('/api/registrations/:id/unapprove', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.put('/api/registrations/:id/unapprove', requirePermission('payments.unapprove'), async (req, res, next) => {
   try {
     const existing = await dbGet('SELECT id, bank_status, delegate_name, phone_number FROM registrations WHERE id = ?', [req.params.id]);
     if (!existing) return res.status(404).json({ success: false, error: 'Registration not found.' });
@@ -5232,7 +5257,7 @@ app.put('/api/registrations/:id/unapprove', requireRole('SUPER_ADMIN'), async (r
 // the portal. Any payments already verified are preserved; the registration's
 // status is re-derived from the new fee (PARTIAL_PAYMENT if a balance is now
 // due, PENDING otherwise) so the delegate is prompted for the difference.
-app.put('/api/registrations/:id/lock-category', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.put('/api/registrations/:id/lock-category', requirePermission('payments.revise'), async (req, res, next) => {
   try {
     const { categoryKey } = req.body;
     const feeInfo = await resolveFee(categoryKey);
@@ -5272,7 +5297,7 @@ app.put('/api/registrations/:id/lock-category', requireRole('SUPER_ADMIN', 'FINA
 // balance is computed against what they've actually paid -- not the claim.
 // Moves the registration to PARTIAL_PAYMENT (the balance-due section) and
 // emails the delegate.
-app.post('/api/registrations/:id/revise-payment', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.post('/api/registrations/:id/revise-payment', requirePermission('payments.revise'), async (req, res, next) => {
   try {
     const reg = await dbGet('SELECT id, phone_number, delegate_name, category_label, expected_amount, bank_status FROM registrations WHERE id = ?', [req.params.id]);
     if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
@@ -5309,7 +5334,7 @@ app.post('/api/registrations/:id/revise-payment', requireRole('SUPER_ADMIN', 'FI
 });
 
 // Unlock a category (Super Admin only) -- lets the delegate choose again.
-app.delete('/api/registrations/:id/lock-category', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.delete('/api/registrations/:id/lock-category', requirePermission('payments.unlock_category'), async (req, res, next) => {
   try {
     const reg = await dbGet('SELECT id, category_label FROM registrations WHERE id = ?', [req.params.id]);
     if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
@@ -5328,7 +5353,7 @@ app.delete('/api/registrations/:id/lock-category', requireRole('SUPER_ADMIN'), a
 // actually verifies that status. Required (see PUT .../status) before a
 // student registration can be marked BANK_VERIFIED; the automated OCR check
 // alone is advisory and never sufficient on its own.
-app.put('/api/registrations/:id/verify-id', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.put('/api/registrations/:id/verify-id', requirePermission('payments.verify_id'), async (req, res, next) => {
   try {
     const verified = !!req.body.verified;
     const existing = await dbGet('SELECT id, category_key, id_verified FROM registrations WHERE id = ?', [req.params.id]);
@@ -5354,7 +5379,7 @@ app.put('/api/registrations/:id/verify-id', requireRole('SUPER_ADMIN', 'FINANCE_
 // unused credits, closest-amount-first, so the admin can eyeball date and
 // description (e.g. an IMPS/NEFT credit with no machine-readable reference)
 // and pick the right one.
-app.get('/api/registrations/:id/candidate-transactions', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/registrations/:id/candidate-transactions', requirePermission('payments.link'), async (req, res, next) => {
   try {
     const reg = await dbGet('SELECT id, paid_amount, expected_amount FROM registrations WHERE id = ?', [req.params.id]);
     if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
@@ -5387,7 +5412,7 @@ app.get('/api/registrations/:id/candidate-transactions', requireRole('SUPER_ADMI
 // amount, so unlike the per-transaction endpoints below it can't take part
 // in a split; any existing allocation at all (even partial, via the current
 // per-transaction mechanism) blocks it.
-app.put('/api/registrations/:id/link-transaction', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.put('/api/registrations/:id/link-transaction', requirePermission('payments.link'), async (req, res, next) => {
   try {
     const { transactionId } = req.body;
     const reg = await dbGet('SELECT id, bank_txn_id FROM registrations WHERE id = ?', [req.params.id]);
@@ -5416,7 +5441,7 @@ app.put('/api/registrations/:id/link-transaction', requireRole('SUPER_ADMIN', 'F
 });
 
 // Undo a link (auto- or manual), e.g. if the wrong transaction was picked.
-app.delete('/api/registrations/:id/link-transaction', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.delete('/api/registrations/:id/link-transaction', requirePermission('payments.link'), async (req, res, next) => {
   try {
     const reg = await dbGet('SELECT id, bank_txn_id FROM registrations WHERE id = ?', [req.params.id]);
     if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
@@ -5441,7 +5466,7 @@ const USED_BANK_TXN_SUBQUERY =
 // Candidate statement credits for a specific payment transaction, nearest to
 // its amount first, excluding any already linked (to a registration or another
 // transaction).
-app.get('/api/payment-transactions/:txnId/candidates', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/payment-transactions/:txnId/candidates', requirePermission('payments.link'), async (req, res, next) => {
   try {
     const txn = await dbGet('SELECT id, amount FROM payment_transactions WHERE id = ?', [req.params.txnId]);
     if (!txn) return res.status(404).json({ success: false, error: 'Payment transaction not found.' });
@@ -5470,7 +5495,7 @@ app.get('/api/payment-transactions/:txnId/candidates', requireRole('SUPER_ADMIN'
 // transaction's own amount, confirmed against the linked credit. The UNIQUE
 // index on payment_transactions.bank_txn_id is the final backstop; the explicit
 // checks give a clearer error.
-app.put('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.put('/api/payment-transactions/:txnId/link', requirePermission('payments.link'), async (req, res, next) => {
   try {
     const { bankTxnId } = req.body;
     const txn = await dbGet('SELECT id, registration_id, bank_txn_id, amount, verified_amount, txn_status FROM payment_transactions WHERE id = ?', [req.params.txnId]);
@@ -5558,7 +5583,7 @@ app.put('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FIN
 // just without a pre-existing row to attach it to. Takes the credit's whole
 // amount, not a partial split -- splitting one credit across several
 // registrations is a separate, not-yet-built feature.
-app.post('/api/registrations/:id/admin-add-payment', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.post('/api/registrations/:id/admin-add-payment', requirePermission('payments.add_payment'), async (req, res, next) => {
   try {
     const { bankTxnId } = req.body;
     const reg = await dbGet('SELECT id, phone_number, expected_amount FROM registrations WHERE id = ?', [req.params.id]);
@@ -5633,7 +5658,7 @@ app.post('/api/registrations/:id/admin-add-payment', requireRole('SUPER_ADMIN', 
 // while filling out the "Register Delegate" form, before the registration
 // itself exists). ?amount= is the fee being registered for; omit it to sort
 // by date instead.
-app.get('/api/admin/bank-credit-candidates', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/bank-credit-candidates', requirePermission('payments.link'), async (req, res, next) => {
   try {
     const target = Number(req.query.amount) || 0;
     const raw = await dbAll(
@@ -5669,7 +5694,7 @@ app.get('/api/admin/bank-credit-candidates', requireRole('SUPER_ADMIN', 'FINANCE
 // rather than reimplementing it, so a walk-in registration is priced and
 // validated identically to a self-service one -- same phase, same capacity
 // limits, same discount rules.
-app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/registrations', requirePermission('payments.desk_register'), async (req, res, next) => {
   try {
     const phone = String(req.body.phone || '').trim();
     // Desk registrations stay Indian-only for now, same reasoning as
@@ -5901,7 +5926,7 @@ app.post('/api/admin/registrations', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
 // Same shape/reasoning as /api/payment-transactions/:txnId/candidates for
 // credits, but 1-to-1 (see the UNIQUE index on payment_refunds.bank_txn_id)
 // rather than split-capable, since a refund debit is one real transfer out.
-app.get('/api/registrations/:id/refund-candidates', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/registrations/:id/refund-candidates', requirePermission('payments.refund'), async (req, res, next) => {
   try {
     const reg = await dbGet('SELECT id, expected_amount FROM registrations WHERE id = ?', [req.params.id]);
     if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
@@ -5931,7 +5956,7 @@ app.get('/api/registrations/:id/refund-candidates', requireRole('SUPER_ADMIN', '
 // Allows a partial refund (amount less than the full outstanding excess) --
 // the rest stays recorded as still-outstanding excess for a later refund
 // against a different debit row.
-app.post('/api/registrations/:id/refund', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.post('/api/registrations/:id/refund', requirePermission('payments.refund'), async (req, res, next) => {
   try {
     const reg = await dbGet('SELECT id, expected_amount FROM registrations WHERE id = ?', [req.params.id]);
     if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
@@ -5989,7 +6014,7 @@ app.post('/api/registrations/:id/refund', requireRole('SUPER_ADMIN', 'FINANCE_AD
 });
 
 // Undo a refund record, e.g. it was logged in error or for the wrong amount.
-app.delete('/api/registrations/:id/refund/:refundId', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.delete('/api/registrations/:id/refund/:refundId', requirePermission('payments.refund'), async (req, res, next) => {
   try {
     const refund = await dbGet('SELECT id, amount, reference_note FROM payment_refunds WHERE id = ? AND registration_id = ?', [req.params.refundId, req.params.id]);
     if (!refund) return res.status(404).json({ success: false, error: 'Refund record not found.' });
@@ -6025,7 +6050,7 @@ app.delete('/api/registrations/:id/refund/:refundId', requireRole('SUPER_ADMIN',
 // that discrepancy belongs to the cash handling, not to the delegate, and
 // must not quietly reduce what a fully-paid delegate is recorded as having
 // paid. Linking cash records WHERE it was banked and changes nothing else.
-app.get('/api/admin/cash-in-hand', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/cash-in-hand', requirePermission('statement.cash_deposit'), async (req, res, next) => {
   try {
     const rows = await dbAll(`
       SELECT pt.id, pt.registration_id, pt.phone_number,
@@ -6049,7 +6074,7 @@ app.get('/api/admin/cash-in-hand', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), 
 // deposited as. All-or-nothing: either every selected payment is attached to
 // this deposit or none is, so a partially-applied batch can't leave the
 // desk's books half-reconciled.
-app.post('/api/admin/cash-deposit', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/cash-deposit', requirePermission('statement.cash_deposit'), async (req, res, next) => {
   try {
     const bankTxnId = req.body.bankTxnId;
     const txnIds = Array.isArray(req.body.txnIds) ? req.body.txnIds.map(Number).filter(Number.isFinite) : [];
@@ -6112,7 +6137,7 @@ app.post('/api/admin/cash-deposit', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'),
 
 // Detach cash from a deposit -- back to unbanked, not un-verified. The money
 // was still collected; only the claim about where it was banked is undone.
-app.post('/api/admin/cash-deposit/unlink', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/cash-deposit/unlink', requirePermission('statement.cash_deposit'), async (req, res, next) => {
   try {
     const txnIds = Array.isArray(req.body.txnIds) ? req.body.txnIds.map(Number).filter(Number.isFinite) : [];
     if (!txnIds.length) return res.status(400).json({ success: false, error: 'Select at least one cash collection.' });
@@ -6137,7 +6162,7 @@ app.post('/api/admin/cash-deposit/unlink', requireRole('SUPER_ADMIN', 'FINANCE_A
 });
 
 // Unlink a payment transaction, which also un-acknowledges it (back to pending).
-app.delete('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.delete('/api/payment-transactions/:txnId/link', requirePermission('payments.link'), async (req, res, next) => {
   try {
     const txn = await dbGet('SELECT id, registration_id, bank_txn_id FROM payment_transactions WHERE id = ?', [req.params.txnId]);
     if (!txn) return res.status(404).json({ success: false, error: 'Payment transaction not found.' });
@@ -6158,7 +6183,7 @@ app.delete('/api/payment-transactions/:txnId/link', requireRole('SUPER_ADMIN', '
 });
 
 // Full audit history for one registration.
-app.get('/api/registrations/:id/audit', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/registrations/:id/audit', requirePermission('payments.view'), async (req, res, next) => {
   try {
     const rows = await dbAll(
       `SELECT action, old_value, new_value, actor_name, actor_role, actor_phone, created_at
@@ -6174,7 +6199,7 @@ app.get('/api/registrations/:id/audit', requireRole('SUPER_ADMIN', 'FINANCE_ADMI
 });
 
 // User administration (super admin only).
-app.get('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res, next) => {
+app.get('/api/users', requirePermission('users.view'), async (req, res, next) => {
   try {
     const rows = await dbAll(
       `SELECT users.*, r.id AS registration_id, r.bank_status AS registration_status
@@ -6206,7 +6231,7 @@ app.get('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res,
 
 // Full profile for the Users side-panel: demography, contact, registration +
 // payment ledger, program-group enrollment, and a best-effort signup date.
-app.get('/api/users/:phone/detail', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res, next) => {
+app.get('/api/users/:phone/detail', requirePermission('users.view'), async (req, res, next) => {
   try {
     const phone = req.params.phone;
     const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
@@ -6242,7 +6267,7 @@ app.get('/api/users/:phone/detail', requireRole('SUPER_ADMIN', 'OPERATIONS'), as
 // changes (see the routes below), but editing a delegate's personal details
 // is a separate capability the "reports + user and role" request didn't ask
 // for, so it's left narrower on purpose.
-app.put('/api/users/:phone', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.put('/api/users/:phone', requirePermission('users.edit'), async (req, res, next) => {
   try {
     const phone = req.params.phone;
     const existing = await dbGet('SELECT phone_number FROM users WHERE phone_number = ?', [phone]);
@@ -6296,7 +6321,7 @@ app.put('/api/users/:phone', requireRole('SUPER_ADMIN'), async (req, res, next) 
   }
 });
 
-app.post('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res, next) => {
+app.post('/api/users', requirePermission('users.create'), async (req, res, next) => {
   try {
     const { name, phone, designation, institute, role, password } = req.body;
     // Staff accounts stay Indian-only: this creates an account whose key IS
@@ -6355,7 +6380,7 @@ app.post('/api/users', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res
   }
 });
 
-app.put('/api/users/:phone/role', requireRole('SUPER_ADMIN', 'OPERATIONS'), async (req, res, next) => {
+app.put('/api/users/:phone/role', requirePermission('users.assign_role'), async (req, res, next) => {
   try {
     const { role } = req.body;
     if (!ADMIN_ROLES.includes(role) && role !== 'DELEGATE') {
@@ -6395,7 +6420,7 @@ const PENDING_SIGNUP_QUERY =
      WHERE NOT EXISTS (SELECT 1 FROM registrations r WHERE r.phone_number = u.phone_number)
      ORDER BY u.full_name`;
 
-app.get('/api/admin/reminders/pending-signups', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/reminders/pending-signups', requirePermission('comms.reminders_view'), async (req, res, next) => {
   try {
     const rows = await dbAll(PENDING_SIGNUP_QUERY);
     res.json({ users: rows || [] });
@@ -6407,7 +6432,7 @@ app.get('/api/admin/reminders/pending-signups', requireRole('SUPER_ADMIN', 'FINA
 // Sends the reminder to the caller's own email only, so wording/formatting
 // can be checked before the irreversible bulk send below. {{name}} is
 // substituted with the admin's own name, same as a real recipient would see.
-app.post('/api/admin/reminders/test-send', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/reminders/test-send', requirePermission('comms.reminders_test'), async (req, res, next) => {
   try {
     const { subject, bodyHtml } = req.body;
     if (!subject || !String(subject).trim()) {
@@ -6439,7 +6464,7 @@ app.post('/api/admin/reminders/test-send', requireRole('SUPER_ADMIN'), async (re
 // {{name}} in the body is replaced per-recipient with "Salutation Full Name".
 // Deliberately SUPER_ADMIN only (unlike the read above) since this is a
 // one-way bulk email blast to real delegates -- nothing to undo if wrong.
-app.post('/api/admin/reminders/send', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/reminders/send', requirePermission('comms.reminders_send'), async (req, res, next) => {
   try {
     const { subject, bodyHtml, phones } = req.body;
     if (!subject || !String(subject).trim()) {
@@ -6512,7 +6537,7 @@ const BALANCE_DUE_QUERY =
      WHERE registrations.bank_status = 'PARTIAL_PAYMENT'
      ORDER BY delegate_name`;
 
-app.get('/api/admin/reminders/balance-due', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/reminders/balance-due', requirePermission('comms.reminders_view'), async (req, res, next) => {
   try {
     const regs = (await dbAll(BALANCE_DUE_QUERY)).map(withDelegateSalutation);
     const rows = [];
@@ -6529,7 +6554,7 @@ app.get('/api/admin/reminders/balance-due', requireRole('SUPER_ADMIN', 'FINANCE_
 // {{name}} -> "Salutation Full Name", {{amount}} -> the caller's own last
 // PARTIAL_PAYMENT balance if they have one (else ₹0, just so the preview
 // shows something plausible rather than a literal placeholder).
-app.post('/api/admin/reminders/balance-due/test-send', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/reminders/balance-due/test-send', requirePermission('comms.reminders_test'), async (req, res, next) => {
   try {
     const { subject, bodyHtml } = req.body;
     if (!subject || !String(subject).trim()) {
@@ -6564,7 +6589,7 @@ app.post('/api/admin/reminders/balance-due/test-send', requireRole('SUPER_ADMIN'
 
 // Deliberately SUPER_ADMIN only, same reasoning as /reminders/send: a
 // one-way bulk email blast to real delegates, nothing to undo if wrong.
-app.post('/api/admin/reminders/balance-due/send', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/reminders/balance-due/send', requirePermission('comms.reminders_send'), async (req, res, next) => {
   try {
     const { subject, bodyHtml, phones } = req.body;
     if (!subject || !String(subject).trim()) {
@@ -6627,7 +6652,7 @@ app.post('/api/admin/reminders/balance-due/send', requireRole('SUPER_ADMIN'), as
 // record behind these addresses to personalize from. Deliberately
 // SUPER_ADMIN only and rolling-24h-deduped per address, same reasoning as
 // the other two: a one-way bulk blast, nothing to undo if wrong.
-app.post('/api/admin/reminders/custom-send', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/reminders/custom-send', requirePermission('comms.custom_send'), async (req, res, next) => {
   try {
     const { subject, bodyHtml, emails } = req.body;
     if (!subject || !String(subject).trim()) {
@@ -6728,7 +6753,7 @@ const readJsonFile = async (file) => {
   try { return JSON.parse(await fs.promises.readFile(file, 'utf8')); } catch { return null; }
 };
 
-app.get('/api/admin/backup/status', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/backup/status', requirePermission('system.backups'), async (req, res, next) => {
   try {
     const [request, last, drive, linkPending, checkPending] = await Promise.all([
       readJsonFile(BACKUP_REQUEST_FILE), readJsonFile(BACKUP_STATUS_FILE),
@@ -6760,7 +6785,7 @@ app.get('/api/admin/backup/status', requireRole('SUPER_ADMIN'), async (req, res,
 // backup script through the data volume and wiped as that script consumes it,
 // so the credential is never stored anywhere this container can read at rest
 // -- the same reason the app cannot take a backup itself.
-app.post('/api/admin/backup/drive-link', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/backup/drive-link', requirePermission('system.backups'), async (req, res, next) => {
   try {
     const token = String(req.body.token || '').trim();
     if (!token) return res.status(400).json({ success: false, error: 'Paste the token from rclone authorize.' });
@@ -6856,7 +6881,7 @@ async function driveExchangeCode(code) {
 }
 
 // Save the OAuth client. Kept out of the database with the other secrets.
-app.post('/api/admin/backup/drive-oauth/config', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/backup/drive-oauth/config', requirePermission('system.backups'), async (req, res, next) => {
   try {
     const clientId = String(req.body.clientId || '').trim();
     const clientSecret = String(req.body.clientSecret || '').trim();
@@ -6880,7 +6905,7 @@ app.post('/api/admin/backup/drive-oauth/config', requireRole('SUPER_ADMIN'), asy
 
 // Send the admin to Google. A browser navigation, not a fetch, so the session
 // cookie rides along and the callback can tell it is the same person.
-app.get('/api/admin/backup/drive-oauth/start', requireRole('SUPER_ADMIN'), (req, res) => {
+app.get('/api/admin/backup/drive-oauth/start', requirePermission('system.backups'), (req, res) => {
   if (!driveOauthConfigured()) {
     return res.status(400).send(driveResultPage('Google Drive is not set up yet', 'Add the OAuth client ID and secret in Settings first.', false));
   }
@@ -6919,7 +6944,7 @@ function driveResultPage(title, detail, ok) {
 // That is cross-site, so this route only sees the session because the cookie
 // is sameSite:'lax' -- lax sends cookies on top-level navigations. Tightening
 // that to 'strict' would make this 403 with no obvious cause.
-app.get('/api/admin/backup/drive-callback', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/backup/drive-callback', requirePermission('system.backups'), async (req, res, next) => {
   try {
     if (req.query.error) {
       return res.status(400).send(driveResultPage('Google Drive was not connected',
@@ -6970,7 +6995,7 @@ app.get('/api/admin/backup/drive-callback', requireRole('SUPER_ADMIN'), async (r
 });
 
 // Ask the backup script to test the link and report back.
-app.post('/api/admin/backup/drive-check', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/backup/drive-check', requirePermission('system.backups'), async (req, res, next) => {
   try {
     await fs.promises.writeFile(DRIVE_CHECK_FILE, JSON.stringify({ requestedAt: Date.now() }), 'utf8');
     res.json({ success: true });
@@ -6979,7 +7004,7 @@ app.post('/api/admin/backup/drive-check', requireRole('SUPER_ADMIN'), async (req
   }
 });
 
-app.post('/api/admin/backup/request', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/backup/request', requirePermission('system.backups'), async (req, res, next) => {
   try {
     // A second request while one is queued would just be the same backup, so
     // say so rather than letting an impatient click look like it did nothing.
@@ -7018,7 +7043,7 @@ function validGroupInput({ name, required, maxSelect }, { partial } = {}) {
   return null;
 }
 
-app.get('/api/admin/program-groups', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/program-groups', requirePermission('masters.programs_view'), async (req, res, next) => {
   try {
     res.json({ groups: await fetchProgramGroups({ activeOnly: false }) });
   } catch (err) {
@@ -7026,7 +7051,7 @@ app.get('/api/admin/program-groups', requireRole('SUPER_ADMIN'), async (req, res
   }
 });
 
-app.post('/api/admin/program-groups', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/program-groups', requirePermission('masters.programs_manage'), async (req, res, next) => {
   try {
     const { name, description, required, maxSelect, sortOrder } = req.body;
     const bad = validGroupInput({ name, maxSelect: maxSelect !== undefined ? Number(maxSelect) : 1 });
@@ -7045,7 +7070,7 @@ app.post('/api/admin/program-groups', requireRole('SUPER_ADMIN'), async (req, re
   }
 });
 
-app.put('/api/admin/program-groups/:id', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.put('/api/admin/program-groups/:id', requirePermission('masters.programs_manage'), async (req, res, next) => {
   try {
     const { name, description, required, maxSelect, sortOrder, active } = req.body;
     const bad = validGroupInput({ name, maxSelect: maxSelect !== undefined ? Number(maxSelect) : undefined }, { partial: true });
@@ -7079,7 +7104,7 @@ app.put('/api/admin/program-groups/:id', requireRole('SUPER_ADMIN'), async (req,
 // Delete a group, but only if it has no options left in it (remove those
 // first -- each option's own delete is already refused while anyone is
 // enrolled, so this transitively can't orphan a delegate's selection).
-app.delete('/api/admin/program-groups/:id', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.delete('/api/admin/program-groups/:id', requirePermission('masters.programs_manage'), async (req, res, next) => {
   try {
     const group = await dbGet('SELECT * FROM program_groups WHERE id = ?', [req.params.id]);
     if (!group) return res.status(404).json({ success: false, error: 'Group not found.' });
@@ -7115,7 +7140,7 @@ function validProgramInput({ groupId, name, capacity, fee }, { partial } = {}) {
 }
 
 // List every option (active or not) with enrollment counts.
-app.get('/api/admin/program-options', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/program-options', requirePermission('masters.programs_view'), async (req, res, next) => {
   try {
     res.json({ options: await fetchProgramOptions({ activeOnly: false }) });
   } catch (err) {
@@ -7123,7 +7148,7 @@ app.get('/api/admin/program-options', requireRole('SUPER_ADMIN'), async (req, re
   }
 });
 
-app.post('/api/admin/program-options', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/program-options', requirePermission('masters.programs_manage'), async (req, res, next) => {
   try {
     const groupId = Number(req.body.groupId);
     const { name, capacity } = req.body;
@@ -7149,7 +7174,7 @@ app.post('/api/admin/program-options', requireRole('SUPER_ADMIN'), async (req, r
   }
 });
 
-app.put('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.put('/api/admin/program-options/:id', requirePermission('masters.programs_manage'), async (req, res, next) => {
   try {
     const { name, capacity, active } = req.body;
     const fee = req.body.fee !== undefined ? Number(req.body.fee) : undefined;
@@ -7182,7 +7207,7 @@ app.put('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (req
 });
 
 // Delete an option, but only if nobody is enrolled (otherwise deactivate it).
-app.delete('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.delete('/api/admin/program-options/:id', requirePermission('masters.programs_manage'), async (req, res, next) => {
   try {
     const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
     if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
@@ -7209,7 +7234,7 @@ app.delete('/api/admin/program-options/:id', requireRole('SUPER_ADMIN'), async (
 
 // List delegates currently enrolled in one option (manual roster view,
 // alongside the capacity count already shown in the list).
-app.get('/api/admin/program-options/:id/enrolled', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/program-options/:id/enrolled', requirePermission('masters.programs_view'), async (req, res, next) => {
   try {
     const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
     if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
@@ -7233,7 +7258,7 @@ app.get('/api/admin/program-options/:id/enrolled', requireRole('SUPER_ADMIN'), a
 // delegate can only hold one option per group here too, regardless of that
 // group's max_select -- this endpoint is a single-slot override, not a bulk
 // selection tool); other groups are untouched.
-app.post('/api/admin/program-options/:id/enroll', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/program-options/:id/enroll', requirePermission('masters.programs_manage'), async (req, res, next) => {
   try {
     const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
     if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
@@ -7279,7 +7304,7 @@ app.post('/api/admin/program-options/:id/enroll', requireRole('SUPER_ADMIN'), as
 // Mark/unmark an enrolled delegate as faculty for this specific option.
 // Faculty stay attached to the option (visible on its roster and report)
 // but are excluded from the capacity count -- see fetchProgramOptions().
-app.put('/api/admin/program-options/:id/enrolled/:phone/faculty', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.put('/api/admin/program-options/:id/enrolled/:phone/faculty', requirePermission('masters.programs_manage'), async (req, res, next) => {
   try {
     const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
     if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
@@ -7304,7 +7329,7 @@ app.put('/api/admin/program-options/:id/enrolled/:phone/faculty', requireRole('S
 
 // Remove a delegate from an option's roster (clears their choice in that
 // group; does not touch their registration or other groups otherwise).
-app.delete('/api/admin/program-options/:id/enroll/:phone', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.delete('/api/admin/program-options/:id/enroll/:phone', requirePermission('masters.programs_manage'), async (req, res, next) => {
   try {
     const opt = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
     if (!opt) return res.status(404).json({ success: false, error: 'Option not found.' });
@@ -7341,7 +7366,7 @@ function studentIdFields(b) {
   return { requiresStudentId: !!b.requiresStudentId };
 }
 
-app.get('/api/admin/fees', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/fees', requirePermission('masters.fees_view'), async (req, res, next) => {
   try {
     const config = await getFeeConfig();
     const categories = await dbAll('SELECT * FROM fee_categories ORDER BY sort_order, id');
@@ -7354,7 +7379,7 @@ app.get('/api/admin/fees', requireRole('SUPER_ADMIN'), async (req, res, next) =>
 // --- DISCOUNT CODES (admin) ---------------------------------------------
 // Each code is annotated with how many registrations currently hold it
 // (applied) and how many of those are verified, so the admin sees real usage.
-app.get('/api/admin/discount-codes', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/discount-codes', requirePermission('discounts.view'), async (req, res, next) => {
   try {
     const codes = await dbAll(`
       SELECT d.*,
@@ -7397,7 +7422,7 @@ function validateDiscountFields(f) {
   return null;
 }
 
-app.post('/api/admin/discount-codes', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/discount-codes', requirePermission('discounts.manage'), async (req, res, next) => {
   try {
     const f = parseDiscountBody(req.body);
     const err = validateDiscountFields(f);
@@ -7434,7 +7459,7 @@ app.post('/api/admin/discount-codes', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'
   }
 });
 
-app.put('/api/admin/discount-codes/:id', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.put('/api/admin/discount-codes/:id', requirePermission('discounts.manage'), async (req, res, next) => {
   try {
     const existing = await dbGet('SELECT * FROM discount_codes WHERE id = ?', [req.params.id]);
     if (!existing) return res.status(404).json({ success: false, error: 'Code not found.' });
@@ -7456,7 +7481,7 @@ app.put('/api/admin/discount-codes/:id', requireRole('SUPER_ADMIN', 'FINANCE_ADM
   }
 });
 
-app.delete('/api/admin/discount-codes/:id', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.delete('/api/admin/discount-codes/:id', requirePermission('discounts.manage'), async (req, res, next) => {
   try {
     const existing = await dbGet('SELECT * FROM discount_codes WHERE id = ?', [req.params.id]);
     if (!existing) return res.status(404).json({ success: false, error: 'Code not found.' });
@@ -7502,7 +7527,7 @@ async function discountCodeLines(code) {
   return { scopeLine, discountLine, expiryLine };
 }
 
-app.get('/api/admin/discount-codes/:id/share', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/discount-codes/:id/share', requirePermission('discounts.view'), async (req, res, next) => {
   try {
     const code = await dbGet('SELECT * FROM discount_codes WHERE id = ?', [req.params.id]);
     if (!code) return res.status(404).send('Discount code not found.');
@@ -7545,7 +7570,7 @@ app.get('/api/admin/discount-codes/:id/share', requireRole('SUPER_ADMIN', 'FINAN
 // signed up. Fire-and-forget like every other email in this app (see
 // sendEmail); the admin is told up front if email isn't configured at all,
 // rather than getting a false "sent" for something that silently no-ops.
-app.post('/api/admin/discount-codes/:id/email', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/discount-codes/:id/email', requirePermission('discounts.manage'), async (req, res, next) => {
   try {
     const to = String(req.body.email || '').trim();
     if (!EMAIL_RE.test(to)) {
@@ -7580,7 +7605,7 @@ app.post('/api/admin/discount-codes/:id/email', requireRole('SUPER_ADMIN', 'FINA
 });
 
 // --- GROUP DISCOUNT RULES (admin) ---------------------------------------
-app.get('/api/admin/group-rules', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/group-rules', requirePermission('discounts.group_view'), async (req, res, next) => {
   try {
     const rules = await dbAll('SELECT * FROM group_discount_rules ORDER BY created_at DESC');
     res.json({ rules });
@@ -7622,7 +7647,7 @@ async function describeOtherEnvVars() {
   ];
 }
 
-app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/general-settings', requirePermission('system.settings_view'), async (req, res, next) => {
   try {
     res.json({
       sms: {
@@ -7653,7 +7678,7 @@ app.get('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
   }
 });
 
-app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.put('/api/admin/general-settings', requirePermission('system.settings_edit'), async (req, res, next) => {
   try {
     const { sms, email, upi, bank, conference, notify, maintenance: maintenanceBody, otherEnv } = req.body || {};
 
@@ -7935,7 +7960,7 @@ app.put('/api/admin/general-settings', requireRole('SUPER_ADMIN'), async (req, r
 });
 
 // Admin monitoring: every group with its members and their verification states.
-app.get('/api/admin/groups', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/groups', requirePermission('discounts.group_view'), async (req, res, next) => {
   try {
     const groups = await dbAll('SELECT * FROM delegate_groups ORDER BY created_at DESC');
     const views = [];
@@ -7946,7 +7971,7 @@ app.get('/api/admin/groups', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async 
   }
 });
 
-app.post('/api/admin/group-rules', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/group-rules', requirePermission('discounts.group_manage'), async (req, res, next) => {
   try {
     const categoryKey = String(req.body.categoryKey || '').trim();
     const minSize = Math.max(2, parseInt(req.body.minSize, 10) || 5);
@@ -7971,7 +7996,7 @@ app.post('/api/admin/group-rules', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), 
   }
 });
 
-app.put('/api/admin/group-rules/:id', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.put('/api/admin/group-rules/:id', requirePermission('discounts.group_manage'), async (req, res, next) => {
   try {
     const rule = await dbGet('SELECT * FROM group_discount_rules WHERE id = ?', [req.params.id]);
     if (!rule) return res.status(404).json({ success: false, error: 'Rule not found.' });
@@ -7987,7 +8012,7 @@ app.put('/api/admin/group-rules/:id', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'
   }
 });
 
-app.delete('/api/admin/group-rules/:id', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.delete('/api/admin/group-rules/:id', requirePermission('discounts.group_manage'), async (req, res, next) => {
   try {
     const rule = await dbGet('SELECT * FROM group_discount_rules WHERE id = ?', [req.params.id]);
     if (!rule) return res.status(404).json({ success: false, error: 'Rule not found.' });
@@ -8002,7 +8027,7 @@ app.delete('/api/admin/group-rules/:id', requireRole('SUPER_ADMIN', 'FINANCE_ADM
   }
 });
 
-app.put('/api/admin/fees/config', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.put('/api/admin/fees/config', requirePermission('masters.fees_manage'), async (req, res, next) => {
   try {
     const { earlyUntil, regularUntil, lateUntil } = req.body;
     if ([earlyUntil, regularUntil, lateUntil].some((d) => d && !DATE_RE.test(d))) {
@@ -8041,7 +8066,7 @@ app.put('/api/admin/fees/config', requireRole('SUPER_ADMIN'), async (req, res, n
   }
 });
 
-app.post('/api/admin/fees/categories', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.post('/api/admin/fees/categories', requirePermission('masters.fees_manage'), async (req, res, next) => {
   try {
     const { categoryKey, label, subtitle } = req.body;
     const f = feeFields(req.body);
@@ -8074,7 +8099,7 @@ app.post('/api/admin/fees/categories', requireRole('SUPER_ADMIN'), async (req, r
   }
 });
 
-app.put('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.put('/api/admin/fees/categories/:id', requirePermission('masters.fees_manage'), async (req, res, next) => {
   try {
     const existing = await dbGet('SELECT * FROM fee_categories WHERE id = ?', [req.params.id]);
     if (!existing) return res.status(404).json({ success: false, error: 'Category not found.' });
@@ -8114,7 +8139,7 @@ app.put('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (req
   }
 });
 
-app.delete('/api/admin/fees/categories/:id', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.delete('/api/admin/fees/categories/:id', requirePermission('masters.fees_manage'), async (req, res, next) => {
   try {
     const cat = await dbGet('SELECT * FROM fee_categories WHERE id = ?', [req.params.id]);
     if (!cat) return res.status(404).json({ success: false, error: 'Category not found.' });
@@ -8280,7 +8305,7 @@ async function autoLinkTransactions() {
 // Upload a statement file. Rows already imported (by an overlapping earlier
 // upload) are silently skipped via the UNIQUE dedupe_hash; this is how
 // re-uploading updated statements "compiles" into one running master.
-app.post('/api/admin/bank-statement/upload', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'),
+app.post('/api/admin/bank-statement/upload', requirePermission('statement.import'),
   statementUpload.single('file'), async (req, res, next) => {
     try {
       if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded.' });
@@ -8321,7 +8346,7 @@ app.post('/api/admin/bank-statement/upload', requireRole('SUPER_ADMIN', 'FINANCE
     }
   });
 
-app.get('/api/admin/bank-statement', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/bank-statement', requirePermission('statement.view'), async (req, res, next) => {
   try {
     const rows = await dbAll('SELECT * FROM bank_statement_transactions ORDER BY post_date DESC, id DESC');
     res.json({ transactions: rows || [] });
@@ -8337,7 +8362,7 @@ app.get('/api/admin/bank-statement', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
 // checks in the link endpoints and candidate pickers below/above). Refuses to
 // mark a credit that's currently linked -- unlink it first, so a credit is
 // never simultaneously "belongs to registration X" and "belongs to no one."
-app.put('/api/admin/bank-statement/:id/non-registration', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.put('/api/admin/bank-statement/:id/non-registration', requirePermission('statement.mark_non_registration'), async (req, res, next) => {
   try {
     const value = !!req.body.value;
     const txn = await dbGet('SELECT id, is_non_registration FROM bank_statement_transactions WHERE id = ?', [req.params.id]);
@@ -8368,7 +8393,7 @@ app.put('/api/admin/bank-statement/:id/non-registration', requireRole('SUPER_ADM
 // credits. A registration matches when a statement credit row's extracted
 // reference equals its UTR/transaction number (digits-only comparison, so
 // formatting differences don't break the match).
-app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINANCE_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/bank-statement/reconcile', requirePermission('statement.view'), async (req, res, next) => {
   try {
     // Credit-centric reconciliation: walk EVERY statement credit and decide
     // whether it maps to a registration, so every credit is accounted for
@@ -8554,7 +8579,7 @@ app.get('/api/admin/bank-statement/reconcile', requireRole('SUPER_ADMIN', 'FINAN
 // Consolidated "who did what, when" view across the admin surface --
 // statement imports, transaction linking, registration approval decisions,
 // abstract approval/allotment, and master-data (workshop/QI/fee) edits.
-app.get('/api/admin/activity-log', requireRole('SUPER_ADMIN'), async (req, res, next) => {
+app.get('/api/admin/activity-log', requirePermission('system.activity_log'), async (req, res, next) => {
   try {
     const imports = await dbAll(`
       SELECT source_file, imported_by, MIN(imported_at) AS imported_at, COUNT(*) AS rows_imported, SUM(credit) AS total_credit
@@ -8819,16 +8844,6 @@ async function buildReport(type, opts = {}) {
   return null;
 }
 
-const REPORT_ROLES = {
-  delegates: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'OPERATIONS'],
-  'delegate-programs': ['SUPER_ADMIN', 'FINANCE_ADMIN', 'OPERATIONS'],
-  payments: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'OPERATIONS'],
-  workshops: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'OPERATIONS'],
-  abstracts: ['SUPER_ADMIN', 'ACADEMIC_REVIEWER', 'OPERATIONS'],
-  // Same roles that can see the Users tab at all (GET /api/users).
-  users: ['SUPER_ADMIN', 'OPERATIONS'],
-};
-
 // Filename-safe conference tag for report downloads, e.g. "nqocn2026" ->
 // nqocn2026-delegates-report.csv. regPrefix is tried first because it's
 // already validated to [A-Za-z0-9]{1,20} (see the general-settings PUT), so
@@ -8895,7 +8910,7 @@ function reportHtml(rep) {
 // this report too, but can't see the masters tab).
 app.get('/api/admin/reports/workshops/options', requireAuth, async (req, res, next) => {
   try {
-    if (!roleGrants(req.session.role).some((r) => REPORT_ROLES.workshops.includes(r))) {
+    if (!roleCan(req.session.role, REPORT_PERMISSIONS.workshops)) {
       return res.status(403).json({ success: false, error: 'You do not have permission for this report.' });
     }
     const groups = await fetchProgramGroups({ activeOnly: false });
@@ -8909,9 +8924,9 @@ app.get('/api/admin/reports/workshops/options', requireAuth, async (req, res, ne
 app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
   try {
     const type = req.params.type;
-    const roles = REPORT_ROLES[type];
-    if (!roles) return res.status(404).json({ success: false, error: 'Unknown report.' });
-    if (!roleGrants(req.session.role).some((r) => roles.includes(r))) {
+    const permission = REPORT_PERMISSIONS[type];
+    if (!permission) return res.status(404).json({ success: false, error: 'Unknown report.' });
+    if (!roleCan(req.session.role, permission)) {
       return res.status(403).json({ success: false, error: 'You do not have permission for this report.' });
     }
     if (type === 'workshops' && !req.query.optionId) {
@@ -8935,7 +8950,7 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
 
 // Abstract review desk (super admin or academic reviewer). Each abstract is
 // annotated with who last changed its status, and when.
-app.get('/api/abstracts', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEWER'), async (req, res, next) => {
+app.get('/api/abstracts', requirePermission('abstracts.view'), async (req, res, next) => {
   try {
     const rows = await dbAll(`
       SELECT abstracts.*,
@@ -8962,7 +8977,7 @@ app.get('/api/abstracts', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEWER'), async
 // the exception: it emails immediately (the delegate needs to act) and,
 // unlike the other statuses, reopens POST /api/abstracts for that one
 // delegate to edit and resubmit (see there).
-app.put('/api/abstracts/:id/status', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEWER'), async (req, res, next) => {
+app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), async (req, res, next) => {
   try {
     const { status } = req.body;
     const allowed = ['UNDER_REVIEW', 'ACCEPTED', 'REJECTED', 'REVISION_REQUESTED'];
@@ -9023,7 +9038,7 @@ app.put('/api/abstracts/:id/status', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEW
 // Step 2 of abstract review: Assignment (oral/poster), for approved
 // abstracts only. This is the delegate's one and only decision email --
 // it states both that the abstract was accepted and the final format.
-app.put('/api/abstracts/:id/allocation', requireRole('SUPER_ADMIN', 'ACADEMIC_REVIEWER'), async (req, res, next) => {
+app.put('/api/abstracts/:id/allocation', requirePermission('abstracts.review'), async (req, res, next) => {
   try {
     const { allocation } = req.body;
     if (!['ORAL', 'POSTER'].includes(allocation)) {
@@ -9093,8 +9108,65 @@ registrationsMigrationReady.then(retitleNamesOnBoot)
   .then(() => { if (COOKIE_SECURE) app.set('trust proxy', 1); })
   .then(startServer);
 
+// Every admin route must state a permission.
+//
+// The dangerous failure in this migration is not a route guarded by the
+// wrong permission -- that locks someone out, loudly, and is fixed in
+// minutes. It is a route that ends up guarded by NOTHING, which is silently
+// reachable by anyone with a session. So the router is walked at boot and
+// audited against the catalogue, and a route that carries no permission
+// stops the server rather than serving unguarded.
+//
+// Deliberately reads the live router rather than the source: a route added
+// tomorrow is covered without anyone remembering this exists.
+function auditRoutePermissions() {
+  const stack = (app._router && app._router.stack) || [];
+  const unguarded = [];
+  let guarded = 0;
+  for (const layer of stack) {
+    if (!layer.route) continue;
+    const routePath = layer.route.path;
+    if (typeof routePath !== 'string') continue;
+    // Admin surface: everything under /api/admin, plus the /api/users and
+    // /api/abstracts trees, which are admin-only despite the path.
+    const isAdmin = routePath.startsWith('/api/admin')
+      || routePath.startsWith('/api/users')
+      || routePath.startsWith('/api/abstracts');
+    const handlers = layer.route.stack.map((h) => h.handle);
+    const permission = handlers.map((h) => h.permission).find(Boolean);
+    if (permission) { guarded++; continue; }
+    if (!isAdmin) continue;
+    // A few routes on admin-looking paths gate inside the handler instead:
+    // the two report routes, which choose their rule by report name, and the
+    // delegate's own abstract endpoints, which are scoped to the caller's own
+    // session rather than to a role. Listed rather than inferred, so adding
+    // one is a deliberate act someone has to write down -- and listed by
+    // METHOD as well as path, because GET /api/abstracts is the admin list
+    // while POST /api/abstracts is a delegate submitting their own.
+    const GATED_INSIDE = new Set([
+      'GET /api/admin/reports/:type',
+      'GET /api/admin/reports/workshops/options',
+      'POST /api/abstracts',
+      'GET /api/abstracts/me',
+    ]);
+    const methods = Object.keys(layer.route.methods).map((m) => m.toUpperCase());
+    const unlisted = methods.filter((m) => !GATED_INSIDE.has(`${m} ${routePath}`));
+    if (!unlisted.length) continue;
+    unguarded.push(`${unlisted.join('/')} ${routePath}`);
+  }
+  if (unguarded.length) {
+    console.error('\nFATAL: admin route(s) with no permission:\n  ' + unguarded.join('\n  ')
+      + '\n\nGive each one a requirePermission(), or add it to GATED_INSIDE with a reason.\n');
+    process.exit(1);
+  }
+  return guarded;
+}
+
 function startServer() {
+const guardedRoutes = auditRoutePermissions();
 app.listen(PORT, () => {
+  console.log(`Access control: ${guardedRoutes} routes guarded by permission, `
+    + `${PERMISSION_KEYS.length} permissions, ${permissionsForRole('SUPER_ADMIN').length} held by Super Admin`);
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`SMS OTP: ${smsEnabled() ? 'ENABLED (Vynttra)' : 'disabled (no SMS_API_KEY)'}`);
   console.log(`Email: ${emailEnabled() ? `ENABLED (SES, from ${EMAIL.from})` : 'disabled (no AWS/SES config)'}`);
