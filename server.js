@@ -722,7 +722,21 @@ const normDigits = (s) => s.replace(/[0-9OolI]+/g, (run) => run.replace(/[OoIl]/
 // the amount. Scoped to a single line: nothing is joined across a line break,
 // which is what used to let the matcher assemble the expected figure out of
 // three unrelated numbers and call it a match.
-function amountCandidates(text) {
+// A line that is a date or a clock, not money. Checked on the LINE rather
+// than by rejecting 2000-2099 outright: that shortcut also rejected every
+// amount in that range, and 2,000 is one of this conference's fee tiers, so
+// a slip plainly showing ₹2,000 against a ₹3,000 fee could never be reported
+// as a discrepancy -- the check was silently blind to a whole price band.
+const DATE_LINE = /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i;
+const CLOCK = /\b\d{1,2}[:.]\d{2}\b/;
+
+// `lettersPossible` is false for the digits-only second pass. "Alone on its
+// line" infers confidence from the absence of letters, which is evidence
+// only when letters COULD have been read; under a digits-only whitelist
+// every line is letterless by construction, so account tails and clock
+// digits all looked like confidently-read amounts. That pass keeps the
+// currency marker as its only confidence signal (₹ is in its whitelist).
+function amountCandidates(text, { lettersPossible = true } = {}) {
   const out = [];
   const lines = normDigits(text).split('\n');
   const nonEmpty = lines.filter((l) => l.trim()).length;
@@ -731,6 +745,7 @@ function amountCandidates(text) {
     if (line.trim()) seen++;
     const bare = line.trim();
     const hasMarker = /₹|rs\.?|inr/i.test(line);
+    const looksTemporal = DATE_LINE.test(line) || CLOCK.test(line);
     // These receipts put the amount in the upper part of the screen, above
     // the bank and reference block.
     const high = seen <= Math.max(4, Math.ceil(nonEmpty * 0.4));
@@ -745,13 +760,17 @@ function amountCandidates(text) {
       // wrong: it made "Bank of Baroda 3183" look like a line holding only
       // 3183, so account tails were read as amounts.
       const rest = bare.replace(/₹|rs\.?|inr/ig, '').replace(t, '').trim();
-      const alone = !/[a-z]/i.test(rest) && rest.replace(/[^0-9]/g, '') === '';
-      const feeShaped = int.length >= 3 && Number(int) >= 100 && !/^20\d\d$/.test(int);
+      const alone = lettersPossible && !/[a-z]/i.test(rest) && rest.replace(/[^0-9]/g, '') === '';
+      const feeShaped = int.length >= 3 && Number(int) >= 100 && !looksTemporal;
       out.push({ int, confident: feeShaped && (hasMarker || (alone && high)) });
     }
   }
   return out;
 }
+
+// The smallest number that can be a fee. Shared by every confidence rule so
+// they cannot drift apart: a value below this is noise whatever produced it.
+const MIN_FEE = 100;
 
 // Amounts written out in words -- "Three Thousand Rupees", "Rupees Seven
 // Hundred Fifty Only". Bank and Paytm receipts print this under the figure,
@@ -807,24 +826,6 @@ function amountAppears(candidates, expectedAmount) {
   ));
 }
 
-async function recognizeText(buffer, params) {
-  const worker = await getOcrWorker();
-  if (params) await worker.setParameters(params);
-  try {
-    // Bound the wait: a corrupt image can make the worker throw out-of-band
-    // and never settle this promise, which would otherwise hang the request.
-    const result = await Promise.race([
-      worker.recognize(buffer),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('OCR timed out')), 15000)),
-    ]);
-    return (result && result.data && result.data.text) || '';
-  } finally {
-    // Always restore the defaults; the worker is shared across requests and a
-    // sparse-text/digits-only pass would wreck the next slip's VPA and UTR.
-    if (params) await worker.setParameters(OCR_DEFAULT_PARAMS).catch(() => {});
-  }
-}
-
 const OCR_DEFAULT_PARAMS = { tessedit_pageseg_mode: '3', tessedit_char_whitelist: '', thresholding_method: '0' };
 // Sparse text, Sauvola thresholding, digits only. Reads the big amount on a
 // dark-mode receipt that the default pass renders as "EE" or "| sol |";
@@ -832,6 +833,43 @@ const OCR_DEFAULT_PARAMS = { tessedit_pageseg_mode: '3', tessedit_char_whitelist
 // only because this pass exists solely to find a number -- it is never used
 // for the UPI id or the transaction reference.
 const OCR_AMOUNT_PARAMS = { tessedit_pageseg_mode: '11', thresholding_method: '2', tessedit_char_whitelist: '0123456789.,₹' };
+
+// One OCR pass at a time.
+//
+// There is a single worker for the whole process, and tesseract.js posts
+// every job to it the moment it is called -- no per-caller queue -- while
+// setParameters applies to the WORKER, not to a call. Two uploads at once
+// could therefore interleave as A.setParameters(digits-only), B.recognize,
+// A.recognize: B's slip would be read under A's whitelist, so B's text would
+// hold no letters at all and B's UPI-id and UTR checks would both fail on a
+// perfectly good screenshot -- flagged, with nothing in the logs to say why.
+//
+// Chaining on both settle paths, so one failed pass does not wedge the queue.
+let ocrChain = Promise.resolve();
+function serializeOcr(job) {
+  const result = ocrChain.then(job, job);
+  ocrChain = result.then(() => {}, () => {});
+  return result;
+}
+
+async function recognizeText(buffer, params) {
+  return serializeOcr(async () => {
+    const worker = await getOcrWorker();
+    // Every pass states its parameters in full rather than inheriting
+    // whatever the previous one left behind. The old code restored defaults
+    // in a `finally` and swallowed any failure of that restore -- which
+    // would have left the worker digits-only for every later request until
+    // the process restarted.
+    await worker.setParameters({ ...OCR_DEFAULT_PARAMS, ...(params || {}) });
+    // Bound the wait: a corrupt image can make the worker throw out-of-band
+    // and never settle this promise, which would otherwise hang the request.
+    const result = await Promise.race([
+      worker.recognize(buffer),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('OCR timed out')), 15000)),
+    ]);
+    return (result && result.data && result.data.text) || '';
+  });
+}
 
 async function runOcrChecks(buffer, { expectedAmount, utr }) {
   let text = '';
@@ -850,7 +888,14 @@ async function runOcrChecks(buffer, { expectedAmount, utr }) {
   let candidates = amountCandidates(text);
   // Words are their own evidence, and confident evidence: a slip that spells
   // out an amount is stating it, not incidentally printing a number.
-  const inWords = amountsInWords(text).map((n) => ({ int: String(n), confident: true }));
+  //
+  // Fee-shaped ones only, the same bar every other candidate clears. "From:
+  // ONE TOUCH SERVICES" parses to 1 and "To: Six Sigma Hospital" to 6, and
+  // marking those confident turned an unreadable slip into a red cross on
+  // the strength of a word in the payer's name.
+  const inWords = amountsInWords(text)
+    .filter((n) => n >= MIN_FEE)
+    .map((n) => ({ int: String(n), confident: true }));
   candidates = candidates.concat(inWords);
   let found = amountAppears(candidates, expectedAmount);
 
@@ -859,7 +904,7 @@ async function runOcrChecks(buffer, { expectedAmount, utr }) {
   if (!found) {
     try {
       const retry = await recognizeText(buffer, OCR_AMOUNT_PARAMS);
-      const more = amountCandidates(retry);
+      const more = amountCandidates(retry, { lettersPossible: false });
       candidates = candidates.concat(more);
       found = amountAppears(more, expectedAmount);
     } catch (err) {
@@ -4853,6 +4898,19 @@ async function readStoredUpload(value) {
   }
 }
 
+// Has this delegate put up enough money to cover the fee?
+//
+// The LEDGER answers that, not registrations.paid_amount: that column holds
+// the most recent claim, so a delegate who paid a 2,000 fee as 750 + 1,250
+// reads as having claimed 750, and comparing it against the whole fee marked
+// four fully paid, verified delegates as having tampered with the amount. A
+// legacy row with no ledger at all falls back to the column.
+function amountShortOfFee(claimedTotal, paidAmount, expectedAmount) {
+  const claimed = Number(claimedTotal) > 0 ? Number(claimedTotal) : paidAmount;
+  if (claimed == null || !Number.isFinite(Number(claimed))) return true;
+  return Math.round(Number(claimed)) + 0.5 < Number(expectedAmount || 0);
+}
+
 // Re-runs the automated screenshot/ID-card checks against every registration
 // that's ever been flagged -- pending, already approved, or rejected -- against
 // its *already-uploaded* files. For when the OCR matching logic itself changes
@@ -4870,6 +4928,16 @@ app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', '
     // the matching logic changes, since those results are what the review
     // modal shows.
     const all = !!req.body.all;
+    // One batch per request. Every row costs an OCR pass, and a second one
+    // when the amount isn't found on the first -- around 190 rows takes
+    // minutes, and this app sits behind a proxy that gives up at 100
+    // seconds. The admin would have seen a failure while the server carried
+    // on rewriting rows behind it. The client walks the batches instead, so
+    // each request is short and the progress is real.
+    const after = Number(req.body.after) || 0;
+    const BATCH = 20;
+    const scopeSql = all ? "r.screenshot IS NOT NULL AND r.screenshot != ''" : 'r.is_flagged = 1';
+
     // slip_amount, not expected_amount. registrations.screenshot is ONE
     // payment's slip, and a delegate who paid a 2,000 fee in instalments of
     // 750 and 1,250 has a slip that says 1,250 -- comparing it against the
@@ -4877,6 +4945,11 @@ app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', '
     // registrations were flagged that way. The ledger row that owns this
     // screenshot knows what it was for; fall back to the fee only when no
     // row claims it (a legacy submission that predates the ledger).
+    //
+    // claimed_total is the same correction applied to the tamper test below:
+    // the whole ledger, not the one claim that happens to sit on the
+    // registration row. REJECTED rows are excluded -- a rejected payment is
+    // not money the delegate has put up.
     const rows = await dbAll(
       `SELECT r.id, r.registration_number, r.category_key, r.expected_amount, r.paid_amount,
               r.utr_number, r.screenshot, r.payment_mode,
@@ -4884,9 +4957,17 @@ app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', '
                 (SELECT COALESCE(pt.verified_amount, pt.amount) FROM payment_transactions pt
                   WHERE pt.registration_id = r.id AND pt.screenshot = r.screenshot
                   ORDER BY pt.id DESC LIMIT 1),
-                r.expected_amount) AS slip_amount
+                r.expected_amount) AS slip_amount,
+              (SELECT COALESCE(SUM(COALESCE(pt.verified_amount, pt.amount)), 0)
+                 FROM payment_transactions pt
+                WHERE pt.registration_id = r.id AND pt.txn_status != 'REJECTED') AS claimed_total
          FROM registrations r
-        WHERE ${all ? "r.screenshot IS NOT NULL AND r.screenshot != ''" : 'r.is_flagged = 1'}`);
+        WHERE ${scopeSql} AND r.id > ?
+        ORDER BY r.id LIMIT ${BATCH}`, [after]);
+
+    const remainingRow = await dbGet(
+      `SELECT COUNT(*) AS n FROM registrations r WHERE ${scopeSql} AND r.id > ?`, [after]);
+    const total = remainingRow ? remainingRow.n : rows.length;
 
     let rescanned = 0;
     let unflagged = 0;
@@ -4907,7 +4988,7 @@ app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', '
       // `amountStatus !== 'mismatch'` rather than `checks.amount`: an amount
       // nobody could read is not a failed check, it is an absent one.
       const allChecksPass = checks.amountStatus !== AMOUNT_MISMATCH && checks.vpa && checks.utr;
-      const amountTampered = reg.paid_amount == null || Math.round(reg.paid_amount) !== reg.expected_amount;
+      const amountTampered = amountShortOfFee(reg.claimed_total, reg.paid_amount, reg.expected_amount);
       const flagged = !allChecksPass || amountTampered ? 1 : 0;
 
       await dbRun(
@@ -4919,7 +5000,13 @@ app.post('/api/admin/registrations/rescan-flagged', requireRole('SUPER_ADMIN', '
       if (flagged) stillFlagged++; else unflagged++;
     }
 
-    res.json({ success: true, scope: all ? 'all' : 'flagged', totalFlagged: rows.length, rescanned, unflagged, stillFlagged, skippedNoFile });
+    // nextAfter drives the client's loop; null means this was the last batch.
+    const nextAfter = rows.length === BATCH ? rows[rows.length - 1].id : null;
+    res.json({
+      success: true, scope: all ? 'all' : 'flagged',
+      totalFlagged: total, remaining: Math.max(0, total - rows.length),
+      nextAfter, rescanned, unflagged, stillFlagged, skippedNoFile,
+    });
   } catch (err) {
     next(err);
   }

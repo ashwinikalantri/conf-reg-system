@@ -2709,22 +2709,48 @@ function paymentRowHtml(p) {
 // flagged, still-pending registration's already-uploaded files -- useful
 // after fixing a bug in the OCR matching logic itself, so past
 // submissions get re-judged instead of sitting flagged on stale results.
-async function rescanFlaggedPayments() {
+// Walks the rescan in batches. The server answers one batch per request and
+// hands back the cursor for the next: OCR takes a second or two per slip, and
+// a whole-corpus rescan in a single request would run for minutes and be cut
+// off by the proxy at 100 seconds -- the admin seeing a failure while the
+// server carried on working. Batching keeps every request short and lets the
+// button report real progress.
+async function rescanFlaggedPayments(all = false) {
   const btn = document.getElementById('rescan-flagged-btn');
+  const label = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '🔄 Rescanning…'; }
 
-  const data = await (await fetch('/api/admin/registrations/rescan-flagged', { method: 'POST' })).json();
+  const tally = { rescanned: 0, unflagged: 0, stillFlagged: 0, skippedNoFile: 0 };
+  let after = 0;
+  let total = 0;
+  let failure = null;
 
-  if (btn) { btn.disabled = false; btn.textContent = '🔄 Rescan Flagged'; }
+  try {
+    for (;;) {
+      const res = await fetch('/api/admin/registrations/rescan-flagged', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all, after }),
+      });
+      const data = await res.json();
+      if (!data.success) { failure = data.error || 'Rescan failed.'; break; }
 
-  if (!data.success) {
-    showToast(data.error || 'Rescan failed.');
-    return;
+      ['rescanned', 'unflagged', 'stillFlagged', 'skippedNoFile'].forEach((k) => { tally[k] += data[k] || 0; });
+      if (!total) total = data.totalFlagged || 0;
+      if (btn && total) btn.textContent = `🔄 Rescanning ${tally.rescanned}/${total}…`;
+
+      if (data.nextAfter == null) break;
+      after = data.nextAfter;
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label || '🔄 Rescan Flagged'; }
   }
+
+  if (failure) { showToast(failure); return; }
   showToast(
-    `Rescanned ${data.rescanned} of ${data.totalFlagged} flagged. ${data.unflagged} cleared, ${data.stillFlagged} still flagged.`
-      + (data.skippedNoFile ? ` (${data.skippedNoFile} skipped -- file missing.)` : ''),
-    data.unflagged ? 'success' : 'info'
+    `Rescanned ${tally.rescanned} of ${total}. ${tally.unflagged} cleared, ${tally.stillFlagged} still flagged.`
+      + (tally.skippedNoFile ? ` (${tally.skippedNoFile} skipped -- file missing.)` : ''),
+    tally.unflagged ? 'success' : 'info'
   );
   await renderBackendPayments();
 }
