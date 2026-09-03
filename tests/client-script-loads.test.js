@@ -36,7 +36,7 @@ function makeSandbox(storedUser, {withDashboard=true}={}) {
 // Constants declared at intervals down the file. If evaluation aborts part
 // way, the ones after the abort point never initialise.
 const LATE=['DEFAULT_PHONE_CC','E164_RE','INDIAN_E164_RE','isPhoneValue','EMAIL_RE',
-            'SIGNUP_COUNTRIES','PAYMENT_MODE_LABELS','BANK_STATUS_LABELS','ADMIN_ROLES'];
+            'SIGNUP_COUNTRIES','PAYMENT_MODE_LABELS','BANK_STATUS_LABELS','ROLE_LABELS'];
 const probe=`(${JSON.stringify(LATE)}).map(function(n){ try { return [n, typeof eval(n)]; } catch(e){ return [n,'THROWS:'+e.message]; } })`;
 
 function evaluate(storedUser, opts) {

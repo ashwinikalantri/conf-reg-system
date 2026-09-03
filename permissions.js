@@ -89,7 +89,15 @@ const PERMISSIONS = [
 
   // --- Communications ---
   ['comms.reminders_view', 'comms', 'View reminder audiences', 'See who would receive a reminder, without sending one.'],
-  ['comms.reminders_send', 'comms', 'Send reminders', 'Send a reminder to a real audience.'],
+  // Super Admin only, by default. Finance Admin has always been able to see
+  // who a reminder would reach (comms.reminders_view) without being able to
+  // press send -- a real product question with no single right answer, not
+  // a bug: is bulk email to delegates a Super Admin decision, or ordinary
+  // Finance Admin work? Left as the conservative default rather than
+  // decided here, because it no longer has to be decided in code at all --
+  // tick this box for Finance Admin (or Finance & Academic) in Settings ->
+  // Roles if the answer for this conference is "yes".
+  ['comms.reminders_send', 'comms', 'Send reminders', 'Send a reminder to a real audience. Super Admin only by default -- grant it to another role here if that role should be trusted to email delegates directly.'],
   ['comms.reminders_test', 'comms', 'Send a test reminder', 'Send a reminder to yourself to check how it reads.'],
   ['comms.custom_send', 'comms', 'Send a custom email', 'Compose and send to an address list you supply.'],
 

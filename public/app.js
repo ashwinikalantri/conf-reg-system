@@ -181,9 +181,16 @@ function showToast(message, type = 'error') {
   setTimeout(() => toast.remove(), type === 'error' ? 7000 : 4000);
 }
 
-const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC', 'OPERATIONS'];
+// Any role but DELEGATE counts as admin-capable -- including a custom one
+// created in Settings -> Roles, which this checked against a hardcoded list
+// of the five built-ins would have missed (this shows/hides the "go to
+// admin panel" button on the delegate dashboard, which every account, admin
+// or not, can land on). Mirrors isKnownAdminRole() on the server, which had
+// the same gap in POST /api/users, PUT /api/users/:phone/role and the
+// /admin page's own gate before it was fixed -- this is the client-side
+// instance of the identical mistake, caught in the same sweep.
 function isAdminUser() {
-  return !!currentDelegate && ADMIN_ROLES.includes(currentDelegate.role);
+  return !!currentDelegate && !!currentDelegate.role && currentDelegate.role !== 'DELEGATE';
 }
 
 // Human-readable role names for display (raw values keep their underscores).
@@ -420,7 +427,7 @@ const isPhoneValue = (v) => !!toE164(v);
 //
 // POSITION MATTERS. This is top-level code, so it runs DURING this script's
 // evaluation and can only use bindings already initialised above it:
-// navigateTo/isAdminUser/ADMIN_ROLES, and -- since it prints the delegate's
+// navigateTo/isAdminUser, and -- since it prints the delegate's
 // phone -- delegateDisplayPhone's whole chain, toE164 / isPhoneValue /
 // DEFAULT_PHONE_CC. Reading a `const` declared further down throws a
 // temporal-dead-zone ReferenceError, and because this is top-level that
@@ -4204,15 +4211,6 @@ async function loadBackendUsers() {
 // someone's enrollment; routing every change through an explicit
 // "Change" -> modal -> "Save" flow removes that. See the Users detail panel
 // for where this is actually used.
-const ROLE_ICONS = {
-  SUPER_ADMIN: '👑',
-  FINANCE_ADMIN: '💰',
-  ACADEMIC_REVIEWER: '🎓',
-  FINANCE_ACADEMIC: '💰🎓',
-  OPERATIONS: '📊',
-  DELEGATE: '🎫',
-};
-
 // Subtle, monochrome role marks for the Users table (staff stand out without
 // colour). Delegates — the overwhelming majority — get no mark, keeping the
 // list quiet; only staff roles show a glyph.

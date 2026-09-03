@@ -2822,6 +2822,13 @@ const MAINTENANCE_OPEN_PATHS = new Set([
 // login form so a super admin can get in.
 function maintenanceGate(req, res, next) {
   if (!maintenance.enabled) return next();
+  // Literally SUPER_ADMIN, not a permission -- deliberately, on the same
+  // reasoning as the role-escalation checks (see isKnownAdminRole and the
+  // client's isSuperAdminViewer): maintenance mode exists to be an
+  // unambiguous freeze, closing every path except the one identity that is
+  // structurally the last resort. A permission here could be handed to a
+  // custom role, which would quietly make maintenance mode mean "everyone
+  // except whoever I decided to exempt" -- a different, weaker feature.
   if (req.session && req.session.role === 'SUPER_ADMIN') return next();
   if (!req.path.startsWith('/api/')) return next();
   if (MAINTENANCE_OPEN_PATHS.has(req.path)) return next();
@@ -2971,6 +2978,7 @@ app.get('/admin', (req, res) => {
   // During maintenance the admin panel is super-admin-only: every other role's
   // panel is driven by API calls that maintenanceGate is now 503ing, so it
   // would render as a shell of empty tables rather than anything usable.
+  // Same literal-role reasoning as maintenanceGate above, not a permission.
   if (maintenance.enabled && req.session.role !== 'SUPER_ADMIN') {
     return res.status(503).send(
       '<!doctype html><meta charset="utf-8"><title>Under maintenance</title>' +

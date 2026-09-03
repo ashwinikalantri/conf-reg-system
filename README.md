@@ -470,7 +470,7 @@ issues a server-side session and sets an `httpOnly`, `SameSite=Lax` cookie
 (`COOKIE_NAME`, default `nqocn_sid`, 12-hour life). Only a hash of the
 session token and of the OTP is stored in the database.
 
-- OTP is a random 6-digit code, valid for 5 minutes, single-use, capped at
+- OTP is a random 6-digit code, valid for 15 minutes, single-use, capped at
   5 wrong attempts, with a 30-second resend throttle per destination.
 - Without `SMS_API_KEY` configured (see SMS OTP above), outside production the
   code is logged to the server console and returned in the API response
@@ -579,26 +579,24 @@ the same modal voluntarily, where dismissing is fine. Neither modal is in the
 admin panel: staff passwords are set at account creation or via
 `set-password` while already logged in.
 
-### Roles (enforced server-side)
+### Roles
 
-| Role                | Access                                              |
-| ------------------- | --------------------------------------------------- |
-| `SUPER_ADMIN`       | Everything, including settings, user & role management |
-| `FINANCE_ADMIN`     | Payment reconciliation, reminders, group discounts (view + verify) |
-| `ACADEMIC_REVIEWER` | Abstract review & allotment                          |
-| `FINANCE_ACADEMIC`  | Both of the above                                    |
-| `OPERATIONS`        | All reports, plus Users (view/create/change role — not demographic edits, still `SUPER_ADMIN`-only) |
-| `DELEGATE`          | Own registration, payment, and abstract submission  |
-
-`OPERATIONS` cannot grant `SUPER_ADMIN` to anyone (including itself) and
-cannot change an existing `SUPER_ADMIN`'s role in either direction —
-enforced in both `POST /api/users` and `PUT /api/users/:phone/role`, not
-just hidden in the UI, so it can't be bypassed by calling the API directly.
+A role is a named set of permissions, editable from Settings → Roles without
+a deploy — see **Roles & Permissions** below for the full model. `DELEGATE`
+is the one role that isn't a row in that editor: it's the non-admin default,
+and every admin-facing route refuses it.
 
 Admins log in through the normal portal with their own phone number; their
-DB role grants access. The database ships with one `SUPER_ADMIN`. Roles can
-only be changed by a `SUPER_ADMIN` or `OPERATIONS` admin via the Users
-screen — they are never accepted from a login or registration request body.
+DB role grants access. The database ships with one `SUPER_ADMIN`, which is
+the only role the editor can't touch. Roles are assigned by anyone holding
+`users.assign_role` (the built-in `SUPER_ADMIN` and `OPERATIONS` roles both
+do) via the Users screen — never accepted from a login or registration
+request body — and the same escalation limit as before still holds:
+whoever's assigning a role cannot grant `SUPER_ADMIN` to anyone (including
+themselves) unless they already are one, and cannot change an existing
+`SUPER_ADMIN`'s role in either direction. That boundary is enforced in both
+`POST /api/users` and `PUT /api/users/:phone/role`, not just hidden in the
+UI, so it can't be bypassed by calling the API directly.
 
 ### Environment variables
 
@@ -616,6 +614,60 @@ cookie is only sent over TLS. These, plus every SMS/Email/UPI/Conference
 variable, are also listed live (with their effective value) under
 **Settings → General → Other Environment Variables** once the server is
 running — see above.
+
+## Roles & Permissions
+
+Every admin route needs a **permission** — a string like `payments.decide`
+or `users.manage_roles` — not a role name. `permissions.js` is the single
+catalogue of every permission that exists: roughly 45 of them, grouped into
+sections (Payments, Statement, Abstracts, Reports, Users & Roles, Masters,
+Discounts, Communications, System) that map one-to-one onto the admin
+panel's tabs and Settings menu items. A permission exists there only if a
+real server route enforces it — the catalogue describes what the app
+*does*, it isn't a wishlist.
+
+A **role** is a named set of permissions, held as rows in two tables
+(`roles`, `role_permissions`) rather than as code. Five ship built in —
+`SUPER_ADMIN`, `FINANCE_ADMIN`, `ACADEMIC_REVIEWER`, `FINANCE_ACADEMIC`,
+`OPERATIONS` — seeded once from the catalogue's own defaults and never
+re-seeded over an edit on a later restart. `SUPER_ADMIN` is the one
+exception: it holds every permission via a flag rather than a list, so a
+permission added to the catalogue next year reaches it automatically, and
+it cannot be edited, deleted, or reduced by anyone — it is the way back in
+if another role is ever misconfigured.
+
+**Settings → Roles** (`users.manage_roles`, `SUPER_ADMIN` by default) is
+where roles are actually managed: create one, duplicate an existing one as
+a starting point, edit a role's label/description/permission checkboxes, or
+delete one that's no longer held by anyone. A role's key is fixed at
+creation — `users.role` stores it directly — but everything else, including
+a built-in role's own permission set, stays editable. That last part is the
+actual point: if Finance Admin should be able to press **Send** on a bulk
+reminder, or Academic Reviewer should see the Payments report, that's a
+checkbox in Settings → Roles, not a code change and a deploy.
+
+Two things stay hardcoded on purpose, not as an oversight:
+
+- Granting `SUPER_ADMIN`, or changing an existing `SUPER_ADMIN`'s role, is
+  restricted to someone who already is one — enforced as a literal role
+  comparison in `POST /api/users` and `PUT /api/users/:phone/role`, because
+  the boundary is about that role's supremacy, which has to hold regardless
+  of what permissions get copied onto some other role later.
+- Maintenance mode's bypass (`maintenanceGate` and the `/admin` page's own
+  copy of the check) is also a literal `SUPER_ADMIN` check. Maintenance mode
+  exists to be an unambiguous freeze; a permission here could be handed to a
+  custom role, which would quietly turn "everything is frozen" into
+  "everything is frozen except whoever I exempted" — a different, weaker
+  guarantee.
+
+Two guardrails prevent an editor from breaking itself: a role still held by
+any user can't be deleted (the error names how many), and an admin cannot
+remove **their own** role's `users.manage_roles` — checked against the
+session's own role, not the permission in the abstract, so a different
+admin editing that same role is still allowed. Every create, edit, and
+delete is written to the audit trail (`ROLE_CREATED` / `ROLE_UPDATED` /
+`ROLE_DELETED`), visible under General Logs like every other settings
+change.
 
 ## Templates
 
@@ -685,25 +737,38 @@ Both toggling and message edits are written to the audit log
 
 ## Route protection
 
-| Route                                 | Access                          |
-| ------------------------------------- | ------------------------------- |
-| `POST /api/otp/request`               | Public (throttled)              |
-| `POST /api/auth/register` / `login`   | Public (OTP-gated)              |
-| `POST /api/auth/login-password`       | Public (rate-limited per phone) |
-| `POST /api/auth/set-password`         | Authenticated (self-service)    |
-| `GET  /api/auth/me`                   | Authenticated                   |
-| `POST /api/auth/logout`               | Authenticated                   |
-| `POST /api/registrations`             | Authenticated (own record)      |
-| `GET  /api/registrations/me`          | Authenticated (own record)      |
-| `POST /api/abstracts`                 | Authenticated (own record)      |
-| `GET  /admin`                         | Any admin role                  |
-| `GET  /api/registrations`             | `SUPER_ADMIN`, `FINANCE_ADMIN`  |
-| `PUT  /api/registrations/:id/status`  | `SUPER_ADMIN`, `FINANCE_ADMIN`  |
-| `GET/POST /api/users`, `PUT .../role` | `SUPER_ADMIN`, `OPERATIONS` (see Roles above for the escalation limits on `OPERATIONS`) |
-| `PUT /api/users/:phone` (demographic edit) | `SUPER_ADMIN`             |
-| `GET /api/admin/reports/:type`        | Per report type — see Reports below |
-| `GET /api/registrations/:id/screenshot` | Owning delegate or finance admin |
-| `GET /api/registrations/:id/audit`    | `SUPER_ADMIN`, `FINANCE_ADMIN`  |
+Every admin route is guarded by `requirePermission('some.key')`, not by a
+list of role names — see Roles & Permissions above. A table of "which role
+can call this" would be wrong the moment anyone edits a role in Settings →
+Roles, so this documents the *permission* each route needs instead, which
+doesn't change when who holds it does. Some sample boundaries:
+
+| Route                                 | Needs                              |
+| -------------------------------------- | ----------------------------------- |
+| `POST /api/otp/request`               | Public (throttled)                  |
+| `POST /api/auth/register` / `login`   | Public (OTP-gated)                  |
+| `POST /api/auth/login-password`       | Public (rate-limited per phone)     |
+| `POST /api/auth/set-password`         | Authenticated (self-service)        |
+| `GET  /api/auth/me`                   | Authenticated — returns this session's resolved permissions & sections |
+| `POST /api/auth/logout`               | Authenticated                       |
+| `POST /api/registrations`             | Authenticated (own record)          |
+| `GET  /api/registrations/me`          | Authenticated (own record)          |
+| `POST /api/abstracts`                 | Authenticated (own record)          |
+| `GET  /admin`                         | Any role in the `roles` table (built-in or custom) |
+| `GET  /api/registrations`             | `payments.view`                     |
+| `PUT  /api/registrations/:id/status`  | `payments.decide`                   |
+| `GET/POST /api/users`                 | `users.view` / `users.create`       |
+| `PUT /api/users/:phone/role`          | `users.assign_role` (plus the fixed `SUPER_ADMIN` escalation limit — see Roles & Permissions) |
+| `PUT /api/users/:phone` (demographic edit) | `users.edit`                   |
+| `GET /api/admin/roles`, `POST/PUT/DELETE .../roles*` | `users.manage_roles` (the light `GET .../roles/options` list needs only `users.assign_role`) |
+| `GET /api/admin/reports/:type`        | Per report — its own permission, see Reports below |
+| `GET /api/registrations/:id/screenshot` | Owning delegate, or `payments.view` |
+| `GET /api/registrations/:id/audit`    | `payments.view`                     |
+
+To see the complete, current mapping — every route, the permission it
+needs, and which roles hold that permission right now — read
+`permissions.js`'s `ROUTE_PERMISSIONS`, or open Settings → Roles and check
+the box's state for the role in question.
 
 ## Audit trail
 
@@ -797,16 +862,18 @@ error.
 ## Reports
 
 The admin **Reports** tab offers six exportable reports, each independently
-role-gated in `REPORT_ROLES` (`server.js`):
+permission-gated (`REPORT_PERMISSIONS` in `permissions.js` — see Roles &
+Permissions above; who currently holds each one is whatever Settings → Roles
+says, not a fixed list):
 
-| Report | Roles |
-| --- | --- |
-| Registered delegates (demography & institute) | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
-| Delegates & program selections (one row per delegate, one column per group) | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
-| Payment details & status | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
-| Registrations per program option (any group) | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
-| Accepted abstracts | `SUPER_ADMIN`, `ACADEMIC_REVIEWER`, `OPERATIONS` |
-| All users | `SUPER_ADMIN`, `OPERATIONS` (the roles that can see the Users tab at all) |
+| Report | Permission | Held by default |
+| --- | --- | --- |
+| Registered delegates (demography & institute) | `reports.delegates` | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
+| Delegates & program selections (one row per delegate, one column per group) | `reports.delegate_programs` | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
+| Payment details & status | `reports.payments` | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
+| Registrations per program option (any group) | `reports.programs` | `SUPER_ADMIN`, `FINANCE_ADMIN`, `OPERATIONS` |
+| Accepted abstracts | `reports.abstracts` | `SUPER_ADMIN`, `ACADEMIC_REVIEWER`, `OPERATIONS` |
+| All users | `reports.users` | `SUPER_ADMIN`, `OPERATIONS` (the roles that can see the Users tab at all) |
 
 The delegates and users reports carry a **Country** column; mobile numbers
 render in E.164, and an account without one (an email-only international

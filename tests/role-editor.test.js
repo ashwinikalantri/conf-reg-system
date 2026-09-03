@@ -189,6 +189,39 @@ const TEST_PASSWORD = 'role-editor-test-pw';
     "SELECT action FROM audit_log WHERE entity_type='role' AND entity_id=? AND action='ROLE_DELETED' ORDER BY id DESC LIMIT 1", [TEST_ROLE]);
   check('the deletion is audited', !!deleteAudit, deleteAudit);
 
+  console.log('\n== The delegate portal recognises a custom role as admin too ==');
+  // Same class of gap as isKnownAdminRole() on the server: the "go to admin
+  // panel" button on the delegate dashboard used to check a hardcoded list
+  // of the five built-in role names. Driven for real, in the same
+  // append-to-the-source vm technique tests/role-visibility-client.test.js
+  // uses for exactly this reason -- isAdminUser() closes over a top-level
+  // `let currentDelegate`, which a value poked onto the sandbox object from
+  // outside would not actually be seen by (verified there; not re-derived
+  // here).
+  const vm = require('vm');
+  const jsForVm = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
+  const driver = `currentDelegate = { role: '${TEST_ROLE}' }; var __IS_ADMIN__ = isAdminUser();
+    currentDelegate = { role: 'DELEGATE' }; var __IS_DELEGATE__ = isAdminUser();
+    currentDelegate = null; var __IS_NULL__ = isAdminUser();`;
+  const sandbox = {
+    window: { addEventListener() {}, location: { href: '', pathname: '/', search: '' }, matchMedia: () => ({ matches: false, addEventListener() {} }) },
+    document: { getElementById: () => null, addEventListener() {}, readyState: 'loading', cookie: '' },
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { userAgent: 'node' }, fetch: () => Promise.reject(new Error('no network in this sandbox')),
+    console: { log() {}, warn() {}, error() {}, info() {} },
+    setTimeout, clearTimeout, setInterval, clearInterval, URL, Intl, Date, Math, JSON,
+    requestAnimationFrame: (f) => setTimeout(f, 0),
+  };
+  sandbox.window.document = sandbox.document; sandbox.self = sandbox; sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  let vmError = null;
+  try { vm.runInContext(jsForVm + '\n' + driver, sandbox, { filename: 'app.js' }); } catch (e) { vmError = e; }
+  check('the sandbox runs cleanly', !vmError, vmError && vmError.message);
+  check('a custom role is recognised as admin (this used to be false)', sandbox.__IS_ADMIN__ === true, sandbox.__IS_ADMIN__);
+  check('DELEGATE is still not admin', sandbox.__IS_DELEGATE__ === false, sandbox.__IS_DELEGATE__);
+  check('no account at all is not admin', sandbox.__IS_NULL__ === false, sandbox.__IS_NULL__);
+
   console.log('\n== Client wiring ==');
   const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
   check('the editor exists', /function openRoleEditor\(/.test(js));
