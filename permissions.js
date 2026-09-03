@@ -156,6 +156,14 @@ const ROUTE_PERMISSIONS = {
   'PUT /api/users/:phone': 'users.edit',
   'PUT /api/users/:phone/role': 'users.assign_role',
   'POST /api/admin/roles/reload': 'users.manage_roles',
+  'GET /api/admin/roles': 'users.manage_roles',
+  'POST /api/admin/roles': 'users.manage_roles',
+  'PUT /api/admin/roles/:key': 'users.manage_roles',
+  'DELETE /api/admin/roles/:key': 'users.manage_roles',
+  // Lighter than the four above: read-only, no permission detail, just
+  // enough (key/label) to populate a role picker. Held by anyone who can
+  // assign a role, not only someone who can redesign one.
+  'GET /api/admin/roles/options': 'users.assign_role',
 
   // Masters -- fees
   'GET /api/admin/fees': 'masters.fees_view',
@@ -239,6 +247,7 @@ const SECTION_PERMISSIONS = {
   reports: { anyOf: ['reports.delegates', 'reports.delegate_programs', 'reports.payments',
     'reports.programs', 'reports.abstracts', 'reports.users'] },
   users: { permission: 'users.view' },
+  roles: { permission: 'users.manage_roles' },
   fees: { permission: 'masters.fees_view' },
   programs: { permission: 'masters.programs_view' },
   discount: { permission: 'discounts.view' },

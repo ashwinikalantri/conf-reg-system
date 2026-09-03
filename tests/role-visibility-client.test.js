@@ -30,7 +30,7 @@ const ELEMENT_IDS = [
   'register-delegate-btn', 'settings-menu-btn',
   'settings-item-programs', 'settings-item-fees', 'settings-item-general',
   'settings-item-discount', 'settings-item-activity',
-  'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users',
+  'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
   'report-delegates', 'report-delegate-programs', 'report-payments',
   'report-workshops', 'report-abstracts',
 ];
@@ -44,7 +44,7 @@ const EXPECTED_VISIBLE = {
   SUPER_ADMIN: ['nav-tab-payments', 'nav-tab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
     'register-delegate-btn', 'settings-menu-btn', 'settings-item-programs', 'settings-item-fees',
     'settings-item-general', 'settings-item-discount', 'settings-item-activity',
-    'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users',
+    'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
     'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
   FINANCE_ADMIN: ['nav-tab-payments', 'nav-tab-statement', 'nav-tab-reports',
     'register-delegate-btn', 'settings-menu-btn', 'settings-item-discount',

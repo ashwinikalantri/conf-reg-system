@@ -107,6 +107,11 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // adding a route is as visible as widening it by editing a role.
   const ADDED_SINCE_BASELINE = {
     'POST /api/admin/roles/reload': 'Phase 2. Re-reads roles from the database. Super Admin only.',
+    'GET /api/admin/roles': 'Phase 4. The role editor\'s own detail view. Super Admin only.',
+    'GET /api/admin/roles/options': 'Phase 4. Light role list for an assignment picker -- users.assign_role, not manage_roles.',
+    'POST /api/admin/roles': 'Phase 4. Create a role. Super Admin only.',
+    'PUT /api/admin/roles/:key': 'Phase 4. Edit a role. Super Admin only.',
+    'DELETE /api/admin/roles/:key': 'Phase 4. Delete a role. Super Admin only.',
   };
   const added = ROUTES.map((r) => r.route).filter((r) => !BASELINE.roles.SUPER_ADMIN.routes.includes(r));
   check('every route added since the baseline is accounted for',
@@ -149,7 +154,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // draws the same thing from the catalogue; until then this is the check
   // that the catalogue would draw it identically.
   const CLIENT_TODAY = {
-    SUPER_ADMIN: ['payments', 'statement', 'abstracts', 'reports', 'users', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'general', 'activity'],
+    SUPER_ADMIN: ['payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'general', 'activity'],
     FINANCE_ADMIN: ['payments', 'statement', 'reports', 'discount', 'groupdiscount', 'reminders'],
     ACADEMIC_REVIEWER: ['abstracts', 'reports'],
     FINANCE_ACADEMIC: ['payments', 'statement', 'abstracts', 'reports', 'discount', 'groupdiscount', 'reminders'],

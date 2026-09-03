@@ -22,6 +22,7 @@ const fetch = require('node-fetch');
 // a role list repeated at every route -- see permissions.js.
 const {
   PERMISSION_KEYS, ROUTE_PERMISSIONS, REPORT_PERMISSIONS, SYSTEM_ROLES, SECTION_PERMISSIONS,
+  SECTIONS, PERMISSIONS,
   roleCan, permissionsForRole,
 } = require('./permissions');
 
@@ -148,8 +149,12 @@ const ADMIN_ROLES = ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINAN
 async function isSetupModeActive() {
   const completed = await dbGet("SELECT value FROM schema_meta WHERE key = 'setup_completed'").catch(() => null);
   if (completed) return false;
+  // Any role that isn't DELEGATE closes the setup window -- including a
+  // custom one, which is exactly as capable of administering this app as
+  // the five built-ins are.
+  const roles = (roleCache && roleCache.size) ? [...roleCache.keys()] : ADMIN_ROLES;
   const admin = await dbGet(
-    `SELECT 1 FROM users WHERE role IN (${ADMIN_ROLES.map(() => '?').join(',')}) LIMIT 1`, ADMIN_ROLES
+    `SELECT 1 FROM users WHERE role IN (${roles.map(() => '?').join(',')}) LIMIT 1`, roles
   ).catch(() => null);
   return !admin;
 }
@@ -987,7 +992,7 @@ async function recordAudit({ req, entityType, entityId, action, oldValue, newVal
 // but never appear in General Logs.
 const GENERAL_LOG_ENTITY_TYPES = [
   'program_option', 'fee_config', 'fee_category', 'discount_code', 'group_rule', 'general_settings',
-  'bank_statement_transaction',
+  'bank_statement_transaction', 'role',
   'settings', // legacy: pre-rename NOTIFICATION_TOGGLE rows only
 ];
 
@@ -2210,6 +2215,21 @@ function can(roleKey, permission) {
   return role.permissions.has(permission);
 }
 
+// Is this a real, currently-existing admin role -- built-in or custom?
+// POST /api/users, PUT /api/users/:phone/role and the /admin page's own
+// access gate all used to check this against the five built-in role names
+// directly. That was fine while those were the only roles that could ever
+// exist; once the editor can create one, that check would silently refuse
+// to assign a brand-new role to anyone, or lock out whoever it WAS assigned
+// to when they next opened /admin -- a role editor whose roles can never
+// actually be used. Checks the live cache, with the same empty-cache
+// fallback can() uses: a broken load answers from the five built-in roles
+// rather than refusing every admin wholesale over a migration hiccup.
+function isKnownAdminRole(role) {
+  if (!roleCache || roleCache.size === 0) return ADMIN_ROLES.includes(role);
+  return roleCache.has(role);
+}
+
 // Everything a role holds, for the browser and for the role editor.
 function permissionsOf(roleKey) {
   if (!roleCache || roleCache.size === 0) return permissionsForRole(roleKey);
@@ -2960,7 +2980,7 @@ app.get('/admin', (req, res) => {
       '<p><a href="/">Return to the delegate portal</a></p></body>'
     );
   }
-  if (!ADMIN_ROLES.includes(req.session.role)) {
+  if (!isKnownAdminRole(req.session.role)) {
     return res.status(403).send(
       '<!doctype html><meta charset="utf-8"><title>Forbidden</title>' +
       '<body style="font-family:sans-serif;max-width:32rem;margin:4rem auto;text-align:center">' +
@@ -6373,6 +6393,196 @@ app.post('/api/admin/roles/reload', requirePermission('users.manage_roles'), asy
   }
 });
 
+// A role's key is its permanent identifier -- users.role stores it directly,
+// and role_permissions keys off it -- so it is validated once, here, and
+// never editable afterward. Uppercase with underscores, matching the shape
+// of the five built-in roles, so a custom one reads the same way in a badge
+// or a dropdown. DELEGATE is reserved: it is not a row in `roles` at all
+// (see ADMIN_ROLES), and every role-changing endpoint treats it as its own
+// special case, so a role actually named DELEGATE would collide with that.
+const ROLE_KEY_RE = /^[A-Z][A-Z0-9_]{2,39}$/;
+function validateRoleKey(key) {
+  if (key === 'DELEGATE') return 'DELEGATE is reserved for the non-admin default and cannot be used as a role key.';
+  if (!ROLE_KEY_RE.test(key)) return 'Role key must be 3-40 characters, uppercase letters, digits and underscores, starting with a letter.';
+  return null;
+}
+
+// Every permission in the submitted set has to be one the catalogue actually
+// defines -- silently dropping an unknown one would let a typo look like it
+// took effect, and silently keeping it would let a retired permission linger
+// forever in role_permissions with nothing left to mean.
+function validateRolePermissions(list) {
+  if (!Array.isArray(list)) return 'Permissions must be a list.';
+  const bad = list.filter((p) => !PERMISSION_KEYS.includes(p));
+  if (bad.length) return `Unknown permission(s): ${bad.join(', ')}`;
+  return null;
+}
+
+// The full detail an editor needs: every role, what each holds, how many
+// accounts currently hold it (so the UI can refuse to delete one in use
+// without a round trip), and the catalogue itself -- sections and
+// permissions, with their descriptions -- so the matrix has one source for
+// both what exists and what each checkbox means.
+app.get('/api/admin/roles', requirePermission('users.manage_roles'), async (req, res, next) => {
+  try {
+    const roles = await dbAll('SELECT key, label, description, is_system, grants_all FROM roles ORDER BY is_system DESC, label');
+    const permRows = await dbAll('SELECT role_key, permission FROM role_permissions');
+    const userCounts = await dbAll('SELECT role, COUNT(*) AS n FROM users GROUP BY role');
+    const countByRole = new Map(userCounts.map((r) => [r.role, r.n]));
+    const permsByRole = new Map();
+    for (const r of permRows) {
+      if (!permsByRole.has(r.role_key)) permsByRole.set(r.role_key, []);
+      permsByRole.get(r.role_key).push(r.permission);
+    }
+    const shaped = roles.map((r) => ({
+      key: r.key, label: r.label, description: r.description,
+      isSystem: !!r.is_system, grantsAll: !!r.grants_all,
+      permissions: r.grants_all ? PERMISSION_KEYS.slice() : (permsByRole.get(r.key) || []),
+      userCount: countByRole.get(r.key) || 0,
+    }));
+    res.json({
+      success: true, roles: shaped,
+      catalogue: { sections: SECTIONS, permissions: PERMISSIONS },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The light version: key/label/isSystem only, for a role-assignment picker.
+// Held by anyone who can assign a role (users.assign_role), not only someone
+// who can redesign one (users.manage_roles) -- Operations has the former but
+// not the latter, and still needs a role list to hand out.
+app.get('/api/admin/roles/options', requirePermission('users.assign_role'), async (req, res, next) => {
+  try {
+    const roles = await dbAll('SELECT key, label, is_system FROM roles ORDER BY is_system DESC, label');
+    res.json({ success: true, roles: roles.map((r) => ({ key: r.key, label: r.label, isSystem: !!r.is_system })) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/admin/roles', requirePermission('users.manage_roles'), async (req, res, next) => {
+  try {
+    const key = String(req.body.key || '').trim().toUpperCase();
+    const label = String(req.body.label || '').trim();
+    const description = req.body.description != null ? String(req.body.description).trim() : null;
+    const permissions = [...new Set(req.body.permissions || [])];
+
+    const keyError = validateRoleKey(key);
+    if (keyError) return res.status(400).json({ success: false, error: keyError });
+    if (!label) return res.status(400).json({ success: false, error: 'A label is required.' });
+    const permError = validateRolePermissions(permissions);
+    if (permError) return res.status(400).json({ success: false, error: permError });
+
+    const existing = await dbGet('SELECT key FROM roles WHERE key = ?', [key]);
+    if (existing) return res.status(409).json({ success: false, error: `A role named ${key} already exists.` });
+
+    const now = Date.now();
+    await dbRun(
+      `INSERT INTO roles (key, label, description, is_system, grants_all, event_id, created_at, updated_at)
+       VALUES (?, ?, ?, 0, 0, NULL, ?, ?)`,
+      [key, label, description, now, now]);
+    for (const permission of permissions) {
+      await dbRun('INSERT OR IGNORE INTO role_permissions (role_key, permission) VALUES (?, ?)', [key, permission]);
+    }
+    await loadRoles();
+
+    await recordAudit({
+      req, entityType: 'role', entityId: key, action: 'ROLE_CREATED',
+      oldValue: null, newValue: `${label} — ${permissions.length} permission(s): ${permissions.join(', ')}`,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/admin/roles/:key', requirePermission('users.manage_roles'), async (req, res, next) => {
+  try {
+    const key = req.params.key;
+    const role = await dbGet('SELECT key, label, is_system, grants_all FROM roles WHERE key = ?', [key]);
+    if (!role) return res.status(404).json({ success: false, error: 'Role not found.' });
+    // Super Admin holds every permission by the grants_all flag, not by rows,
+    // and is not up for negotiation -- it is the way back in when another
+    // role is misconfigured, which only works if nothing can misconfigure IT.
+    if (role.grants_all) {
+      return res.status(403).json({ success: false, error: 'Super Admin cannot be edited.' });
+    }
+
+    const label = req.body.label != null ? String(req.body.label).trim() : role.label;
+    const description = req.body.description != null ? String(req.body.description).trim() : null;
+    const permissions = [...new Set(req.body.permissions || [])];
+    if (!label) return res.status(400).json({ success: false, error: 'A label is required.' });
+    const permError = validateRolePermissions(permissions);
+    if (permError) return res.status(400).json({ success: false, error: permError });
+
+    // The lock-out this exists to prevent: an admin editing the very role
+    // they are logged in as, and removing their own ability to fix it back.
+    // Every other role stays fully editable, including down to zero
+    // permissions -- it's only the role the ACTOR currently holds, and only
+    // this one permission, that is protected.
+    if (req.session.role === key && !permissions.includes('users.manage_roles')) {
+      return res.status(409).json({
+        success: false,
+        error: 'You cannot remove your own ability to manage roles. Have another Super Admin or role manager make this change instead.',
+      });
+    }
+
+    const before = await dbAll('SELECT permission FROM role_permissions WHERE role_key = ?', [key]);
+    const beforeSet = new Set(before.map((r) => r.permission));
+    const added = permissions.filter((p) => !beforeSet.has(p));
+    const removed = [...beforeSet].filter((p) => !permissions.includes(p));
+
+    await dbRun('UPDATE roles SET label = ?, description = ?, updated_at = ? WHERE key = ?',
+      [label, description, Date.now(), key]);
+    await dbRun('DELETE FROM role_permissions WHERE role_key = ?', [key]);
+    for (const permission of permissions) {
+      await dbRun('INSERT OR IGNORE INTO role_permissions (role_key, permission) VALUES (?, ?)', [key, permission]);
+    }
+    await loadRoles();
+
+    await recordAudit({
+      req, entityType: 'role', entityId: key, action: 'ROLE_UPDATED',
+      oldValue: `${role.label}`,
+      newValue: `${label}` + (added.length ? ` — added: ${added.join(', ')}` : '')
+        + (removed.length ? ` — removed: ${removed.join(', ')}` : ''),
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/admin/roles/:key', requirePermission('users.manage_roles'), async (req, res, next) => {
+  try {
+    const key = req.params.key;
+    const role = await dbGet('SELECT key, label, is_system FROM roles WHERE key = ?', [key]);
+    if (!role) return res.status(404).json({ success: false, error: 'Role not found.' });
+    if (role.is_system) return res.status(403).json({ success: false, error: 'A built-in role cannot be deleted.' });
+
+    const holders = await dbGet('SELECT COUNT(*) AS n FROM users WHERE role = ?', [key]);
+    if (holders.n > 0) {
+      return res.status(409).json({
+        success: false,
+        error: `${holders.n} user(s) still hold this role. Reassign them first.`,
+      });
+    }
+
+    await dbRun('DELETE FROM role_permissions WHERE role_key = ?', [key]);
+    await dbRun('DELETE FROM roles WHERE key = ?', [key]);
+    await loadRoles();
+
+    await recordAudit({
+      req, entityType: 'role', entityId: key, action: 'ROLE_DELETED',
+      oldValue: role.label, newValue: null,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get('/api/users', requirePermission('users.view'), async (req, res, next) => {
   try {
     const rows = await dbAll(
@@ -6518,7 +6728,7 @@ app.post('/api/users', requirePermission('users.create'), async (req, res, next)
     if (await emailTakenBy(emailVal, phone)) {
       return res.status(409).json({ success: false, error: 'Another account already uses that email address.' });
     }
-    if (!ADMIN_ROLES.includes(role) && role !== 'DELEGATE') {
+    if (!isKnownAdminRole(role) && role !== 'DELEGATE') {
       return res.status(400).json({ success: false, error: 'Invalid role.' });
     }
     // OPERATIONS gets Users & Roles so it can manage staff accounts, but not
@@ -6557,7 +6767,7 @@ app.post('/api/users', requirePermission('users.create'), async (req, res, next)
 app.put('/api/users/:phone/role', requirePermission('users.assign_role'), async (req, res, next) => {
   try {
     const { role } = req.body;
-    if (!ADMIN_ROLES.includes(role) && role !== 'DELEGATE') {
+    if (!isKnownAdminRole(role) && role !== 'DELEGATE') {
       return res.status(400).json({ success: false, error: 'Invalid role.' });
     }
     // Same escalation boundary as user creation: OPERATIONS can move anyone

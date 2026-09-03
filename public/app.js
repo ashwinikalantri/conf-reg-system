@@ -2504,7 +2504,7 @@ function applyRoleVisibility() {
   // own tab, from the same source that gated it above -- no separate list of
   // roles kept in step by hand.
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
-  const settingsItems = ['programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount'];
+  const settingsItems = ['programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount', 'roles'];
   let anySettingsItem = false;
   settingsItems.forEach((key) => {
     const visible = canSee(key);
@@ -2576,6 +2576,11 @@ async function initBackendPortal() {
   if (canSee('payments')) renderDelegateMap();
   if (canSee('abstracts')) await renderBackendAbstracts();
   if (canSee('users')) await loadBackendUsers();
+  // The role picker used in Users & Roles and the Create Staff User modal --
+  // needed by anyone who can assign a role, not only someone who can also
+  // redesign one.
+  if (can('users.assign_role')) await renderRoleOptions();
+  if (canSee('roles')) await loadBackendRoles();
   if (canSee('programs')) await renderBackendPrograms();
   if (canSee('fees')) await renderBackendFees();
   if (canSee('discount')) await renderDiscountCodes();
@@ -3971,6 +3976,217 @@ const REG_STATUS_STYLES = {
 let cachedUsers = [];
 let cachedAdminProgramGroups = [];
 
+// --- ROLES (Settings -> Roles) --------------------------------------------
+// The catalogue -- every permission, grouped by section, with a description
+// for each -- comes from the server (permissions.js) rather than being
+// duplicated here, so the matrix can never list a checkbox the server
+// wouldn't recognise.
+let cachedRoles = [];
+let cachedRoleCatalogue = { sections: [], permissions: [] };
+// Editor state: null (closed), {mode:'create'} or {mode:'edit', key}.
+let roleEditorState = null;
+
+// The role picker used by the "Assign Administrative Role" select (Create
+// Staff User modal) and the role dropdown in a user's own detail panel.
+// Fetched separately from the full editor payload -- it's held by anyone who
+// can ASSIGN a role, not only someone who can also redesign one -- and kept
+// in ROLE_LABELS too, so a role's chosen label (not just its key, humanised)
+// shows everywhere a role is named, including one created after this page
+// loaded.
+let cachedRoleOptions = [];
+async function renderRoleOptions() {
+  const res = await fetch('/api/admin/roles/options');
+  if (!res.ok) return;
+  const data = await res.json();
+  cachedRoleOptions = data.roles || [];
+  cachedRoleOptions.forEach((r) => { ROLE_LABELS[r.key] = r.label; });
+  // If a user's detail panel is open, its role select was built from the
+  // list as it stood at the time -- refresh it in place rather than leaving
+  // it stale until the panel is reopened.
+  if (userDetailData) renderUserDetail();
+}
+
+async function loadBackendRoles() {
+  const res = await fetch('/api/admin/roles');
+  if (!res.ok) return;
+  const data = await res.json();
+  cachedRoles = data.roles || [];
+  cachedRoleCatalogue = data.catalogue || { sections: [], permissions: [] };
+  renderRoleCards();
+}
+
+function renderRoleCards() {
+  const list = document.getElementById('roles-list');
+  if (!list) return;
+  list.innerHTML = cachedRoles.map((r) => {
+    const isMine = activeAdminUser && activeAdminUser.role === r.key;
+    const badge = r.grantsAll
+      ? `<span class="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wide">Built-in · every permission</span>`
+      : r.isSystem
+        ? `<span class="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-wide">Built-in</span>`
+        : '';
+    const deleteDisabled = r.isSystem || r.userCount > 0;
+    const deleteTitle = r.isSystem ? 'Built-in roles cannot be deleted'
+      : r.userCount > 0 ? `${r.userCount} user(s) still hold this role -- reassign them first` : '';
+    return `
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col gap-3">
+      <div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <h3 class="text-sm font-bold text-slate-800">${esc(r.label)}</h3>
+          ${badge}
+          ${isMine ? '<span class="text-[10px] text-emerald-700 font-bold">· this is your role</span>' : ''}
+        </div>
+        <p class="text-[11px] font-mono text-slate-400 mt-0.5">${esc(r.key)}</p>
+        ${r.description ? `<p class="text-xs text-slate-500 mt-1.5">${esc(r.description)}</p>` : ''}
+      </div>
+      <p class="text-xs text-slate-500">${r.grantsAll ? 'Every permission, always' : `${r.permissions.length} permission(s)`} · ${r.userCount} user(s)</p>
+      <div class="flex items-center gap-2 mt-auto pt-1">
+        <button type="button" onclick="openRoleEditor('${esc(r.key)}')" ${r.grantsAll ? 'disabled title="Super Admin cannot be edited"' : ''}
+          class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 text-xs font-semibold rounded-lg">
+          ${r.grantsAll ? 'Uneditable' : 'Edit'}
+        </button>
+        <button type="button" onclick="duplicateRole('${esc(r.key)}')" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg">Duplicate</button>
+        <button type="button" onclick="deleteRoleAction('${esc(r.key)}')" ${deleteDisabled ? `disabled title="${esc(deleteTitle)}"` : ''}
+          class="ml-auto px-3 py-1.5 text-rose-600 hover:bg-rose-50 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-semibold rounded-lg">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// The checkbox matrix, grouped by section exactly as the catalogue orders
+// them. `selected` is the set of permission keys already held (edit) or
+// pre-filled from a source role (duplicate); empty for a fresh create.
+function buildPermissionMatrix(selected) {
+  const bySection = {};
+  cachedRoleCatalogue.permissions.forEach((p) => {
+    (bySection[p.section] = bySection[p.section] || []).push(p);
+  });
+  return cachedRoleCatalogue.sections.map((sec) => {
+    const perms = bySection[sec.key] || [];
+    if (!perms.length) return '';
+    return `
+    <div>
+      <h4 class="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">${esc(sec.label)}</h4>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+        ${perms.map((p) => `
+          <label class="flex items-start gap-2 py-1 cursor-pointer" title="${esc(p.description)}">
+            <input type="checkbox" class="role-perm-checkbox mt-0.5" value="${esc(p.key)}" ${selected.has(p.key) ? 'checked' : ''} onchange="updateRolePermCount()">
+            <span class="text-xs text-slate-700">${esc(p.label)}</span>
+          </label>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function updateRolePermCount() {
+  const n = document.querySelectorAll('.role-perm-checkbox:checked').length;
+  setText('role-editor-perm-count', String(n));
+}
+
+function roleEditorErrorEl() { return document.getElementById('role-editor-error'); }
+function showRoleEditorError(msg) {
+  const el = roleEditorErrorEl();
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+function clearRoleEditorError() {
+  const el = roleEditorErrorEl();
+  if (el) el.classList.add('hidden');
+}
+
+// No argument: a blank create form. A key: edit that existing role, its key
+// field locked (a role's key is permanent -- see the server's own
+// validateRoleKey comment).
+function openRoleEditor(key) {
+  clearRoleEditorError();
+  const keyInput = document.getElementById('role-editor-key');
+  const labelInput = document.getElementById('role-editor-label');
+  const descInput = document.getElementById('role-editor-description');
+  const title = document.getElementById('role-editor-title');
+  const subtitle = document.getElementById('role-editor-subtitle');
+  const matrix = document.getElementById('role-editor-matrix');
+
+  const role = key ? cachedRoles.find((r) => r.key === key) : null;
+  roleEditorState = role ? { mode: 'edit', key } : { mode: 'create' };
+
+  if (title) title.textContent = role ? `Edit ${role.label}` : 'New Role';
+  if (subtitle) subtitle.textContent = role
+    ? 'The key stays fixed; everything else can change.'
+    : 'A role\'s key can\'t be changed once it\'s created.';
+  if (keyInput) { keyInput.value = role ? role.key : ''; keyInput.disabled = !!role; }
+  if (labelInput) labelInput.value = role ? role.label : '';
+  if (descInput) descInput.value = (role && role.description) || '';
+  if (matrix) matrix.innerHTML = buildPermissionMatrix(new Set(role ? role.permissions : []));
+  updateRolePermCount();
+  openModal('modal-role-editor');
+}
+
+// Pre-fills a NEW role's form from an existing one's permission set -- a
+// duplicate is just a create with a head start, so it reuses the same
+// create endpoint rather than a dedicated one.
+function duplicateRole(sourceKey) {
+  const source = cachedRoles.find((r) => r.key === sourceKey);
+  if (!source) return;
+  openRoleEditor(); // blank create form, then override with the source's shape
+  roleEditorState = { mode: 'create' };
+  const labelInput = document.getElementById('role-editor-label');
+  const descInput = document.getElementById('role-editor-description');
+  const matrix = document.getElementById('role-editor-matrix');
+  if (labelInput) labelInput.value = `Copy of ${source.label}`;
+  if (descInput) descInput.value = source.description || '';
+  if (matrix) matrix.innerHTML = buildPermissionMatrix(new Set(source.grantsAll ? cachedRoleCatalogue.permissions.map((p) => p.key) : source.permissions));
+  updateRolePermCount();
+}
+
+async function submitRoleEditor(e) {
+  e.preventDefault();
+  clearRoleEditorError();
+  if (!roleEditorState) return;
+
+  const label = document.getElementById('role-editor-label').value.trim();
+  const description = document.getElementById('role-editor-description').value.trim();
+  const permissions = Array.from(document.querySelectorAll('.role-perm-checkbox:checked')).map((cb) => cb.value);
+
+  const btn = document.getElementById('role-editor-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  try {
+    let data;
+    if (roleEditorState.mode === 'create') {
+      const key = document.getElementById('role-editor-key').value.trim().toUpperCase();
+      data = await (await fetch('/api/admin/roles', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, label, description, permissions }),
+      })).json();
+    } else {
+      data = await (await fetch(`/api/admin/roles/${encodeURIComponent(roleEditorState.key)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label, description, permissions }),
+      })).json();
+    }
+    if (!data.success) return showRoleEditorError(data.error || 'Could not save this role.');
+
+    closeModal('modal-role-editor');
+    showToast(roleEditorState.mode === 'create' ? 'Role created.' : 'Role updated.', 'success');
+    await loadBackendRoles();
+    await renderRoleOptions();
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Role'; }
+  }
+}
+
+async function deleteRoleAction(key) {
+  const role = cachedRoles.find((r) => r.key === key);
+  if (!role) return;
+  if (!(await showConfirm(`Delete the role "${role.label}"? This can't be undone.`))) return;
+  const data = await (await fetch(`/api/admin/roles/${encodeURIComponent(key)}`, { method: 'DELETE' })).json();
+  if (!data.success) return showToast(data.error || 'Could not delete this role.');
+  showToast('Role deleted.', 'success');
+  await loadBackendRoles();
+  await renderRoleOptions();
+}
+
 async function loadBackendUsers() {
   const [usersRes, groupsRes] = await Promise.all([
     fetch('/api/users'),
@@ -4190,15 +4406,6 @@ let userDetailData = null;
 let userDetailEditing = false;
 let userDetailSelections = [];
 
-const ROLE_OPTIONS = [
-  ['DELEGATE', 'Delegate'],
-  ['FINANCE_ADMIN', 'Finance Admin'],
-  ['ACADEMIC_REVIEWER', 'Academic Reviewer'],
-  ['FINANCE_ACADEMIC', 'Finance & Academic Reviewer'],
-  ['OPERATIONS', 'Operations'],
-  ['SUPER_ADMIN', 'Super Admin'],
-];
-
 // Whether the viewer literally IS Super Admin -- a role-hierarchy check, not
 // a permission one. Reserved for the two places that mirror the server's own
 // hardcoded escalation boundary (PUT /api/users/:phone/role, POST
@@ -4340,11 +4547,18 @@ function renderUserDetail() {
   // all. Hiding/disabling here is UX only; the server enforces regardless.
   const viewerIsSuper = isSuperAdminViewer();
   const targetIsSuper = u.role === 'SUPER_ADMIN';
-  const roleOptions = viewerIsSuper ? ROLE_OPTIONS : ROLE_OPTIONS.filter(([v]) => v !== 'SUPER_ADMIN');
   const roleLocked = targetIsSuper && !viewerIsSuper;
-  const roleSelect = `<div class="flex items-center gap-2">
+  // A viewer who can SEE Users & Roles but was not given users.assign_role
+  // (possible now that roles are editable -- a custom role could hold view
+  // without assign) gets the role shown as plain text, not a control they'd
+  // click only to be refused by the server.
+  const canAssign = can('users.assign_role');
+  const roleSelect = !canAssign
+    ? `<p class="text-sm text-slate-700 font-medium">${esc(roleLabel(u.role))}</p>`
+    : `<div class="flex items-center gap-2">
     <select id="user-detail-role-select" ${roleLocked ? 'disabled' : ''} class="flex-1 p-2 border rounded-lg text-sm bg-white outline-none disabled:bg-slate-100 disabled:text-slate-400">
-      ${roleLocked ? `<option value="SUPER_ADMIN" selected>${esc(roleLabel('SUPER_ADMIN'))}</option>` : roleOptions.map(([v, l]) => `<option value="${v}" ${u.role === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+      ${roleLocked ? `<option value="SUPER_ADMIN" selected>${esc(roleLabel('SUPER_ADMIN'))}</option>`
+        : roleSelectOptionsHtml({ includeDelegate: 'first', selected: u.role })}
     </select>
     <button type="button" onclick="saveUserDetailRole()" ${roleLocked ? 'disabled' : ''} class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:bg-slate-300 disabled:cursor-not-allowed">Save</button>
   </div>${roleLocked ? `<p class="text-[11px] text-slate-400 mt-1.5">Only a Super Admin can change another Super Admin's role.</p>` : ''}`;
@@ -6700,12 +6914,36 @@ async function updateAbstractAllocation(id, allocation) {
   renderBackendAbstracts();
 }
 
+// Builds <option>s for a role picker from the live role list (see
+// renderRoleOptions), so a role created in the editor is immediately
+// assignable -- without this, creating a role would be a dead end, since
+// nothing could ever be given it. Falls back to nothing extra if the fetch
+// hasn't completed yet; the static options already in the markup cover that
+// gap until it does.
+function roleSelectOptionsHtml({ includeDelegate = 'none', selected = null } = {}) {
+  const viewerIsSuper = isSuperAdminViewer();
+  const admin = cachedRoleOptions.map((r) => {
+    // Same escalation boundary the server enforces (POST /api/users, PUT
+    // /api/users/:phone/role): only a Super Admin may hand out Super Admin.
+    const locked = r.key === 'SUPER_ADMIN' && !viewerIsSuper;
+    return `<option value="${esc(r.key)}" ${locked ? 'disabled' : ''} ${selected === r.key ? 'selected' : ''}>${esc(r.label)}</option>`;
+  }).join('');
+  const delegateOpt = includeDelegate !== 'none'
+    ? `<option value="DELEGATE" ${selected === 'DELEGATE' ? 'selected' : ''}>Delegate</option>` : '';
+  return includeDelegate === 'first' ? delegateOpt + admin : admin + delegateOpt;
+}
+
 function openCreateUserModal() {
-  // Same escalation boundary as the role-change select in openUserDetail:
-  // only a Super Admin can hand out Super Admin (see the server-side check
-  // in POST /api/users).
-  const superOpt = document.querySelector('#new-user-role option[value="SUPER_ADMIN"]');
-  if (superOpt) superOpt.disabled = !isSuperAdminViewer();
+  const roleSelect = document.getElementById('new-user-role');
+  if (roleSelect && cachedRoleOptions.length) {
+    roleSelect.innerHTML = roleSelectOptionsHtml({ includeDelegate: 'last' });
+  } else if (roleSelect) {
+    // cachedRoleOptions hasn't loaded (or this viewer can't fetch it) --
+    // the static list already in the markup stands in; only the escalation
+    // lock still needs applying to it.
+    const superOpt = roleSelect.querySelector('option[value="SUPER_ADMIN"]');
+    if (superOpt) superOpt.disabled = !isSuperAdminViewer();
+  }
   openModal('modal-create-user');
 }
 
@@ -7030,7 +7268,7 @@ document.addEventListener('click', (e) => {
 // Settings sub-menu tabs (each is now its own top-level <section>) vs. the
 // main nav-bar tabs. The Settings items highlight in the dropdown; the main
 // tabs highlight in the tab bar.
-const SETTINGS_TABS = ['programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'activity'];
+const SETTINGS_TABS = ['programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
 const MAIN_TABS = ['payments', 'statement', 'abstracts', 'reports'];
 
 // Which tabs each role may open -- the single source of truth used both to
@@ -7069,6 +7307,7 @@ function switchBackendTab(tab) {
   if (tab === 'general') renderGeneralSettings();
   if (tab === 'activity') renderBackendActivity();
   if (tab === 'users') loadBackendUsers();
+  if (tab === 'roles') loadBackendRoles();
   if (tab === 'reminders') { renderBackendReminders(); renderBackendBalanceDueReminders(); initCustomReminderCard(); }
   [...MAIN_TABS, ...SETTINGS_TABS].forEach(t => {
     const section = document.getElementById(`section-${t}`);
