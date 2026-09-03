@@ -832,20 +832,20 @@ function applyRegistrationState(reg) {
 
   if (!reg) {
     // No payment submitted yet — reset to the initial pending state.
-    statusTag.className = "text-xs bg-amber-100 text-amber-800 font-bold px-2.5 py-1 rounded-full border border-amber-200";
+    statusTag.className = "text-xs bg-amber-100 text-amber-800 font-bold px-2.5 py-1 rounded-full border border-amber-300";
     statusTag.innerText = "Registration Pending";
     confBtn.innerText = "Register & Pay Now";
     reverifyBanner.classList.add('hidden');
   } else if (verified) {
     // Confirmed: the action button/note are hidden; only the confirmed block
     // (number, workshop, QI, receipt) is shown.
-    statusTag.className = "text-xs bg-emerald-100 text-emerald-800 font-bold px-3 py-1 rounded-full border border-emerald-300";
+    statusTag.className = "text-xs bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1 rounded-full border border-emerald-300";
     statusTag.innerText = "Registration Confirmed ✓";
     reverifyBanner.classList.add('hidden');
   } else if (reg.bank_status === 'REJECTED') {
     // Rejected: show the reason and the tailored action the delegate should
     // take. The button dispatches by reason (see resolveRejection).
-    statusTag.className = "text-xs bg-rose-100 text-rose-800 font-bold px-3 py-1 rounded-full border border-rose-300";
+    statusTag.className = "text-xs bg-rose-100 text-rose-800 font-bold px-2.5 py-1 rounded-full border border-rose-300";
     statusTag.innerText = "Registration Rejected";
 
     const R = {
@@ -866,7 +866,7 @@ function applyRegistrationState(reg) {
     reverifyBanner.classList.remove('hidden');
   } else if (partial) {
     // Partial payment: the balance banner above carries the CTA (Pay Balance).
-    statusTag.className = "text-xs bg-orange-100 text-orange-800 font-bold px-3 py-1 rounded-full border border-orange-300";
+    statusTag.className = "text-xs bg-orange-100 text-orange-800 font-bold px-2.5 py-1 rounded-full border border-orange-300";
     statusTag.innerText = "Partial Payment — Balance Due";
     reverifyBanner.classList.add('hidden');
   } else {
@@ -874,7 +874,7 @@ function applyRegistrationState(reg) {
     // submitted, so there is nothing for the delegate to edit here. Hide
     // the action button entirely rather than opening a form the server
     // will just reject.
-    statusTag.className = "text-xs bg-amber-100 text-amber-800 font-bold px-3 py-1 rounded-full border border-amber-300";
+    statusTag.className = "text-xs bg-amber-100 text-amber-800 font-bold px-2.5 py-1 rounded-full border border-amber-300";
     statusTag.innerText = reg.is_flagged ? "Flagged - Awaiting Manual Audit" : "Registration Pending (Awaiting Verification)";
     reverifyBanner.classList.add('hidden');
   }
@@ -1002,11 +1002,13 @@ async function loadAbstractStatus() {
   const btn = document.getElementById('abstract-action-btn');
   const desc = document.getElementById('abstract-desc');
   if (!tag) return;
+  // Same pill shape as payment-status-tag's states -- one status-pill
+  // component, not two ad hoc ones, since the two cards sit side by side.
   const STYLES = {
-    UNDER_REVIEW: ['Under Review', 'bg-amber-100 text-amber-700'],
-    ACCEPTED: ['Accepted ✓', 'bg-emerald-100 text-emerald-700'],
-    REJECTED: ['Not Accepted', 'bg-rose-100 text-rose-700'],
-    REVISION_REQUESTED: ['Corrections Needed', 'bg-orange-100 text-orange-700'],
+    UNDER_REVIEW: ['Under Review', 'bg-amber-100 text-amber-800 border-amber-300'],
+    ACCEPTED: ['Accepted ✓', 'bg-emerald-100 text-emerald-800 border-emerald-300'],
+    REJECTED: ['Not Accepted', 'bg-rose-100 text-rose-800 border-rose-300'],
+    REVISION_REQUESTED: ['Corrections Needed', 'bg-orange-100 text-orange-800 border-orange-300'],
   };
   const previewToggle = document.getElementById('abstract-preview-toggle');
   const previewBox = document.getElementById('abstract-preview-box');
@@ -1018,7 +1020,7 @@ async function loadAbstractStatus() {
       if (abs.status === 'ACCEPTED' && abs.allocation) {
         label = `Accepted · ${abs.allocation === 'ORAL' ? 'Oral' : 'Poster'}`;
       }
-      tag.className = `text-xs font-bold px-2 py-0.5 rounded-full ${cls}`;
+      tag.className = `text-xs font-bold px-2.5 py-1 rounded-full border ${cls}`;
       tag.innerText = label;
 
       // Locked after submission -- except REVISION_REQUESTED, the one
@@ -1048,7 +1050,7 @@ async function loadAbstractStatus() {
       if (previewToggle) previewToggle.classList.remove('hidden');
       if (previewBox) previewBox.classList.add('hidden'); // collapsed by default each load
     } else {
-      tag.className = 'text-xs bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-full';
+      tag.className = 'text-xs bg-slate-100 text-slate-600 font-bold px-2.5 py-1 rounded-full border border-slate-200';
       tag.innerText = 'Not Submitted';
       if (btn) { btn.innerText = 'Submit Abstract'; btn.disabled = false; btn.classList.remove('opacity-60', 'cursor-not-allowed'); }
       if (previewToggle) previewToggle.classList.add('hidden');
