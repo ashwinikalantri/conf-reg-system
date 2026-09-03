@@ -10,11 +10,11 @@
            in by OTP regardless, so this is a convenience toggle, not two
            genuinely different accounts. -->
       <div class="flex gap-1.5 bg-slate-100 rounded-lg p-1 text-xs font-semibold">
-        <button type="button" id="login-mode-otp-btn" onclick="setLoginMode('otp')" class="flex-1 py-2 rounded-md bg-white text-indigo-700 shadow-sm">OTP</button>
-        <button type="button" id="login-mode-password-btn" onclick="setLoginMode('password')" class="flex-1 py-2 rounded-md text-slate-500">Password</button>
+        <button type="button" id="login-mode-otp-btn" onclick="setLoginMode('otp')" class="flex-1 py-2 rounded-md text-slate-500">OTP</button>
+        <button type="button" id="login-mode-password-btn" onclick="setLoginMode('password')" class="flex-1 py-2 rounded-md bg-white text-indigo-700 shadow-sm">Password</button>
       </div>
 
-      <div id="login-otp-mode">
+      <div id="login-otp-mode" class="hidden">
         <p class="text-xs text-slate-500 mb-3">Enter your registered mobile number or email address to receive an OTP.</p>
         <div class="bg-indigo-50/60 p-4 rounded-xl border border-indigo-100 space-y-3">
           <label class="block text-xs font-bold text-indigo-800 uppercase tracking-wide">Mobile Number or Email</label>
@@ -44,7 +44,7 @@
         </div>
       </div>
 
-      <div id="login-password-mode" class="hidden">
+      <div id="login-password-mode">
         <p class="text-xs text-slate-500 mb-3">Enter your registered mobile number or email address and your password.</p>
         <div class="bg-indigo-50/60 p-4 rounded-xl border border-indigo-100 space-y-3">
           <div>
@@ -58,7 +58,7 @@
         </div>
       </div>
 
-      <button type="submit" id="login-submit-btn" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl shadow-md">Verify OTP &amp; Login</button>
+      <button type="submit" id="login-submit-btn" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl shadow-md">Login</button>
 
       <p class="text-center text-sm text-slate-600 mt-4">
         Don't have an account? <a href="#" onclick="toggleAuth('register'); return false;" class="text-indigo-600 font-bold hover:underline">Sign up here</a>

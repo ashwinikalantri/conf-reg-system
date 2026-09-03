@@ -246,7 +246,7 @@ function toggleAuth(view) {
 // every account can always fall back to OTP regardless of whether a
 // password is also set. handleLogin() below reads this to decide which
 // endpoint to call.
-let loginMode = 'otp';
+let loginMode = 'password';
 function setLoginMode(mode) {
   loginMode = mode;
   const isOtp = mode === 'otp';
