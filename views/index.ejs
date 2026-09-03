@@ -4,7 +4,39 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><%= conferenceName || 'Registration Portal' %></title>
+  <!-- Direction A, "Clinical Trust" -- settled on from three low-fi sketches
+       (see the delegate-portal UI plan). Libre Franklin for headings, Source
+       Sans 3 for body text, a steel-blue accent ramp remapped onto Tailwind's
+       own `indigo` -- every existing bg-indigo-600/text-indigo-700/etc. across
+       this page picks up the new color with nothing else touched, and any
+       future screen built with the same utilities inherits it automatically.
+       Scoped to THIS page: admin.ejs and setup.ejs load their own independent
+       copy of the CDN script, so this config never reaches them. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            indigo: {
+              50: '#eef3f6', 100: '#dbe6ec', 200: '#b9cedb', 300: '#8fb0c3',
+              400: '#628ea8', 500: '#46708c', 600: '#2f5673', 700: '#244560',
+              800: '#1c3549', 900: '#142838',
+            },
+          },
+          fontFamily: {
+            sans: ['"Source Sans 3"', 'system-ui', '-apple-system', 'sans-serif'],
+          },
+          boxShadow: {
+            card: '0 1px 2px rgba(20,30,40,.05), 0 12px 28px -14px rgba(20,30,40,.18)',
+          },
+        },
+      },
+    };
+  </script>
 </head>
 <body class="bg-slate-100 font-sans min-h-screen flex flex-col justify-center items-center p-4">
 

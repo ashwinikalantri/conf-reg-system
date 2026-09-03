@@ -3,6 +3,27 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Direction A ("Clinical Trust"): Libre Franklin carries every heading, on
+   the delegate portal only -- this file is shared with the admin panel too,
+   so it's scoped by id to the portal's own containers (the hero, the two
+   pages, every portal modal) rather than a blanket h1-h4 rule, which would
+   also retype every admin heading. */
+#conf-name-h1,
+#auth-page h1, #auth-page h2, #auth-page h3, #auth-page h4,
+#dashboard-page h1, #dashboard-page h2, #dashboard-page h3, #dashboard-page h4,
+#modal-conference h1, #modal-conference h2, #modal-conference h3, #modal-conference h4,
+#modal-abstract h1, #modal-abstract h2, #modal-abstract h3, #modal-abstract h4,
+#modal-topup h1, #modal-topup h2, #modal-topup h3, #modal-topup h4,
+#modal-confirm h1, #modal-confirm h2, #modal-confirm h3, #modal-confirm h4,
+#modal-correct h1, #modal-correct h2, #modal-correct h3, #modal-correct h4,
+#modal-group-add h1, #modal-group-add h2, #modal-group-add h3, #modal-group-add h4,
+#modal-set-password h1, #modal-set-password h2, #modal-set-password h3, #modal-set-password h4,
+#modal-verify-email h1, #modal-verify-email h2, #modal-verify-email h3, #modal-verify-email h4 {
+  font-family: 'Libre Franklin', system-ui, -apple-system, sans-serif;
+  font-weight: 700;
+  letter-spacing: -.01em;
+}
+
 div::-webkit-scrollbar, section::-webkit-scrollbar {
   width: 6px;
   height: 6px;
