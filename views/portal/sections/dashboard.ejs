@@ -6,8 +6,12 @@
         <p id="user-display-sub" class="text-xs text-slate-500 mt-0.5"></p>
       </div>
       <div class="self-start sm:self-auto flex items-center gap-2">
-        <a id="admin-nav-btn" href="/admin" title="Admin Backend Panel" aria-label="Admin Backend Panel" class="hidden px-3 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 hover:text-indigo-600 transition">⚙️</a>
-        <button onclick="openSetPasswordModal(false)" title="Set Password" aria-label="Set Password" class="px-3 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 hover:text-indigo-600 transition">🔑</button>
+        <a id="admin-nav-btn" href="/admin" title="Admin Backend Panel" aria-label="Admin Backend Panel" class="hidden px-3 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 hover:text-indigo-600 transition">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="11" cy="17" r="2" fill="currentColor" stroke="none"/></svg>
+        </a>
+        <button onclick="openSetPasswordModal(false)" title="Set Password" aria-label="Set Password" class="px-3 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 hover:text-indigo-600 transition">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><circle cx="7" cy="12" r="4"/><line x1="11" y1="12" x2="21" y2="12"/><line x1="17" y1="12" x2="17" y2="16"/><line x1="21" y1="12" x2="21" y2="16"/></svg>
+        </button>
         <button onclick="logout()" class="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50">Logout</button>
       </div>
     </div>
@@ -15,7 +19,7 @@
     <div id="reverify-banner" class="hidden mb-6 bg-rose-50 border-l-4 border-rose-500 p-4 rounded-r-xl">
       <div class="flex items-start justify-between gap-4">
         <div>
-          <h4 id="reverify-title" class="text-sm font-bold text-rose-800 flex items-center gap-2">⚠️ Action Needed</h4>
+          <h4 id="reverify-title" class="text-sm font-bold text-rose-800 flex items-center gap-2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg> Action Needed</h4>
           <p id="reverify-msg" class="text-xs text-rose-700 mt-1"></p>
         </div>
         <button id="reverify-btn" onclick="resolveRejection()" class="shrink-0 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-lg shadow">Update</button>
@@ -31,7 +35,7 @@
     <div id="verify-email-banner" class="hidden mb-6 bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-xl">
       <div class="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h4 class="text-sm font-bold text-amber-800 flex items-center gap-2">✉️ <span id="verify-email-banner-title">Email not verified</span></h4>
+          <h4 class="text-sm font-bold text-amber-800 flex items-center gap-2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M3 6.5 L12 13 L21 6.5"/></svg> <span id="verify-email-banner-title">Email not verified</span></h4>
           <p id="verify-email-banner-msg" class="text-xs text-amber-700 mt-1"></p>
         </div>
         <button onclick="openVerifyEmailModal()" class="shrink-0 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs rounded-lg shadow">Verify Now</button>
@@ -43,7 +47,7 @@
     <div id="balance-banner" class="hidden mb-6 bg-orange-50 border-l-4 border-orange-500 p-4 rounded-r-xl">
       <div class="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h4 class="text-sm font-bold text-orange-800 flex items-center gap-2">💳 Balance Due</h4>
+          <h4 class="text-sm font-bold text-orange-800 flex items-center gap-2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg> Balance Due</h4>
           <p class="text-xs text-orange-700 mt-1">Part of your registration fee has been received. Please pay the remaining balance to complete your registration.</p>
           <div class="grid grid-cols-3 gap-2 mt-3">
             <div class="bg-white/70 border border-orange-200 rounded-lg px-2.5 py-1.5">
@@ -62,7 +66,7 @@
         </div>
         <button id="balance-topup-btn" onclick="openTopupModal()" class="shrink-0 px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs rounded-lg shadow">Pay Balance</button>
       </div>
-      <p id="balance-pending-note" class="hidden text-[11px] text-orange-700 mt-2 font-semibold">⏳ Your top-up payment is submitted and pending verification.</p>
+      <p id="balance-pending-note" class="hidden text-[11px] text-orange-700 mt-2 font-semibold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 inline align-[-1px] mr-1"><circle cx="12" cy="12" r="9"/><path d="M12 7 L12 12 L16 14"/></svg>Your top-up payment is submitted and pending verification.</p>
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">

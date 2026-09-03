@@ -883,6 +883,9 @@ function applyRegistrationState(reg) {
 
 // --- GROUP REGISTRATION (delegate) ---
 const GROUP_STATUS_LABEL = { BANK_VERIFIED: 'Paid ✓', PARTIAL_PAYMENT: 'Balance due', PENDING: 'Pending', REJECTED: 'Rejected', NOT_REGISTERED: 'Not paid' };
+// Shared by both branches of renderGroupSection() below, so the heading
+// icon has exactly one source instead of two copies that could drift.
+const GROUP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2c2.8.4 5 2.8 5 5.8"/></svg>';
 async function renderGroupSection() {
   const box = document.getElementById('group-section');
   if (!box) return;
@@ -908,7 +911,7 @@ async function renderGroupSection() {
       : `<span class="text-amber-700 font-semibold">${need} more member${need === 1 ? '' : 's'} needed to unlock the discount (min ${g.minSize})</span>`;
     box.innerHTML = `
       <div class="flex items-center justify-between mb-2">
-        <h3 class="text-lg font-bold text-slate-800">👥 Group Registration</h3>
+        <h3 class="text-lg font-bold text-slate-800">${GROUP_ICON}Group Registration</h3>
         <span class="text-xs text-slate-500">${esc(g.categoryLabel)} · ${g.size} member${g.size === 1 ? '' : 's'}</span>
       </div>
       <p class="text-xs mb-3">${statusLine}</p>
@@ -927,7 +930,7 @@ async function renderGroupSection() {
   if (!eligible.length) { box.classList.add('hidden'); return; }
   box.innerHTML = `
     <div class="flex items-center justify-between mb-2">
-      <h3 class="text-lg font-bold text-slate-800">👥 Group Registration</h3>
+      <h3 class="text-lg font-bold text-slate-800">${GROUP_ICON}Group Registration</h3>
       <span class="text-xs text-slate-500">Save with 5+ delegates</span>
     </div>
     <p class="text-xs text-slate-600 mb-3">Registering as a group? Start a group and add fellow delegates in the same category to unlock a group discount for everyone.</p>
