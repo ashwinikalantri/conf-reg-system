@@ -87,10 +87,10 @@ function loadApp(js) {
   check('submit hidden and disabled on step 1', els['reg-submit-btn'].classList.contains('hidden') && els['reg-submit-btn'].disabled);
 
   console.log('\n== Step 1 -> 2 gated on a name ==');
-  sandbox.nextSignupStep();
+  await sandbox.nextSignupStep();
   check('empty name blocks advance', els['reg-step-2'].classList.contains('hidden'));
   els['reg-name'].value = 'Dr Jane Doe';
-  sandbox.nextSignupStep();
+  await sandbox.nextSignupStep();
   check('a name advances to step 2', !els['reg-step-2'].classList.contains('hidden'));
   check('step 1 now hidden', els['reg-step-1'].classList.contains('hidden'));
   check('back button now visible', !els['reg-back-btn'].classList.contains('hidden'));
@@ -98,10 +98,10 @@ function loadApp(js) {
   console.log('\n== Step 2 -> 3 gated on India requiring a phone, same rule as handleRegistration ==');
   els['reg-phone'].value = '';
   els['reg-email'].value = 'jane@example.com';
-  sandbox.nextSignupStep();
+  await sandbox.nextSignupStep();
   check('India with no phone blocks advance to Verify', els['reg-step-3'].classList.contains('hidden'));
   els['reg-phone'].value = '9876543210';
-  sandbox.nextSignupStep();
+  await sandbox.nextSignupStep();
   check('valid India contact advances to Verify', !els['reg-step-3'].classList.contains('hidden'));
   check('recap mentions the phone and email just entered',
     els['reg-contact-recap'].textContent.includes('9876543210') && els['reg-contact-recap'].textContent.includes('jane@example.com'),
@@ -110,24 +110,24 @@ function loadApp(js) {
   console.log('\n== Step 3 -> 4 gated on at least one OTP entered ==');
   els['reg-otp'].value = '';
   els['reg-email-otp'].value = '';
-  sandbox.nextSignupStep();
+  await sandbox.nextSignupStep();
   check('no OTP entered blocks advance to Details', els['reg-step-4'].classList.contains('hidden'));
   els['reg-otp'].value = '123456';
-  sandbox.nextSignupStep();
+  await sandbox.nextSignupStep();
   check('an entered OTP advances to Details', !els['reg-step-4'].classList.contains('hidden'));
 
   console.log('\n== Step 4 -> 5 gated on age/gender/designation/institute/password ==');
   els['reg-age'].value = ''; els['reg-gender'].value = ''; els['reg-designation'].value = '';
   els['reg-institute'].value = ''; els['reg-password'].value = '';
-  sandbox.nextSignupStep();
+  await sandbox.nextSignupStep();
   check('empty Details block advance to Address', els['reg-step-5'].classList.contains('hidden'));
   els['reg-age'].value = '34'; els['reg-gender'].value = 'Female';
   els['reg-designation'].value = 'Consultant'; els['reg-institute'].value = 'City Hospital';
   els['reg-password'].value = 'short';
-  sandbox.nextSignupStep();
+  await sandbox.nextSignupStep();
   check('a too-short password still blocks advance', els['reg-step-5'].classList.contains('hidden'));
   els['reg-password'].value = 'longenoughpw';
-  sandbox.nextSignupStep();
+  await sandbox.nextSignupStep();
   check('a complete Details step reaches Address', !els['reg-step-5'].classList.contains('hidden'));
   check('next button hidden on the last step', els['reg-next-btn'].classList.contains('hidden'));
   check('submit visible and enabled on the last step',
@@ -148,11 +148,11 @@ function loadApp(js) {
   els['reg-country'].value = 'United Kingdom';
   sandbox.resetSignupWizard();
   els['reg-name'].value = 'Alex Smith';
-  sandbox.nextSignupStep();
+  await sandbox.nextSignupStep();
   check('reached Contact', !els['reg-step-2'].classList.contains('hidden'));
   els['reg-phone'].value = '';
   els['reg-email'].value = 'alex@example.co.uk';
-  sandbox.nextSignupStep();
+  await sandbox.nextSignupStep();
   check('no phone required outside India', !els['reg-step-3'].classList.contains('hidden'));
 
   report();

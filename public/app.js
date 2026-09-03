@@ -541,10 +541,17 @@ function showSignupStep(n) {
   if (firstField) firstField.focus({ preventScroll: true });
 }
 
-function nextSignupStep() {
-  const err = validateSignupStep(signupStep);
-  if (err) return showToast(err);
-  showSignupStep(Math.min(signupStep + 1, 5));
+async function nextSignupStep() {
+  const btn = document.getElementById('reg-next-btn');
+  const original = btn ? btn.innerText : null;
+  if (btn) { btn.disabled = true; btn.innerText = 'Please wait…'; }
+  try {
+    const err = await validateSignupStep(signupStep);
+    if (err) return showToast(err);
+    showSignupStep(Math.min(signupStep + 1, 5));
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerText = original; }
+  }
 }
 
 function prevSignupStep() {
@@ -582,12 +589,37 @@ function validateSignupContact() {
   return null;
 }
 
-function validateSignupStep(n) {
+// Checked once the Contact step's own format checks above already pass --
+// no point asking the server about a number/address that isn't even shaped
+// right yet. A network hiccup fails OPEN (returns no error) rather than
+// stranding the wizard: POST /api/auth/register is the real, unconditional
+// gate regardless of what this said.
+async function checkSignupContactAvailable() {
+  const phone = document.getElementById('reg-phone').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  try {
+    const data = await (await fetch('/api/auth/check-contact', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, email }),
+    })).json();
+    if (data.emailTaken) return 'An account with this email address already exists. Please sign in instead.';
+    if (data.phoneTaken) return 'An account with this mobile number already exists. Please sign in instead.';
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function validateSignupStep(n) {
   if (n === 1) {
     if (!document.getElementById('reg-name').value.trim()) return 'Please enter your full name.';
     return null;
   }
-  if (n === 2) return validateSignupContact();
+  if (n === 2) {
+    const formatErr = validateSignupContact();
+    if (formatErr) return formatErr;
+    return await checkSignupContactAvailable();
+  }
   if (n === 3) {
     const phoneOtp = document.getElementById('reg-otp').value.trim();
     const emailOtp = document.getElementById('reg-email-otp').value.trim();
@@ -613,7 +645,7 @@ function validateSignupStep(n) {
 async function handleRegistration(e) {
   e.preventDefault();
   for (let step = 1; step <= 4; step++) {
-    const err = validateSignupStep(step);
+    const err = await validateSignupStep(step);
     if (err) return showToast(err);
   }
 

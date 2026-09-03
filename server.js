@@ -3166,7 +3166,32 @@ app.post('/api/setup/create-admin', async (req, res, next) => {
   }
 });
 
-// Register (or update own profile) after OTP verification, then log in.
+// Unauthenticated availability check for the signup wizard's Contact step --
+// lets a duplicate phone/email get caught before a delegate spends time
+// requesting and entering an OTP for it, instead of only at final
+// submission. This is a convenience only: POST /api/auth/register below
+// re-checks unconditionally and is the real, authoritative gate regardless
+// of what this endpoint says.
+app.post('/api/auth/check-contact', async (req, res, next) => {
+  try {
+    const phoneVal = String(req.body.phone || '').trim();
+    const emailRaw = String(req.body.email || '').trim();
+    const emailVal = emailRaw && isEmailValue(emailRaw) ? normalizeEmail(emailRaw) : null;
+
+    let phoneTaken = false;
+    if (phoneVal && isPhoneValue(phoneVal)) {
+      const row = await dbGet(`SELECT phone_number FROM users WHERE ${PHONE_MATCH_SQL}`, phoneMatchParams(phoneVal));
+      phoneTaken = !!row;
+    }
+    const emailTaken = emailVal ? !!(await emailTakenBy(emailVal, null)) : false;
+
+    res.json({ success: true, phoneTaken, emailTaken });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Register a new account after OTP verification, then log in.
 //
 // A signup supplies a phone, an email, or both, and proves at least ONE of
 // them with an OTP (phoneOtp / emailOtp). Whichever is proven is recorded as
@@ -3175,6 +3200,10 @@ app.post('/api/setup/create-admin', async (req, res, next) => {
 // with email-only accounts there is no guaranteed SMS fallback, so an
 // account with neither a password nor a verified channel would be
 // unreachable.
+//
+// Always creates a brand-new account: a phone or email that already
+// belongs to one is refused outright, even if this attempt just proved
+// ownership of it (see the "no exceptions" note further down).
 app.post('/api/auth/register', async (req, res, next) => {
   try {
     const { otp, phoneOtp, emailOtp, salutation, name, designation, institute, pincode, state, district, age, gender, password } = req.body;
@@ -3259,24 +3288,20 @@ app.post('/api/auth/register', async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Verify your mobile number or your email address with an OTP to continue.' });
     }
 
-    // Existing account for whichever channel was proven. An OTP proves
-    // control of that channel, so updating the account reachable at it is
-    // safe -- this is the same "re-register to update your profile" path the
-    // phone-only flow had, now reachable from either side.
-    const byPhone = phoneOk && phoneVal
-      ? await dbGet(`SELECT * FROM users WHERE ${PHONE_MATCH_SQL}`, phoneMatchParams(phoneVal)) : null;
-    const byEmailRows = emailOk && emailVal
-      ? await dbAll('SELECT * FROM users WHERE LOWER(email) = ?', [emailVal]) : [];
-    if (byEmailRows.length > 1) {
-      return res.status(409).json({ success: false, error: 'More than one account already uses this email address. Please contact the organisers.' });
-    }
-    const existing = byPhone || byEmailRows[0] || null;
-
+    // One account per phone/email, no exceptions. Earlier this allowed one
+    // case through -- a signup whose OTP-proven channel matched an existing
+    // account was treated as that account re-registering to update its own
+    // profile. That path is gone: a phone or email already on file now
+    // refuses the signup outright, whether or not this attempt just proved
+    // ownership of it. (There is currently no other way to change your own
+    // details after signing up -- that gap is real, and is being tracked
+    // separately, not silently reopened here.)
+    //
     // One address per account: without this, a new signup could claim an
     // address already on someone else's account and then log in as neither
     // (resolveAccountByIdentifier refuses an ambiguous email).
     if (emailVal) {
-      const takenBy = await emailTakenBy(emailVal, existing ? existing.phone_number : null);
+      const takenBy = await emailTakenBy(emailVal, null);
       if (takenBy) {
         return res.status(409).json({ success: false, error: 'An account with this email address already exists. Please sign in instead.' });
       }
@@ -3284,9 +3309,7 @@ app.post('/api/auth/register', async (req, res, next) => {
     // Same for the phone number, which additionally doubles as the account
     // key for phone signups.
     if (phoneVal) {
-      const phoneTaken = await dbGet(
-        `SELECT phone_number FROM users WHERE ${PHONE_MATCH_SQL} AND phone_number != ?`,
-        [...phoneMatchParams(phoneVal), existing ? existing.phone_number : '']);
+      const phoneTaken = await dbGet(`SELECT phone_number FROM users WHERE ${PHONE_MATCH_SQL}`, phoneMatchParams(phoneVal));
       if (phoneTaken) {
         return res.status(409).json({ success: false, error: 'An account with this mobile number already exists. Please sign in instead.' });
       }
@@ -3302,36 +3325,17 @@ app.post('/api/auth/register', async (req, res, next) => {
     // verified, so it's exactly the kind of value that gets mistyped and
     // needs correcting later; keeping it out of the key leaves it editable
     // like any other column. See the USER KEY note on the users table.
-    const userKey = existing
-      ? existing.phone_number
-      : (isIndianPhone(phoneVal) ? toE164(phoneVal).slice(1 + DEFAULT_PHONE_CC.length) : newUserKey());
+    //
+    // Always a brand-new account past this point -- the checks above already
+    // refused any phone/email that belongs to an existing one.
+    const userKey = isIndianPhone(phoneVal) ? toE164(phoneVal).slice(1 + DEFAULT_PHONE_CC.length) : newUserKey();
     const passwordHash = hashPassword(String(password));
-
-    // Verification is sticky: a channel already proven stays proven even if
-    // this call only re-proved the other one.
-    const phoneVerified = (phoneOk || (existing && existing.phone_verified)) ? 1 : 0;
-    const emailVerified = (emailOk || (existing && existing.email_verified && normalizeEmail(existing.email) === emailVal)) ? 1 : 0;
+    const phoneVerified = phoneOk ? 1 : 0;
+    const emailVerified = emailOk ? 1 : 0;
 
     await dbRun(
       `INSERT INTO users (phone_number, phone, phone_verified, email_verified, salutation, full_name, designation, institution, country, pincode, state, district, age, gender, email, password_hash, role, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE', ?)
-       ON CONFLICT(phone_number) DO UPDATE SET
-         phone = excluded.phone,
-         phone_verified = excluded.phone_verified,
-         email_verified = excluded.email_verified,
-         salutation = excluded.salutation,
-         full_name = excluded.full_name,
-         designation = excluded.designation,
-         institution = excluded.institution,
-         country = excluded.country,
-         pincode = excluded.pincode,
-         state = excluded.state,
-         district = excluded.district,
-         age = excluded.age,
-         gender = excluded.gender,
-         email = excluded.email,
-         password_hash = excluded.password_hash,
-         created_at = COALESCE(users.created_at, excluded.created_at)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE', ?)`,
       [userKey, phoneVal ? toE164(phoneVal) : null, phoneVerified, emailVerified, salutationVal, nameVal, designation, institute,
        countryVal, pincode || null, state || null, district || null, ageNum, genderVal, emailVal, passwordHash, Date.now()]
     );
