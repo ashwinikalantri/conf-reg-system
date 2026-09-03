@@ -40,6 +40,10 @@ const ELEMENT_IDS = [
 // holds discounts.view/discounts.group_view, matching what the server has
 // always enforced -- the same resolution as the Reminders drift, made by the
 // same reasoning, confirmed with the user before this test was written.
+// Finance Admin (and Finance & Academic) also see settings-item-fees now --
+// see permission-catalogue.test.js's note on masters.fees_view for why: a
+// bugfix for the ID-verification/category-picker screens they already use,
+// with this tab-visibility grant as its accepted, read-only side effect.
 const EXPECTED_VISIBLE = {
   SUPER_ADMIN: ['nav-tab-payments', 'nav-tab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
     'register-delegate-btn', 'settings-menu-btn', 'settings-item-programs', 'settings-item-fees',
@@ -47,12 +51,12 @@ const EXPECTED_VISIBLE = {
     'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
     'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
   FINANCE_ADMIN: ['nav-tab-payments', 'nav-tab-statement', 'nav-tab-reports',
-    'register-delegate-btn', 'settings-menu-btn', 'settings-item-discount',
+    'register-delegate-btn', 'settings-menu-btn', 'settings-item-fees', 'settings-item-discount',
     'settings-item-reminders', 'settings-item-groupdiscount',
     'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops'],
   ACADEMIC_REVIEWER: ['nav-tab-abstracts', 'nav-tab-reports', 'report-abstracts'],
   FINANCE_ACADEMIC: ['nav-tab-payments', 'nav-tab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
-    'register-delegate-btn', 'settings-menu-btn', 'settings-item-discount',
+    'register-delegate-btn', 'settings-menu-btn', 'settings-item-fees', 'settings-item-discount',
     'settings-item-reminders', 'settings-item-groupdiscount',
     'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
   OPERATIONS: ['nav-tab-reports', 'settings-menu-btn', 'settings-item-users',

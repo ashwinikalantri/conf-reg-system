@@ -119,12 +119,29 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   check('the baseline still covers the rest',
     BASELINE.routeCount === ROUTES.length - added.length, [BASELINE.routeCount, ROUTES.length, added.length]);
 
+  // Existing routes whose ACCESS widened for one particular role -- a
+  // different thing from a new route existing at all (ADDED_SINCE_BASELINE
+  // above), and deliberately role-scoped rather than filtered globally: this
+  // must not also let some OTHER role gain the same route unnoticed. Keyed
+  // "ROLE route", one entry per (role, route) pair, each with its own reason.
+  const WIDENED_SINCE_BASELINE = {
+    'FINANCE_ADMIN GET /api/admin/fees': 'Bugfix, pre-dates the roles migration (this route was '
+      + "SUPER_ADMIN-only in the original server.js too). Finance Admin's own Review modal reads it "
+      + '(ensureReviewCategories, via masters.fees_view) to know which categories require a student ID '
+      + 'and to populate the category-correction and both discount-scope pickers -- all screens Finance '
+      + 'Admin already has. Without it those rendered as silently empty: no ID Verification section, no '
+      + 'options in the category dropdowns. Read-only -- masters.fees_manage, which can actually change a '
+      + 'fee or a phase date, is untouched and stays Super Admin only.',
+    'FINANCE_ACADEMIC GET /api/admin/fees': 'Inherited automatically -- FINANCE_ACADEMIC is the union of '
+      + 'FINANCE_ADMIN and ACADEMIC_REVIEWER\'s permission sets, not a separately-curated list. Same reason as above.',
+  };
+
   let mismatched = 0;
   for (const role of ROLES) {
     const held = setOf(perms.permissionsForRole(role));
     const before = setOf(BASELINE.roles[role].routes);
     const nowReach = setOf(ROUTES.filter((r) => held.has(r.permission)).map((r) => r.route));
-    const gained = diff(nowReach, before).filter((r) => !ADDED_SINCE_BASELINE[r]);
+    const gained = diff(nowReach, before).filter((r) => !ADDED_SINCE_BASELINE[r] && !WIDENED_SINCE_BASELINE[`${role} ${r}`]);
     const lost = diff(before, nowReach);
     const ok = gained.length === 0 && lost.length === 0;
     if (!ok) mismatched++;
@@ -153,11 +170,16 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // (rolesFor + the tab/menu toggles). Phase 3 deletes that function and
   // draws the same thing from the catalogue; until then this is the check
   // that the catalogue would draw it identically.
+  // Finance Admin (and Finance & Academic) now also see 'fees' -- a
+  // deliberate consequence of granting masters.fees_view to fix the
+  // ID-verification bug below, not a fact independently re-derived from the
+  // client. The tab is read-only for them: masters.fees_manage (the actual
+  // edit/save/delete actions on the Fee Master page) is untouched.
   const CLIENT_TODAY = {
     SUPER_ADMIN: ['payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'general', 'activity'],
-    FINANCE_ADMIN: ['payments', 'statement', 'reports', 'discount', 'groupdiscount', 'reminders'],
+    FINANCE_ADMIN: ['payments', 'statement', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
     ACADEMIC_REVIEWER: ['abstracts', 'reports'],
-    FINANCE_ACADEMIC: ['payments', 'statement', 'abstracts', 'reports', 'discount', 'groupdiscount', 'reminders'],
+    FINANCE_ACADEMIC: ['payments', 'statement', 'abstracts', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
     OPERATIONS: ['reports', 'users'],
   };
   const allSections = Object.keys(perms.SECTION_PERMISSIONS);

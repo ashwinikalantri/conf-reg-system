@@ -302,6 +302,20 @@ const SYSTEM_ROLES = [
       'statement.view', 'statement.import', 'statement.mark_non_registration', 'statement.cash_deposit',
       'discounts.view', 'discounts.manage', 'discounts.group_view', 'discounts.group_manage',
       'comms.reminders_view',
+      // Read-only, not masters.fees_manage -- Finance Admin still can't touch
+      // a fee amount or a phase date, and never sees the Fee Master settings
+      // page's edit controls. But three things Finance Admin already does --
+      // student ID verification and category correction inside Review, and
+      // the category picker on both discount screens -- all read the fee
+      // category list to know which categories are "student" ones or to
+      // populate a dropdown, and without this they silently rendered as
+      // empty: no ID Verification section shown at all, a blank category
+      // picker. This was true before roles became data (GET /api/admin/fees
+      // was SUPER_ADMIN-only in the original server.js too) -- a real bug
+      // this migration inherited rather than caused, closed here because the
+      // fix is a plain read grant, not a product decision like the two
+      // deliberately-left-alone ones above.
+      'masters.fees_view',
       'reports.delegates', 'reports.delegate_programs', 'reports.payments', 'reports.programs',
     ],
   },
