@@ -21,9 +21,10 @@ const fetch = require('node-fetch');
 // What each admin route needs, and which roles hold it. One file rather than
 // a role list repeated at every route -- see permissions.js.
 const {
-  PERMISSION_KEYS, ROUTE_PERMISSIONS, REPORT_PERMISSIONS, SYSTEM_ROLES,
+  PERMISSION_KEYS, ROUTE_PERMISSIONS, REPORT_PERMISSIONS, SYSTEM_ROLES, SECTION_PERMISSIONS,
   roleCan, permissionsForRole,
 } = require('./permissions');
+
 const multer = require('multer');
 const XLSX = require('xlsx');
 
@@ -2217,6 +2218,19 @@ function permissionsOf(roleKey) {
   return role.grantsAll ? PERMISSION_KEYS.slice() : [...role.permissions];
 }
 
+// May this role open that screen? Same rule as permissions.js's
+// roleSeesSection, but asking the LIVE cache (can()) rather than the static
+// catalogue -- a role edited through the database, or later the editor,
+// changes what /api/auth/me reports without a deploy. SECTION_PERMISSIONS
+// itself (which screen needs which permission) stays code: that mapping is
+// about the shape of the admin panel, not something an admin edits.
+function sectionVisible(roleKey, sectionKey) {
+  const rule = SECTION_PERMISSIONS[sectionKey];
+  if (!rule) return false;
+  if (rule.anyOf) return rule.anyOf.some((k) => can(roleKey, k));
+  return can(roleKey, rule.permission);
+}
+
 // One-time-ever: the signup form used to have no separate salutation field,
 // so people typed "Dr Abhishek Raut" etc. straight into Full Name. Split any
 // already-stored name that starts with a title into salutation + clean name.
@@ -3502,7 +3516,18 @@ app.post('/api/auth/verify-contact/confirm', requireAuth, async (req, res, next)
 app.get('/api/auth/me', requireAuth, async (req, res, next) => {
   try {
     const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [req.session.phone]);
-    res.json({ success: true, user: omitPasswordHash(user) });
+    // What this session may do, resolved server-side and shipped as data --
+    // not the role name alone, which is what the browser used to re-derive
+    // its own four booleans from and had already drifted from what the
+    // server actually enforces (see permissions.js's header comment).
+    //
+    // `sections` rather than making the client re-implement
+    // roleSeesSection(): a screen opens or it doesn't, and that decision
+    // belongs with the one file that knows what each screen requires.
+    const permissions = permissionsOf(user.role);
+    const sections = {};
+    for (const key of Object.keys(SECTION_PERMISSIONS)) sections[key] = sectionVisible(user.role, key);
+    res.json({ success: true, user: omitPasswordHash(user), permissions, sections });
   } catch (err) {
     next(err);
   }

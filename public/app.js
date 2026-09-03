@@ -2460,76 +2460,77 @@ function fmtAuditTime(ms) {
   return isNaN(d) ? '' : d.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-// Which broad capabilities a role grants. Single source of truth -- used by
-// applyRoleVisibility() to show/hide chrome and by allowedBackendTabs() to
-// decide which tabs may be opened, so the two can't drift apart.
-function rolesFor(role) {
-  const isSuper = role === 'SUPER_ADMIN';
-  return {
-    isSuper,
-    isFinance: isSuper || role === 'FINANCE_ADMIN' || role === 'FINANCE_ACADEMIC',
-    isReviewer: isSuper || role === 'ACADEMIC_REVIEWER' || role === 'FINANCE_ACADEMIC',
-    // Reports (all of them) + Users & Roles only -- not Payments/Statement/
-    // Abstracts, so isOperations is its own flag rather than folded into
-    // isFinance/isReviewer above.
-    isOperations: isSuper || role === 'OPERATIONS',
-  };
+// What this session may do, as resolved by the server (see /api/auth/me) --
+// not re-derived from the role name. That re-derivation used to live here as
+// four booleans (isSuper/isFinance/isReviewer/isOperations) and had already
+// drifted from what the server actually enforced: the Settings menu offered
+// Reminders to a Finance Admin whose every send button answered 403. Now the
+// server is asked once at login, and everything downstream reads its answer.
+let myPermissions = new Set();
+let mySections = {};
+
+// May this session do this? `permission` is a catalogue key, e.g.
+// 'payments.decide' -- see permissions.js on the server, which is the only
+// place these strings are defined.
+function can(permission) {
+  return myPermissions.has(permission);
 }
 
-// Show only the nav tabs and default to the first section this admin's role
-// is allowed to use.
-function applyRoleVisibility(role) {
-  const { isSuper, isFinance, isReviewer, isOperations } = rolesFor(role);
+// May this session open this screen? `section` is a views/admin/sections
+// filename with no extension, e.g. 'payments'.
+function canSee(section) {
+  return !!mySections[section];
+}
 
+// Show only the nav tabs, menu items and report cards this session's
+// permissions actually allow. Reads myPermissions/mySections, populated from
+// /api/auth/me before this is called -- see initBackendPortal.
+function applyRoleVisibility() {
   const tabPayments = document.getElementById('nav-tab-payments');
   const tabStatement = document.getElementById('nav-tab-statement');
   const tabAbstracts = document.getElementById('nav-tab-abstracts');
   const tabReports = document.getElementById('nav-tab-reports');
-  if (tabPayments) tabPayments.classList.toggle('hidden', !isFinance);
-  if (tabStatement) tabStatement.classList.toggle('hidden', !isFinance);
-  if (tabAbstracts) tabAbstracts.classList.toggle('hidden', !isReviewer);
-  if (tabReports) tabReports.classList.toggle('hidden', !(isFinance || isReviewer || isOperations));
+  if (tabPayments) tabPayments.classList.toggle('hidden', !canSee('payments'));
+  if (tabStatement) tabStatement.classList.toggle('hidden', !canSee('statement'));
+  if (tabAbstracts) tabAbstracts.classList.toggle('hidden', !canSee('abstracts'));
+  if (tabReports) tabReports.classList.toggle('hidden', !canSee('reports'));
 
-  // POST /api/admin/registrations is requireRole('SUPER_ADMIN', 'FINANCE_ADMIN')
-  // -- same as isFinance, since ROLE_IMPLIES grants FINANCE_ACADEMIC the
-  // FINANCE_ADMIN role too (see server.js), so no narrower check is needed here.
   const registerBtn = document.getElementById('register-delegate-btn');
-  if (registerBtn) registerBtn.classList.toggle('hidden', !isFinance);
+  if (registerBtn) registerBtn.classList.toggle('hidden', !can('payments.desk_register'));
 
   // Masters/Users/Reminders/Logs live in the header's Settings menu, not
   // the main tab bar. The menu button itself only shows if at least one
-  // item would.
+  // item would. Each item toggles on the same section key that governs its
+  // own tab, from the same source that gated it above -- no separate list of
+  // roles kept in step by hand.
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
-  // Super-admin-only masters; Reminders + Group Discount also open to finance;
-  // Users & Roles also opens to Operations (see isOperations above).
-  const superItems = ['programs', 'fees', 'general', 'discount', 'activity'];
-  const financeItems = ['reminders', 'groupdiscount'];
-  superItems.forEach((key) => {
+  const settingsItems = ['programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount'];
+  let anySettingsItem = false;
+  settingsItems.forEach((key) => {
+    const visible = canSee(key);
+    if (visible) anySettingsItem = true;
     const el = document.getElementById(`settings-item-${key}`);
-    if (el) el.classList.toggle('hidden', !isSuper);
-  });
-  financeItems.forEach((key) => {
-    const el = document.getElementById(`settings-item-${key}`);
-    if (el) el.classList.toggle('hidden', !isFinance);
+    if (el) el.classList.toggle('hidden', !visible);
   });
   const usersItem = document.getElementById('settings-item-users');
-  if (usersItem) usersItem.classList.toggle('hidden', !(isSuper || isOperations));
-  if (settingsMenuBtn) settingsMenuBtn.classList.toggle('hidden', !(isSuper || isFinance || isOperations));
+  const seesUsers = canSee('users');
+  if (usersItem) usersItem.classList.toggle('hidden', !seesUsers);
+  if (settingsMenuBtn) settingsMenuBtn.classList.toggle('hidden', !(anySettingsItem || seesUsers));
 
-  // Show only the report cards this role can access. Operations sees all of
-  // them, same as Super Admin.
-  const rd = document.getElementById('report-delegates');
-  const rdp = document.getElementById('report-delegate-programs');
-  const rp = document.getElementById('report-payments');
-  const rw = document.getElementById('report-workshops');
-  const ra = document.getElementById('report-abstracts');
-  if (rd) rd.classList.toggle('hidden', !(isFinance || isOperations));
-  if (rdp) rdp.classList.toggle('hidden', !(isFinance || isOperations));
-  if (rp) rp.classList.toggle('hidden', !(isFinance || isOperations));
-  if (rw) rw.classList.toggle('hidden', !(isFinance || isOperations));
-  if (ra) ra.classList.toggle('hidden', !(isReviewer || isOperations));
-
-  return { isSuper, isFinance, isReviewer, isOperations };
+  // Show only the report cards this permission set can access. Each report
+  // is its own permission (see permissions.js), so this is not one
+  // isFinance/isReviewer/isOperations question but six separate ones.
+  const reportCards = {
+    'report-delegates': 'reports.delegates',
+    'report-delegate-programs': 'reports.delegate_programs',
+    'report-payments': 'reports.payments',
+    'report-workshops': 'reports.programs',
+    'report-abstracts': 'reports.abstracts',
+  };
+  Object.entries(reportCards).forEach(([id, permission]) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', !can(permission));
+  });
 }
 
 async function initBackendPortal() {
@@ -2542,43 +2543,48 @@ async function initBackendPortal() {
     window.location.href = '/';
     return;
   }
-  activeAdminUser = (await meRes.json()).user;
+  const me = await meRes.json();
+  activeAdminUser = me.user;
+  myPermissions = new Set(me.permissions || []);
+  mySections = me.sections || {};
   setText('active-admin-role-badge', activeAdminUser.full_name);
 
-  const { isSuper, isFinance, isReviewer, isOperations } = applyRoleVisibility(activeAdminUser.role);
+  applyRoleVisibility();
 
   // Land on the section from the URL (so a refresh, bookmark, or shared link
-  // stays put), falling back to the first section this role can actually use.
-  // A hash naming a tab this role can't open -- a stale bookmark, or a link
-  // from a super admin -- falls back too rather than showing an empty page.
-  // Done now, before the awaited renders below, not after: switching tabs
-  // here first means an admin who clicks a different tab while data is still
-  // loading stays where they clicked; switching again afterwards would
-  // silently snap them back once loading finished.
-  const defaultTab = isFinance ? 'payments' : isReviewer ? 'abstracts' : isOperations ? 'reports' : 'workshops';
-  const allowed = allowedBackendTabs({ isSuper, isFinance, isReviewer, isOperations });
+  // stays put), falling back to the first section this permission set can
+  // actually use. A hash naming a tab this session can't open -- a stale
+  // bookmark, or a link from a super admin -- falls back too rather than
+  // showing an empty page. Done now, before the awaited renders below, not
+  // after: switching tabs here first means an admin who clicks a different
+  // tab while data is still loading stays where they clicked; switching
+  // again afterwards would silently snap them back once loading finished.
+  const defaultTab = canSee('payments') ? 'payments'
+    : canSee('abstracts') ? 'abstracts'
+    : canSee('reports') ? 'reports'
+    : 'workshops'; // unreachable for the five built-in roles; a defensive fallback for an unrecognised one
+  const allowed = allowedBackendTabs();
   const hashTab = window.location.hash.slice(1);
   const loading = document.getElementById('admin-initial-loading');
   if (loading) loading.classList.add('hidden');
   switchBackendTab(allowed.includes(hashTab) ? hashTab : defaultTab);
 
-  // Render every section this role may see (this also fills the tab badges).
-  if (isFinance) await renderBackendPayments();
-  if (isFinance) renderDelegateMap();
-  if (isReviewer) await renderBackendAbstracts();
-  // Users & Roles is also open to OPERATIONS (see allowedBackendTabs/
-  // applyRoleVisibility above) -- everything below this line stays
-  // isSuper-only, since those are the SUPER_ADMIN-only masters.
-  if (isSuper || isOperations) await loadBackendUsers();
-  if (isSuper) await renderBackendPrograms();
-  if (isSuper) await renderBackendFees();
-  if (isSuper) await renderDiscountCodes();
-  if (isSuper) await renderGroupRules();
-  if (isSuper) await renderGeneralSettings();
-  if (isSuper) await renderBackendActivity();
-  if (isFinance) await loadReportWorkshopOptions();
-  if (isFinance) await renderBackendReminders(isSuper);
-  if (isFinance) await renderBackendBalanceDueReminders(isSuper);
+  // Render every section this session may see (this also fills the tab
+  // badges). Each gate is the section that screen belongs to -- the same
+  // fact applyRoleVisibility() just drew the menu from.
+  if (canSee('payments')) await renderBackendPayments();
+  if (canSee('payments')) renderDelegateMap();
+  if (canSee('abstracts')) await renderBackendAbstracts();
+  if (canSee('users')) await loadBackendUsers();
+  if (canSee('programs')) await renderBackendPrograms();
+  if (canSee('fees')) await renderBackendFees();
+  if (canSee('discount')) await renderDiscountCodes();
+  if (canSee('discount') || canSee('groupdiscount')) await renderGroupRules();
+  if (canSee('general')) await renderGeneralSettings();
+  if (canSee('activity')) await renderBackendActivity();
+  if (canSee('payments')) await loadReportWorkshopOptions();
+  if (canSee('reminders')) await renderBackendReminders();
+  if (canSee('reminders')) await renderBackendBalanceDueReminders();
 }
 
 const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT / RTGS' };
@@ -2818,15 +2824,16 @@ async function renderBackendPayments() {
   if (balanceSection) balanceSection.classList.toggle('hidden', partialAwaiting.length === 0);
   if (balanceBody) balanceBody.innerHTML = partialAwaiting.map(paymentRowHtml).join('');
 
-  // Verified section is a super-admin-only entry point into already-verified
-  // registrations, purely so they can be opened and un-approved. Hidden for
-  // everyone else (finance admins never need to reach a settled record here).
-  const isSuper = !!(activeAdminUser && activeAdminUser.role === 'SUPER_ADMIN');
+  // The verified section is an entry point into already-verified
+  // registrations, purely so they can be opened and un-approved -- hidden
+  // for anyone who can't do that (finance admins never need to reach a
+  // settled record here).
+  const canUnapprove = can('payments.unapprove');
   const verifiedSection = document.getElementById('verified-section');
   const verifiedBody = document.getElementById('verified-table-body');
   setText('badge-verified-count', verified.length);
-  if (verifiedSection) verifiedSection.classList.toggle('hidden', !isSuper || verified.length === 0);
-  if (verifiedBody) verifiedBody.innerHTML = isSuper ? verified.map(paymentRowHtml).join('') : '';
+  if (verifiedSection) verifiedSection.classList.toggle('hidden', !canUnapprove || verified.length === 0);
+  if (verifiedBody) verifiedBody.innerHTML = canUnapprove ? verified.map(paymentRowHtml).join('') : '';
 }
 
 // --- DELEGATE LOCATION MAP (approval page overview) ---
@@ -3208,15 +3215,14 @@ function openReviewModal(id) {
   const rejectBtn = document.getElementById('review-reject-btn');
   if (rejectBtn) rejectBtn.classList.toggle('hidden', p.bank_status === 'REJECTED');
 
-  // Un-approve: super admins only, and only for a currently-verified
-  // registration (reverting a decision that's already been made). The
-  // Accept/Reject buttons are meaningless on an already-verified record, so
-  // hide them in that state and offer un-approve instead.
-  const isSuper = !!(activeAdminUser && activeAdminUser.role === 'SUPER_ADMIN');
+  // Un-approve: only for a currently-verified registration (reverting a
+  // decision that's already been made). The Accept/Reject buttons are
+  // meaningless on an already-verified record, so hide them in that state
+  // and offer un-approve instead.
   const isVerified = p.bank_status === 'BANK_VERIFIED';
   const unapproveBtn = document.getElementById('review-unapprove-btn');
   const acceptBtn = document.getElementById('review-accept-btn');
-  if (unapproveBtn) unapproveBtn.classList.toggle('hidden', !(isSuper && isVerified));
+  if (unapproveBtn) unapproveBtn.classList.toggle('hidden', !(can('payments.unapprove') && isVerified));
   if (isVerified) {
     if (acceptBtn) acceptBtn.classList.add('hidden');
     if (rejectBtn) rejectBtn.classList.add('hidden');
@@ -3839,12 +3845,11 @@ async function renderReviewCategoryLock(p) {
   sel.innerHTML = cats.map((c) => `<option value="${esc(c.key)}" ${c.key === p.category_key ? 'selected' : ''}>${esc(c.label)}</option>`).join('');
 
   const locked = !!p.category_locked;
-  const isSuper = !!(activeAdminUser && activeAdminUser.role === 'SUPER_ADMIN');
   if (badge) badge.classList.toggle('hidden', !locked);
-  // When locked, the picker is disabled; only a super admin can unlock.
+  // When locked, the picker is disabled; only someone who can unlock it sees the button.
   sel.disabled = locked;
   if (lockBtn) lockBtn.classList.toggle('hidden', locked);
-  if (unlockBtn) unlockBtn.classList.toggle('hidden', !(locked && isSuper));
+  if (unlockBtn) unlockBtn.classList.toggle('hidden', !(locked && can('payments.unlock_category')));
 
   // The Corrections disclosure is closed by default (these controls are used
   // on a small minority of reviews), but an already-locked category is state
@@ -4194,6 +4199,15 @@ const ROLE_OPTIONS = [
   ['SUPER_ADMIN', 'Super Admin'],
 ];
 
+// Whether the viewer literally IS Super Admin -- a role-hierarchy check, not
+// a permission one. Reserved for the two places that mirror the server's own
+// hardcoded escalation boundary (PUT /api/users/:phone/role, POST
+// /api/users): only a Super Admin may grant Super Admin, or touch an
+// existing Super Admin's role. That boundary is about the role itself being
+// special, which is exactly what stays true even if every permission it
+// holds were later copied onto another role -- so it is deliberately not
+// expressed as a permission, and can()/canSee() are what everything else
+// in this file should use.
 function isSuperAdminViewer() {
   return activeAdminUser && activeAdminUser.role === 'SUPER_ADMIN';
 }
@@ -4335,7 +4349,7 @@ function renderUserDetail() {
     <button type="button" onclick="saveUserDetailRole()" ${roleLocked ? 'disabled' : ''} class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:bg-slate-300 disabled:cursor-not-allowed">Save</button>
   </div>${roleLocked ? `<p class="text-[11px] text-slate-400 mt-1.5">Only a Super Admin can change another Super Admin's role.</p>` : ''}`;
 
-  const editBtn = isSuperAdminViewer()
+  const editBtn = can('users.edit')
     ? `<button type="button" onclick="toggleUserDetailEdit()" class="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold underline">Edit</button>`
     : '';
 
@@ -4379,7 +4393,7 @@ function userDetailEditForm(u) {
 }
 
 function toggleUserDetailEdit() {
-  if (!isSuperAdminViewer()) return showToast('Only a super admin can edit user details.');
+  if (!can('users.edit')) return showToast('You do not have permission to edit user details.');
   userDetailEditing = !userDetailEditing;
   renderUserDetail();
 }
@@ -5781,7 +5795,7 @@ function reminderDefaultBody() {
 }
 
 let cachedReminderRecipients = [];
-let reminderIsSuper = false;
+// The pending-signups reminder card's own state.
 
 // A reminder sent within the last 24h to this person blocks another one
 // (server-enforced too -- this just keeps the UI honest about it upfront).
@@ -5790,8 +5804,7 @@ function reminderOnCooldown(u) {
   return u.last_reminder_sent_at && (Date.now() - Number(u.last_reminder_sent_at)) < REMINDER_COOLDOWN_MS;
 }
 
-async function renderBackendReminders(isSuper) {
-  reminderIsSuper = isSuper;
+async function renderBackendReminders() {
   const res = await fetch('/api/admin/reminders/pending-signups');
   if (!res.ok) return;
   const data = await res.json();
@@ -5825,8 +5838,8 @@ async function renderBackendReminders(isSuper) {
 
   const testBtn = document.getElementById('reminder-test-btn');
   if (testBtn) {
-    testBtn.disabled = !isSuper;
-    testBtn.title = isSuper ? '' : 'Only a Super Admin can send reminder emails.';
+    testBtn.disabled = !can('comms.reminders_test');
+    testBtn.title = can('comms.reminders_test') ? '' : 'You do not have permission to send reminder emails.';
   }
   updateReminderSelectedCount();
 }
@@ -5850,8 +5863,8 @@ function updateReminderSelectedCount() {
 
   const sendBtn = document.getElementById('reminder-send-btn');
   if (sendBtn) {
-    sendBtn.disabled = selected.length === 0 || !reminderIsSuper;
-    sendBtn.title = reminderIsSuper ? '' : 'Only a Super Admin can send bulk reminder emails.';
+    sendBtn.disabled = selected.length === 0 || !can('comms.reminders_send');
+    sendBtn.title = can('comms.reminders_send') ? '' : 'You do not have permission to send bulk reminder emails.';
   }
 }
 
@@ -5922,7 +5935,7 @@ async function sendRegistrationReminders() {
     showToast(msg, 'success');
   }
   // Refresh so last-sent times and cooldown badges reflect what just happened.
-  await renderBackendReminders(reminderIsSuper);
+  await renderBackendReminders();
 }
 
 // --- BALANCE-DUE PAYMENT REMINDERS (admin) ---
@@ -5943,14 +5956,13 @@ function balanceDueReminderDefaultBody() {
 }
 
 let cachedBalanceDueRecipients = [];
-let balanceDueIsSuper = false;
+// The balance-due reminder card's own state.
 
 function balanceDueReminderOnCooldown(u) {
   return u.last_reminder_sent_at && (Date.now() - Number(u.last_reminder_sent_at)) < REMINDER_COOLDOWN_MS;
 }
 
-async function renderBackendBalanceDueReminders(isSuper) {
-  balanceDueIsSuper = isSuper;
+async function renderBackendBalanceDueReminders() {
   const res = await fetch('/api/admin/reminders/balance-due');
   if (!res.ok) return;
   const data = await res.json();
@@ -5983,8 +5995,8 @@ async function renderBackendBalanceDueReminders(isSuper) {
 
   const testBtn = document.getElementById('bdreminder-test-btn');
   if (testBtn) {
-    testBtn.disabled = !isSuper;
-    testBtn.title = isSuper ? '' : 'Only a Super Admin can send reminder emails.';
+    testBtn.disabled = !can('comms.reminders_test');
+    testBtn.title = can('comms.reminders_test') ? '' : 'You do not have permission to send reminder emails.';
   }
   updateBalanceDueReminderSelectedCount();
 }
@@ -6005,8 +6017,8 @@ function updateBalanceDueReminderSelectedCount() {
 
   const sendBtn = document.getElementById('bdreminder-send-btn');
   if (sendBtn) {
-    sendBtn.disabled = selected.length === 0 || !balanceDueIsSuper;
-    sendBtn.title = balanceDueIsSuper ? '' : 'Only a Super Admin can send bulk reminder emails.';
+    sendBtn.disabled = selected.length === 0 || !can('comms.reminders_send');
+    sendBtn.title = can('comms.reminders_send') ? '' : 'You do not have permission to send bulk reminder emails.';
   }
 }
 
@@ -6075,7 +6087,7 @@ async function sendBalanceDueReminders() {
     showToast(msg, 'success');
   }
   // Refresh so last-sent times and cooldown badges reflect what just happened.
-  await renderBackendBalanceDueReminders(balanceDueIsSuper);
+  await renderBackendBalanceDueReminders();
 }
 
 // --- CUSTOM-RECIPIENT REMINDERS (admin) ---
@@ -6246,7 +6258,7 @@ function parseCustomReminderEmails() {
 function updateCustomReminderCount() {
   setText('customreminder-send-count', String(parseCustomReminderEmails().length));
   const sendBtn = document.getElementById('customreminder-send-btn');
-  if (sendBtn) sendBtn.disabled = !isSuperAdminViewer();
+  if (sendBtn) sendBtn.disabled = !can('comms.custom_send');
 }
 
 // Reuses the same test-send endpoint as the other two cards -- it only ever
@@ -7025,15 +7037,8 @@ const MAIN_TABS = ['payments', 'statement', 'abstracts', 'reports'];
 // pick the landing tab and to validate a tab restored from the URL, so a
 // bookmarked #users can't drop a finance admin on a section they can't see.
 // Mirrors the show/hide rules in applyRoleVisibility().
-function allowedBackendTabs({ isSuper, isFinance, isReviewer, isOperations }) {
-  const allowed = [];
-  if (isFinance) allowed.push('payments', 'statement');
-  if (isReviewer) allowed.push('abstracts');
-  if (isFinance || isReviewer || isOperations) allowed.push('reports');
-  if (isFinance) allowed.push('reminders', 'groupdiscount');
-  if (isSuper) allowed.push('programs', 'fees', 'general', 'discount', 'activity');
-  if (isSuper || isOperations) allowed.push('users');
-  return allowed;
+function allowedBackendTabs() {
+  return Object.keys(mySections).filter((key) => mySections[key]);
 }
 
 // The tab currently shown. Kept so the hashchange listener can tell a
@@ -7064,7 +7069,7 @@ function switchBackendTab(tab) {
   if (tab === 'general') renderGeneralSettings();
   if (tab === 'activity') renderBackendActivity();
   if (tab === 'users') loadBackendUsers();
-  if (tab === 'reminders') { renderBackendReminders(isSuperAdminViewer()); renderBackendBalanceDueReminders(isSuperAdminViewer()); initCustomReminderCard(); }
+  if (tab === 'reminders') { renderBackendReminders(); renderBackendBalanceDueReminders(); initCustomReminderCard(); }
   [...MAIN_TABS, ...SETTINGS_TABS].forEach(t => {
     const section = document.getElementById(`section-${t}`);
     if (section) section.classList.toggle('hidden', t !== tab);
@@ -7100,7 +7105,7 @@ function switchBackendTab(tab) {
 window.addEventListener('hashchange', () => {
   const tab = window.location.hash.slice(1);
   if (!tab || tab === currentBackendTab || !activeAdminUser) return;
-  if (allowedBackendTabs(rolesFor(activeAdminUser.role)).includes(tab)) switchBackendTab(tab);
+  if (allowedBackendTabs().includes(tab)) switchBackendTab(tab);
 });
 
 // --- BANK STATEMENT RECONCILIATION (admin) ---
