@@ -1365,68 +1365,10 @@ async function loadFees() {
         (data.categories || []).map((c) => `<option value="${esc(c.key)}">${esc(c.label)}${c.subtitle ? ' — ' + esc(c.subtitle) : ''} — ₹${inr(Number(c.fee))}</option>`).join('');
       if (current) sel.value = current;
     }
-    renderCategoryDropdown(data.categories || []);
   } catch (e) {
     /* keep any hardcoded fallback options */
   }
 }
-
-// Custom category picker: the underlying <select id="payment-category"> stays
-// in the DOM (hidden) so calculateFee()/submit keep reading its .value --
-// this just renders a nicer label/subtitle/fee row on top of it and keeps
-// the two in sync.
-function renderCategoryDropdown(categories) {
-  const panel = document.getElementById('category-dropdown-panel');
-  if (!panel) return;
-  panel.innerHTML = categories.map((c) => `
-    <button type="button" class="category-option w-full text-left p-3 border-b border-slate-100 last:border-b-0 hover:bg-slate-50 flex items-start justify-between gap-3" data-key="${esc(c.key)}" onclick="selectCategory('${esc(c.key)}')">
-      <div class="min-w-0">
-        <p class="font-semibold text-slate-800 text-sm">${esc(c.label)}</p>
-        ${c.subtitle ? `<p class="text-xs text-slate-500 mt-0.5">${esc(c.subtitle)}</p>` : ''}
-      </div>
-      <p class="font-semibold text-slate-700 text-sm shrink-0">₹${inr(Number(c.fee))}</p>
-    </button>`).join('');
-
-  // Re-sync the button label if a category was already selected (e.g. re-opening the modal).
-  const sel = document.getElementById('payment-category');
-  const chosen = categories.find((c) => c.key === (sel && sel.value));
-  setCategoryDropdownLabel(chosen || null);
-}
-
-function setCategoryDropdownLabel(category) {
-  const label = document.getElementById('category-dropdown-label');
-  if (!label) return;
-  if (category) {
-    label.innerText = category.label;
-    label.classList.remove('text-slate-400');
-  } else {
-    label.innerText = '-- Select Category --';
-    label.classList.add('text-slate-400');
-  }
-}
-
-function toggleCategoryDropdown(forceOpen) {
-  const panel = document.getElementById('category-dropdown-panel');
-  if (!panel) return;
-  const open = forceOpen !== undefined ? forceOpen : panel.classList.contains('hidden');
-  panel.classList.toggle('hidden', !open);
-}
-
-function selectCategory(key) {
-  const sel = document.getElementById('payment-category');
-  if (!sel) return;
-  sel.value = key;
-  setCategoryDropdownLabel(feeCategories[key] || null);
-  toggleCategoryDropdown(false);
-  calculateFee(); // nothing listens for the hidden select's 'change' event, so call it directly
-}
-
-document.addEventListener('click', (e) => {
-  const panel = document.getElementById('category-dropdown-panel');
-  const btn = document.getElementById('category-dropdown-btn');
-  if (!panel || panel.classList.contains('hidden')) return;
-  if (!panel.contains(e.target) && e.target !== btn) toggleCategoryDropdown(false);
-});
 
 // Refresh capacity + fees then open the payment modal.
 async function openPaymentModal() {
@@ -1447,18 +1389,13 @@ async function openPaymentModal() {
 // category picker so they can only pay for the locked category.
 function applyCategoryLock() {
   const reg = currentRegistration;
-  const btn = document.getElementById('category-dropdown-btn');
+  const sel = document.getElementById('payment-category');
   const locked = !!(reg && reg.category_locked);
-  if (locked && reg.category_key) {
-    selectCategory(reg.category_key);
-    setCategoryDropdownLabel(feeCategories[reg.category_key] || { label: reg.category_label });
+  if (locked && reg.category_key && sel) {
+    sel.value = reg.category_key;
+    calculateFee();
   }
-  if (btn) {
-    btn.disabled = locked;
-    btn.classList.toggle('opacity-60', locked);
-    btn.classList.toggle('cursor-not-allowed', locked);
-    btn.onclick = locked ? null : () => toggleCategoryDropdown();
-  }
+  if (sel) sel.disabled = locked;
 }
 
 // --- PAYMENT SUBMISSION ---

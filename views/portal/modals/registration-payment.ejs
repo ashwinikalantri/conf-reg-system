@@ -6,15 +6,13 @@
 
       <form id="payment-form" onsubmit="verifyAndSubmitPayment(event)" class="space-y-5">
         <div>
-          <label class="block text-sm font-semibold text-slate-700">1. Select Delegate Category</label>
-          <div class="relative mt-1">
-            <button type="button" id="category-dropdown-btn" onclick="toggleCategoryDropdown()" class="w-full p-3 border rounded-lg bg-white outline-none flex items-center justify-between text-left">
-              <span id="category-dropdown-label" class="text-slate-400">-- Select Category --</span>
-              <span class="text-slate-400 text-xs">▾</span>
-            </button>
-            <div id="category-dropdown-panel" class="hidden absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-72 overflow-y-auto"></div>
+          <div class="flex items-center gap-2">
+            <span class="flex items-center justify-center w-5 h-5 rounded-full bg-indigo-600 text-white text-[11px] font-bold shrink-0">1</span>
+            <label for="payment-category" class="text-sm font-bold text-slate-800">Select Delegate Category</label>
           </div>
-          <select id="payment-category" class="hidden"></select>
+          <select id="payment-category" onchange="calculateFee()" class="w-full mt-1 p-3 border rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none appearance-none bg-no-repeat bg-[right_0.75rem_center] bg-[length:1rem] bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22%2364748b%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M5.23%207.21a.75.75%200%20011.06.02L10%2011.168l3.71-3.938a.75.75%200%20111.08%201.04l-4.25%204.5a.75.75%200%2001-1.08%200l-4.25-4.5a.75.75%200%2001.02-1.06z%22%20clip-rule%3D%22evenodd%22%2F%3E%3C%2Fsvg%3E')]">
+            <option value="">-- Select Category --</option>
+          </select>
 
           <!-- Shown only for student categories -->
           <div id="id-card-block" class="hidden mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3">
@@ -26,7 +24,10 @@
         </div>
 
         <div id="program-groups-section" class="hidden bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
-          <h4 class="text-sm font-bold text-slate-800 uppercase tracking-wide">2. Academic Preferences</h4>
+          <div class="flex items-center gap-2">
+            <span class="flex items-center justify-center w-5 h-5 rounded-full bg-indigo-600 text-white text-[11px] font-bold shrink-0">2</span>
+            <h4 class="text-sm font-bold text-slate-800">Academic Preferences</h4>
+          </div>
           <!-- One block per active program group (Workshops, QI Practices, or
                any further group a conference defines), populated by
                loadProgramOptions() in app.js. Each renders as a single
@@ -35,7 +36,7 @@
           <div id="program-groups-container" class="space-y-4"></div>
         </div>
 
-        <div id="qr-container" class="hidden bg-slate-50 border border-indigo-200 rounded-xl p-4 space-y-4">
+        <div id="qr-container" class="hidden bg-indigo-50/60 border border-indigo-100 rounded-xl p-4 space-y-4">
           <div class="border-b pb-2">
             <div id="fee-discount-line" class="hidden flex justify-between items-center text-xs text-slate-500 mb-1">
               <span>Base fee</span><span id="fee-base-display">₹0</span>
@@ -110,7 +111,10 @@
         </div>
 
         <div id="payment-verification-fields" class="space-y-4 border-t pt-4">
-          <h4 class="text-sm font-bold text-slate-800 uppercase tracking-wide">3. Payment Verification</h4>
+          <div class="flex items-center gap-2">
+            <span class="flex items-center justify-center w-5 h-5 rounded-full bg-indigo-600 text-white text-[11px] font-bold shrink-0">3</span>
+            <h4 class="text-sm font-bold text-slate-800">Payment Verification</h4>
+          </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
