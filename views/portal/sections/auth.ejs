@@ -201,15 +201,32 @@
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <!-- Pick from what people have already entered, with "Other" for
+               anything not yet on the list. These were free-text inputs with
+               a <datalist>, which suggests but never obliges -- so the same
+               institution arrived 19 different ways ("MGIMS Sevagram",
+               "MGIMS Sevagram .", "Mahatma Gandhi Institute Of Medical
+               Sciences Sewagram"). Choosing from a list is what stops that.
+
+               The hidden input is still the field everything else reads, so
+               the select is presentation and nothing downstream changes. -->
           <div>
             <label class="block text-sm font-medium text-slate-700">Designation</label>
-            <input type="text" id="reg-designation" list="designation-options" autocomplete="off" placeholder="e.g., Resident, Professor" required class="w-full mt-1 p-3 border rounded-lg outline-none">
-            <datalist id="designation-options"></datalist>
+            <select id="reg-designation-select" onchange="onDirectorySelect('designation')" class="w-full mt-1 p-3 border rounded-lg bg-white outline-none">
+              <option value="">Select your designation…</option>
+              <option value="__other__">Other — type it in</option>
+            </select>
+            <input type="text" id="reg-designation-other" placeholder="Your designation" autocomplete="off" class="hidden w-full mt-2 p-3 border rounded-lg outline-none">
+            <input type="hidden" id="reg-designation">
           </div>
           <div>
             <label class="block text-sm font-medium text-slate-700">Institute / Organization</label>
-            <input type="text" id="reg-institute" list="institute-options" autocomplete="off" required class="w-full mt-1 p-3 border rounded-lg outline-none">
-            <datalist id="institute-options"></datalist>
+            <select id="reg-institute-select" onchange="onDirectorySelect('institute')" class="w-full mt-1 p-3 border rounded-lg bg-white outline-none">
+              <option value="">Select your institute…</option>
+              <option value="__other__">Other — type it in</option>
+            </select>
+            <input type="text" id="reg-institute-other" placeholder="Your institute or organization" autocomplete="off" class="hidden w-full mt-2 p-3 border rounded-lg outline-none">
+            <input type="hidden" id="reg-institute">
           </div>
         </div>
 

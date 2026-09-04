@@ -70,6 +70,23 @@ const INDIA_PINCODES = (() => {
 const pincodeChecksAvailable = () => INDIA_PINCODES.size > 0;
 const isKnownPincode = (pin) => !pincodeChecksAvailable() || INDIA_PINCODES.has(String(pin || '').trim());
 
+// --- FREE-TEXT TIDYING ---------------------------------------------------
+// Designation and institution are typed by delegates, and the same place
+// arrived 19 different ways: "MGIMS Sevagram", "MGIMS Sevagram ",
+// "MGIMS Sevagram ." and so on. That splits the Users filters, the reports
+// and any count by institution.
+//
+// This is the mechanical half only -- leading/trailing space, runs of
+// spaces, and trailing punctuation. Deliberately NOT case: title-casing
+// would turn MGIMS into Mgims, and ANM into Anm. Variants that differ only
+// by case are reconciled against the spellings already in use, which
+// preserves acronyms because the acronym IS the common spelling.
+function tidyFreeText(v) {
+  if (v == null) return v;
+  const out = String(v).replace(/\s+/g, ' ').trim().replace(/[.,;:\s]+$/, '').trim();
+  return out || null;
+}
+
 const PAGE_HEAD_FONT = "'Libre Franklin', 'Source Sans 3', system-ui, sans-serif";
 
 // The short "something stopped you here" pages -- maintenance, not
@@ -3101,12 +3118,20 @@ app.get('/api/directory/suggestions', async (req, res, next) => {
     // existing "Professor") still collapse to one suggestion; MIN() favors
     // the title-cased spelling whenever both exist, since SQLite's default
     // BINARY collation sorts uppercase letters before lowercase ones.
+    // Ordered by how many people already gave that answer, then
+    // alphabetically. These feed a dropdown now rather than a type-ahead, and
+    // in a list of 125 institutions the one 41% of delegates belong to should
+    // not be somewhere in the M's. MIN() still picks the title-cased spelling
+    // when two cases somehow coexist, since BINARY collation sorts uppercase
+    // first.
     const designations = await dbAll(
-      `SELECT MIN(designation) AS designation FROM users WHERE designation IS NOT NULL AND TRIM(designation) != ''
-       GROUP BY LOWER(designation) ORDER BY designation`);
+      `SELECT MIN(designation) AS designation, COUNT(*) AS n FROM users
+        WHERE designation IS NOT NULL AND TRIM(designation) != ''
+        GROUP BY LOWER(designation) ORDER BY n DESC, designation`);
     const institutions = await dbAll(
-      `SELECT MIN(institution) AS institution FROM users WHERE institution IS NOT NULL AND TRIM(institution) != ''
-       GROUP BY LOWER(institution) ORDER BY institution`);
+      `SELECT MIN(institution) AS institution, COUNT(*) AS n FROM users
+        WHERE institution IS NOT NULL AND TRIM(institution) != ''
+        GROUP BY LOWER(institution) ORDER BY n DESC, institution`);
     res.set('Cache-Control', 'public, max-age=300');
     res.json({
       designations: designations.map((r) => r.designation),
@@ -3469,7 +3494,7 @@ app.post('/api/auth/register', async (req, res, next) => {
     await dbRun(
       `INSERT INTO users (phone_number, phone, phone_verified, email_verified, salutation, full_name, designation, institution, country, pincode, state, district, age, gender, email, password_hash, role, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE', ?)`,
-      [userKey, phoneVal ? toE164(phoneVal) : null, phoneVerified, emailVerified, salutationVal, nameVal, designation, institute,
+      [userKey, phoneVal ? toE164(phoneVal) : null, phoneVerified, emailVerified, salutationVal, nameVal, tidyFreeText(designation), tidyFreeText(institute),
        countryVal, pincodeVal || null, stateVal || null, districtVal || null, ageNum, genderVal, emailVal, passwordHash, Date.now()]
     );
 
@@ -6217,7 +6242,7 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
       await dbRun(
         `INSERT INTO users (phone_number, phone, phone_verified, full_name, email, designation, institution, role, password_hash, created_at)
          VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
-        [phone, toE164(phone), name, normalizeEmail(emailVal), req.body.designation || null, req.body.institute || null, 'DELEGATE', hashPassword(tempPassword), Date.now()]
+        [phone, toE164(phone), name, normalizeEmail(emailVal), tidyFreeText(req.body.designation), tidyFreeText(req.body.institute), 'DELEGATE', hashPassword(tempPassword), Date.now()]
       );
     } else if (!existingUser.password_hash) {
       tempPassword = generateTempPassword();
@@ -6895,10 +6920,15 @@ app.put('/api/users/:phone', requirePermission('users.edit'), async (req, res, n
       'age', 'gender', 'pincode', 'state', 'district'];
     const sets = [];
     const params = [];
+    // designation and institution are free text a human typed, so they get
+    // the same tidying as at signup -- otherwise an admin correcting a name
+    // reintroduces the trailing spaces this is meant to remove.
+    const TIDY_FIELDS = new Set(['designation', 'institution']);
     for (const f of fields) {
       if (Object.prototype.hasOwnProperty.call(b, f)) {
         sets.push(`${f} = ?`);
-        params.push(b[f] === '' ? null : b[f]);
+        const value = TIDY_FIELDS.has(f) ? tidyFreeText(b[f]) : b[f];
+        params.push(value === '' ? null : value);
       }
     }
     // Back to unproven whenever the address actually changes: the delegate
@@ -6963,7 +6993,7 @@ app.post('/api/users', requirePermission('users.create'), async (req, res, next)
     await dbRun(
       `INSERT INTO users (phone_number, phone, phone_verified, full_name, email, designation, institution, role, password_hash, created_at)
        VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
-      [phone, toE164(phone), name, normalizeEmail(emailVal), designation, institute, role, passwordHash, Date.now()]
+      [phone, toE164(phone), name, normalizeEmail(emailVal), tidyFreeText(designation), tidyFreeText(institute), role, passwordHash, Date.now()]
     );
     res.json({ success: true });
   } catch (err) {

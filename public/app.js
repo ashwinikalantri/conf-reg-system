@@ -2399,28 +2399,70 @@ async function restoreSession() {
   }
 }
 
-// Populates the signup form's Designation/Institute <datalist> options from
-// what's already on file, so a new delegate can pick an existing spelling
-// instead of typing a near-duplicate -- the fields stay plain text inputs,
-// so typing anything not in the list is still accepted. No-op on admin.html
-// (no signup form there) since the datalist elements simply won't exist.
+// Fills the signup form's Designation and Institute dropdowns from what is
+// already on file, so a delegate picks an existing spelling rather than
+// typing a near-duplicate of it.
+//
+// These were free-text inputs with a <datalist>, which suggests but never
+// obliges -- and the result was 19 spellings of one institution, 41% of the
+// conference between them. A list you choose from is what stops that; the
+// "Other" option keeps anyone genuinely new from being locked out.
+//
+// The <select> and the "Other" box are presentation. The value everything
+// downstream reads (handleRegister, validateSignupStep) still comes from the
+// hidden #reg-designation / #reg-institute, so nothing else had to change.
+const DIRECTORY_FIELDS = {
+  designation: { key: 'designations', placeholder: 'Select your designation…' },
+  institute: { key: 'institutions', placeholder: 'Select your institute…' },
+};
+
+// Keeps the hidden field in step with whichever control is in play.
+function onDirectorySelect(which) {
+  const sel = document.getElementById(`reg-${which}-select`);
+  const other = document.getElementById(`reg-${which}-other`);
+  const hidden = document.getElementById(`reg-${which}`);
+  if (!sel || !other || !hidden) return;
+  const isOther = sel.value === '__other__';
+  other.classList.toggle('hidden', !isOther);
+  if (isOther) {
+    hidden.value = other.value.trim();
+    other.focus();
+  } else {
+    hidden.value = sel.value;
+    other.value = '';
+  }
+}
+
 async function loadDirectorySuggestions() {
-  const designationList = document.getElementById('designation-options');
-  const instituteList = document.getElementById('institute-options');
-  if (!designationList && !instituteList) return;
+  const anySelect = document.getElementById('reg-designation-select')
+    || document.getElementById('reg-institute-select');
+  if (!anySelect) return;   // admin page: no signup form
+  let data = {};
   try {
     const res = await fetch('/api/directory/suggestions');
-    if (!res.ok) return;
-    const data = await res.json();
-    if (designationList) {
-      designationList.innerHTML = (data.designations || []).map((d) => `<option value="${esc(d)}">`).join('');
-    }
-    if (instituteList) {
-      instituteList.innerHTML = (data.institutions || []).map((i) => `<option value="${esc(i)}">`).join('');
-    }
+    if (res.ok) data = await res.json();
   } catch (e) {
-    /* offline — the fields still work as plain free-text inputs */
+    /* offline -- the lists stay empty, and "Other" still lets anyone finish */
   }
+  for (const [which, cfg] of Object.entries(DIRECTORY_FIELDS)) {
+    const sel = document.getElementById(`reg-${which}-select`);
+    if (!sel) continue;
+    const values = data[cfg.key] || [];
+    // "Other" stays last: it is the escape hatch, not a first suggestion.
+    sel.innerHTML = `<option value="">${esc(cfg.placeholder)}</option>`
+      + values.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('')
+      + '<option value="__other__">Other — type it in</option>';
+    // With nothing on file yet (a fresh conference), a dropdown of one
+    // option is a dead end -- open straight into the text box instead.
+    if (!values.length) {
+      sel.value = '__other__';
+      onDirectorySelect(which);
+    }
+  }
+  ['designation', 'institute'].forEach((which) => {
+    const other = document.getElementById(`reg-${which}-other`);
+    if (other) other.addEventListener('input', () => onDirectorySelect(which));
+  });
 }
 document.addEventListener('DOMContentLoaded', loadDirectorySuggestions);
 // Public (no login required) -- runs on both the delegate landing page and
