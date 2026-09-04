@@ -90,4 +90,23 @@ check('...and none of them is a bare unstyled page any more',
   !/font-family:sans-serif;max-width:32rem/.test(serverSrc)
   && !/font-family:sans-serif;text-align:center/.test(serverSrc));
 
+console.log('\n== Every page that scopes a font by id actually loads that stylesheet ==');
+// public/styles.css is what puts Libre Franklin on the headings, scoped by
+// id to each page's own containers. Its own comment says it is shared by
+// index.ejs and admin.ejs -- but index.ejs never linked it, so the portal
+// downloaded the face from Google Fonts on every load and then applied it
+// to nothing. Nothing about that is visible in a diff of either file, which
+// is why it lasted; the invariant is cheap to state, so state it.
+const css = fs.readFileSync(appFile('public', 'styles.css'), 'utf8');
+const linksStylesheet = (src) => /<link[^>]+href="styles\.css"/.test(src);
+for (const page of ['index.ejs', 'admin.ejs']) {
+  const src = fs.readFileSync(appFile('views', page), 'utf8');
+  check(`${page} links styles.css`, linksStylesheet(src));
+}
+check('the heading rule still scopes to the portal containers it names',
+  /#dashboard-page h1/.test(css) && /#auth-page h1/.test(css));
+check('setup.ejs carries the design tokens too (it loads its own Tailwind)',
+  (() => { const s2 = fs.readFileSync(appFile('views', 'setup.ejs'), 'utf8');
+    return /tailwind\.config/.test(s2) && s2.includes('#2f5673') && /Libre\+Franklin/.test(s2); })());
+
 report();

@@ -15,6 +15,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- styles.css is what actually puts Libre Franklin on the headings (it
+       scopes the face to this page's containers by id -- see the note at the
+       top of that file). It says it is shared between index.ejs and
+       admin.ejs, and admin.ejs did link it, but this page never did: the
+       font was downloaded on every portal load and then applied to nothing,
+       so every heading here rendered in the body face instead. -->
+  <link rel="stylesheet" href="styles.css">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {

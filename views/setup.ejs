@@ -4,7 +4,46 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>First-Run Setup</title>
+  <!-- Direction A, "Clinical Trust" -- the same treatment index.ejs and
+       admin.ejs carry. This page loads its own copy of the CDN script, so it
+       needs its own copy of the config; without it the ~27 indigo utilities
+       below rendered in stock Tailwind indigo, which is why the very first
+       screen anyone saw of this app looked like a different product from the
+       rest of it.
+
+       The heading rule is a blanket h1-h4 here rather than the id-scoped
+       list styles.css uses. That file is shared by two pages and has to
+       avoid retyping partials neither owns; this page is self-contained and
+       includes nothing, so there is nothing else to catch. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            indigo: {
+              50: '#eef3f6', 100: '#dbe6ec', 200: '#b9cedb', 300: '#8fb0c3',
+              400: '#628ea8', 500: '#46708c', 600: '#2f5673', 700: '#244560',
+              800: '#1c3549', 900: '#142838',
+            },
+          },
+          fontFamily: {
+            sans: ['"Source Sans 3"', 'system-ui', '-apple-system', 'sans-serif'],
+          },
+          boxShadow: {
+            card: '0 1px 2px rgba(20,30,40,.05), 0 12px 28px -14px rgba(20,30,40,.18)',
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+    h1, h2, h3, h4 { font-family: 'Libre Franklin', system-ui, -apple-system, sans-serif; }
+  </style>
 </head>
 <body class="bg-slate-100 font-sans min-h-screen flex flex-col justify-center items-center p-4">
 
@@ -17,7 +56,7 @@
     <div id="toast" class="hidden mb-4 text-sm font-semibold text-center rounded-lg p-3"></div>
 
     <!-- STEP 1: Create Super Admin -->
-    <div id="step-admin" class="bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-4">
+    <div id="step-admin" class="bg-white rounded-2xl p-6 shadow-card border border-slate-200 space-y-4">
       <h2 class="text-lg font-bold text-slate-800">Create the Super Admin account</h2>
       <p class="text-xs text-slate-500">This account's phone number is verified by OTP at first login, same as every delegate. This is the only step that can't be skipped or done later.</p>
       <div>
@@ -41,7 +80,7 @@
     </div>
 
     <!-- STEP 2: Conference Details -->
-    <div id="step-conference" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
+    <div id="step-conference" class="hidden bg-white rounded-2xl p-6 shadow-card border border-slate-200 space-y-3">
       <h2 class="text-lg font-bold text-slate-800">Conference Details</h2>
       <p class="text-xs text-slate-500">Shown across confirmation emails, reports, and printable pages.</p>
       <div><label class="block text-xs font-semibold text-slate-700 mb-1">Full Name</label><input id="su-conf-name" placeholder="e.g. Annual Conference on Clinical Excellence 2027" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
@@ -61,7 +100,7 @@
     </div>
 
     <!-- STEP 3: Delegate Categories & Fees -->
-    <div id="step-categories" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
+    <div id="step-categories" class="hidden bg-white rounded-2xl p-6 shadow-card border border-slate-200 space-y-3">
       <h2 class="text-lg font-bold text-slate-800">Delegate Categories &amp; Fees</h2>
       <p class="text-xs text-slate-500">Add each category delegates can register under and its fee at every pricing phase. Each one is added immediately — nothing to lose by skipping and adding more later from Settings → Fees.</p>
 
@@ -97,7 +136,7 @@
     </div>
 
     <!-- STEP 4: Workshops -->
-    <div id="step-workshops" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-4">
+    <div id="step-workshops" class="hidden bg-white rounded-2xl p-6 shadow-card border border-slate-200 space-y-4">
       <div>
         <h2 class="text-lg font-bold text-slate-800">Workshops</h2>
         <p class="text-xs text-slate-500">Optional capacity-limited tracks a delegate can enroll in alongside their main registration. Two steps: first create a group (a named bucket a delegate picks one option from, e.g. "Workshops"), then add options into it. Add as many groups as this conference needs — a further one might be "QI Practices," or anything else; there's nothing built-in beyond what you add here. Everything below is saved immediately, same as categories above, and can be edited anytime from Settings → Program Groups.</p>
@@ -137,7 +176,7 @@
     </div>
 
     <!-- STEP 5: UPI + Bank Transfer -->
-    <div id="step-upi" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
+    <div id="step-upi" class="hidden bg-white rounded-2xl p-6 shadow-card border border-slate-200 space-y-3">
       <h2 class="text-lg font-bold text-slate-800">Payment</h2>
       <p class="text-xs text-slate-500">UPI ID generates the QR code delegates scan to pay. Bank transfer is offered as a fallback when UPI doesn't work for someone — both optional here, either can be filled in later.</p>
       <div><label class="block text-xs font-semibold text-slate-700 mb-1">UPI ID (VPA)</label><input id="su-upi-id" placeholder="name@bank" class="w-full p-2.5 border rounded-lg text-sm outline-none font-mono"></div>
@@ -155,7 +194,7 @@
     </div>
 
     <!-- STEP 6: SMS -->
-    <div id="step-sms" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
+    <div id="step-sms" class="hidden bg-white rounded-2xl p-6 shadow-card border border-slate-200 space-y-3">
       <h2 class="text-lg font-bold text-slate-800">SMS (OTP delivery)</h2>
       <p class="text-xs text-slate-500">Without an API key, delegate/staff login still works via the on-screen OTP echo outside production, or via password if one is set. Real SMS just won't send until this is filled in, from here or later.</p>
       <div>
@@ -178,7 +217,7 @@
     </div>
 
     <!-- STEP 7: Email -->
-    <div id="step-email" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
+    <div id="step-email" class="hidden bg-white rounded-2xl p-6 shadow-card border border-slate-200 space-y-3">
       <h2 class="text-lg font-bold text-slate-800">Email (AWS SES)</h2>
       <p class="text-xs text-slate-500">Confirmation, reminder, and receipt emails won't send until this is configured, from here or later.</p>
       <div><label class="block text-xs font-semibold text-slate-700 mb-1">From address</label><input id="su-email-from" type="email" class="w-full p-2.5 border rounded-lg text-sm outline-none"></div>
@@ -201,7 +240,7 @@
     </div>
 
     <!-- BACKUPS -->
-    <div id="step-backups" class="hidden bg-white rounded-2xl p-6 shadow-md border border-slate-200 space-y-3">
+    <div id="step-backups" class="hidden bg-white rounded-2xl p-6 shadow-card border border-slate-200 space-y-3">
       <h2 class="text-lg font-bold text-slate-800">Backups (Google Drive)</h2>
       <p class="text-xs text-slate-500">A backup of the database and uploads runs on the server every night. Linking Google Drive keeps an off-site copy of the most recent 14, which is what you would restore from if the server itself were lost.</p>
       <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-3">
@@ -228,8 +267,10 @@
     </div>
 
     <!-- DONE -->
-    <div id="step-done" class="hidden bg-white rounded-2xl p-6 shadow-md border border-emerald-200 text-center space-y-4">
-      <div class="text-4xl">🎉</div>
+    <div id="step-done" class="hidden bg-white rounded-2xl p-6 shadow-card border border-emerald-200 text-center space-y-4">
+      <div class="flex justify-center text-indigo-600">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-10 h-10"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9.5"/></svg>
+      </div>
       <h2 class="text-lg font-bold text-slate-800">Setup complete</h2>
       <p class="text-sm text-slate-500">You're signed in as the Super Admin. Anything you skipped can be filled in anytime from Settings → General, Fees, or Workshops.</p>
       <a href="/admin" class="block w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg">Go to Admin Panel</a>
