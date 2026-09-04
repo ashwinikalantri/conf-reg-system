@@ -1,7 +1,23 @@
     <!-- SETTINGS: GENERAL (SMS / Email / UPI) -->
     <section id="section-general" class="hidden space-y-6">
+      <!-- Quick jump: this is the longest settings page by far (8 stacked
+           cards), so a plain scroll makes "find Backups" a real chore.
+           scrollIntoView rather than real #anchors -- this page's own
+           routing already owns the URL hash (see switchBackendTab's
+           history.replaceState), and real anchor links would fight it. -->
+      <div class="flex flex-wrap gap-2 sticky top-0 z-10 bg-slate-100/95 backdrop-blur-sm py-2 -mx-1 px-1">
+        <button type="button" onclick="document.getElementById('gs-card-conference').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Conference</button>
+        <button type="button" onclick="document.getElementById('gs-card-sms').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">SMS</button>
+        <button type="button" onclick="document.getElementById('gs-card-email').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Email</button>
+        <button type="button" onclick="document.getElementById('gs-card-payment').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Payment</button>
+        <button type="button" onclick="document.getElementById('gs-card-maintenance').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Maintenance</button>
+        <button type="button" onclick="document.getElementById('gs-card-notifications').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Notifications</button>
+        <button type="button" onclick="document.getElementById('gs-card-backups').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Backups</button>
+        <button type="button" onclick="document.getElementById('gs-card-env').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Other Env Vars</button>
+      </div>
+
       <!-- Conference Details -->
-      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+      <div id="gs-card-conference" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <h3 class="text-lg font-bold text-slate-800 mb-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="8" r="0.6" fill="currentColor" stroke="none"/></svg>Conference Details</h3>
         <p class="text-xs text-slate-500 mb-3">Shown across confirmation emails, reports, and printable pages.</p>
         <form onsubmit="saveGeneralSettings(event, 'conference')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -20,7 +36,7 @@
       </div>
 
       <!-- SMS -->
-      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+      <div id="gs-card-sms" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div>
             <h3 class="text-lg font-bold text-slate-800"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>SMS</h3>
@@ -49,7 +65,7 @@
       </div>
 
       <!-- Email -->
-      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+      <div id="gs-card-email" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div>
             <h3 class="text-lg font-bold text-slate-800"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M3 6.5 L12 13 L21 6.5"/></svg>Email</h3>
@@ -82,7 +98,7 @@
            can choose between at checkout (see payment-mode radio on the
            registration/top-up forms). Each has its own save button, same
            pattern as SMS/Email above. -->
-      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+      <div id="gs-card-payment" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <h3 class="text-lg font-bold text-slate-800 mb-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>Payment</h3>
         <p class="text-xs text-slate-500 mb-4">The two payment methods offered to delegates at checkout — UPI (QR code / pay link) and NEFT/RTGS bank transfer. Both sets of details are also used to verify payment screenshots.</p>
 
@@ -108,7 +124,7 @@
       </div>
 
       <!-- Maintenance mode -->
-      <div class="bg-white rounded-2xl p-5 border-2 border-amber-200 shadow-sm">
+      <div id="gs-card-maintenance" class="bg-white rounded-2xl p-5 border-2 border-amber-200 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div>
             <h3 class="text-lg font-bold text-slate-800"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M14.5 3.5a4.5 4.5 0 0 0-5.9 5.9L3 15l3 3 5.6-5.6a4.5 4.5 0 0 0 5.9-5.9l-2.8 2.8-2-2z"/></svg>Maintenance Mode</h3>
@@ -131,7 +147,7 @@
       </div>
 
       <!-- Notifications -->
-      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+      <div id="gs-card-notifications" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-1">
           <h3 class="text-lg font-bold text-slate-800"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M6 10a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>Notifications</h3>
           <label class="flex items-center gap-2 cursor-pointer shrink-0">
@@ -164,7 +180,7 @@
            so this queues a request that the backup cron picks up within a few
            minutes. Super admin only, like the rest of this tab's write
            actions. -->
-      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+      <div id="gs-card-backups" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <h3 class="text-lg font-bold text-slate-800 mb-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M5 3h11l3 3v15H5z"/><rect x="8" y="3" width="7" height="5"/><rect x="8" y="14" width="8" height="6"/></svg>Backups</h3>
         <p class="text-xs text-slate-500 mb-3">A backup runs automatically every night at 02:00 and is copied to Google Drive, which keeps the most recent 14.</p>
         <div id="backup-status" class="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-3 mb-3">Checking…</div>
@@ -263,7 +279,7 @@
       </div>
 
       <!-- Other Environment Variables -->
-      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+      <div id="gs-card-env" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <h3 class="text-lg font-bold text-slate-800 mb-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M9 6l-5 6 5 6"/><path d="M15 6l5 6-5 6"/></svg>Other Environment Variables</h3>
         <p class="text-xs text-slate-500 mb-3">Server-level settings, stored in the database instead of the server's .env file. Portal URL and OTP Echo apply immediately; Port, Cookie Name, and Cookie Secure are saved now but only take effect the next time the server process restarts.</p>
         <form onsubmit="saveGeneralSettings(event, 'otherEnv')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
