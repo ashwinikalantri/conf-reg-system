@@ -14,14 +14,20 @@
       <p id="overview-updated" class="text-xs text-slate-400"></p>
     </div>
 
-    <!-- Money first: it is the question the desk is asked most. -->
+    <!-- Money first: it is the question the desk is asked most.
+
+         The two rupee figures are conference-wide money and hide separately
+         from the two headcounts: they need payments.view_totals, which is a
+         different disclosure from working the approval queue. They are
+         individually hidden rather than split into their own grid so the row
+         still flows as 2 or 4 cards instead of wrapping. -->
     <div id="overview-money" class="hidden grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+      <div id="ov-card-collected" class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
         <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Collected</p>
         <p id="ov-collected" class="skeleton text-2xl font-black text-slate-800 mt-1 tabular-nums">₹0</p>
         <p id="ov-collected-sub" class="text-[11px] text-slate-500 mt-0.5">&nbsp;</p>
       </div>
-      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+      <div id="ov-card-outstanding" class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
         <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Outstanding</p>
         <p id="ov-outstanding" class="skeleton text-2xl font-black text-orange-700 mt-1 tabular-nums">₹0</p>
         <p id="ov-outstanding-sub" class="text-[11px] text-slate-500 mt-0.5">&nbsp;</p>
@@ -40,7 +46,11 @@
 
     <!-- What is waiting on somebody. These are the ones worth acting on, so
          each is a button into the section that can settle it. -->
-    <div class="mb-6">
+    <!-- Hidden whole for a viewer with none of the sections it summarises:
+         the heading and the all-clear line below both make claims across
+         payments, the statement and abstracts, so shown to someone who can
+         see none of them they would be asserting something unknowable. -->
+    <div id="overview-attention" class="hidden mb-6">
       <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Needs attention</h3>
       <div id="overview-queues" class="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <button type="button" id="ov-q-payments" onclick="switchBackendTab('payments')" class="hidden text-left bg-white rounded-2xl border border-slate-200 shadow-sm p-4 hover:border-indigo-300 hover:shadow-card transition">
@@ -64,7 +74,7 @@
           <p id="ov-abstracts-sub" class="text-[11px] text-slate-500 mt-0.5">&nbsp;</p>
         </button>
       </div>
-      <p id="overview-all-clear" class="hidden text-sm text-slate-500 bg-white rounded-2xl border border-slate-200 shadow-sm p-5">Nothing is waiting on a decision right now.</p>
+      <p id="overview-all-clear" class="hidden text-sm text-slate-500 bg-white rounded-2xl border border-slate-200 shadow-sm p-5"></p>
     </div>
 
       <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">

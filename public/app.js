@@ -3052,6 +3052,9 @@ async function renderBackendOverview() {
   const seesPayments = canSee('payments');
   const seesStatement = canSee('statement');
   const seesAbstracts = canSee('abstracts');
+  // Conference-wide money is its own permission: working the approval queue
+  // and seeing what the conference has taken are different disclosures.
+  const seesTotals = can('payments.view_totals');
 
   const show = (id, on) => {
     const el = document.getElementById(id);
@@ -3069,10 +3072,11 @@ async function renderBackendOverview() {
     } catch (e) { return null; }
   };
 
-  const [regs, abstracts, statement] = await Promise.all([
+  const [regs, abstracts, statement, totals] = await Promise.all([
     seesPayments ? getJson('/api/registrations') : Promise.resolve(null),
     seesAbstracts ? getJson('/api/abstracts') : Promise.resolve(null),
     seesStatement ? getJson('/api/admin/bank-statement/reconcile') : Promise.resolve(null),
+    seesTotals ? getJson('/api/admin/finance-summary') : Promise.resolve(null),
   ]);
 
   let pending = 0;
@@ -3080,7 +3084,13 @@ async function renderBackendOverview() {
   let unmatched = 0;
   let underReview = 0;
 
-  show('overview-money', !!regs);
+  // The block appears if EITHER half has something to show: the headcounts
+  // need payments.view, the two rupee figures need payments.view_totals, and
+  // a role may hold one without the other.
+  show('overview-money', !!regs || !!totals);
+  show('ov-card-collected', !!totals);
+  show('ov-card-outstanding', !!totals);
+
   if (regs) {
     const all = regs.registrations || [];
     const verified = all.filter((r) => r.bank_status === 'BANK_VERIFIED');
@@ -3089,18 +3099,6 @@ async function renderBackendOverview() {
     pending = needsDecision.length;
     balanceCount = partial.length;
 
-    // Same figures the Payments tab shows, computed the same way -- see
-    // renderBackendPayments, where this arithmetic is explained.
-    const collected = all.reduce((sum, r) => sum + (Number(r.verified_total) || 0), 0);
-    const outstanding = partial.reduce((sum, r) => {
-      const paidSoFar = Number(r.verified_total) > 0 ? Number(r.verified_total) : (Number(r.paid_amount) || 0);
-      return sum + Math.max(0, Number(r.expected_amount) - paidSoFar);
-    }, 0);
-
-    setText('ov-collected', `₹${inr(collected)}`);
-    setText('ov-collected-sub', `${verified.length} confirmed registration${verified.length === 1 ? '' : 's'}`);
-    setText('ov-outstanding', `₹${inr(outstanding)}`);
-    setText('ov-outstanding-sub', outstanding > 0 ? `across ${partial.length} delegate${partial.length === 1 ? '' : 's'}` : 'nothing owed');
     setText('ov-delegates', all.length);
     setText('ov-delegates-sub', 'registrations submitted');
     setText('ov-confirmed', verified.length);
@@ -3109,6 +3107,27 @@ async function renderBackendOverview() {
     setText('ov-pending', pending);
     setText('ov-balance', balanceCount);
     setText('ov-balance-sub', balanceCount ? 'waiting on the delegate' : 'none outstanding');
+  }
+
+  // Totals come from the server, not from summing the registration list in
+  // the browser. That is what makes payments.view_totals a real boundary:
+  // derived client-side, the figures were only ever as private as
+  // /api/registrations itself.
+  if (totals) {
+    setText('ov-collected', `₹${inr(totals.collected)}`);
+    setText('ov-outstanding', `₹${inr(totals.outstanding)}`);
+    setText('ov-outstanding-sub', totals.outstanding > 0
+      ? `across ${totals.owingCount} delegate${totals.owingCount === 1 ? '' : 's'}`
+      : 'nothing owed');
+    // The sub-line under Collected counts confirmed registrations, which only
+    // the registration list knows -- left blank for a totals-only role rather
+    // than inventing a number it cannot see.
+    if (regs) {
+      const verified = (regs.registrations || []).filter((r) => r.bank_status === 'BANK_VERIFIED');
+      setText('ov-collected-sub', `${verified.length} confirmed registration${verified.length === 1 ? '' : 's'}`);
+    } else {
+      setText('ov-collected-sub', '');
+    }
   }
 
   if (statement) {
@@ -3134,9 +3153,25 @@ async function renderBackendOverview() {
   show('ov-q-balance', seesPayments && balanceCount > 0);
   show('ov-q-statement', seesStatement && unmatched > 0);
   show('ov-q-abstracts', seesAbstracts && underReview > 0);
+  // The whole block belongs to whoever can open at least one of the sections
+  // it summarises. Without this the heading and the all-clear line showed to
+  // everyone, and the line in particular claimed nothing was waiting ANYWHERE
+  // -- said to someone who can see only abstracts while a payments queue was
+  // piling up behind a tab they cannot open.
+  const anySection = seesPayments || seesStatement || seesAbstracts;
+  show('overview-attention', anySection);
+
   const anyQueue = (seesPayments && (pending > 0 || balanceCount > 0))
     || (seesStatement && unmatched > 0) || (seesAbstracts && underReview > 0);
-  show('overview-all-clear', !anyQueue);
+  show('overview-all-clear', anySection && !anyQueue);
+  // Say which sections the all-clear covers, so it is a claim about the
+  // viewer's own work rather than about the conference.
+  if (anySection && !anyQueue) {
+    const mine = [seesPayments && 'registrations', seesStatement && 'the bank statement',
+      seesAbstracts && 'abstracts'].filter(Boolean);
+    const list = mine.length > 1 ? `${mine.slice(0, -1).join(', ')} or ${mine[mine.length - 1]}` : mine[0];
+    setText('overview-all-clear', `Nothing is waiting on a decision in ${list} right now.`);
+  }
 
   setText('overview-updated', `Updated ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`);
   settleSkeletons(host);

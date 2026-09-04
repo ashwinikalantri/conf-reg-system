@@ -49,6 +49,13 @@ const PERMISSIONS = [
   ['payments.verify_id', 'payments', 'Verify a student ID', 'Confirm a student ID card and unlock verification.'],
   ['payments.desk_register', 'payments', 'Register at the desk', 'Create a registration for a walk-in, with the payment already settled.'],
   ['payments.rescan', 'payments', 'Re-run slip checks', 'Re-judge stored screenshots against the current OCR logic.'],
+  // Conference-wide money, as opposed to one delegate's. Separate from
+  // payments.view because they are different disclosures: working the
+  // approval queue needs each registration's amount, while total revenue and
+  // total outstanding are a management figure. Keeping them apart also makes
+  // a totals-only role expressible -- someone who should see what the
+  // conference has taken without reading anybody's individual record.
+  ['payments.view_totals', 'payments', 'View financial totals', 'See conference-wide money: total collected and total still outstanding, without needing access to individual registrations.'],
 
   // --- Bank statement ---
   ['statement.view', 'statement', 'View the statement', 'Open the Bank Statement tab and its reconciliation.'],
@@ -126,6 +133,7 @@ const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
 const ROUTE_PERMISSIONS = {
   // Payments
   'GET /api/registrations': 'payments.view',
+  'GET /api/admin/finance-summary': 'payments.view_totals',
   'GET /api/registrations/:id/audit': 'payments.view',
   'GET /api/registrations/:id/receipt': 'payments.view',
   'GET /api/admin/delegate-locations': 'payments.view',
@@ -308,7 +316,7 @@ const SYSTEM_ROLES = [
     label: 'Finance Admin',
     description: 'Payments, the bank statement, discounts and the finance reports.',
     permissions: [
-      'payments.view', 'payments.decide', 'payments.revise', 'payments.link',
+      'payments.view', 'payments.view_totals', 'payments.decide', 'payments.revise', 'payments.link',
       'payments.add_payment', 'payments.refund', 'payments.verify_id',
       'payments.desk_register', 'payments.rescan',
       'statement.view', 'statement.import', 'statement.mark_non_registration', 'statement.cash_deposit',

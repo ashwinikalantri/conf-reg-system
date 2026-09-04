@@ -112,6 +112,12 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/admin/roles': 'Phase 4. Create a role. Super Admin only.',
     'PUT /api/admin/roles/:key': 'Phase 4. Edit a role. Super Admin only.',
     'DELETE /api/admin/roles/:key': 'Phase 4. Delete a role. Super Admin only.',
+    'GET /api/admin/finance-summary': 'Conference-wide money (total collected, total outstanding) and '
+      + 'nothing else -- no delegate, no registration, no row. Guarded by the new payments.view_totals, '
+      + 'held by Super Admin and Finance Admin (and so Finance & Academic, their union) -- exactly the '
+      + 'roles that already saw these figures on the Overview, so nobody gains a number they could not '
+      + 'already see. It exists because the Overview used to SUM /api/registrations in the browser, which '
+      + 'meant the totals were only as private as that list and the cards hid nothing.',
     'POST /api/admin/fees/categories/:id/realign': 'Brings registrations that stored an older label for a category up to the current one. Display name only -- no category or fee changes. masters.fees_manage, the same permission as renaming the category in the first place, so it widens nobody\'s access.',
   };
   const added = ROUTES.map((r) => r.route).filter((r) => !BASELINE.roles.SUPER_ADMIN.routes.includes(r));

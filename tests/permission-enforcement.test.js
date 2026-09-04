@@ -46,6 +46,9 @@ const PROBES = [
   { permission: 'system.backups', url: '/api/admin/backup/status', route: 'GET /api/admin/backup/status' },
   { permission: 'payments.link', url: '/api/admin/bank-credit-candidates', route: 'GET /api/admin/bank-credit-candidates' },
   { permission: 'statement.cash_deposit', url: '/api/admin/cash-in-hand', route: 'GET /api/admin/cash-in-hand' },
+  // Conference-wide money. Separate from payments.view on purpose: reading
+  // the approval queue and knowing total revenue are different disclosures.
+  { permission: 'payments.view_totals', url: '/api/admin/finance-summary', route: 'GET /api/admin/finance-summary' },
 ];
 
 // The reports gate inside the handler rather than at the route, so they are

@@ -2247,9 +2247,48 @@ async function seedRolesOnBoot() {
     }
     created++;
   }
+  await backfillNewSystemPermissions();
   await loadRoles();
   if (created) console.log(`Seeded ${created} built-in role(s) from the catalogue.`);
   return created;
+}
+
+// Roles are seeded once and never re-seeded, so a permission added to the
+// catalogue after a deployment does not reach the roles already in that
+// database. Usually that is the wanted behaviour -- it is what stops a new
+// key silently widening a role someone has since customised.
+//
+// It is wrong for a key that SPLITS an existing one. payments.view_totals
+// carved conference-wide money out of payments.view: everyone holding
+// payments.view could already see those figures, so leaving them behind
+// would take something away that nobody decided to take away, and the
+// catalogue would say one thing while the database enforced another.
+//
+// So each entry here says: give a role the new key if it already holds the
+// one the new key was split from. Idempotent (INSERT OR IGNORE), skips a
+// role that has since dropped the source permission, and never touches a
+// grants_all role, which needs no rows at all.
+const PERMISSION_BACKFILLS = [
+  { permission: 'payments.view_totals', ifRoleHas: 'payments.view' },
+];
+
+async function backfillNewSystemPermissions() {
+  for (const { permission, ifRoleHas } of PERMISSION_BACKFILLS) {
+    const roles = await dbAll(
+      `SELECT rp.role_key FROM role_permissions rp
+         JOIN roles r ON r.key = rp.role_key
+        WHERE rp.permission = ? AND r.grants_all = 0
+          AND NOT EXISTS (SELECT 1 FROM role_permissions x
+                           WHERE x.role_key = rp.role_key AND x.permission = ?)`,
+      [ifRoleHas, permission]);
+    for (const r of roles) {
+      await dbRun('INSERT OR IGNORE INTO role_permissions (role_key, permission) VALUES (?, ?)',
+        [r.role_key, permission]);
+    }
+    if (roles.length) {
+      console.log(`Backfilled ${permission} onto ${roles.length} role(s) already holding ${ifRoleHas}.`);
+    }
+  }
 }
 
 // May this role do this? The only permission question the app asks.
@@ -5126,6 +5165,57 @@ app.get('/api/admin/delegate-locations', requirePermission('payments.view'), asy
       ORDER BY registered DESC, signedup DESC, country`);
 
     res.json({ locations: rows || [], international: intl || [] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Conference-wide money, and nothing else. The Overview used to derive these
+// in the browser by summing /api/registrations, which meant the figures were
+// only as private as that list -- anyone who could open the Payments tab
+// could total them up whatever the cards showed. Hiding the cards was
+// therefore never a boundary; this is.
+//
+// It returns aggregates ONLY: no delegate, no registration, no row. That is
+// what lets payments.view_totals stand on its own, so a role can be given
+// the conference's financial position without being given everybody's
+// individual record.
+app.get('/api/admin/finance-summary', requirePermission('payments.view_totals'), async (req, res, next) => {
+  try {
+    // Same arithmetic the Overview showed before, kept here rather than in
+    // the client so the two cannot drift.
+    //
+    // verified_total is NOT a column -- it is derived per registration from
+    // its VERIFIED payment_transactions (see GET /api/registrations, which
+    // builds the same figure). Summing a column of that name silently
+    // returned nothing, so it is computed the same way here.
+    //
+    // Gross, not net of refunds, which is what this card has always shown.
+    // Netting them off would be defensible but is a change to what the
+    // number MEANS, and this change is about who may see it.
+    const row = await dbGet(`
+      SELECT COALESCE(SUM(COALESCE(verified_amount, amount, 0)), 0) AS collected
+        FROM payment_transactions
+       WHERE txn_status = 'VERIFIED'`);
+    // Only PARTIAL_PAYMENT registrations can owe a balance -- the client's
+    // isBalanceDue() is exactly that test.
+    const owing = await dbAll(`
+      SELECT r.expected_amount, r.paid_amount,
+             (SELECT COALESCE(SUM(COALESCE(t.verified_amount, t.amount, 0)), 0)
+                FROM payment_transactions t
+               WHERE t.registration_id = r.id AND t.txn_status = 'VERIFIED') AS verified_total
+        FROM registrations r
+       WHERE r.bank_status = 'PARTIAL_PAYMENT'`);
+    const outstanding = owing.reduce((sum, r) => {
+      const paidSoFar = Number(r.verified_total) > 0 ? Number(r.verified_total) : (Number(r.paid_amount) || 0);
+      return sum + Math.max(0, Number(r.expected_amount) - paidSoFar);
+    }, 0);
+    res.json({
+      success: true,
+      collected: Number(row.collected) || 0,
+      outstanding,
+      owingCount: owing.length,
+    });
   } catch (err) {
     next(err);
   }
