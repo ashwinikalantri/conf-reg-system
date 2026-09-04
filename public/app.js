@@ -7024,15 +7024,23 @@ async function renderBackendAbstracts() {
   }
 
   // Step 1: Approval -- accept/reject/reset happens inside the review modal
-  // (see openAbstractReview), not on the card itself.
-  approvalBox.innerHTML = abstracts.map(a => `
+  // (see openAbstractReview), not on the card itself. Still-pending ones
+  // first: this list only grows over a conference, and burying "needs a
+  // decision" among already-decided abstracts is exactly the wrong order
+  // for the one task this step describes. Stable sort keeps each group's
+  // own relative order (server's own, typically submission order).
+  const approvalOrder = [...abstracts].sort((a, b) =>
+    (a.status === 'UNDER_REVIEW' ? 0 : 1) - (b.status === 'UNDER_REVIEW' ? 0 : 1));
+  approvalBox.innerHTML = approvalOrder.map(a => `
     <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
       ${abstractCardHeader(a)}
     </div>
   `).join('');
 
-  // Step 2: Assignment -- approved abstracts only.
-  const approved = abstracts.filter(a => a.status === 'ACCEPTED');
+  // Step 2: Assignment -- approved abstracts only, not-yet-assigned first
+  // for the same reason.
+  const approved = abstracts.filter(a => a.status === 'ACCEPTED')
+    .sort((a, b) => (a.allocation ? 1 : 0) - (b.allocation ? 1 : 0));
   assignBox.innerHTML = approved.length ? approved.map(a => `
     <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
       ${abstractCardHeader(a)}
