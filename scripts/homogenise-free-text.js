@@ -58,6 +58,13 @@ const capScore = (v) => String(v).split(/\s+/).filter((w) => /^[A-Z]/.test(w)).l
 const dbFile = process.argv[2];
 const APPLY = process.argv.includes('--apply');
 const PROPOSE = process.argv.includes('--propose');
+const CLUSTERS = process.argv.includes('--clusters');
+// Tier 2: apply the reviewed alias map. Separate flag from --apply because
+// it is a different kind of change -- Tier 1 is spacing, this asserts that
+// two differently-named things are the same place or the same rank, which
+// only a person can decide. The script does no matching here; it applies
+// exactly what the file says.
+const ALIASES = process.argv.includes('--aliases');
 if (!dbFile) {
   console.error('Usage: node scripts/homogenise-free-text.js <db> [--apply] [--propose]');
   process.exit(1);
@@ -152,6 +159,39 @@ function suspicious(canonicals) {
 }
 
 (async () => {
+  if (ALIASES) {
+    const mapFile = path.join(__dirname, 'free-text-aliases.json');
+    const map = JSON.parse(require('fs').readFileSync(mapFile, 'utf8'));
+    console.log(`Applying reviewed aliases from ${path.basename(mapFile)}`
+      + `${APPLY ? '' : '   (DRY RUN -- add --apply to write)'}\n`);
+    let grand = 0;
+    for (const field of FIELDS) {
+      const groups = map[field.column] || {};
+      console.log(`===== ${field.label} =====`);
+      for (const [canonical, variants] of Object.entries(groups)) {
+        for (const variant of variants) {
+          const hit = await all(
+            `SELECT COUNT(*) AS n FROM users WHERE role = 'DELEGATE' AND ${field.column} = ?`, [variant]);
+          const n = hit[0].n;
+          // A variant that matches nothing is reported rather than skipped
+          // silently -- it means the map has drifted from the data, which is
+          // worth knowing before trusting the rest of it.
+          if (!n) { console.log(`    0  ${JSON.stringify(variant)}   <-- NOT FOUND, map may be stale`); continue; }
+          console.log(`  ${String(n).padStart(3)}  ${JSON.stringify(variant)} -> ${JSON.stringify(canonical)}`);
+          if (APPLY) {
+            const r = await run(
+              `UPDATE users SET ${field.column} = ? WHERE role = 'DELEGATE' AND ${field.column} = ?`,
+              [canonical, variant]);
+            grand += r.changes;
+          }
+        }
+      }
+      console.log('');
+    }
+    if (APPLY) console.log(`applied: ${grand} row(s) updated.`);
+    db.close();
+    return;
+  }
   const rows = await all("SELECT phone_number, designation, institution FROM users WHERE role = 'DELEGATE'");
   console.log(`${rows.length} delegates in ${path.basename(dbFile)}${APPLY ? '' : '   (DRY RUN -- pass --apply to write)'}\n`);
 
@@ -188,6 +228,36 @@ function suspicious(canonicals) {
       if (odd.length) {
         console.log(`\n  --- NOT AN ${field.label} AT ALL (${odd.length}) ---`);
         odd.forEach((g) => console.log(`   ! ${JSON.stringify(g.canonical)} (${g.total})`));
+      }
+      if (CLUSTERS) {
+        // Pairs are the wrong unit to review: one institution generated
+        // eight of them. Connected components turn that into one decision.
+        // Every member is printed, because transitive linking (A~B, B~C) can
+        // pull in something that belongs to neither -- which a reader spots
+        // instantly and a similarity score never will.
+        const cands = proposals(groups);
+        const parent = new Map(groups.map((g) => [g.canonical, g.canonical]));
+        const find = (x) => (parent.get(x) === x ? x : (parent.set(x, find(parent.get(x))), parent.get(x)));
+        cands.forEach(({ a, b }) => { const ra = find(a.canonical); const rb = find(b.canonical);
+          if (ra !== rb) parent.set(ra, rb); });
+        const byRoot = new Map();
+        groups.forEach((g) => {
+          const r = find(g.canonical);
+          if (!byRoot.has(r)) byRoot.set(r, []);
+          byRoot.get(r).push(g);
+        });
+        const clusters = [...byRoot.values()].filter((c) => c.length > 1)
+          .map((c) => c.sort((x, y) => y.total - x.total))
+          .sort((x, y) => y.reduce((s, g) => s + g.total, 0) - x.reduce((s, g) => s + g.total, 0));
+        console.log(`\n  --- ${clusters.length} CLUSTER(S) TO REVIEW ---`);
+        clusters.forEach((c, i) => {
+          const total = c.reduce((s, g) => s + g.total, 0);
+          console.log(`\n  [${field.label[0]}${i + 1}]  ${total} delegates   suggested: ${JSON.stringify(c[0].canonical)}`);
+          c.forEach((g) => console.log(`         ${String(g.total).padStart(3)}  ${JSON.stringify(g.canonical)}`));
+        });
+        const single = groups.filter((g) => byRoot.get(find(g.canonical)).length === 1);
+        console.log(`\n  (${single.length} value(s) matched nothing and are left alone)`);
+        continue;
       }
       const cands = proposals(groups);
       console.log(`\n  --- TIER 2 CANDIDATES (${cands.length}) -- suggestions only, nothing merged ---`);

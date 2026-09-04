@@ -1,0 +1,77 @@
+{
+  "_note": "Tier 2 merges for delegate designation and institution, decided one cluster at a time by the conference owner on 2026-09-04. Every line here is a human call, NOT a similarity score -- the script that applies it does no matching of its own. That separation exists because 'Kasturba Nursing College, Sevagram' (47 delegates) and 'Kasturba Nursing School, Sevagram' (8) are different institutions one word apart, and any rule loose enough to catch the MGIMS spellings also merges those two.",
+  "_format": "canonical value -> the exact stored spellings that should become it. Matching is exact after the mechanical tidy in homogenise-free-text.js; nothing is guessed.",
+  "_rejected": {
+    "Government Medical College (all cities)": "NOT merged. Clustering swept Akola, Nagpur, Jangaon, Singrauli, Siddipet, Jalna, Chhatrapati Sambhajinagar, Gondia and Jalgaon into one group -- nine different colleges. Only the two acronym pairs below are real.",
+    "District Hospital": "NOT merged. Katni (MP), Kabirdham (Chhattisgarh) and Kovilpatti (Tamil Nadu) are different hospitals sharing a generic name.",
+    "Mahatma Gandhi Medical College / MGM, Indore": "NOT merged. MGM Indore is Mahatma Gandhi MEMORIAL Medical College, a different institution again from MGIMS Sevagram.",
+    "Datta Meghe / JNMC": "NOT merged into one. JNMC is a constituent college OF Datta Meghe Institute, so its own spellings are unified but the parent university stays separate.",
+    "Clinical Instructor / PG, Clinical Instructor": "NOT merged. The five who wrote 'PG, Clinical Instructor' are also postgraduate students; merging drops that.",
+    "Professor & HOD / Professor & HOD, Vice Dean": "NOT merged. Vice Dean is a further office.",
+    "BSC Nursing student": "NOT merged into MSc Nursing Student. BSc is undergraduate; MSc and PG Nursing Student are postgraduate."
+  },
+
+  "institution": {
+    "Mahatma Gandhi Institute of Medical Sciences, Sevagram": [
+      "MGIMS Sevagram",
+      "Mahatma Gandhi Institute Of Medical Sciences Sewagram",
+      "MGIMS",
+      "MGIMS sevagram wardha",
+      "Mahatma Gandhi Institute of Medical Science Sevagram",
+      "MGIMS, Sevagram, Wardha",
+      "Mahatma gandhi institute of medical sciences, Sevagram, Wardha",
+      "MGIMS, Sevagram",
+      "Mahatma Gandhi Institute of Medical Sciences",
+      "Mahatma gabdhi institute of medical sciences,sevagram",
+      "satvikdama@mgims.ac.in"
+    ],
+    "Suretech College of Nursing, Jamtha, Nagpur": [
+      "SureTech College of Nursing"
+    ],
+    "Government Medical College, Akola": [
+      "GMC Akola"
+    ],
+    "Government Medical College, Gondia": [
+      "GMC, Gondia, Maharashtra"
+    ],
+    "Jawaharlal Nehru Medical College, Wardha": [
+      "JNMC",
+      "JNMC wardha",
+      "Jawaharlal Nehru Medical College, Sawangi (M), Wardha",
+      "Jawaharlal Nehru Medical College, Datta meghe Institute of higher Education and research"
+    ],
+    "Taywade College of Nursing, Mahadula, Nagpur": [
+      "Taywade college of nursing mahadula Nagpur",
+      "Taywade College of Nursing"
+    ],
+    "Atal Bihari Vajpayee Government Medical College, Vidisha": [
+      "ABVGMC, Vidisha",
+      "Atal Bihari Vajpayee Government Medical college, Vidisha"
+    ]
+  },
+
+  "designation": {
+    "Junior Resident": [
+      "Junior Resident 2",
+      "Junior Resident 1",
+      "Tutor cum Junior Resident",
+      "General Surgery JR1",
+      "JR2",
+      "JR",
+      "Post Graduate Resident"
+    ],
+    "Senior Resident": [
+      "General Surgery SR"
+    ],
+    "Resident": [
+      "Resident doctor"
+    ],
+    "MSc Nursing Student": [
+      "PG Nursing Student"
+    ],
+    "Professor": [
+      "Professor, Department of Pediatrics",
+      "Professor of Pediatrics"
+    ]
+  }
+}
