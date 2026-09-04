@@ -178,6 +178,7 @@ const ROUTE_PERMISSIONS = {
   'PUT /api/admin/fees/config': 'masters.fees_manage',
   'POST /api/admin/fees/categories': 'masters.fees_manage',
   'PUT /api/admin/fees/categories/:id': 'masters.fees_manage',
+  'POST /api/admin/fees/categories/:id/realign': 'masters.fees_manage',
   'DELETE /api/admin/fees/categories/:id': 'masters.fees_manage',
 
   // Masters -- programmes

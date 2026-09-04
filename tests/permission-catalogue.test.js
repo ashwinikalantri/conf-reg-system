@@ -112,6 +112,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/admin/roles': 'Phase 4. Create a role. Super Admin only.',
     'PUT /api/admin/roles/:key': 'Phase 4. Edit a role. Super Admin only.',
     'DELETE /api/admin/roles/:key': 'Phase 4. Delete a role. Super Admin only.',
+    'POST /api/admin/fees/categories/:id/realign': 'Brings registrations that stored an older label for a category up to the current one. Display name only -- no category or fee changes. masters.fees_manage, the same permission as renaming the category in the first place, so it widens nobody\'s access.',
   };
   const added = ROUTES.map((r) => r.route).filter((r) => !BASELINE.roles.SUPER_ADMIN.routes.includes(r));
   check('every route added since the baseline is accounted for',

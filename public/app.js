@@ -2512,6 +2512,8 @@ function setupAdminDelegation() {
       if (toggle) return toggleFeeCategory(toggle.dataset.id, toggle.dataset.active === '1' ? 0 : 1);
       const del = e.target.closest('.fee-delete');
       if (del) return deleteFeeCategory(del.dataset.id);
+      const realign = e.target.closest('.fee-realign');
+      if (realign) return realignFeeCategory(realign.dataset.id);
     });
   }
 }
@@ -5088,9 +5090,16 @@ async function renderBackendFees() {
   tbody.innerHTML = (data.categories || []).map((c) => `
     <tr class="${c.active ? '' : 'opacity-50'}" data-id="${esc(c.id)}">
       <td class="p-4">
-        <p class="font-semibold text-slate-800">${esc(c.label)}</p>
-        ${c.subtitle ? `<p class="text-xs text-slate-500">${esc(c.subtitle)}</p>` : ''}
+        <input type="text" value="${esc(c.label)}" aria-label="Category label"
+               class="fee-label w-full p-1.5 border rounded text-sm font-semibold text-slate-800" data-id="${esc(c.id)}">
+        <input type="text" value="${esc(c.subtitle || '')}" placeholder="Subtitle (optional)" aria-label="Category subtitle"
+               class="fee-subtitle w-full mt-1 p-1.5 border rounded text-xs text-slate-500" data-id="${esc(c.id)}">
+        <!-- The key is shown, never edited: registrations, group discount
+             rules and promo-code scopes all join on it. -->
         <p class="text-[10px] font-mono text-slate-400 mt-1">${esc(c.category_key)}${c.active ? '' : ' · inactive'}</p>
+        ${Number(c.drifted) > 0 ? `
+        <p class="mt-1.5 text-[10px] text-amber-800 font-bold bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5 inline-block">${ICON('warning')}${esc(c.drifted)} registration${Number(c.drifted) === 1 ? '' : 's'} on an older name</p>
+        <button class="fee-realign block mt-1 text-[11px] text-indigo-600 hover:underline font-semibold" data-id="${esc(c.id)}">Realign them to this label</button>` : ''}
       </td>
       <td class="p-4"><input type="number" min="0" value="${esc(c.early_fee)}" class="fee-early w-20 p-1.5 border rounded text-sm" data-id="${esc(c.id)}"></td>
       <td class="p-4"><input type="number" min="0" value="${esc(c.regular_fee)}" class="fee-regular w-20 p-1.5 border rounded text-sm" data-id="${esc(c.id)}"></td>
@@ -5136,6 +5145,7 @@ const ACTIVITY_ACTION_LABELS = {
   BANK_TXN_LINK: 'Linked', BANK_TXN_UNLINK: 'Unlinked', PAYMENT_ADMIN_ADDED: 'Payment Added', ABSTRACT_STATUS_CHANGE: 'Status', ABSTRACT_ALLOCATION: 'Allotted',
   PROGRAM_OPTION_CREATE: 'Created', PROGRAM_OPTION_UPDATE: 'Updated', PROGRAM_OPTION_DELETE: 'Deleted',
   FEE_CONFIG_UPDATE: 'Dates Updated', FEE_CATEGORY_CREATE: 'Created', FEE_CATEGORY_UPDATE: 'Updated', FEE_CATEGORY_DELETE: 'Deleted',
+  FEE_CATEGORY_REALIGN: 'Labels Realigned',
   DISCOUNT_CODE_CREATE: 'Created', DISCOUNT_CODE_UPDATE: 'Updated', DISCOUNT_CODE_DELETE: 'Deleted', DISCOUNT_CODE_USED: 'Used', DISCOUNT_CODE_EMAILED: 'Emailed',
   GROUP_RULE_SET: 'Created', GROUP_RULE_UPDATE: 'Updated', GROUP_RULE_DELETE: 'Deleted',
   GENERAL_SETTINGS_UPDATE: 'Updated', BANK_TXN_NON_REGISTRATION_UPDATE: 'Non-Reg Marking',
@@ -5319,6 +5329,8 @@ async function saveFeeCategory(id) {
   const data = await (await fetch(`/api/admin/fees/categories/${encodeURIComponent(id)}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      label: q('fee-label').value.trim(),
+      subtitle: q('fee-subtitle').value.trim(),
       earlyFee: Number(q('fee-early').value),
       regularFee: Number(q('fee-regular').value),
       lateFee: Number(q('fee-late').value),
@@ -5327,7 +5339,26 @@ async function saveFeeCategory(id) {
     })
   })).json();
   if (!data.success) showToast(data.error || 'Update failed.');
+  // A rename carries through to every registration that stored the old
+  // name (receipts and exports print that snapshot, not the master row),
+  // so say how many were touched rather than letting it happen silently.
+  else if (data.renamed > 0) {
+    showToast(`Saved. ${data.renamed} registration${data.renamed === 1 ? '' : 's'} updated to the new name.`, 'success');
+  }
   reviewCategoryList = null; // requiresStudentId may have changed -- force ensureReviewCategories() to refetch
+  renderBackendFees();
+}
+
+// Bring registrations that stored an older name for this category up to the
+// current label. Only the display name changes -- not the category, not the
+// fee -- but it does alter what already-issued receipts print, so it asks
+// first, like every other irreversible action here.
+async function realignFeeCategory(id) {
+  const label = (document.querySelector(`.fee-label[data-id="${id}"]`) || {}).value || 'this label';
+  if (!(await showConfirm(`Update every registration in this category to "${String(label).trim()}"? Their receipts and exports will show the new name.`))) return;
+  const data = await (await fetch(`/api/admin/fees/categories/${encodeURIComponent(id)}/realign`, { method: 'POST' })).json();
+  if (!data.success) return showToast(data.error || 'Could not realign.');
+  showToast(`${data.updated} registration${data.updated === 1 ? '' : 's'} updated.`, 'success');
   renderBackendFees();
 }
 

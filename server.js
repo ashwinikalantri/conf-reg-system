@@ -7765,7 +7765,18 @@ function studentIdFields(b) {
 app.get('/api/admin/fees', requirePermission('masters.fees_view'), async (req, res, next) => {
   try {
     const config = await getFeeConfig();
-    const categories = await dbAll('SELECT * FROM fee_categories ORDER BY sort_order, id');
+    // `drifted` is how many of this category's registrations still carry a
+    // category_label other than the master one. Renaming through the API
+    // carries the new name across (see the PUT below), so this counts rows
+    // that drifted some other way -- a rename made directly against the
+    // database, most likely -- and is what the Realign control acts on.
+    const categories = await dbAll(`
+      SELECT fc.*,
+             (SELECT COUNT(*) FROM registrations r
+               WHERE r.category_key = fc.category_key
+                 AND (r.category_label IS NULL OR r.category_label <> fc.label)) AS drifted
+        FROM fee_categories fc
+       ORDER BY fc.sort_order, fc.id`);
     res.json({ config: config || {}, phase: currentPhase(config), categories });
   } catch (err) {
     next(err);
@@ -8504,11 +8515,20 @@ app.put('/api/admin/fees/categories/:id', requirePermission('masters.fees_manage
     if ([f.early, f.regular, f.late, f.spot].some((x) => !Number.isFinite(x) || x < 0)) {
       return res.status(400).json({ success: false, error: 'Fees must be non-negative numbers.' });
     }
-    // Label and subtitle are set once at category creation and are not
-    // editable afterwards -- only fees, active status, and the student-ID
-    // requirement can be updated here. requiresStudentId is left untouched
-    // when the field is absent from the body (same "absent = no change"
-    // convention as active), so a plain fee edit never has to resend it.
+    // Label and subtitle are display text and can be renamed. Absent from
+    // the body means "no change", the same convention as active and
+    // requiresStudentId, so a plain fee edit never has to resend them.
+    //
+    // category_key is deliberately NOT editable: registrations,
+    // group_discount_rules and promo-code scopes all join on it, and
+    // changing it would orphan every one of them.
+    let label = existing.label;
+    if (req.body.label !== undefined) {
+      label = String(req.body.label).trim();
+      if (!label) return res.status(400).json({ success: false, error: 'Label is required.' });
+    }
+    const subtitle = req.body.subtitle !== undefined ? String(req.body.subtitle).trim() : existing.subtitle;
+    // requiresStudentId is left untouched when the field is absent.
     let sid = { requiresStudentId: !!existing.requires_student_id };
     if (req.body.requiresStudentId !== undefined) {
       const parsed = studentIdFields(req.body);
@@ -8519,17 +8539,62 @@ app.put('/api/admin/fees/categories/:id', requirePermission('masters.fees_manage
       active: active !== undefined ? (active ? 1 : 0) : existing.active,
     };
     await dbRun(
-      'UPDATE fee_categories SET early_fee = ?, regular_fee = ?, late_fee = ?, spot_fee = ?, active = ?, requires_student_id = ? WHERE id = ?',
-      [f.early, f.regular, f.late, f.spot, updated.active, sid.requiresStudentId ? 1 : 0, req.params.id]
+      'UPDATE fee_categories SET label = ?, subtitle = ?, early_fee = ?, regular_fee = ?, late_fee = ?, spot_fee = ?, active = ?, requires_student_id = ? WHERE id = ?',
+      [label, subtitle, f.early, f.regular, f.late, f.spot, updated.active, sid.requiresStudentId ? 1 : 0, req.params.id]
     );
+    // registrations.category_label is a snapshot taken when the delegate
+    // registered, and it -- not the master row -- is what receipts, CSV
+    // exports and reminder emails print. A rename that stopped at the
+    // master would leave those delegates showing a category name that no
+    // longer appears anywhere in the admin panel, so it is carried across.
+    // Rows already at the new name are left alone, so `renamed` is a true
+    // count of what this change touched.
+    let renamed = 0;
+    if (label !== existing.label) {
+      const r = await dbRun(
+        'UPDATE registrations SET category_label = ? WHERE category_key = ? AND (category_label IS NULL OR category_label <> ?)',
+        [label, existing.category_key, label]);
+      renamed = r.changes || 0;
+    }
     const idNote = (v) => v.requiresStudentId ? ', requires student ID' : '';
     await recordAudit({
       req, entityType: 'fee_category', entityId: req.params.id,
       action: 'FEE_CATEGORY_UPDATE',
       oldValue: `${existing.label} — early ₹${inr(existing.early_fee)}, regular ₹${inr(existing.regular_fee)}, late ₹${inr(existing.late_fee)}, spot ₹${inr(existing.spot_fee)}, ${existing.active ? 'active' : 'inactive'}${idNote({ requiresStudentId: !!existing.requires_student_id })}`,
-      newValue: `${existing.label} — early ₹${inr(f.early)}, regular ₹${inr(f.regular)}, late ₹${inr(f.late)}, spot ₹${inr(f.spot)}, ${updated.active ? 'active' : 'inactive'}${idNote(sid)}`,
+      newValue: `${label} — early ₹${inr(f.early)}, regular ₹${inr(f.regular)}, late ₹${inr(f.late)}, spot ₹${inr(f.spot)}, ${updated.active ? 'active' : 'inactive'}${idNote(sid)}`
+        + (label !== existing.label ? ` — renamed from "${existing.label}", ${renamed} registration(s) updated` : ''),
     });
-    res.json({ success: true });
+    res.json({ success: true, renamed });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Bring this category's registrations back to the master label. Renaming
+// through the PUT above already carries the new name across, so this is for
+// rows that drifted some other way -- historically, renames made directly
+// against the database, which left delegates' receipts printing a category
+// name the admin panel no longer showed anywhere.
+//
+// Deliberately only touches the denormalised label. category_key, the fee
+// and everything else about the registration are left exactly as they are:
+// this reconciles a display name, it does not re-categorise anyone.
+app.post('/api/admin/fees/categories/:id/realign', requirePermission('masters.fees_manage'), async (req, res, next) => {
+  try {
+    const cat = await dbGet('SELECT * FROM fee_categories WHERE id = ?', [req.params.id]);
+    if (!cat) return res.status(404).json({ success: false, error: 'Category not found.' });
+    const result = await dbRun(
+      'UPDATE registrations SET category_label = ? WHERE category_key = ? AND (category_label IS NULL OR category_label <> ?)',
+      [cat.label, cat.category_key, cat.label]);
+    const updated = result.changes || 0;
+    if (updated > 0) {
+      await recordAudit({
+        req, entityType: 'fee_category', entityId: req.params.id,
+        action: 'FEE_CATEGORY_REALIGN', oldValue: null,
+        newValue: `${updated} registration(s) realigned to "${cat.label}"`,
+      });
+    }
+    res.json({ success: true, updated });
   } catch (err) {
     next(err);
   }
