@@ -779,13 +779,28 @@ async function loadDashboard() {
 
   renderVerifyEmailBanner();
 
-  const regRes = await fetch('/api/registrations/me');
-  const regData = await regRes.json();
-  applyRegistrationState(regData.registration);
-
-  await loadAbstractStatus();
-  await renderGroupSection();
+  // Show the dashboard shell now rather than gating it behind three
+  // separate network round trips run one after another -- on a slow
+  // connection that meant staring at nothing but the "Welcome back" toast
+  // for as long as all three combined took, and a single one of them
+  // rejecting outright used to throw straight past navigateTo, leaving the
+  // delegate stuck with no page under the toast at all. The markup already
+  // ships neutral placeholder states for exactly this ("Checking...", "Not
+  // Submitted", the bootstrap chip below) -- this is what they're for. Each
+  // section now fills in on its own, in parallel, as its own fetch resolves.
   navigateTo('dashboard-page');
+
+  await Promise.all([
+    (async () => {
+      try {
+        const regRes = await fetch('/api/registrations/me');
+        const regData = await regRes.json();
+        applyRegistrationState(regData.registration);
+      } catch (e) { /* leave as-is */ }
+    })(),
+    loadAbstractStatus(),
+    renderGroupSection(),
+  ]);
 }
 
 // Paint every part of the dashboard that depends on the registration: the
@@ -921,6 +936,13 @@ const GROUP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 async function renderGroupSection() {
   const box = document.getElementById('group-section');
   if (!box) return;
+  // Wrapped like loadAbstractStatus's own fetch: the .catch() on .json()
+  // below only covers a bad response body, not fetch() itself rejecting
+  // outright (a network failure) -- which, unguarded, threw straight past
+  // this function's several other callers (loadDashboard included) with
+  // nothing to show for it. A failed fetch here just leaves the section
+  // hidden, the same as "not in a group with nothing eligible" already does.
+  try {
   const data = await (await fetch('/api/groups/me')).json().catch(() => ({}));
   const g = data.group;
 
@@ -973,6 +995,7 @@ async function renderGroupSection() {
       <button onclick="startGroup()" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Start a group</button>
     </div>`;
   box.classList.remove('hidden');
+  } catch (e) { box.classList.add('hidden'); }
 }
 
 async function startGroup() {
