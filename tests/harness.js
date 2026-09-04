@@ -128,7 +128,7 @@ function report() {
 // person they would throttle each other, which is exactly what happened when
 // the suite first ran against a fixture. Chosen from the file name so a given
 // test always gets the same account, whatever order the runner uses.
-const ADMIN_POOL_SIZE = 60;   // must match tests/seed.js
+const ADMIN_POOL_SIZE = 100;   // must match tests/seed.js
 const ADMIN_PW = 'harness-admin-pw';
 const DELEGATE_PW = 'harness-delegate-pw';
 //

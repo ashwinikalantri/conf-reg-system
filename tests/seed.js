@@ -45,8 +45,11 @@ const ago = (days) => now - days * DAY;
 const ymd = (offsetDays) => new Date(now + offsetDays * DAY).toISOString().slice(0, 10);
 
 const ADMIN_PW = 'harness-admin-pw';
-// Must match ADMIN_POOL_SIZE in harness.js.
-const ADMIN_POOL_SIZE = 60;
+// Must match ADMIN_POOL_SIZE in harness.js. Raised with headroom past the
+// test-file count rather than exactly matching it, since this redesign
+// keeps adding one new test file per phase and hitting this exact ceiling
+// each time is just friction, not a real safeguard.
+const ADMIN_POOL_SIZE = 100;
 const DELEGATE_PW = 'harness-delegate-pw';
 
 // --- 1. schema, straight from the application ------------------------------

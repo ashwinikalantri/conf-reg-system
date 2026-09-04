@@ -6273,7 +6273,7 @@ async function sendRegistrationReminders() {
   if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
   if (!phones.length) return showToast('Select at least one recipient.');
 
-  if (!confirm(`Send this reminder to ${phones.length} selected ${phones.length === 1 ? 'person' : 'people'}? This can't be undone.`)) return;
+  if (!(await showConfirm(`Send this reminder to ${phones.length} selected ${phones.length === 1 ? 'person' : 'people'}? This can't be undone.`))) return;
 
   const btn = document.getElementById('reminder-send-btn');
   const resultEl = document.getElementById('reminder-send-result');
@@ -6425,7 +6425,7 @@ async function sendBalanceDueReminders() {
   if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
   if (!phones.length) return showToast('Select at least one recipient.');
 
-  if (!confirm(`Send this reminder to ${phones.length} selected ${phones.length === 1 ? 'person' : 'people'}? This can't be undone.`)) return;
+  if (!(await showConfirm(`Send this reminder to ${phones.length} selected ${phones.length === 1 ? 'person' : 'people'}? This can't be undone.`))) return;
 
   const btn = document.getElementById('bdreminder-send-btn');
   const resultEl = document.getElementById('bdreminder-send-result');
@@ -6660,7 +6660,7 @@ async function sendCustomReminders() {
   if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
   if (!emails.length) return showToast('Enter at least one email address.');
 
-  if (!confirm(`Send this reminder to ${emails.length} entered ${emails.length === 1 ? 'address' : 'addresses'}? This can't be undone.`)) return;
+  if (!(await showConfirm(`Send this reminder to ${emails.length} entered ${emails.length === 1 ? 'address' : 'addresses'}? This can't be undone.`))) return;
 
   const btn = document.getElementById('customreminder-send-btn');
   const resultEl = document.getElementById('customreminder-send-result');
