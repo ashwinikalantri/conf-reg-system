@@ -45,7 +45,7 @@ console.log('\n== 4. Slip labels ==');
    JSON.stringify(tabs.map(t=>t.label)));
  check('it is not numbered when there is only one', !/Payment Slip \d/.test(tabs[0].label), tabs[0].label);
  check('a single document shows a plain label, not a tab strip',
-   els['review-img-solo-label'].textContent.includes('Payment Slip') &&
+   els['review-img-solo-label'].innerHTML.includes('Payment Slip') &&
    els['review-img-switcher'].classList.contains('hidden'));
 }
 {
@@ -146,5 +146,43 @@ console.log('\n== 1. The ledger row button ==');
    submitted_at:Date.now(),has_screenshot:0});
  check('no slip on file -> no button offered', !/<button[^>]*showTxnSlip/.test(noSlip));
  check('...it says so instead', noSlip.includes('No slip on file'));
+}
+
+console.log('\n== 0. Tab labels reach the page as markup, not as escaped source ==');
+// The ID Card and Payment Slip tabs rendered the raw text "<svg viewBox=..."
+// inside the button instead of an icon and a word. The label was built as
+// ICON(...) + 'ID Card' -- one string mixing our markup with display text --
+// and then went through two sinks that both treat their input as text:
+// esc(label) for the tab strip, and textContent for the single-document
+// label. Every check that existed here asked whether the label *contained*
+// "Payment Slip", which an escaped blob still does, so the whole section
+// passed while the pane was unreadable. These assert on the rendered form.
+{
+ const {api,els}=harness();
+ api.buildReviewEvidence({id:77,has_id_card:1,has_screenshot:0,
+   transactions:[{id:88,has_screenshot:1}]});
+ const strip=els['review-img-tabs'].innerHTML;
+ check('the tab strip carries real <svg>, not escaped source',
+   strip.includes('<svg') && !strip.includes('&lt;svg'), strip.slice(0,120));
+ check('and still shows both words',
+   strip.includes('ID Card') && strip.includes('Payment Slip'));
+ // The invariant that keeps it that way: icon and label stay separate, so
+ // neither sink has to choose between escaping the text and rendering the
+ // icon. A label that carries markup again is the bug coming back.
+ const tabs=api.state().tabs;
+ check('icon and label are separate fields',
+   tabs.every(t=>typeof t.icon==='string' && t.icon.includes('<svg') && typeof t.label==='string'),
+   JSON.stringify(tabs.map(t=>({icon:(t.icon||'').slice(0,5),label:t.label}))));
+ check('the label half is plain text, with no markup in it',
+   tabs.every(t=>!t.label.includes('<')), JSON.stringify(tabs.map(t=>t.label)));
+}
+{
+ const {api,els}=harness();
+ api.buildReviewEvidence({id:78,has_id_card:0,has_screenshot:0,
+   transactions:[{id:89,has_screenshot:1}]});
+ const solo=els['review-img-solo-label'].innerHTML;
+ check('the single-document label carries real <svg> too',
+   solo.includes('<svg') && !solo.includes('&lt;svg'), solo.slice(0,120));
+ check('...and its word', solo.includes('Payment Slip'));
 }
 report();

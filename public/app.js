@@ -3451,8 +3451,15 @@ function buildReviewEvidence(p) {
   // ID card first, and selected by default. For a student category the ID is
   // the first question the reviewer has to answer -- it gates Accept & Verify
   // -- which is why it is also the first section of the detail column.
+  // icon and label are kept APART, not pre-concatenated. They end up in two
+  // different sinks -- innerHTML for the tab strip, and the solo label -- and
+  // a single combined string forced both to choose between escaping the
+  // delegate-facing text or letting the icon's SVG through. Split, each half
+  // gets the treatment it needs: the icon is our own markup and goes in raw,
+  // the text is escaped. (Pre-concatenated, both sinks escaped the whole
+  // thing and printed the raw <svg ...> source into the button.)
   if (p.has_id_card) {
-    reviewImageTabs.push({ key: 'idcard', label: ICON('idbadge') + 'ID Card' });
+    reviewImageTabs.push({ key: 'idcard', icon: ICON('idbadge'), label: 'ID Card' });
     reviewImageUrls.idcard = `/api/registrations/${encodeURIComponent(p.id)}/id-card`;
   }
   // Then one tab per payment with a slip, oldest first. Numbered only when
@@ -3461,13 +3468,13 @@ function buildReviewEvidence(p) {
   const slipTxns = (p.transactions || []).filter((t) => t.has_screenshot);
   slipTxns.forEach((t, i) => {
     const key = `slip${t.id}`;
-    reviewImageTabs.push({ key, label: ICON('document') + `Payment Slip${slipTxns.length > 1 ? ` ${i + 1}` : ''}` });
+    reviewImageTabs.push({ key, icon: ICON('document'), label: `Payment Slip${slipTxns.length > 1 ? ` ${i + 1}` : ''}` });
     reviewImageUrls[key] = `/api/payment-transactions/${encodeURIComponent(t.id)}/screenshot`;
   });
   // Older registrations predate the per-payment ledger and only have the
   // registration's own screenshot; without this they'd show no slip at all.
   if (!slipTxns.length && p.has_screenshot) {
-    reviewImageTabs.push({ key: 'screenshot', label: ICON('document') + 'Payment Slip' });
+    reviewImageTabs.push({ key: 'screenshot', icon: ICON('document'), label: 'Payment Slip' });
     reviewImageUrls.screenshot = `/api/registrations/${encodeURIComponent(p.id)}/screenshot`;
   }
 
@@ -3567,17 +3574,21 @@ function setReviewImage(which) {
     switcher.classList.toggle('flex', multi);
   }
   if (soloLabel) {
-    const soloText = reviewImageTabs.length === 1 ? reviewImageTabs[0].label : '';
-    soloLabel.textContent = soloText;
-    soloLabel.classList.toggle('hidden', multi || !soloText);
+    // innerHTML, not textContent: the label carries an icon. textContent
+    // printed the icon's SVG source into the page as literal text.
+    const solo = reviewImageTabs.length === 1 ? reviewImageTabs[0] : null;
+    soloLabel.innerHTML = solo ? solo.icon + esc(solo.label) : '';
+    soloLabel.classList.toggle('hidden', multi || !solo);
   }
   // Active-tab styling written out by hand rather than toggled via a class,
   // so the inactive state stays legible on the dark pane.
   if (tabsBox) {
-    tabsBox.innerHTML = reviewImageTabs.map(({ key, label }) => {
+    tabsBox.innerHTML = reviewImageTabs.map(({ key, icon, label }) => {
       const active = key === which;
+      // icon is our own markup (ICON()) and goes in as-is; only the text is
+      // escaped. Escaping the pair together printed the SVG source instead.
       return `<button type="button" onclick="setReviewImage('${esc(key)}')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition ${
-        active ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-300 hover:text-white hover:bg-slate-700'}">${esc(label)}</button>`;
+        active ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-300 hover:text-white hover:bg-slate-700'}">${icon || ''}${esc(label)}</button>`;
     }).join('');
   }
   // Nudges a reviewer looking at a payment slip to also open the ID card --
