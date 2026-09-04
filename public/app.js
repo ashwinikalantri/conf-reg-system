@@ -5181,6 +5181,28 @@ async function renderBackendActivity() {
   // Only set the initial sub-tab -- if the admin already picked one while
   // this fetch was in flight, leave their choice alone.
   if (!document.querySelector('[id^="activity-panel-"]:not(.hidden)')) switchActivityLog('imports');
+
+  // Re-fetching replaces every tbody's innerHTML, which would otherwise
+  // silently drop a filter someone had typed while the fetch was in
+  // flight -- the search box would still show their text, but every row
+  // would be back to visible. Re-apply whichever logs already have one.
+  ACTIVITY_SUBTABS.forEach((key) => {
+    const input = document.getElementById(`activity-search-${key}`);
+    if (input && input.value) filterActivityRows(key);
+  });
+}
+
+// Plain client-side row filter for one activity log's own table -- matches
+// filterReportRows()'s approach (row text includes the query), just against
+// <tr> elements instead of the generic report viewer's .report-row divs.
+function filterActivityRows(key) {
+  const input = document.getElementById(`activity-search-${key}`);
+  const tbody = document.getElementById(`activity-${key}-body`);
+  if (!input || !tbody) return;
+  const q = input.value.trim().toLowerCase();
+  tbody.querySelectorAll('tr').forEach((row) => {
+    row.classList.toggle('hidden', !(!q || row.textContent.toLowerCase().includes(q)));
+  });
 }
 
 async function saveFeeConfig() {

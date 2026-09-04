@@ -1,6 +1,6 @@
 <%
-// Eight logs, all the same shape (a subnav pill + a titled panel wrapping
-// one table), previously copy-pasted eight times with only the label, icon,
+// Nine logs, all the same shape (a subnav pill + a titled panel wrapping
+// one table), previously copy-pasted nine times with only the label, icon,
 // columns and tbody id varying. switchActivityLog()/renderBackendActivity()
 // in app.js key off activity-subnav-<key>/activity-panel-<key>/
 // activity-count-<key>/activity-<key>-body, so as long as this loop keeps
@@ -49,11 +49,14 @@ const activityLogs = [
 
 <% activityLogs.forEach((log, i) => { %>
       <div id="activity-panel-<%= log.key %>" class="<%= i === 0 ? '' : 'hidden ' %>bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-100">
-          <h3 class="font-bold text-slate-800 text-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><%- log.icon %></svg><%= log.label %></h3>
+        <div class="px-4 py-3 border-b border-slate-100 flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h3 class="font-bold text-slate-800 text-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><%- log.icon %></svg><%= log.label %></h3>
 <% if (log.note) { %>
-          <p class="text-[11px] text-slate-500"><%= log.note %></p>
+            <p class="text-[11px] text-slate-500 max-w-md"><%= log.note %></p>
 <% } %>
+          </div>
+          <input type="text" id="activity-search-<%= log.key %>" oninput="filterActivityRows('<%= log.key %>')" placeholder="Filter this log…" class="w-full sm:w-52 h-8 px-3 border border-slate-300 rounded-lg text-xs bg-white outline-none shrink-0">
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-left border-collapse min-w-[<%= log.minWidth %>px] text-sm">
