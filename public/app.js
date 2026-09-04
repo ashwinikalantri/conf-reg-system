@@ -2514,6 +2514,10 @@ function setupAdminDelegation() {
       if (del) return deleteFeeCategory(del.dataset.id);
       const realign = e.target.closest('.fee-realign');
       if (realign) return realignFeeCategory(realign.dataset.id);
+      const edit = e.target.closest('.fee-edit');
+      if (edit) return toggleFeeNameEdit(edit.dataset.id, true);
+      const cancel = e.target.closest('.fee-edit-cancel');
+      if (cancel) return toggleFeeNameEdit(cancel.dataset.id, false);
     });
   }
 }
@@ -5090,10 +5094,26 @@ async function renderBackendFees() {
   tbody.innerHTML = (data.categories || []).map((c) => `
     <tr class="${c.active ? '' : 'opacity-50'}" data-id="${esc(c.id)}">
       <td class="p-4">
-        <input type="text" value="${esc(c.label)}" aria-label="Category label"
-               class="fee-label w-full p-1.5 border rounded text-sm font-semibold text-slate-800" data-id="${esc(c.id)}">
-        <input type="text" value="${esc(c.subtitle || '')}" placeholder="Subtitle (optional)" aria-label="Category subtitle"
-               class="fee-subtitle w-full mt-1 p-1.5 border rounded text-xs text-slate-500" data-id="${esc(c.id)}">
+        <!-- Read-only until Edit is pressed. A live text box in a dense
+             table is too easy to change by accident, and a stray keystroke
+             here doesn't just mistitle a row -- saving renames every
+             registration in the category (see the PUT). The name fields
+             only exist in the DOM while editing, so a save that wasn't a
+             deliberate rename sends no label at all, and the server's
+             "absent means no change" rule leaves it alone. -->
+        <div class="fee-name-view" data-id="${esc(c.id)}">
+          <p class="font-semibold text-slate-800">${esc(c.label)}</p>
+          ${c.subtitle ? `<p class="text-xs text-slate-500">${esc(c.subtitle)}</p>` : ''}
+          <button class="fee-edit mt-1 px-2 py-0.5 border border-slate-300 hover:bg-slate-50 text-slate-600 text-[11px] font-semibold rounded" data-id="${esc(c.id)}">Edit name</button>
+        </div>
+        <div class="fee-name-edit hidden" data-id="${esc(c.id)}">
+          <input type="text" value="${esc(c.label)}" aria-label="Category label" data-original="${esc(c.label)}"
+                 class="fee-label w-full p-1.5 border rounded text-sm font-semibold text-slate-800" data-id="${esc(c.id)}">
+          <input type="text" value="${esc(c.subtitle || '')}" placeholder="Subtitle (optional)" aria-label="Category subtitle" data-original="${esc(c.subtitle || '')}"
+                 class="fee-subtitle w-full mt-1 p-1.5 border rounded text-xs text-slate-500" data-id="${esc(c.id)}">
+          <p class="text-[10px] text-slate-500 mt-1">Press <b>Save</b> to apply. Renaming updates this category's existing registrations too.</p>
+          <button class="fee-edit-cancel mt-1 text-[11px] text-slate-500 hover:underline font-semibold" data-id="${esc(c.id)}">Cancel</button>
+        </div>
         <!-- The key is shown, never edited: registrations, group discount
              rules and promo-code scopes all join on it. -->
         <p class="text-[10px] font-mono text-slate-400 mt-1">${esc(c.category_key)}${c.active ? '' : ' · inactive'}</p>
@@ -5324,13 +5344,35 @@ async function handleAddFeeCategory(e) {
   renderBackendFees();
 }
 
+// Show or hide one row's name editor. Cancel puts the fields back to what
+// they held when the row was drawn, so an abandoned edit leaves nothing
+// behind for the next Save to pick up.
+function toggleFeeNameEdit(id, editing) {
+  const view = document.querySelector(`.fee-name-view[data-id="${id}"]`);
+  const edit = document.querySelector(`.fee-name-edit[data-id="${id}"]`);
+  if (!view || !edit) return;
+  if (!editing) {
+    edit.querySelectorAll('input[data-original]').forEach((el) => { el.value = el.dataset.original; });
+  }
+  view.classList.toggle('hidden', editing);
+  edit.classList.toggle('hidden', !editing);
+  if (editing) {
+    const label = edit.querySelector('.fee-label');
+    if (label) { label.focus(); label.select(); }
+  }
+}
+
 async function saveFeeCategory(id) {
   const q = (cls) => document.querySelector(`.${cls}[data-id="${id}"]`);
+  // The name is sent only when the row is actually being edited. Otherwise
+  // it is left out entirely, and the server keeps whatever it has -- so
+  // saving a fee change can never rename a category as a side effect.
+  const editing = (document.querySelector(`.fee-name-edit[data-id="${id}"]`) || {}).classList;
+  const renaming = editing && !editing.contains('hidden');
   const data = await (await fetch(`/api/admin/fees/categories/${encodeURIComponent(id)}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      label: q('fee-label').value.trim(),
-      subtitle: q('fee-subtitle').value.trim(),
+      ...(renaming ? { label: q('fee-label').value.trim(), subtitle: q('fee-subtitle').value.trim() } : {}),
       earlyFee: Number(q('fee-early').value),
       regularFee: Number(q('fee-regular').value),
       lateFee: Number(q('fee-late').value),
@@ -5354,7 +5396,11 @@ async function saveFeeCategory(id) {
 // fee -- but it does alter what already-issued receipts print, so it asks
 // first, like every other irreversible action here.
 async function realignFeeCategory(id) {
-  const label = (document.querySelector(`.fee-label[data-id="${id}"]`) || {}).value || 'this label';
+  // Read the SAVED name from the static view, not the edit box -- realign
+  // applies the label the server already holds, so quoting an unsaved edit
+  // would promise something this does not do.
+  const view = document.querySelector(`.fee-name-view[data-id="${id}"] p`);
+  const label = (view && view.textContent) || 'this label';
   if (!(await showConfirm(`Update every registration in this category to "${String(label).trim()}"? Their receipts and exports will show the new name.`))) return;
   const data = await (await fetch(`/api/admin/fees/categories/${encodeURIComponent(id)}/realign`, { method: 'POST' })).json();
   if (!data.success) return showToast(data.error || 'Could not realign.');
