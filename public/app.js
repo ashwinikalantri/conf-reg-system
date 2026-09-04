@@ -7242,8 +7242,27 @@ function updateRegisterDelegateFee() {
     cashInput.value = total;
     cashInput.dataset.auto = '1';
   }
+  // Partial-payment warning: cash only, and only once something's actually
+  // been entered -- an empty/zero field isn't "less than the fee due" in
+  // any useful sense, just not filled in yet.
+  const partialNote = document.getElementById('rd-partial-note');
+  if (partialNote) {
+    const cashVal = Number(cashInput && cashInput.value) || 0;
+    partialNote.classList.toggle('hidden', !(rdMode === 'CASH' && cashVal > 0 && cashVal < total));
+  }
   if (rdMode === 'BANK_TRANSFER') loadRegisterDelegateBankCandidates(total);
   return total;
+}
+
+// The admin typing their own amount (a deliberate partial payment, say) --
+// stop the auto-fill in updateRegisterDelegateFee() from silently
+// overwriting it back to the full fee the next time a category or program
+// option changes, and refresh the partial-due note against what they just
+// typed.
+function onRegisterDelegateCashInput() {
+  const cashInput = document.getElementById('rd-cash-amount');
+  if (cashInput) delete cashInput.dataset.auto;
+  updateRegisterDelegateFee();
 }
 
 function setRegisterDelegateMode(mode) {
@@ -7257,7 +7276,11 @@ function setRegisterDelegateMode(mode) {
   if (bankBtn) bankBtn.className = `flex-1 py-2 rounded-md ${!isCash ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`;
   if (cashBox) cashBox.classList.toggle('hidden', !isCash);
   if (bankBox) bankBox.classList.toggle('hidden', isCash);
-  if (isCash) setRegisterDelegateBankLinkLater(false);
+  // Either direction needs a fresh updateRegisterDelegateFee() call: bank
+  // mode uses its return value to load candidates near that amount, and
+  // cash mode needs it to re-evaluate the partial-due note (hidden in bank
+  // mode, so switching away can leave it stale otherwise).
+  if (isCash) { setRegisterDelegateBankLinkLater(false); updateRegisterDelegateFee(); }
   else loadRegisterDelegateBankCandidates(updateRegisterDelegateFee());
 }
 
