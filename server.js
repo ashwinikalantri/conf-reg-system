@@ -28,6 +28,43 @@ const {
 
 const multer = require('multer');
 const XLSX = require('xlsx');
+// Shared with scripts/daily-digest.js -- see the note there about why the
+// email chrome is not just the app's own CSS.
+const { emailWrap: renderEmail, emailButton, STEEL: EMAIL_STEEL } = require('./email-template');
+
+// The handful of standalone pages this server renders outside the two SPAs
+// -- the Drive OAuth landing, the discount-code share page and the report
+// viewer. Unlike email these run in a browser, so they can load the real
+// webfaces the portal and admin panel use rather than approximating them.
+const PAGE_FONTS = '<link rel="preconnect" href="https://fonts.googleapis.com">'
+  + '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+  + '<link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">';
+const PAGE_FONT = "'Source Sans 3', system-ui, -apple-system, 'Segoe UI', sans-serif";
+const PAGE_HEAD_FONT = "'Libre Franklin', 'Source Sans 3', system-ui, sans-serif";
+
+// The short "something stopped you here" pages -- maintenance, not
+// authorised, no receipt yet. There were four of these, each an ad hoc
+// string with bare `font-family:sans-serif` and no styling at all, which is
+// how they had escaped every redesign: they are not part of either SPA and
+// nothing links to them from a screen anyone designs. One helper instead,
+// so they look like the app they interrupt.
+//
+// `title` is plain text, `bodyHtml` is trusted markup from the call sites
+// below (never delegate input, which is escaped by the caller).
+function noticePage(title, bodyHtml, linkHref = '/', linkText = 'Return to the delegate portal') {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">`
+    + `<meta name="viewport" content="width=device-width, initial-scale=1">`
+    + `<title>${escapeHtml(title)}</title>${PAGE_FONTS}</head>`
+    + `<body style="font-family:${PAGE_FONT};background:#f1f5f9;margin:0;padding:3rem 1rem;color:#0f172a">`
+    + `<div style="max-width:32rem;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;`
+    + `padding:2rem;text-align:center;box-shadow:0 1px 2px rgba(20,30,40,.05), 0 12px 28px -14px rgba(20,30,40,.18)">`
+    + `<h1 style="font-family:${PAGE_HEAD_FONT};font-size:1.15rem;font-weight:700;margin:0 0 .5rem">${escapeHtml(title)}</h1>`
+    + `<div style="font-size:.9rem;color:#475569;line-height:1.6">${bodyHtml}</div>`
+    + `<p style="margin:1.5rem 0 0"><a href="${escapeHtml(linkHref)}" style="display:inline-block;background:#2f5673;`
+    + `color:#fff;text-decoration:none;font-family:${PAGE_HEAD_FONT};font-weight:700;font-size:.85rem;`
+    + `padding:.7rem 1.4rem;border-radius:10px">${escapeHtml(linkText)}</a></p>`
+    + `</div></body></html>`;
+}
 
 const app = express();
 // `let`, not `const`: admin-editable from Settings → General (see
@@ -470,18 +507,11 @@ async function notifyDelegate(phone, subject, html) {
   if (u && u.email) sendEmail(u.email, subject, html);
 }
 
-const emailWrap = (title, bodyHtml) =>
-  `<div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;color:#0f172a">
-     <div style="background:#312e81;color:#fff;padding:1.25rem 1.5rem;border-radius:12px 12px 0 0">
-       <div style="font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:#c7d2fe">${escapeHtml([CONFERENCE.acronym, CONFERENCE.location].filter(Boolean).join(' · '))}</div>
-       <h1 style="font-size:1.05rem;margin:.35rem 0 0">${escapeHtml(CONFERENCE.name)}</h1>
-     </div>
-     <div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:1.5rem">
-       <h2 style="font-size:1rem;margin:0 0 .75rem">${escapeHtml(title)}</h2>
-       ${bodyHtml}
-       <p style="color:#94a3b8;font-size:.72rem;margin-top:1.5rem">This is an automated message from the conference registration portal.</p>
-     </div>
-   </div>`;
+// The chrome itself lives in email-template.js, shared with the daily-digest
+// script so the two cannot drift apart again (they already had). CONFERENCE
+// is read at send time, not at require time, since Settings → General can
+// change it while the server is up.
+const emailWrap = (title, bodyHtml) => renderEmail(title, bodyHtml, CONFERENCE);
 
 // Fees are stored in the admin-editable fee_categories master and resolved at
 // today's pricing phase (see resolveFee); nothing is taken from the request body.
@@ -2981,21 +3011,11 @@ app.get('/admin', (req, res) => {
   // Same literal-role reasoning as maintenanceGate above, not a permission.
   if (maintenance.enabled && req.session.role !== 'SUPER_ADMIN') {
     return res.status(503).send(
-      '<!doctype html><meta charset="utf-8"><title>Under maintenance</title>' +
-      '<body style="font-family:sans-serif;max-width:32rem;margin:4rem auto;text-align:center">' +
-      '<h1>🔧 Under maintenance</h1>' +
-      `<p>${escapeHtml(maintenance.message)}</p>` +
-      '<p><a href="/">Return to the delegate portal</a></p></body>'
-    );
+      noticePage('Under maintenance', `<p style="margin:0">${escapeHtml(maintenance.message)}</p>`));
   }
   if (!isKnownAdminRole(req.session.role)) {
     return res.status(403).send(
-      '<!doctype html><meta charset="utf-8"><title>Forbidden</title>' +
-      '<body style="font-family:sans-serif;max-width:32rem;margin:4rem auto;text-align:center">' +
-      '<h1>403 — Not authorised</h1>' +
-      '<p>Your account does not have administrative access.</p>' +
-      '<p><a href="/">Return to the delegate portal</a></p></body>'
-    );
+      noticePage('Not authorised', '<p style="margin:0">Your account does not have administrative access.</p>'));
   }
   res.render('admin');
 });
@@ -4385,10 +4405,10 @@ const renderReceipt = async (req, res, next) => {
       ? await dbGet('SELECT * FROM registrations WHERE id = ?', [req.params.id])
       : await dbGet('SELECT * FROM registrations WHERE phone_number = ?', [req.session.phone]);
     if (!reg) {
-      return res.status(404).send('<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;text-align:center;margin-top:4rem">No registration found.</body>');
+      return res.status(404).send(noticePage('No registration found', '<p style="margin:0">We could not find a registration for this account.</p>'));
     }
     if (reg.bank_status !== 'BANK_VERIFIED') {
-      return res.status(403).send('<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;text-align:center;margin-top:4rem"><h2>Receipt not available yet</h2><p>A receipt is issued once the finance team verifies the payment.</p><p><a href="/">Return to portal</a></p></body>');
+      return res.status(403).send(noticePage('Receipt not available yet', '<p style="margin:0">A receipt is issued once the finance team verifies the payment.</p>'));
     }
 
     // From the registration, not the session: the admin route's caller is not
@@ -7324,14 +7344,20 @@ app.get('/api/admin/backup/drive-oauth/start', requirePermission('system.backups
 
 // A plain page, because this is a browser landing rather than an API call.
 function driveResultPage(title, detail, ok) {
+  // The tick/warning is drawn, not an emoji, matching the icon pass the
+  // admin panel went through -- this page is reached from Settings, and a
+  // colour emoji beside that panel's stroke icons read as a leftover.
+  const mark = ok
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="#2f5673" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="40" height="40"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9.5"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="#b45309" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="40" height="40"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="#b45309" stroke="none"/></svg>';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title></head>
-<body style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#f1f5f9;margin:0;padding:3rem 1rem;color:#0f172a">
-  <div style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:2rem;text-align:center">
-    <div style="font-size:2.5rem">${ok ? '✅' : '⚠️'}</div>
-    <h1 style="font-size:1.15rem;margin:.75rem 0 .5rem">${escapeHtml(title)}</h1>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title>${PAGE_FONTS}</head>
+<body style="font-family:${PAGE_FONT};background:#f1f5f9;margin:0;padding:3rem 1rem;color:#0f172a">
+  <div style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:2rem;text-align:center;box-shadow:0 1px 2px rgba(20,30,40,.05), 0 12px 28px -14px rgba(20,30,40,.18)">
+    <div style="line-height:0;margin-bottom:.25rem">${mark}</div>
+    <h1 style="font-family:${PAGE_HEAD_FONT};font-size:1.15rem;font-weight:700;margin:.75rem 0 .5rem">${escapeHtml(title)}</h1>
     <p style="font-size:.9rem;color:#475569;line-height:1.6;margin:0 0 1.5rem">${escapeHtml(detail)}</p>
-    <a href="/admin#general" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;font-weight:700;font-size:.85rem;padding:.7rem 1.4rem;border-radius:10px">Back to Settings</a>
+    <a href="/admin#general" style="display:inline-block;background:#2f5673;color:#fff;text-decoration:none;font-weight:700;font-size:.85rem;padding:.7rem 1.4rem;border-radius:10px">Back to Settings</a>
   </div>
 </body></html>`;
 }
@@ -7941,18 +7967,18 @@ app.get('/api/admin/discount-codes/:id/share', requirePermission('discounts.view
 
     const { scopeLine, discountLine, expiryLine } = await discountCodeLines(code);
 
-    res.type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    res.type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${PAGE_FONTS}
 <title>Discount Code ${escapeHtml(code.code)}</title>
 <style>
-  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#0f172a;margin:2rem;}
-  .card{max-width:420px;width:100%;margin:0 auto;border:2px dashed #4f46e5;border-radius:16px;padding:2rem;text-align:center;box-sizing:border-box;}
-  .eyebrow{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:#6366f1;font-weight:700;}
-  h1{font-size:.95rem;margin:.35rem 0 1.25rem;color:#312e81;}
-  .code{font-family:ui-monospace,Menlo,monospace;font-size:2.25rem;font-weight:800;letter-spacing:.1em;background:#eef2ff;border-radius:12px;padding:1rem;margin:0 0 1rem;color:#312e81;}
+  body{font-family:${PAGE_FONT};color:#0f172a;margin:2rem;}
+  .card{max-width:420px;width:100%;margin:0 auto;border:2px dashed #2f5673;border-radius:16px;padding:2rem;text-align:center;box-sizing:border-box;}
+  .eyebrow{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:#46708c;font-weight:700;}
+  h1{font-family:${PAGE_HEAD_FONT};font-size:.95rem;font-weight:700;margin:.35rem 0 1.25rem;color:#244560;}
+  .code{font-family:ui-monospace,Menlo,monospace;font-size:2.25rem;font-weight:800;letter-spacing:.1em;background:#eef3f6;border-radius:12px;padding:1rem;margin:0 0 1rem;color:#244560;}
   .discount{font-size:1.1rem;font-weight:700;color:#047857;margin-bottom:.75rem;}
   p{font-size:.82rem;color:#475569;margin:.35rem 0;}
   .actions{margin-top:1.5rem;}
-  button{background:#4f46e5;color:#fff;border:0;border-radius:8px;padding:.6rem 1.4rem;font-weight:700;cursor:pointer;font-size:.85rem;}
+  button{background:#2f5673;color:#fff;border:0;border-radius:8px;padding:.6rem 1.4rem;font-weight:700;cursor:pointer;font-size:.85rem;}
   @media print{body{margin:0;}.actions{display:none;}.card{border-style:solid;}}
 </style></head><body>
   <div class="card">
@@ -7991,8 +8017,8 @@ app.post('/api/admin/discount-codes/:id/email', requirePermission('discounts.man
 
     const { scopeLine, discountLine, expiryLine } = await discountCodeLines(code);
     const body = `
-      <div style="text-align:center;border:2px dashed #4f46e5;border-radius:12px;padding:1.5rem;margin:0 0 1rem">
-        <div style="font-family:ui-monospace,Menlo,monospace;font-size:1.75rem;font-weight:800;letter-spacing:.08em;background:#eef2ff;border-radius:10px;padding:.85rem;margin:0 0 .75rem;color:#312e81">${escapeHtml(code.code)}</div>
+      <div style="text-align:center;border:2px dashed #2f5673;border-radius:12px;padding:1.5rem;margin:0 0 1rem">
+        <div style="font-family:ui-monospace,Menlo,monospace;font-size:1.75rem;font-weight:800;letter-spacing:.08em;background:#eef3f6;border-radius:10px;padding:.85rem;margin:0 0 .75rem;color:#244560">${escapeHtml(code.code)}</div>
         <p style="font-size:1rem;font-weight:700;color:#047857;margin:0 0 .5rem">${discountLine}</p>
         <p style="font-size:.82rem;color:#475569;margin:.3rem 0">${scopeLine}</p>
         <p style="font-size:.82rem;color:#475569;margin:.3rem 0">${expiryLine}</p>
@@ -9343,20 +9369,20 @@ function reportHtml(rep) {
   };
   const now = new Date().toLocaleString('en-IN', { dateStyle: 'long', timeStyle: 'short' });
   const total = rep.sections.reduce((n, s) => n + s.rows.length, 0);
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${PAGE_FONTS}
 <title>${escapeHtml(rep.title)}</title>
 <style>
-  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#0f172a;margin:2rem;}
-  h1{font-size:1.2rem;margin:0 0 .25rem;}
-  h2{font-size:.95rem;margin:1.5rem 0 .5rem;color:#312e81;}
+  body{font-family:${PAGE_FONT};color:#0f172a;margin:2rem;}
+  h1{font-family:${PAGE_HEAD_FONT};font-size:1.2rem;font-weight:700;margin:0 0 .25rem;}
+  h2{font-family:${PAGE_HEAD_FONT};font-size:.95rem;font-weight:700;margin:1.5rem 0 .5rem;color:#244560;}
   .count{color:#94a3b8;font-weight:400;font-size:.8rem;}
   .sub{color:#64748b;font-size:.8rem;margin-bottom:1rem;}
   table{width:100%;border-collapse:collapse;font-size:.8rem;}
-  th,td{border:1px solid #e2e8f0;padding:.5rem .6rem;text-align:left;vertical-align:top;}
+  th,td{border:1px solid #e2e8f0;padding:.5rem .6rem;text-align:left;vertical-align:top;font-variant-numeric:tabular-nums;}
   th{background:#f1f5f9;text-transform:uppercase;font-size:.68rem;letter-spacing:.04em;color:#475569;}
   tr:nth-child(even) td{background:#f8fafc;}
   .actions{margin:1.25rem 0;}
-  button{background:#4f46e5;color:#fff;border:0;border-radius:8px;padding:.55rem 1.25rem;font-weight:700;cursor:pointer;}
+  button{background:#2f5673;color:#fff;border:0;border-radius:8px;padding:.55rem 1.25rem;font-weight:700;cursor:pointer;}
   @media print{body{margin:0;}.actions{display:none;}}
 </style></head><body>
   <h1>${escapeHtml(CONFERENCE.acronym)} · ${escapeHtml(rep.title)}</h1>
@@ -9487,7 +9513,7 @@ app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), asyn
         emailWrap('Corrections requested',
           `<p>Dear ${escapeHtml(existing.author_name)},</p>
            <p>The scientific committee has reviewed your abstract, <b>"${escapeHtml(existing.title)}"</b>, and requests some corrections before it can be considered further:</p>
-           <blockquote style="margin:0.75rem 0;padding:0.5rem 1rem;border-left:3px solid #c7d2fe;color:#334155">${escapeHtml(note)}</blockquote>
+           <blockquote style="margin:0.75rem 0;padding:0.5rem 1rem;border-left:3px solid #b9cedb;color:#334155">${escapeHtml(note)}</blockquote>
            <p>Please log in to the portal, update your abstract, and resubmit it for review.</p>`));
     }
     res.json({ success: true });

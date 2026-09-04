@@ -161,18 +161,15 @@ function dbGet(db, sql, params = []) {
   });
 }
 
-const emailWrap = (title, bodyHtml) =>
-  `<div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;color:#0f172a">
-     <div style="background:#312e81;color:#fff;padding:1.25rem 1.5rem;border-radius:12px 12px 0 0">
-       <div style="font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:#c7d2fe">${escapeHtml([CONFERENCE_ACRONYM, CONFERENCE_LOCATION].filter(Boolean).join(' · '))}</div>
-       <h1 style="font-size:1.05rem;margin:.35rem 0 0">${escapeHtml(CONFERENCE_NAME)}</h1>
-     </div>
-     <div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:1.5rem">
-       <h2 style="font-size:1rem;margin:0 0 .75rem">${escapeHtml(title)}</h2>
-       ${bodyHtml}
-       <p style="color:#94a3b8;font-size:.72rem;margin-top:1.5rem">This is an automated message from the conference registration portal.</p>
-     </div>
-   </div>`;
+// One copy of the chrome, shared with the app (see email-template.js). This
+// used to be a second, byte-identical definition, and the pair had already
+// fallen a redesign behind. The conference constants are read at call time
+// because loadGeneralSettings() above refreshes them from the database on
+// each run.
+const { emailWrap: renderEmail } = require(path.join(APP_DIR, 'email-template'));
+const emailWrap = (title, bodyHtml) => renderEmail(title, bodyHtml, {
+  name: CONFERENCE_NAME, acronym: CONFERENCE_ACRONYM, location: CONFERENCE_LOCATION,
+});
 
 function buildDigestHtml(pending, pendingCount, verifiedCount, partialCount, abstractsSubmitted, abstractsReviewed, dateLabel) {
   const rows = pending.slice(0, MAX_ROWS_SHOWN).map((r) => `
@@ -216,7 +213,7 @@ function buildDigestHtml(pending, pendingCount, verifiedCount, partialCount, abs
       <tbody>${rows}${moreRow}</tbody>
     </table>` : `<p style="font-size:.85rem;color:#64748b">Nothing pending approval right now.</p>`}
     <div style="text-align:center;margin:1.25rem 0 .5rem">
-      <a href="${PORTAL_URL}/admin" style="display:inline-block;background:#4338ca;color:#fff;text-decoration:none;font-size:.8rem;font-weight:600;padding:.6rem 1.4rem;border-radius:8px">Open Registration Approval →</a>
+      <a href="${PORTAL_URL}/admin" style="display:inline-block;background:#2f5673;color:#fff;text-decoration:none;font-size:.8rem;font-weight:600;padding:.6rem 1.4rem;border-radius:8px">Open Registration Approval →</a>
     </div>`;
 
   return emailWrap(`Daily Registration Summary — ${dateLabel}`, body);
