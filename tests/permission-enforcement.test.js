@@ -146,5 +146,48 @@ const REPORT_PROBES = [
     check('the fixture has a delegate with a password', false, 'none found');
   }
 
+  // --- write probes ------------------------------------------------------
+  // Every probe above is a GET, so no write route had ever been proved to
+  // refuse anyone. Abstract assignment is exactly a claim about a write
+  // being refused -- accept/reject and set-format are two permissions now,
+  // and the whole point is that holding one does not get you the other.
+  console.log('\n== The two abstract writes are separately enforced ==');
+  check('the two routes are guarded by different keys',
+    perms.permissionForRoute('PUT /api/abstracts/:id/status') === 'abstracts.review'
+    && perms.permissionForRoute('PUT /api/abstracts/:id/allocation') === 'abstracts.assign',
+    [perms.permissionForRoute('PUT /api/abstracts/:id/status'),
+      perms.permissionForRoute('PUT /api/abstracts/:id/allocation')]);
+
+  {
+    const db2 = openDb({ readOnly: true });
+    const abs = await db2.get('SELECT id FROM abstracts LIMIT 1');
+    db2.close();
+    if (!abs) {
+      check('the fixture has an abstract to probe with', false, 'none found');
+    } else {
+      for (const role of Object.keys(STAFF)) {
+        if (!cookies[role]) continue;
+        const canReview = perms.roleCan(role, 'abstracts.review');
+        const canAssign = perms.roleCan(role, 'abstracts.assign');
+        // A 400 means it got past the guard and the handler objected (an
+        // abstract that is not ACCEPTED cannot be assigned a format) -- for
+        // this test that still counts as "not refused", same convention as
+        // the GET probes treating a 500 as served.
+        const st = await call('PUT', `/api/abstracts/${abs.id}/status`, { status: 'UNDER_REVIEW' }, cookies[role]);
+        check(`${role}: PUT status ${canReview ? 'allowed' : '403'}`,
+          (st.status !== 403) === canReview, `got ${st.status}`);
+        const al = await call('PUT', `/api/abstracts/${abs.id}/allocation`, { allocation: 'ORAL' }, cookies[role]);
+        check(`${role}: PUT allocation ${canAssign ? 'allowed' : '403'}`,
+          (al.status !== 403) === canAssign, `got ${al.status}`);
+      }
+      // The split is only meaningful if some role is on different sides of
+      // it. Stated as its own check so the pair above cannot pass by every
+      // role happening to hold both or neither.
+      const reviewOnly = Object.keys(STAFF).filter((r) =>
+        perms.roleCan(r, 'abstracts.review') && !perms.roleCan(r, 'abstracts.assign'));
+      check('at least one role can review but not assign', reviewOnly.length > 0, reviewOnly);
+    }
+  }
+
   report();
 })();

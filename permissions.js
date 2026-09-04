@@ -58,7 +58,13 @@ const PERMISSIONS = [
 
   // --- Abstracts ---
   ['abstracts.view', 'abstracts', 'View abstracts', 'Open the Abstracts tab and read submissions.'],
-  ['abstracts.review', 'abstracts', 'Review abstracts', 'Accept, reject or allocate an abstract.'],
+  ['abstracts.review', 'abstracts', 'Review abstracts', 'Accept or reject a submission, or ask its author for corrections.'],
+  // Separate from review, and independent of it: deciding oral vs poster is a
+  // programme decision rather than an academic one, and a role may hold
+  // either without the other. Note this is also the step that emails the
+  // author -- accepting an abstract tells them nothing until a format is
+  // assigned (see PUT /api/abstracts/:id/allocation).
+  ['abstracts.assign', 'abstracts', 'Assign presentation format', 'Set an accepted abstract to oral or poster, which is what sends the author their decision.'],
 
   // --- Reports ---
   ['reports.delegates', 'reports', 'Delegates report', 'The full delegate list, on screen or as CSV.'],
@@ -155,7 +161,7 @@ const ROUTE_PERMISSIONS = {
   // Abstracts
   'GET /api/abstracts': 'abstracts.view',
   'PUT /api/abstracts/:id/status': 'abstracts.review',
-  'PUT /api/abstracts/:id/allocation': 'abstracts.review',
+  'PUT /api/abstracts/:id/allocation': 'abstracts.assign',
 
   // Users & roles
   'GET /api/users': 'users.view',

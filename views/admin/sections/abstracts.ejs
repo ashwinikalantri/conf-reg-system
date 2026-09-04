@@ -5,7 +5,11 @@
         <p class="text-xs text-slate-500 mb-3">Accept or reject each submission. This can be done independently of, and before, assignment below.</p>
         <div id="abstracts-approval-container" class="space-y-4"></div>
       </div>
-      <div class="pt-4 border-t border-slate-200">
+      <!-- Hidden entirely for a role without abstracts.assign (see
+           applyRoleVisibility). The id is on the whole block, not just the
+           list, so the heading and blurb go with it rather than leaving a
+           section that explains an action you cannot take. -->
+      <div id="abstracts-assignment-block" class="pt-4 border-t border-slate-200">
         <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 2 · Assignment (approved abstracts only)</h3>
         <p class="text-xs text-slate-500 mb-3">Assign oral or poster presentation. The delegate's decision email is sent from here.</p>
         <div id="abstracts-assignment-container" class="space-y-4"></div>

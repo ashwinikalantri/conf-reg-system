@@ -137,13 +137,31 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
       + 'FINANCE_ADMIN and ACADEMIC_REVIEWER\'s permission sets, not a separately-curated list. Same reason as above.',
   };
 
+  // The mirror of the above, for access that SHRINKS. There was no way to
+  // record one: `lost` was computed unfiltered, so narrowing a role failed
+  // this test with nothing to do about it but revert. That made removing a
+  // permission harder than adding one, which is the wrong way round -- the
+  // point of the file is that a change in who reaches what appears in a diff
+  // someone reads, and that argument applies at least as strongly to taking
+  // something away. Same key shape: "ROLE route", one entry per pair.
+  const NARROWED_SINCE_BASELINE = {
+    'ACADEMIC_REVIEWER PUT /api/abstracts/:id/allocation': 'Assigning oral vs poster moved from '
+      + 'abstracts.review to its own abstracts.assign key, granted to Super Admin only. Deliberate: '
+      + 'the format is a programme decision rather than an academic one. Accept/reject '
+      + '(PUT .../status) is untouched. Note this route is also what emails the author their '
+      + 'decision, so acceptances now reach delegates only once a Super Admin assigns a format.',
+    'FINANCE_ACADEMIC PUT /api/abstracts/:id/allocation': 'Follows from the line above -- '
+      + 'FINANCE_ACADEMIC is the union of FINANCE_ADMIN and ACADEMIC_REVIEWER, not a curated list, '
+      + 'so it loses what ACADEMIC_REVIEWER loses.',
+  };
+
   let mismatched = 0;
   for (const role of ROLES) {
     const held = setOf(perms.permissionsForRole(role));
     const before = setOf(BASELINE.roles[role].routes);
     const nowReach = setOf(ROUTES.filter((r) => held.has(r.permission)).map((r) => r.route));
     const gained = diff(nowReach, before).filter((r) => !ADDED_SINCE_BASELINE[r] && !WIDENED_SINCE_BASELINE[`${role} ${r}`]);
-    const lost = diff(before, nowReach);
+    const lost = diff(before, nowReach).filter((r) => !NARROWED_SINCE_BASELINE[`${role} ${r}`]);
     const ok = gained.length === 0 && lost.length === 0;
     if (!ok) mismatched++;
     console.log(`   ${role.padEnd(18)} ${String(before.size).padStart(2)} routes at the baseline`

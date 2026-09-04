@@ -33,6 +33,10 @@ const ELEMENT_IDS = [
   'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
   'report-delegates', 'report-delegate-programs', 'report-payments',
   'report-workshops', 'report-abstracts',
+  // Step 2 of the Abstracts tab, gated on abstracts.assign rather than on
+  // seeing the section -- a reviewer who cannot set oral vs poster should not
+  // be shown the controls for it.
+  'abstracts-assignment-block',
 ];
 
 // Expected outcome per role, decided explicitly during this phase (not
@@ -49,7 +53,8 @@ const EXPECTED_VISIBLE = {
     'register-delegate-btn', 'settings-menu-btn', 'settings-item-programs', 'settings-item-fees',
     'settings-item-general', 'settings-item-discount', 'settings-item-activity',
     'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
-    'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
+    'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts',
+    'abstracts-assignment-block'],
   FINANCE_ADMIN: ['nav-tab-payments', 'nav-tab-statement', 'nav-tab-reports',
     'register-delegate-btn', 'settings-menu-btn', 'settings-item-fees', 'settings-item-discount',
     'settings-item-reminders', 'settings-item-groupdiscount',

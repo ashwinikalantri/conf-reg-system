@@ -2738,6 +2738,14 @@ function applyRoleVisibility() {
   const registerBtn = document.getElementById('register-delegate-btn');
   if (registerBtn) registerBtn.classList.toggle('hidden', !can('payments.desk_register'));
 
+  // Step 2 of the Abstracts tab. Assignment is its own permission, so a
+  // reviewer who may accept and reject but not decide oral vs poster does
+  // not get a section full of buttons the server would refuse -- which is
+  // what happened before this, silently, since the allocation call never
+  // read its response.
+  const assignBlock = document.getElementById('abstracts-assignment-block');
+  if (assignBlock) assignBlock.classList.toggle('hidden', !can('abstracts.assign'));
+
   // Masters/Users/Reminders/Logs live in the header's Settings menu, not
   // the main tab bar. The menu button itself only shows if at least one
   // item would. Each item toggles on the same section key that governs its

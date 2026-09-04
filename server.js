@@ -9619,7 +9619,7 @@ app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), asyn
 // Step 2 of abstract review: Assignment (oral/poster), for approved
 // abstracts only. This is the delegate's one and only decision email --
 // it states both that the abstract was accepted and the final format.
-app.put('/api/abstracts/:id/allocation', requirePermission('abstracts.review'), async (req, res, next) => {
+app.put('/api/abstracts/:id/allocation', requirePermission('abstracts.assign'), async (req, res, next) => {
   try {
     const { allocation } = req.body;
     if (!['ORAL', 'POSTER'].includes(allocation)) {

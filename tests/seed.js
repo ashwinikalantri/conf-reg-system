@@ -429,6 +429,30 @@ async function seedRows() {
       [String(r.id), STAFF[0].phone, Number(r.submitted_at) + 2 * 60 * 60 * 1000]);
   }
 
+  // --- abstracts ---------------------------------------------------------
+  // The review desk had no fixture data at all: every abstract test until now
+  // drove the client against a stubbed fetch, so nothing exercised the real
+  // routes against a database, and no test could prove who is refused a write
+  // on one. One abstract per status that the desk treats differently -- the
+  // two-step design means "accepted but not yet assigned" is its own state,
+  // and it is the one abstracts.assign exists to control.
+  const mkAbstract = async (a) => db.run(
+    `INSERT INTO abstracts (phone_number, author_name, format, title, text, word_count, status, allocation)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [a.phone, a.name, a.format || 'Paper', a.title, a.text || 'Fixture abstract body.',
+      a.words || 120, a.status, a.allocation || null]);
+
+  await mkAbstract({ phone: '9000001001', name: 'One Payment', title: 'Awaiting a decision',
+    status: 'UNDER_REVIEW' });
+  // Accepted, no format yet: what Step 2 -- Assignment lists, and the only
+  // state in which PUT .../allocation is allowed to succeed.
+  await mkAbstract({ phone: '9000001002', name: 'Two Payments', title: 'Accepted, not yet assigned',
+    status: 'ACCEPTED' });
+  await mkAbstract({ phone: '9000001003', name: 'Half Price', title: 'Accepted and assigned',
+    status: 'ACCEPTED', allocation: 'ORAL' });
+  await mkAbstract({ phone: '9000001004', name: 'Had A Reject', title: 'Turned down',
+    status: 'REJECTED' });
+
   // A credit nobody has claimed, and a debit to refund against.
   await mkCredit({ ref: '900000000001', amount: 2500, desc: 'UPI/RRN 900000000001/UPI_UNCLAIMED' });
   await mkCredit({ ref: '900000000002', debit: 500, amount: null, desc: 'NEFT OUT/REFUND FIXTURE' });
@@ -495,6 +519,9 @@ const REQUIRED = [
   ['an expired promo code', "SELECT 1 FROM discount_codes WHERE expires_at < date('now')"],
   ['early-bird pricing in effect today', "SELECT 1 FROM fee_config WHERE early_until >= date('now')"],
   ['a confirmation timestamp for the receipt', "SELECT 1 FROM audit_log WHERE action='BANK_STATUS_CHANGE' AND new_value='BANK_VERIFIED'"],
+  ['an abstract awaiting review', "SELECT 1 FROM abstracts WHERE status='UNDER_REVIEW'"],
+  ['an accepted abstract with no format yet', "SELECT 1 FROM abstracts WHERE status='ACCEPTED' AND allocation IS NULL"],
+  ['an accepted abstract already assigned', "SELECT 1 FROM abstracts WHERE status='ACCEPTED' AND allocation IS NOT NULL"],
 ];
 
 async function verify() {
