@@ -2718,15 +2718,19 @@ function isBalanceDue(r) {
 // checks, screenshot/ID card, transaction link) is already one click away
 // in the review modal -- repeating it here just made the list noisy.
 function paymentRowHtml(p) {
-  const statusTone = p.bank_status === 'REJECTED' ? 'bg-rose-100 text-rose-800'
-    : p.bank_status === 'BANK_VERIFIED' ? 'bg-emerald-100 text-emerald-800'
-    : p.bank_status === 'PARTIAL_PAYMENT' ? 'bg-orange-100 text-orange-800'
-    : 'bg-amber-100 text-amber-800';
+  const statusTone = p.bank_status === 'REJECTED' ? 'bg-rose-100 text-rose-800 border-rose-300'
+    : p.bank_status === 'BANK_VERIFIED' ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+    : p.bank_status === 'PARTIAL_PAYMENT' ? 'bg-orange-100 text-orange-800 border-orange-300'
+    : 'bg-amber-100 text-amber-800 border-amber-300';
   const balanceDue = isBalanceDue(p);
   const statusLabel = p.bank_status === 'PARTIAL_PAYMENT' ? 'PARTIAL'
     : (balanceDue ? 'BALANCE DUE' : (BANK_STATUS_LABELS[p.bank_status] || p.bank_status).toUpperCase());
-  const statusTone2 = balanceDue ? 'bg-orange-100 text-orange-800' : statusTone;
-  const statusPill = `<span class="${statusTone2} text-[10px] sm:text-xs px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full font-bold">${esc(statusLabel)}</span>`;
+  const statusTone2 = balanceDue ? 'bg-orange-100 text-orange-800 border-orange-300' : statusTone;
+  // Same pill shape as the delegate dashboard's status tags (Portal phase 04)
+  // and every other status pill in the admin panel (Phase 3 of the admin
+  // redesign) -- text-xs font-bold px-2.5 py-1 rounded-full border, colour
+  // as the only thing that varies.
+  const statusPill = `<span class="${statusTone2} text-xs px-2.5 py-1 rounded-full font-bold border">${esc(statusLabel)}</span>`;
   // Surface how much is still owed at a glance: use the verified total when
   // there is one, else the claimed amount (category-changed, not yet
   // verified). Also what the Amount column itself shows below -- it used to
@@ -3600,13 +3604,15 @@ function renderReviewStatusStrip(p) {
 
   const verdict = document.getElementById('review-strip-verdict');
   const TONE = {
-    BANK_VERIFIED: ['Verified', 'bg-emerald-100 text-emerald-800', 'bg-emerald-50 border-emerald-200'],
-    REJECTED: ['Rejected', 'bg-rose-100 text-rose-800', 'bg-rose-50 border-rose-200'],
-    PARTIAL_PAYMENT: ['Partial', 'bg-orange-100 text-orange-800', 'bg-orange-50 border-orange-200'],
-    PENDING: ['Pending', 'bg-amber-100 text-amber-800', 'bg-amber-50 border-amber-200'],
+    BANK_VERIFIED: ['Verified', 'bg-emerald-100 text-emerald-800 border-emerald-300', 'bg-emerald-50 border-emerald-200'],
+    REJECTED: ['Rejected', 'bg-rose-100 text-rose-800 border-rose-300', 'bg-rose-50 border-rose-200'],
+    PARTIAL_PAYMENT: ['Partial', 'bg-orange-100 text-orange-800 border-orange-300', 'bg-orange-50 border-orange-200'],
+    PENDING: ['Pending', 'bg-amber-100 text-amber-800 border-amber-300', 'bg-amber-50 border-amber-200'],
   };
   const [label, pillTone, stripTone] = TONE[p.bank_status] || TONE.PENDING;
-  if (verdict) verdict.className = `text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${pillTone}`;
+  // Same canonical status-pill shape as the payment table and the users
+  // table -- see paymentRowHtml.
+  if (verdict) verdict.className = `text-xs font-bold px-2.5 py-1 rounded-full border ${pillTone}`;
   if (verdict) verdict.textContent = label;
   strip.className = `rounded-lg border p-3 ${stripTone}`;
 
@@ -4073,10 +4079,10 @@ async function reviewRevisePayment() {
 }
 
 const REG_STATUS_STYLES = {
-  BANK_VERIFIED: 'bg-emerald-100 text-emerald-800',
-  PENDING: 'bg-amber-100 text-amber-800',
-  REJECTED: 'bg-rose-100 text-rose-800',
-  PARTIAL_PAYMENT: 'bg-orange-100 text-orange-800',
+  BANK_VERIFIED: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+  PENDING: 'bg-amber-100 text-amber-800 border-amber-300',
+  REJECTED: 'bg-rose-100 text-rose-800 border-rose-300',
+  PARTIAL_PAYMENT: 'bg-orange-100 text-orange-800 border-orange-300',
 };
 
 // Cached so filtering/search re-renders instantly without a round-trip, and
@@ -4129,9 +4135,9 @@ function renderRoleCards() {
   list.innerHTML = cachedRoles.map((r) => {
     const isMine = activeAdminUser && activeAdminUser.role === r.key;
     const badge = r.grantsAll
-      ? `<span class="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wide">Built-in · every permission</span>`
+      ? `<span class="text-[10px] bg-indigo-100 text-indigo-700 border border-indigo-300 px-2 py-0.5 rounded-full font-bold">Built-in · every permission</span>`
       : r.isSystem
-        ? `<span class="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-wide">Built-in</span>`
+        ? `<span class="text-[10px] bg-slate-100 text-slate-600 border border-slate-300 px-2 py-0.5 rounded-full font-bold">Built-in</span>`
         : '';
     const deleteDisabled = r.isSystem || r.userCount > 0;
     const deleteTitle = r.isSystem ? 'Built-in roles cannot be deleted'
@@ -4417,7 +4423,7 @@ function renderBackendUsers() {
       <td class="p-4 text-slate-600">${esc(u.institution || '—')}</td>
       <td class="p-4 whitespace-nowrap">${accountMarks(u)}</td>
       <td class="p-4">${u.registration_status
-        ? `<span class="${REG_STATUS_STYLES[u.registration_status] || 'bg-slate-100 text-slate-600'} text-xs font-bold px-2 py-1 rounded-full">${esc(BANK_STATUS_LABELS[u.registration_status] || u.registration_status)}</span>`
+        ? `<span class="${REG_STATUS_STYLES[u.registration_status] || 'bg-slate-100 text-slate-600 border-slate-200'} text-xs font-bold px-2.5 py-1 rounded-full border">${esc(BANK_STATUS_LABELS[u.registration_status] || u.registration_status)}</span>`
         : `<span class="text-xs text-slate-400">Not registered</span>`}</td>
       <td class="p-4 text-right">
         <button type="button" onclick="event.stopPropagation();openUserDetail('${esc(u.phone_number)}')" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg">Details →</button>
@@ -4629,7 +4635,7 @@ function renderUserDetail() {
     <span class="text-slate-500">${esc(group.name)}</span>
     <span class="text-right">
       <span class="text-slate-800 font-medium">${sel ? esc(sel.option_name) : '—'}</span>
-      ${sel && sel.is_faculty ? '<span class="ml-1.5 text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide align-middle">Faculty</span>' : ''}
+      ${sel && sel.is_faculty ? '<span class="ml-1.5 text-[10px] bg-indigo-100 text-indigo-700 border border-indigo-300 px-2 py-0.5 rounded-full font-bold align-middle">Faculty</span>' : ''}
       ${canChange ? `<button type="button" onclick="openProgramChangeModalFromDetail(${group.id})" class="ml-2 text-[11px] text-indigo-600 hover:text-indigo-800 underline font-semibold">${sel ? 'Change' : 'Add'}</button>` : ''}
     </span>
   </div>`;
@@ -4907,7 +4913,7 @@ async function loadRoster() {
     ? enrolled.map(r => `
       <div class="flex items-center justify-between py-2 gap-2">
         <div class="min-w-0">
-          <p class="font-semibold text-slate-800 truncate">${esc(r.delegate_name)}${Number(r.is_faculty) ? ' <span class="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide align-middle">Faculty</span>' : ''}</p>
+          <p class="font-semibold text-slate-800 truncate">${esc(r.delegate_name)}${Number(r.is_faculty) ? ' <span class="text-[10px] bg-indigo-100 text-indigo-700 border border-indigo-300 px-2 py-0.5 rounded-full font-bold align-middle">Faculty</span>' : ''}</p>
           <p class="text-[11px] text-slate-500">${esc(delegateDisplayPhone(r) || r.email || '—')} · ${esc(r.registration_number || '—')}</p>
         </div>
         <div class="flex items-center gap-2 shrink-0">
@@ -6035,10 +6041,10 @@ async function renderGroupsMonitor() {
   const LABEL = { BANK_VERIFIED: 'Verified', PARTIAL_PAYMENT: 'Balance due', REJECTED: 'Rejected', PENDING: 'Pending', NOT_REGISTERED: 'Not paid' };
   box.innerHTML = groups.map((g) => {
     const statusBadge = g.allVerified
-      ? '<span class="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">' + ICON('check') + 'Fully approved</span>'
+      ? '<span class="text-xs font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 rounded-full px-2.5 py-1">' + ICON('check') + 'Fully approved</span>'
       : g.qualifies
-        ? '<span class="text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">Discount active</span>'
-        : `<span class="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Below min (${g.size}/${g.minSize || '—'})</span>`;
+        ? '<span class="text-xs font-bold text-indigo-800 bg-indigo-100 border border-indigo-300 rounded-full px-2.5 py-1">Discount active</span>'
+        : `<span class="text-xs font-bold text-amber-800 bg-amber-100 border border-amber-300 rounded-full px-2.5 py-1">Below min (${g.size}/${g.minSize || '—'})</span>`;
     const rows = g.members.map((m) => `
       <div class="flex items-center justify-between py-1.5 text-sm border-b border-slate-50 last:border-0">
         <span class="min-w-0 truncate">${esc(m.name)}${m.phone === g.leaderPhone ? ' <span class="text-[10px] text-indigo-500 font-semibold">(leader)</span>' : ''} <span class="text-[11px] text-slate-400 font-mono">${esc(m.phone)}</span></span>
@@ -6142,8 +6148,8 @@ async function renderBackendReminders() {
             <p class="font-semibold text-slate-700 truncate">${esc([u.salutation, u.full_name].filter(Boolean).join(' '))}</p>
             <p class="text-xs text-slate-400 truncate">${esc(u.email || 'No email on file')}${u.last_reminder_sent_at ? ` · last sent ${esc(fmtAuditTime(u.last_reminder_sent_at))}` : ''}</p>
           </div>
-          ${!u.email ? '<span class="text-[10px] bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-bold shrink-0">No email</span>' : ''}
-          ${onCooldown ? '<span class="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold shrink-0">Sent within 24h</span>' : ''}
+          ${!u.email ? '<span class="text-[10px] bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-full font-bold shrink-0">No email</span>' : ''}
+          ${onCooldown ? '<span class="text-[10px] bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">Sent within 24h</span>' : ''}
         </div>`;
       }).join('')
       : `<div class="px-3 py-6 text-center text-slate-400 text-sm">Everyone who's signed up has also registered.</div>`;
@@ -6299,8 +6305,8 @@ async function renderBackendBalanceDueReminders() {
             <p class="font-semibold text-slate-700 truncate">${esc(u.delegate_name)} <span class="font-normal text-slate-400">· ₹${inr(u.remaining)} due</span></p>
             <p class="text-xs text-slate-400 truncate">${esc(u.email || 'No email on file')}${u.last_reminder_sent_at ? ` · last sent ${esc(fmtAuditTime(u.last_reminder_sent_at))}` : ''}</p>
           </div>
-          ${!u.email ? '<span class="text-[10px] bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-bold shrink-0">No email</span>' : ''}
-          ${onCooldown ? '<span class="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold shrink-0">Sent within 24h</span>' : ''}
+          ${!u.email ? '<span class="text-[10px] bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-full font-bold shrink-0">No email</span>' : ''}
+          ${onCooldown ? '<span class="text-[10px] bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">Sent within 24h</span>' : ''}
         </div>`;
       }).join('')
       : `<div class="px-3 py-6 text-center text-slate-400 text-sm">No registrations have a balance due right now.</div>`;
@@ -6847,17 +6853,17 @@ function filterReportRows() {
 }
 
 const ABSTRACT_STATUS_STYLES = {
-  UNDER_REVIEW: 'bg-amber-100 text-amber-800',
-  ACCEPTED: 'bg-emerald-100 text-emerald-800',
-  REJECTED: 'bg-rose-100 text-rose-800',
-  REVISION_REQUESTED: 'bg-orange-100 text-orange-800',
+  UNDER_REVIEW: 'bg-amber-100 text-amber-800 border-amber-300',
+  ACCEPTED: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+  REJECTED: 'bg-rose-100 text-rose-800 border-rose-300',
+  REVISION_REQUESTED: 'bg-orange-100 text-orange-800 border-orange-300',
 };
 
 // Shared header markup (title, author, status badge, last-action note, file
 // link) for both the Approval and Assignment cards.
 function abstractCardHeader(a) {
   const status = a.status || 'UNDER_REVIEW';
-  const badge = ABSTRACT_STATUS_STYLES[status] || 'bg-slate-100 text-slate-700';
+  const badge = ABSTRACT_STATUS_STYLES[status] || 'bg-slate-100 text-slate-700 border-slate-200';
   return `
       <div class="flex justify-between items-start gap-4">
         <div>
@@ -6865,7 +6871,7 @@ function abstractCardHeader(a) {
           <p class="text-xs text-slate-500 mt-0.5">${esc(a.author_name)} · ${esc(a.format)}</p>
         </div>
         <div class="text-right shrink-0">
-          <span class="${badge} text-xs px-2.5 py-1 rounded-full font-bold whitespace-nowrap">${esc(status.replace('_', ' '))}</span>
+          <span class="${badge} text-xs px-2.5 py-1 rounded-full font-bold border whitespace-nowrap">${esc(status.replace('_', ' '))}</span>
           ${status === 'REVISION_REQUESTED' ? '<p class="text-[10px] text-orange-600 mt-1">Awaiting delegate resubmission</p>' : ''}
           ${a.last_action_by
             ? `<p class="text-[10px] text-slate-400 mt-1">by ${esc(a.last_action_by)} · ${esc(fmtAuditTime(a.last_action_at))}</p>`
@@ -7609,7 +7615,7 @@ async function loadReconciliation() {
             <p class="font-semibold text-slate-700 shrink-0">₹${inr(esc(r.paid_amount != null ? r.paid_amount : r.expected_amount))}</p>
           </div>
           <div class="flex items-center gap-2 mt-1.5">
-            <span class="bg-slate-100 text-slate-600 text-[10px] font-semibold px-2 py-0.5 rounded-full">${esc(PAYMENT_MODE_LABELS[r.payment_mode] || r.payment_mode || 'UPI')}</span>
+            <span class="bg-slate-100 text-slate-600 border border-slate-300 text-[10px] font-bold px-2 py-0.5 rounded-full">${esc(PAYMENT_MODE_LABELS[r.payment_mode] || r.payment_mode || 'UPI')}</span>
             <span class="text-[11px] font-mono text-slate-500 truncate">${esc(r.utr_number)}</span>
           </div>
         </td>
