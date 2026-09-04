@@ -78,7 +78,7 @@ check('anonymous refused', anon.status===401||anon.status===403, anon.status);
 console.log('\n== Menu rename ==');
 let r = { cookie: await adminLogin() };
 const admin=await call('GET','/admin',null,r.cookie);
-check('menu says "Users"', /<span>👤 Users<\/span>/.test(admin.raw));
+check('menu says "Users"', /<span><svg[\s\S]{0,700}?<\/svg>Users<\/span>/.test(admin.raw));
 check('no longer "Users and Roles"', !/Users and Roles/.test(admin.raw));
 report();
 db.close();

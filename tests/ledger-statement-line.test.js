@@ -5,8 +5,11 @@ fs=require('fs');
 
 const js=fs.readFileSync(appFile('public','app.js'),'utf8');
 const grab=(n)=>{const i=js.indexOf('function '+n+'('); const j=js.indexOf('\n}', i); return js.slice(i, j+2);};
+const grabConst=(n)=>{const i=js.indexOf('const '+n+' = {'); const j=js.indexOf('\n};', i); return js.slice(i, j+3);};
 const row=new Function(`
   ${grab('esc')} ${grab('inr')} ${grab('fmtAuditTime')}
+  ${grabConst('ADMIN_ICON_SVG')}
+  ${grab('ICON')}
   let reviewRegVerified=false;
   ${grab('reviewTxnRowHtml')}
   return reviewTxnRowHtml;`)();
@@ -25,7 +28,7 @@ const row=new Function(`
    /truncate/.test(linked) && /min-w-0/.test(linked));
  check('the full text is available on hover', /title="UPI\/RRN 128217278187/.test(linked));
  check('amount and status stay put', linked.includes('₹750') && linked.includes('VERIFIED'));
- check('the link line still shows the credit', linked.includes('🔗'));
+ check('the link line still shows the credit', linked.includes('<svg'));
 
  console.log('\n== Nothing linked yet -> no statement line to show ==');
  const unlinked=row({id:2,amount:1250,verified_amount:null,txn_status:'PENDING',payment_mode:'UPI',

@@ -5,27 +5,27 @@
           <h3 class="font-bold text-slate-800">Registered Delegates</h3>
           <p class="text-xs text-slate-500 mt-1 mb-4">Demography &amp; institute details for verified delegates — no program-group or fee data.</p>
           <div class="flex flex-wrap gap-2">
-            <button onclick="viewReport('delegates')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg">👁 View</button>
-            <button onclick="downloadReport('delegates','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">⬇ Excel</button>
-            <button onclick="downloadReport('delegates')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">🖨 PDF</button>
+            <button onclick="viewReport('delegates')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M2 12c2.5-5 7-8 10-8s7.5 3 10 8c-2.5 5-7 8-10 8s-7.5-3-10-8z"/><circle cx="12" cy="12" r="3"/></svg>View</button>
+            <button onclick="downloadReport('delegates','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>Excel</button>
+            <button onclick="downloadReport('delegates')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="6" y="9" width="12" height="7" rx="1"/><path d="M6 9V4h12v5"/><path d="M8 16v4h8v-4"/></svg>PDF</button>
           </div>
         </div>
         <div id="report-delegate-programs" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
           <h3 class="font-bold text-slate-800">Delegates &amp; Program Selections</h3>
           <p class="text-xs text-slate-500 mt-1 mb-4">One row per delegate with a column per program group (Workshops, QI Practices, …) — for sorting and filtering in Excel. Includes pending registrations; faculty are marked.</p>
           <div class="flex flex-wrap gap-2">
-            <button onclick="viewReport('delegate-programs')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg">👁 View</button>
-            <button onclick="downloadReport('delegate-programs','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">⬇ Excel</button>
-            <button onclick="downloadReport('delegate-programs')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">🖨 PDF</button>
+            <button onclick="viewReport('delegate-programs')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M2 12c2.5-5 7-8 10-8s7.5 3 10 8c-2.5 5-7 8-10 8s-7.5-3-10-8z"/><circle cx="12" cy="12" r="3"/></svg>View</button>
+            <button onclick="downloadReport('delegate-programs','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>Excel</button>
+            <button onclick="downloadReport('delegate-programs')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="6" y="9" width="12" height="7" rx="1"/><path d="M6 9V4h12v5"/><path d="M8 16v4h8v-4"/></svg>PDF</button>
           </div>
         </div>
         <div id="report-payments" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
           <h3 class="font-bold text-slate-800">Payments</h3>
           <p class="text-xs text-slate-500 mt-1 mb-4">Every registration's payment details and status — pending, verified, and rejected.</p>
           <div class="flex flex-wrap gap-2">
-            <button onclick="viewReport('payments')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg">👁 View</button>
-            <button onclick="downloadReport('payments','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">⬇ Excel</button>
-            <button onclick="downloadReport('payments')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">🖨 PDF</button>
+            <button onclick="viewReport('payments')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M2 12c2.5-5 7-8 10-8s7.5 3 10 8c-2.5 5-7 8-10 8s-7.5-3-10-8z"/><circle cx="12" cy="12" r="3"/></svg>View</button>
+            <button onclick="downloadReport('payments','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>Excel</button>
+            <button onclick="downloadReport('payments')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="6" y="9" width="12" height="7" rx="1"/><path d="M6 9V4h12v5"/><path d="M8 16v4h8v-4"/></svg>PDF</button>
           </div>
         </div>
         <div id="report-workshops" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
@@ -35,18 +35,18 @@
             <option value="">Loading options…</option>
           </select>
           <div class="flex flex-wrap gap-2">
-            <button id="report-workshop-view-btn" disabled onclick="viewReport('workshops', reportWorkshopQuery())" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg">👁 View</button>
-            <button id="report-workshop-csv-btn" disabled onclick="downloadReport('workshops','csv', reportWorkshopQuery())" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg">⬇ Excel</button>
-            <button id="report-workshop-pdf-btn" disabled onclick="downloadReport('workshops', null, reportWorkshopQuery())" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg">🖨 PDF</button>
+            <button id="report-workshop-view-btn" disabled onclick="viewReport('workshops', reportWorkshopQuery())" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M2 12c2.5-5 7-8 10-8s7.5 3 10 8c-2.5 5-7 8-10 8s-7.5-3-10-8z"/><circle cx="12" cy="12" r="3"/></svg>View</button>
+            <button id="report-workshop-csv-btn" disabled onclick="downloadReport('workshops','csv', reportWorkshopQuery())" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>Excel</button>
+            <button id="report-workshop-pdf-btn" disabled onclick="downloadReport('workshops', null, reportWorkshopQuery())" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="6" y="9" width="12" height="7" rx="1"/><path d="M6 9V4h12v5"/><path d="M8 16v4h8v-4"/></svg>PDF</button>
           </div>
         </div>
         <div id="report-abstracts" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
           <h3 class="font-bold text-slate-800">Accepted Abstracts</h3>
           <p class="text-xs text-slate-500 mt-1 mb-4">All abstracts marked accepted.</p>
           <div class="flex flex-wrap gap-2">
-            <button onclick="viewReport('abstracts')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg">👁 View</button>
-            <button onclick="downloadReport('abstracts','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">⬇ Excel</button>
-            <button onclick="downloadReport('abstracts')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">🖨 PDF</button>
+            <button onclick="viewReport('abstracts')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M2 12c2.5-5 7-8 10-8s7.5 3 10 8c-2.5 5-7 8-10 8s-7.5-3-10-8z"/><circle cx="12" cy="12" r="3"/></svg>View</button>
+            <button onclick="downloadReport('abstracts','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>Excel</button>
+            <button onclick="downloadReport('abstracts')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="6" y="9" width="12" height="7" rx="1"/><path d="M6 9V4h12v5"/><path d="M8 16v4h8v-4"/></svg>PDF</button>
           </div>
         </div>
       </div>

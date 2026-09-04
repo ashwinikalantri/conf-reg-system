@@ -36,7 +36,7 @@ check('admin gets the slip', fin.status===200, fin.status);
 
 console.log('\n== UI wiring shipped ==');
 const js=await call('GET','/app.js',null,null);
-check('Payment Slip button rendered per ledger row', /📄 Payment Slip/.test(js.buf.toString()));
+check('Payment Slip button rendered per ledger row', /onclick="showTxnSlip\(\$\{esc\(t\.id\)\}\)">\$\{ICON\('document'\)\}Payment Slip<\/button>/.test(js.buf.toString()));
 check('showTxnSlip defined', /function showTxnSlip/.test(js.buf.toString()));
 // The fixed three-slot pane (screenshot/idcard/txnslip) was replaced by tabs
 // built per registration -- ID card, then one per payment slip. Assert the

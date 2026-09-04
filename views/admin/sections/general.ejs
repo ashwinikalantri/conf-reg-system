@@ -2,7 +2,7 @@
     <section id="section-general" class="hidden space-y-6">
       <!-- Conference Details -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-        <h3 class="text-lg font-bold text-slate-800 mb-1">🏛️ Conference Details</h3>
+        <h3 class="text-lg font-bold text-slate-800 mb-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="8" r="0.6" fill="currentColor" stroke="none"/></svg>Conference Details</h3>
         <p class="text-xs text-slate-500 mb-3">Shown across confirmation emails, reports, and printable pages.</p>
         <form onsubmit="saveGeneralSettings(event, 'conference')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div class="sm:col-span-2"><label class="block text-[10px] font-semibold text-slate-600 mb-1">Full Name</label><input id="gs-conf-name" required class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
@@ -23,7 +23,7 @@
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div>
-            <h3 class="text-lg font-bold text-slate-800">📱 SMS</h3>
+            <h3 class="text-lg font-bold text-slate-800"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>SMS</h3>
             <p class="text-xs text-slate-500">DLT gateway configuration. Turning this off also stops login OTPs.</p>
           </div>
           <label class="flex items-center gap-2 cursor-pointer shrink-0">
@@ -31,7 +31,7 @@
             <span class="text-sm font-semibold text-slate-700">Enabled <span id="notify-sms-state" class="text-xs font-normal text-slate-400"></span></span>
           </label>
         </div>
-        <p id="sms-key-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3">⚠️ No SMS_API_KEY set in the server environment — SMS cannot send regardless of this configuration.</p>
+        <p id="sms-key-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>No SMS_API_KEY set in the server environment — SMS cannot send regardless of this configuration.</p>
         <form onsubmit="saveGeneralSettings(event, 'sms')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Sender ID</label><input id="gs-sms-sender" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Gateway URL</label><input id="gs-sms-url" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
@@ -52,7 +52,7 @@
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div>
-            <h3 class="text-lg font-bold text-slate-800">✉️ Email</h3>
+            <h3 class="text-lg font-bold text-slate-800"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M3 6.5 L12 13 L21 6.5"/></svg>Email</h3>
             <p class="text-xs text-slate-500">Amazon SES sender configuration.</p>
           </div>
           <label class="flex items-center gap-2 cursor-pointer shrink-0">
@@ -60,7 +60,7 @@
             <span class="text-sm font-semibold text-slate-700">Enabled <span id="notify-email-state" class="text-xs font-normal text-slate-400"></span></span>
           </label>
         </div>
-        <p id="email-key-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3">⚠️ AWS credentials are not set in the server environment — Email cannot send regardless of this configuration.</p>
+        <p id="email-key-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>AWS credentials are not set in the server environment — Email cannot send regardless of this configuration.</p>
         <form onsubmit="saveGeneralSettings(event, 'email')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">From address</label><input id="gs-email-from" type="email" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">From name</label><input id="gs-email-fromname" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
@@ -83,7 +83,7 @@
            registration/top-up forms). Each has its own save button, same
            pattern as SMS/Email above. -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-        <h3 class="text-lg font-bold text-slate-800 mb-1">💳 Payment</h3>
+        <h3 class="text-lg font-bold text-slate-800 mb-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>Payment</h3>
         <p class="text-xs text-slate-500 mb-4">The two payment methods offered to delegates at checkout — UPI (QR code / pay link) and NEFT/RTGS bank transfer. Both sets of details are also used to verify payment screenshots.</p>
 
         <div class="border border-slate-200 rounded-xl p-4 mb-4">
@@ -96,7 +96,7 @@
         </div>
 
         <div class="border border-slate-200 rounded-xl p-4">
-          <h4 class="text-sm font-bold text-slate-700 mb-1">🏦 Bank Transfer (NEFT/RTGS)</h4>
+          <h4 class="text-sm font-bold text-slate-700 mb-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M3 10 L12 4 L21 10"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="5" y1="10" x2="5" y2="19"/><line x1="9" y1="10" x2="9" y2="19"/><line x1="15" y1="10" x2="15" y2="19"/><line x1="19" y1="10" x2="19" y2="19"/><line x1="3" y1="19" x2="21" y2="19"/></svg>Bank Transfer (NEFT/RTGS)</h4>
           <form onsubmit="saveGeneralSettings(event, 'bank')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Account Name</label><input id="gs-bank-accountname" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
             <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Account Number</label><input id="gs-bank-accountnumber" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono"></div>
@@ -111,7 +111,7 @@
       <div class="bg-white rounded-2xl p-5 border-2 border-amber-200 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div>
-            <h3 class="text-lg font-bold text-slate-800">🔧 Maintenance Mode</h3>
+            <h3 class="text-lg font-bold text-slate-800"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M14.5 3.5a4.5 4.5 0 0 0-5.9 5.9L3 15l3 3 5.6-5.6a4.5 4.5 0 0 0 5.9-5.9l-2.8 2.8-2-2z"/></svg>Maintenance Mode</h3>
             <p class="text-xs text-slate-500">Closes the portal to delegates and all other admin roles. Super admins keep full access.</p>
           </div>
           <label class="flex items-center gap-2 cursor-pointer shrink-0">
@@ -119,7 +119,7 @@
             <span class="text-sm font-semibold text-slate-700">Enabled <span id="maintenance-state" class="text-xs font-normal text-slate-400"></span></span>
           </label>
         </div>
-        <p id="maintenance-active-note" class="hidden text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3">⚠️ <b>Maintenance mode is ON.</b> Delegates cannot register, pay, or submit abstracts, and finance/reviewer admins cannot use the panel. Remember to turn this off when you're done.</p>
+        <p id="maintenance-active-note" class="hidden text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg><b>Maintenance mode is ON.</b> Delegates cannot register, pay, or submit abstracts, and finance/reviewer admins cannot use the panel. Remember to turn this off when you're done.</p>
         <form onsubmit="saveGeneralSettings(event, 'maintenance')" class="space-y-2">
           <div>
             <label class="block text-[10px] font-semibold text-slate-600 mb-1">Message shown to delegates</label>
@@ -133,7 +133,7 @@
       <!-- Notifications -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-1">
-          <h3 class="text-lg font-bold text-slate-800">🔔 Notifications</h3>
+          <h3 class="text-lg font-bold text-slate-800"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M6 10a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>Notifications</h3>
           <label class="flex items-center gap-2 cursor-pointer shrink-0">
             <input type="checkbox" id="notify-digest-toggle" onchange="setGeneralToggle('digest', this.checked)" class="w-5 h-5">
             <span class="text-sm font-semibold text-slate-700">Daily Digest <span id="notify-digest-state" class="text-xs font-normal text-slate-400"></span></span>
@@ -165,12 +165,12 @@
            minutes. Super admin only, like the rest of this tab's write
            actions. -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-        <h3 class="text-lg font-bold text-slate-800 mb-1">💾 Backups</h3>
+        <h3 class="text-lg font-bold text-slate-800 mb-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M5 3h11l3 3v15H5z"/><rect x="8" y="3" width="7" height="5"/><rect x="8" y="14" width="8" height="6"/></svg>Backups</h3>
         <p class="text-xs text-slate-500 mb-3">A backup runs automatically every night at 02:00 and is copied to Google Drive, which keeps the most recent 14.</p>
         <div id="backup-status" class="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-3 mb-3">Checking…</div>
         <div class="flex flex-wrap items-center gap-2">
           <button type="button" id="backup-now-btn" onclick="requestBackupNow()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm rounded-xl shadow-md">
-            💾 Back Up Now
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M5 3h11l3 3v15H5z"/><rect x="8" y="3" width="7" height="5"/><rect x="8" y="14" width="8" height="6"/></svg>Back Up Now
           </button>
           <span class="text-[11px] text-slate-500">Queues a backup; it starts within about five minutes.</span>
         </div>
@@ -264,7 +264,7 @@
 
       <!-- Other Environment Variables -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-        <h3 class="text-lg font-bold text-slate-800 mb-1">🗄️ Other Environment Variables</h3>
+        <h3 class="text-lg font-bold text-slate-800 mb-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M9 6l-5 6 5 6"/><path d="M15 6l5 6-5 6"/></svg>Other Environment Variables</h3>
         <p class="text-xs text-slate-500 mb-3">Server-level settings, stored in the database instead of the server's .env file. Portal URL and OTP Echo apply immediately; Port, Cookie Name, and Cookie Secure are saved now but only take effect the next time the server process restarts.</p>
         <form onsubmit="saveGeneralSettings(event, 'otherEnv')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div class="sm:col-span-2">
@@ -275,26 +275,26 @@
           <div class="border-t pt-3">
             <label class="block text-[10px] font-semibold text-slate-600 mb-1">Port</label>
             <input id="gs-env-port" type="number" min="1" max="65535" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
-            <p class="text-[10px] text-amber-700 mt-1">⚠️ Takes effect only after the server process is restarted.</p>
+            <p class="text-[10px] text-amber-700 mt-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>Takes effect only after the server process is restarted.</p>
           </div>
           <div class="border-t pt-3">
             <label class="block text-[10px] font-semibold text-slate-600 mb-1">Cookie Name</label>
             <input id="gs-env-cookiename" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
-            <p class="text-[10px] text-amber-700 mt-1">⚠️ Takes effect only after restart, and signs everyone out (delegates and admins alike) the moment it does.</p>
+            <p class="text-[10px] text-amber-700 mt-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>Takes effect only after restart, and signs everyone out (delegates and admins alike) the moment it does.</p>
           </div>
           <div class="sm:col-span-2 border-t pt-3">
             <label class="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" id="gs-env-cookiesecure" class="w-5 h-5">
               <span class="text-sm font-semibold text-slate-700">Cookie Secure (HTTPS-only)</span>
             </label>
-            <p class="text-[10px] text-amber-700 mt-1">⚠️ Takes effect only after restart, and signs everyone out when it does. Only turn this ON if the site is actually served over HTTPS — turning it on over plain HTTP will silently break every login.</p>
+            <p class="text-[10px] text-amber-700 mt-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>Takes effect only after restart, and signs everyone out when it does. Only turn this ON if the site is actually served over HTTPS — turning it on over plain HTTP will silently break every login.</p>
           </div>
           <div class="sm:col-span-2 border-t pt-3">
             <label class="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" id="gs-env-otpecho" class="w-5 h-5">
               <span class="text-sm font-semibold text-slate-700">OTP Echo</span>
             </label>
-            <p class="text-[10px] text-rose-700 mt-1">⚠️ Development convenience only — when ON, OTP codes are returned directly in the login API response instead of only via SMS. Applies immediately. Never leave this on in production.</p>
+            <p class="text-[10px] text-rose-700 mt-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>Development convenience only — when ON, OTP codes are returned directly in the login API response instead of only via SMS. Applies immediately. Never leave this on in production.</p>
           </div>
           <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save</button></div>
         </form>

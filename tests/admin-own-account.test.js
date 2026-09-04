@@ -12,7 +12,7 @@ check('no "Verify My Email" menu item', !/Verify My Email/.test(admin.raw));
 check('no set-password modal', !/id="modal-set-password"/.test(admin.raw));
 check('no verify-email modal', !/id="modal-verify-email"/.test(admin.raw));
 check('no unverified dot', !/admin-email-unverified-dot/.test(admin.raw));
-check('Users menu still intact', /<span>👤 Users<\/span>/.test(admin.raw));
+check('Users menu still intact', /<span><svg[\s\S]{0,700}?<\/svg>Users<\/span>/.test(admin.raw));
 
 console.log('\n== 2. Users page has the Account column ==');
 check('Account header present', /title="M = mobile verified[^"]*">Account /.test(admin.raw), (admin.raw.match(/>Account[^<]*/)||[])[0]);

@@ -7,7 +7,7 @@
         </div>
         <div class="flex flex-wrap gap-2 shrink-0">
           <button onclick="downloadReport('users','csv')" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-xl shadow-md">
-            ⬇ Export CSV
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>Export CSV
           </button>
           <button onclick="openCreateUserModal()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md">
             + Create New Staff Account
@@ -16,7 +16,7 @@
       </div>
 
       <div class="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-wrap items-center gap-3">
-        <input id="user-filter-search" type="text" placeholder="🔍 Search name, phone, reg no…" oninput="renderBackendUsers()" class="flex-1 min-w-[200px] p-2.5 border rounded-lg text-sm outline-none">
+        <input id="user-filter-search" type="text" placeholder="Search name, phone, reg no…" oninput="renderBackendUsers()" class="flex-1 min-w-[200px] p-2.5 border rounded-lg text-sm outline-none">
         <select id="user-filter-role" onchange="renderBackendUsers()" class="p-2.5 border rounded-lg text-sm bg-white outline-none">
           <option value="">All roles</option>
           <option value="DELEGATE">Delegate</option>

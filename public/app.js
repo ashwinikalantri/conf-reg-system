@@ -2316,6 +2316,36 @@ document.addEventListener('DOMContentLoaded', loadConferenceInfo);
 
 // --- ADMIN & BACKEND LOGIC ---
 
+// Same stroke-icon language as the rest of the admin panel (2px stroke,
+// round caps/joins, currentColor) -- these are the ones needed inline inside
+// dense render-function output (review-modal marks, table cells, small
+// status lines), so they default to a smaller size than the EJS-authored
+// ones. `ICON(name, cls)` lets a call site size/space one individually.
+const ADMIN_ICON_SVG = {
+  check: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5 L11 15.5 L16 9"/>',
+  cross: '<circle cx="12" cy="12" r="9"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/>',
+  warning: '<path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/>',
+  coin: '<circle cx="12" cy="12" r="9"/><path d="M12 7v10"/><path d="M9 9.7c0-1.1 1.2-1.7 3-1.7s3 .8 3 1.9-1.2 1.6-3 1.6-3 .6-3 1.8 1.2 1.9 3 1.9 3-.6 3-1.6"/>',
+  link: '<path d="M8 12l-2.5 2.5a3.5 3.5 0 0 0 5 5L13 17"/><path d="M16 12l2.5-2.5a3.5 3.5 0 0 0-5-5L11 7"/><path d="M9 15l6-6"/>',
+  gradcap: '<path d="M12 4L2 9l10 5 10-5-10-5z"/><path d="M6 12v5c0 1.5 3 3 6 3s6-1.5 6-3v-5"/>',
+  document: '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/>',
+  refresh: '<path d="M4 12a8 8 0 0 1 14-5.3"/><path d="M20 12a8 8 0 0 1-14 5.3"/><path d="M17 4v4h-4"/><path d="M7 20v-4h4"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><line x1="3" y1="12" x2="21" y2="12"/>',
+  idbadge: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M6 16c0-1.7 1.3-3 3-3s3 1.3 3 3"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="13" x2="18" y2="13"/>',
+  search: '<circle cx="10" cy="10" r="7"/><line x1="15.5" y1="15.5" x2="21" y2="21"/>',
+  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  envelope: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M3 6.5 L12 13 L21 6.5"/>',
+  send: '<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7 L12 12 L16 14"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/>',
+  mappin: '<path d="M12 21s-7-6.5-7-11a7 7 0 0 1 14 0c0 4.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+  close: '<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>',
+  circle: '<circle cx="12" cy="12" r="9"/>',
+};
+function ICON(name, cls) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="${cls || 'w-3.5 h-3.5 inline align-[-2px] mr-1'}">${ADMIN_ICON_SVG[name]}</svg>`;
+}
+
 // Escape untrusted values before putting them in HTML. Delegate-supplied
 // fields (name, UTR, institution, ...) reach the admin's browser, so every
 // interpolation below must pass through this.
@@ -2504,8 +2534,8 @@ function reviewCheckMark(val, what) {
     return `<span class="text-slate-300 font-bold" title="${esc(what)} was not checked automatically">–</span>`;
   }
   return Number(val) === 1
-    ? `<span class="text-emerald-600 font-bold" title="${esc(what)} matches the payment screenshot">✓</span>`
-    : `<span class="text-rose-600 font-bold" title="${esc(what)} does not match the payment screenshot">✗</span>`;
+    ? `<span class="text-emerald-600 font-bold" title="${esc(what)} matches the payment screenshot">${ICON('check')}</span>`
+    : `<span class="text-rose-600 font-bold" title="${esc(what)} does not match the payment screenshot">${ICON('cross')}</span>`;
 }
 
 // The amount has a third outcome the other checks don't: the slip may simply
@@ -2519,10 +2549,10 @@ function reviewAmountMark(status, legacyVal) {
     return '<span class="text-amber-500 font-bold" title="The amount could not be read from this screenshot — nothing to compare, not a discrepancy. Check it against the slip yourself.">?</span>';
   }
   if (status === 'match') {
-    return '<span class="text-emerald-600 font-bold" title="The amount on the screenshot matches the fee">✓</span>';
+    return '<span class="text-emerald-600 font-bold" title="The amount on the screenshot matches the fee">' + ICON('check') + '</span>';
   }
   if (status === 'mismatch') {
-    return '<span class="text-rose-600 font-bold" title="The screenshot shows an amount, and it is not the one expected">✗</span>';
+    return '<span class="text-rose-600 font-bold" title="The screenshot shows an amount, and it is not the one expected">' + ICON('cross') + '</span>';
   }
   // Checked before the three-state result existed: fall back to the old flag.
   return reviewCheckMark(legacyVal, 'The amount');
@@ -2714,7 +2744,7 @@ function paymentRowHtml(p) {
     ? `<span class="text-[10px] text-orange-700 font-semibold">₹${inr(paidSoFar)} of ₹${inr(Number(p.expected_amount))} · ₹${inr(owed)} due</span>`
     : '';
   const reviseHint = categoryChangedShortfall
-    ? `<span class="text-[10px] text-orange-700 font-semibold bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5">⚠ Category changed — revise</span>`
+    ? `<span class="text-[10px] text-orange-700 font-semibold bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5">${ICON('warning')}Category changed — revise</span>`
     : '';
   // Verified payments (net of any already-recorded refund) exceed what was
   // owed -- surfaced here so it's visible while scanning the list, not only
@@ -2723,7 +2753,7 @@ function paymentRowHtml(p) {
   // refunded).
   const overpaidAmt = Number(p.overpaid) || 0;
   const overpaidPill = overpaidAmt > 0
-    ? `<span class="text-[10px] text-amber-700 font-semibold bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">💰 ₹${inr(overpaidAmt)} excess paid</span>`
+    ? `<span class="text-[10px] text-amber-700 font-semibold bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">${ICON('coin')}₹${inr(overpaidAmt)} excess paid</span>`
     : '';
   // Link status is now per transaction: show "linked" only when every pending
   // payment has its own bank credit linked. Verified/rejected rows (no pending
@@ -2731,9 +2761,9 @@ function paymentRowHtml(p) {
   const pendingTxns = (p.transactions || []).filter((t) => t.txn_status === 'PENDING');
   const allPendingLinked = pendingTxns.length > 0 && pendingTxns.every((t) => t.bank_txn_id != null);
   const linkedPill = pendingTxns.length === 0 ? ''
-    : `<span class="text-[10px] ${allPendingLinked ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${allPendingLinked ? '🔗 Linked' : '⚠ Not linked'}</span>`;
+    : `<span class="text-[10px] ${allPendingLinked ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${allPendingLinked ? ICON('link') + 'Linked' : ICON('warning') + 'Not linked'}</span>`;
   const idPill = isStudentCategory(p.category_key)
-    ? `<span class="text-[10px] ${p.id_verified ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${p.id_verified ? '🎓 ID Verified' : '⚠ ID Not Verified'}</span>`
+    ? `<span class="text-[10px] ${p.id_verified ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${p.id_verified ? ICON('gradcap') + 'ID Verified' : ICON('warning') + 'ID Not Verified'}</span>`
     : '';
   const rejectionNote = p.bank_status === 'REJECTED' && p.rejection_reason
     ? `<span class="text-[10px] text-rose-600 font-semibold">${esc(REJECTION_LABELS[p.rejection_reason] || p.rejection_reason)}${p.rejection_note ? ': ' + esc(p.rejection_note) : ''}</span>`
@@ -2744,7 +2774,7 @@ function paymentRowHtml(p) {
   // one without reading it off their phone. Only on verified rows: a receipt
   // for an unverified payment doesn't exist, and the server refuses one.
   const receiptBtn = p.bank_status === 'BANK_VERIFIED'
-    ? `<a href="/api/registrations/${esc(p.id)}/receipt" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold rounded-lg text-xs">🧾 Receipt</a>`
+    ? `<a href="/api/registrations/${esc(p.id)}/receipt" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold rounded-lg text-xs">${ICON('document')}Receipt</a>`
     : '';
   const rowActions = `<div class="flex flex-wrap items-center gap-2 sm:justify-end">${reviewBtn}${receiptBtn}</div>`;
 
@@ -2761,7 +2791,7 @@ function paymentRowHtml(p) {
           <p class="font-semibold text-slate-700 shrink-0">₹${inr(paidSoFar)}</p>
         </div>
         <div class="flex flex-wrap items-center gap-1.5 mt-2">
-          ${p.is_flagged ? `<span class="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">⚠️ Flagged</span>` : ''}
+          ${p.is_flagged ? `<span class="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">${ICON('warning')}Flagged</span>` : ''}
           ${statusPill}${reviseHint}${balancePill}${overpaidPill}${rejectionNote}${linkedPill}${idPill}
         </div>
         <div class="mt-3">${rowActions}</div>
@@ -2770,7 +2800,7 @@ function paymentRowHtml(p) {
       <td class="p-4 font-bold text-sm hidden sm:table-cell">
         ${esc(p.delegate_name)}
         <br><span class="text-[11px] font-normal text-slate-500">${esc(p.category_label)}</span>
-        ${p.is_flagged ? `<br><span class="inline-block mt-1 text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">⚠️ Flagged</span>` : ''}
+        ${p.is_flagged ? `<br><span class="inline-block mt-1 text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">${ICON('warning')}Flagged</span>` : ''}
       </td>
       <td class="p-4 text-sm hidden sm:table-cell">
         <span class="font-semibold text-slate-700">₹${inr(paidSoFar)}</span>
@@ -2803,8 +2833,11 @@ function paymentRowHtml(p) {
 // button report real progress.
 async function rescanFlaggedPayments(all = false) {
   const btn = document.getElementById('rescan-flagged-btn');
-  const label = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '🔄 Rescanning…'; }
+  // innerHTML, not textContent -- the button's default label carries an SVG
+  // icon (see payments.ejs); textContent would silently strip it every time
+  // this runs, since it only writes plain text nodes.
+  const label = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = ICON('refresh') + 'Rescanning…'; }
 
   const tally = { rescanned: 0, unflagged: 0, stillFlagged: 0, skippedNoFile: 0 };
   let after = 0;
@@ -2823,13 +2856,13 @@ async function rescanFlaggedPayments(all = false) {
 
       ['rescanned', 'unflagged', 'stillFlagged', 'skippedNoFile'].forEach((k) => { tally[k] += data[k] || 0; });
       if (!total) total = data.totalFlagged || 0;
-      if (btn && total) btn.textContent = `🔄 Rescanning ${tally.rescanned}/${total}…`;
+      if (btn && total) btn.innerHTML = ICON('refresh') + `Rescanning ${tally.rescanned}/${total}…`;
 
       if (data.nextAfter == null) break;
       after = data.nextAfter;
     }
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = label || '🔄 Rescan Flagged'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = label || (ICON('refresh') + 'Rescan Flagged'); }
   }
 
   if (failure) { showToast(failure); return; }
@@ -3133,7 +3166,7 @@ function drawDelegateMap() {
     intlBox.classList.toggle('hidden', intl.length === 0);
     if (intl.length) {
       intlBox.innerHTML =
-        `<p class="text-xs font-bold text-slate-600 mb-1.5">🌍 International — ${intlReg} registered · ${intlSign} signed up only <span class="font-normal text-slate-400">(not shown on the map)</span></p>`
+        `<p class="text-xs font-bold text-slate-600 mb-1.5">${ICON('globe')}International — ${intlReg} registered · ${intlSign} signed up only <span class="font-normal text-slate-400">(not shown on the map)</span></p>`
         + `<div class="flex flex-wrap gap-1.5">${intl.map((c) => `
              <span class="inline-flex items-center gap-1.5 bg-white border border-slate-200 rounded-full px-2.5 py-1 text-[11px]">
                <span class="font-semibold text-slate-700">${esc(c.country)}</span>
@@ -3377,7 +3410,7 @@ function buildReviewEvidence(p) {
   // the first question the reviewer has to answer -- it gates Accept & Verify
   // -- which is why it is also the first section of the detail column.
   if (p.has_id_card) {
-    reviewImageTabs.push({ key: 'idcard', label: '🪪 ID Card' });
+    reviewImageTabs.push({ key: 'idcard', label: ICON('idbadge') + 'ID Card' });
     reviewImageUrls.idcard = `/api/registrations/${encodeURIComponent(p.id)}/id-card`;
   }
   // Then one tab per payment with a slip, oldest first. Numbered only when
@@ -3386,13 +3419,13 @@ function buildReviewEvidence(p) {
   const slipTxns = (p.transactions || []).filter((t) => t.has_screenshot);
   slipTxns.forEach((t, i) => {
     const key = `slip${t.id}`;
-    reviewImageTabs.push({ key, label: `📄 Payment Slip${slipTxns.length > 1 ? ` ${i + 1}` : ''}` });
+    reviewImageTabs.push({ key, label: ICON('document') + `Payment Slip${slipTxns.length > 1 ? ` ${i + 1}` : ''}` });
     reviewImageUrls[key] = `/api/payment-transactions/${encodeURIComponent(t.id)}/screenshot`;
   });
   // Older registrations predate the per-payment ledger and only have the
   // registration's own screenshot; without this they'd show no slip at all.
   if (!slipTxns.length && p.has_screenshot) {
-    reviewImageTabs.push({ key: 'screenshot', label: '📄 Payment Slip' });
+    reviewImageTabs.push({ key: 'screenshot', label: ICON('document') + 'Payment Slip' });
     reviewImageUrls.screenshot = `/api/registrations/${encodeURIComponent(p.id)}/screenshot`;
   }
 
@@ -3532,7 +3565,7 @@ function applyReviewImageZoom() {
     img.className = 'max-h-full max-w-full object-contain';
     box.className = 'flex-1 min-h-0 overflow-auto flex items-center justify-center p-1';
   }
-  if (btn) btn.textContent = reviewImageZoomed ? '🔍 Fit' : '🔍 Zoom';
+  if (btn) btn.innerHTML = ICON('search') + (reviewImageZoomed ? 'Fit' : 'Zoom');
 }
 
 // Opens ONE ledger payment's own slip in the evidence pane. Each payment now
@@ -3656,7 +3689,7 @@ async function renderReviewRefunds(p) {
     reviewRefundOverpaid = overpaid;
     if (reviewRefundCandidates.length) onReviewRefundTxnChange();
   } else if (excessLine) {
-    excessLine.innerHTML = `<span class="text-emerald-700 font-semibold">✓ No outstanding excess</span>`;
+    excessLine.innerHTML = `<span class="text-emerald-700 font-semibold">${ICON('check')}No outstanding excess</span>`;
   }
 
   const historyBox = document.getElementById('review-refund-history');
@@ -3730,13 +3763,13 @@ function reviewTxnRowHtml(t) {
   // cash-deposit endpoints in server.js.
   const isCash = t.payment_mode === 'CASH';
   const linkLine = linked
-    ? `<span class="text-emerald-700 font-semibold">🔗 ${isCash ? 'Banked ' : ''}${esc(t.bank_txn_date || '')} · ₹${inr(esc(t.bank_txn_credit != null ? t.bank_txn_credit : ''))}</span>`
+    ? `<span class="text-emerald-700 font-semibold">${ICON('link')}${isCash ? 'Banked ' : ''}${esc(t.bank_txn_date || '')} · ₹${inr(esc(t.bank_txn_credit != null ? t.bank_txn_credit : ''))}</span>`
         + (reviewRegVerified || isCash ? '' : ` <button type="button" class="text-rose-600 hover:underline font-semibold ml-1" onclick="unlinkTxn(${esc(t.id)})">Unlink</button>`)
     : isRejected
       ? `<span class="text-slate-400">Rejected — not linked</span>`
       : isCash
-        ? `<span class="text-slate-500">💵 Cash taken at the desk — <span class="text-amber-700 font-semibold">not yet banked</span></span>`
-        : `<span class="text-amber-700 font-semibold">⚠ Not acknowledged</span> <button type="button" class="text-indigo-600 hover:underline font-semibold ml-1" onclick="toggleTxnCandidates(${esc(t.id)})">Link &amp; acknowledge</button>`;
+        ? `<span class="text-slate-500">${ICON('coin')}Cash taken at the desk — <span class="text-amber-700 font-semibold">not yet banked</span></span>`
+        : `<span class="text-amber-700 font-semibold">${ICON('warning')}Not acknowledged</span> <button type="button" class="text-indigo-600 hover:underline font-semibold ml-1" onclick="toggleTxnCandidates(${esc(t.id)})">Link &amp; acknowledge</button>`;
   // Each payment keeps its OWN slip (payment_transactions.screenshot), unlike
   // registrations.screenshot which the next submission overwrites -- so this
   // is how the original partial payment's slip stays reachable after a
@@ -3745,7 +3778,7 @@ function reviewTxnRowHtml(t) {
   // evidence for a payment is the same kind of act as opening the evidence
   // for a student ID, and it read as an afterthought as a text link.
   const slipBtn = t.has_screenshot
-    ? `<button type="button" class="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg" onclick="showTxnSlip(${esc(t.id)})">📄 Payment Slip</button>`
+    ? `<button type="button" class="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg" onclick="showTxnSlip(${esc(t.id)})">${ICON('document')}Payment Slip</button>`
     : `<span class="text-slate-400 text-[10px]">No slip on file</span>`;
   // The bank statement's own description of the credit this payment landed
   // as -- the bank's words, not the delegate's. The UTR shown here before was
@@ -3880,7 +3913,7 @@ function updateReviewAcceptGate() {
   const acceptVisible = acceptBtn && !acceptBtn.classList.contains('hidden');
   if (!acceptVisible) { list.innerHTML = ''; return; }
   const row = (ok, okText, blockedText) =>
-    `<div class="${ok ? 'text-emerald-700' : 'text-amber-700 font-semibold'}">${ok ? '✓' : '○'} ${ok ? okText : blockedText}</div>`;
+    `<div class="${ok ? 'text-emerald-700' : 'text-amber-700 font-semibold'}">${ok ? ICON('check') : ICON('circle')} ${ok ? okText : blockedText}</div>`;
   const rows = [row(reviewGate.linked, 'All payments linked to bank credits', 'Link every payment to its bank credit below')];
   // idOk is true for non-student categories, where there's nothing to confirm
   // -- showing a permanently-ticked row there would be noise.
@@ -3937,7 +3970,7 @@ async function renderReviewCategoryLock(p) {
   // the section when it applies.
   const details = document.getElementById('review-corrections');
   const hint = document.getElementById('review-corrections-hint');
-  if (hint) hint.textContent = locked ? ' · 🔒 category locked' : '';
+  if (hint) hint.textContent = locked ? ' · category locked' : '';
   if (details) details.open = locked;
 }
 
@@ -3977,7 +4010,7 @@ function renderReviewIdVerification(p) {
   if (checkbox) checkbox.checked = !!p.id_verified;
   if (note) {
     note.classList.toggle('hidden', !p.id_verified);
-    note.textContent = p.id_verified_by ? `✓ Verified by ${p.id_verified_by} · ${fmtAuditTime(p.id_verified_at)}` : '';
+    note.textContent = p.id_verified_by ? `Verified by ${p.id_verified_by} · ${fmtAuditTime(p.id_verified_at)}` : '';
   }
   updateReviewAcceptGate();
 }
@@ -5296,7 +5329,7 @@ async function handleEmailShareDiscount(e) {
     if (!data.success) return showToast(data.error || 'Could not send the email.');
     showToast(`Sent to ${email}.`, 'success');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '✉️ Send'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = ICON('envelope') + 'Send'; }
   }
 }
 
@@ -5428,7 +5461,7 @@ async function renderDiscountCodes() {
       <td class="p-4">${usedTxt}</td>
       <td class="p-4 text-slate-600">${c.expires_at ? esc(c.expires_at) : '—'}</td>
       <td class="p-4 text-right whitespace-nowrap">
-        <button onclick="openShareDiscountModal(${esc(c.id)})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">📤 Share</button>
+        <button onclick="openShareDiscountModal(${esc(c.id)})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">${ICON('send')}Share</button>
       </td>
       <td class="p-4 text-right whitespace-nowrap">
         <button onclick="toggleDiscountCode(${esc(c.id)}, ${c.active ? 0 : 1})" class="px-3 py-1.5 ${c.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg">${c.active ? 'Deactivate' : 'Activate'}</button>
@@ -5642,7 +5675,7 @@ async function renderBackupStatus() {
   }
   if (data.pending) {
     const asked = data.request && data.request.requestedAt ? fmtAuditTime(data.request.requestedAt) : '';
-    lines.push(`<span class="text-indigo-700 font-semibold">⏳ A backup is queued${asked ? ` (requested ${esc(asked)})` : ''} and will start within a few minutes.</span>`);
+    lines.push(`<span class="text-indigo-700 font-semibold">${ICON('clock')}A backup is queued${asked ? ` (requested ${esc(asked)})` : ''} and will start within a few minutes.</span>`);
   }
   box.innerHTML = lines.join('<br>');
   if (btn) btn.disabled = !!data.pending;
@@ -5660,7 +5693,7 @@ function renderDriveStatus(data) {
   const d = data.drive;
 
   if (data.drivePending) {
-    box.innerHTML = '<span class="text-indigo-700 font-semibold">⏳ Applying the Google Drive change — this takes up to five minutes.</span>';
+    box.innerHTML = '<span class="text-indigo-700 font-semibold">' + ICON('clock') + 'Applying the Google Drive change — this takes up to five minutes.</span>';
   } else if (!d) {
     // No report yet: the script writes one on every run and after any link
     // attempt, so this is a fresh deployment, not a broken link.
@@ -5669,14 +5702,14 @@ function renderDriveStatus(data) {
     // The account matters: it is whose Drive these backups are sitting in, and
     // the one thing you cannot infer from the folder name if the wrong person
     // linked it.
-    box.innerHTML = `<span class="text-emerald-700 font-semibold">✓ Linked</span>`
+    box.innerHTML = `<span class="text-emerald-700 font-semibold">${ICON('check')}Linked</span>`
       + (d.account ? ` as <b>${esc(d.account)}</b>` : '')
       + ` · <code class="bg-slate-100 px-1 rounded">${esc(d.remote || '')}</code>`
       + ` · holds <b>${esc(String(d.backupCount || 0))}</b> backup${Number(d.backupCount) === 1 ? '' : 's'}`
       + ` (oldest removed beyond ${esc(String(d.keep || 14))})`
       + (d.checkedAt ? ` · checked ${esc(fmtAuditTime(d.checkedAt))}` : '');
   } else {
-    box.innerHTML = `<span class="text-rose-700 font-semibold">✗ Not linked</span>`
+    box.innerHTML = `<span class="text-rose-700 font-semibold">${ICON('cross')}Not linked</span>`
       + (d.lastError ? ` — ${esc(d.lastError)}` : '')
       + (d.checkedAt ? ` <span class="text-slate-400">(checked ${esc(fmtAuditTime(d.checkedAt))})</span>` : '');
   }
@@ -6002,7 +6035,7 @@ async function renderGroupsMonitor() {
   const LABEL = { BANK_VERIFIED: 'Verified', PARTIAL_PAYMENT: 'Balance due', REJECTED: 'Rejected', PENDING: 'Pending', NOT_REGISTERED: 'Not paid' };
   box.innerHTML = groups.map((g) => {
     const statusBadge = g.allVerified
-      ? '<span class="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✓ Fully approved</span>'
+      ? '<span class="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">' + ICON('check') + 'Fully approved</span>'
       : g.qualifies
         ? '<span class="text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">Discount active</span>'
         : `<span class="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Below min (${g.size}/${g.minSize || '—'})</span>`;
@@ -6695,7 +6728,7 @@ function reportRowCardHtml(row, columns) {
     </div>`;
 
   if (isPayments && amountIdx !== -1) {
-    const STATUS_ICON = { verified: '✅', accepted: '✅', completed: '✅', rejected: '❌', pending: '⏳' };
+    const STATUS_ICON = { verified: ICON('check'), accepted: ICON('check'), completed: ICON('check'), rejected: ICON('cross'), pending: ICON('clock') };
     const statusVal = statusIdx !== -1 ? row[statusIdx] : null;
     const icon = statusVal ? (STATUS_ICON[String(statusVal).toLowerCase()] || '•') : '';
     const amountVal = row[amountIdx];
@@ -6757,7 +6790,7 @@ async function viewReport(type, extraQuery) {
         <p class="text-xs text-slate-500 mt-0.5">Total: <span id="report-total-count" class="font-bold text-slate-700">${totalRows}</span> record${totalRows === 1 ? '' : 's'}<span id="report-filtered-note" class="hidden text-slate-400"> (filtered from ${totalRows})</span></p>
       </div>
       <div class="flex items-center gap-2">
-        <input id="report-search-input" type="text" placeholder="🔍 Search rows…" oninput="filterReportRows()" class="p-2 border rounded-lg text-xs w-52 outline-none focus:ring-2 focus:ring-indigo-200">
+        <input id="report-search-input" type="text" placeholder="Search rows…" oninput="filterReportRows()" class="p-2 border rounded-lg text-xs w-52 outline-none focus:ring-2 focus:ring-indigo-200">
         <button onclick="document.getElementById('report-view-container').classList.add('hidden')" class="text-xs text-slate-400 hover:text-slate-600 font-semibold">✕ Close</button>
       </div>
     </div>
@@ -7263,7 +7296,8 @@ async function handleRegisterDelegateSubmit(e) {
     const banner = document.getElementById('rd-result-banner');
     const isPending = data.bankStatus === 'PENDING';
     if (banner) banner.className = `rounded-xl p-4 text-center ${isPending ? 'bg-amber-50 border border-amber-200' : 'bg-emerald-50 border border-emerald-200'}`;
-    setText('rd-result-icon', isPending ? '⏳' : '✅');
+    const resultIcon = document.getElementById('rd-result-icon');
+    if (resultIcon) resultIcon.innerHTML = ICON(isPending ? 'clock' : 'check', 'w-9 h-9');
     const heading = document.getElementById('rd-result-heading');
     if (heading) heading.className = `font-bold mt-1 ${isPending ? 'text-amber-800' : 'text-emerald-800'}`;
     setText('rd-result-heading', isPending ? 'Registered — payment pending bank-statement linkage' : 'Registration confirmed');
@@ -7733,7 +7767,7 @@ function matchedRowHtml(m, serial) {
             </div>
           </div>
           ${m.transaction.description ? `<p class="text-[11px] text-slate-500 mt-1 truncate">${esc(m.transaction.description)}</p>` : ''}
-          ${m.amountOk ? '' : `<p class="text-[11px] text-rose-600 font-bold mt-1">⚠ credit not fully/exactly allocated</p>`}
+          ${m.amountOk ? '' : `<p class="text-[11px] text-rose-600 font-bold mt-1">${ICON('warning')}credit not fully/exactly allocated</p>`}
         </td>
         <td class="p-3 text-slate-400 hidden sm:table-cell">${serial}</td>
         <td class="p-3 font-mono text-xs hidden sm:table-cell">${esc(m.registration_number || '—')}</td>
@@ -7741,7 +7775,7 @@ function matchedRowHtml(m, serial) {
         <td class="p-3 font-mono text-xs hidden sm:table-cell">${esc(m.utr_number)}</td>
         <td class="p-3 hidden sm:table-cell">${esc(m.transaction.post_date)}</td>
         <td class="p-3 text-xs text-slate-500 hidden sm:table-cell max-w-[240px] truncate" title="${esc(m.transaction.description || '')}">${esc(m.transaction.description || '—')}</td>
-        <td class="p-3 hidden sm:table-cell">${amountLine}${m.amountOk ? '' : ` <span class="text-rose-600 font-bold">⚠ not fully/exactly allocated</span>`}</td>
+        <td class="p-3 hidden sm:table-cell">${amountLine}${m.amountOk ? '' : ` <span class="text-rose-600 font-bold">${ICON('warning')}not fully/exactly allocated</span>`}</td>
       </tr>`;
 }
 

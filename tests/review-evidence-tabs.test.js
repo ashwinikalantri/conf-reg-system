@@ -4,6 +4,11 @@ const { check, report, appFile } = require('./harness');
 const fs=require('fs');
 const js=fs.readFileSync(appFile('public','app.js'),'utf8');
 const grab=(n)=>{const i=js.indexOf('function '+n+'('); const j=js.indexOf('\n}', i); return js.slice(i, j+2);};
+const grabConst=(n)=>{const i=js.indexOf('const '+n+' = {'); const j=js.indexOf('\n};', i); return js.slice(i, j+3);};
+// Tab labels and the ledger row now carry an SVG icon (see ADMIN_ICON_SVG/
+// ICON in app.js) instead of a literal emoji -- pull both in wherever a
+// function that calls ICON() is isolated below.
+const iconSrc = `${grabConst('ADMIN_ICON_SVG')}\n${grab('ICON')}`;
 
 // Minimal DOM so buildReviewEvidence/setReviewImage can run headless.
 function harness(){
@@ -18,6 +23,7 @@ function harness(){
     fetch:()=>new Promise(()=>{}), encodeURIComponent, console};
   const src=`
     ${grab('esc')}
+    ${iconSrc}
     let reviewImageUrls={},reviewImageBlobUrls={},reviewImageTabs=[],reviewImageZoomed=false,reviewImageWhich='';
     ${grab('buildReviewEvidence')} ${grab('prefetchReviewImages')} ${grab('fetchReviewImage')}
     ${grab('setReviewImage')} ${grab('applyReviewImageZoom')} ${grab('showTxnSlip')}
@@ -112,22 +118,26 @@ console.log('\n== 2. ID card comes first ==');
 
 console.log('\n== 1. The ledger row button ==');
 {
- const row=new Function(`${grab('esc')} ${grab('inr')} ${grab('fmtAuditTime')}
+ const row=new Function(`${grab('esc')} ${grab('inr')} ${grab('fmtAuditTime')} ${iconSrc}
    let reviewRegVerified=false; ${grab('reviewTxnRowHtml')} return reviewTxnRowHtml;`)();
  const withSlip=row({id:154,amount:2000,verified_amount:750,txn_status:'VERIFIED',payment_mode:'UPI',
    bank_txn_id:518,bank_txn_date:'2026-08-20',bank_txn_credit:750,
    bank_txn_description:'UPI/RRN 128217278187/UPI_PRIYANKA',submitted_at:Date.now(),has_screenshot:1});
- check('it is a button, not a text link', /<button[^>]*>📄 Payment Slip<\/button>/.test(withSlip));
+ check('it is a button, not a text link', /<button[^>]*><svg[\s\S]*?<\/svg>Payment Slip<\/button>/.test(withSlip));
  check('styled like View ID Card (indigo, rounded)',
    /bg-indigo-600[^"]*hover:bg-indigo-700/.test(withSlip) && /rounded-lg/.test(withSlip));
  check('no longer an underlined link', !/hover:underline[^"]*"[^>]*onclick="showTxnSlip/.test(withSlip));
  // It shares the reconciliation row instead of owning one: alone on its own
  // row it was right-aligned against an empty half-row, which read as a gap.
  const btnRow=withSlip.slice(withSlip.lastIndexOf('<div class="mt-2'));
+ // The link icon and the Payment Slip button's document icon are both
+ // <svg> now (previously distinct emoji) -- tell them apart by a path
+ // fragment unique to each (see ADMIN_ICON_SVG.link / .document in app.js).
+ const LINK_ICON_MARK = 'M8 12l-2.5 2.5';
  check('it shares a row with the reconciliation line',
-   btnRow.includes('🔗') && btnRow.includes('Payment Slip'));
+   btnRow.includes(LINK_ICON_MARK) && btnRow.includes('Payment Slip'));
  check('no row of its own with empty space beside it', !/justify-end/.test(withSlip));
- check('link line left, button right', btnRow.indexOf('🔗') < btnRow.indexOf('📄 Payment Slip'));
+ check('link line left, button right', btnRow.indexOf(LINK_ICON_MARK) < btnRow.indexOf('Payment Slip'));
  check('the row splits them to opposite ends', /justify-between/.test(btnRow));
  check('a long link line truncates rather than pushing the button off',
    /min-w-0/.test(btnRow) && /shrink-0/.test(btnRow));

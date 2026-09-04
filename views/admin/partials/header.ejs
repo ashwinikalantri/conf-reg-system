@@ -11,36 +11,36 @@
       </a>
       <div class="relative">
         <button id="settings-menu-btn" onclick="toggleSettingsMenu()" class="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-600 hover:text-indigo-600 border border-slate-300 rounded-xl text-sm font-semibold transition flex items-center gap-1.5">
-          ⚙️ Settings <span class="text-[10px]">▾</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="11" cy="17" r="2" fill="currentColor" stroke="none"/></svg> Settings <span class="text-[10px]">▾</span>
         </button>
         <div id="settings-menu" class="hidden absolute right-0 mt-2 w-60 bg-white rounded-xl shadow-card border border-slate-200 py-1.5 z-50 text-slate-800 max-h-[80vh] overflow-y-auto">
           <button id="settings-item-programs" onclick="selectSettingsTab('programs')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span>🛠️ Program Groups</span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M14.5 3.5a4.5 4.5 0 0 0-5.9 5.9L3 15l3 3 5.6-5.6a4.5 4.5 0 0 0 5.9-5.9l-2.8 2.8-2-2z"/></svg>Program Groups</span>
           </button>
           <button id="settings-item-fees" onclick="selectSettingsTab('fees')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span>💰 Fee Master</span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="12" cy="12" r="9"/><path d="M12 7v10"/><path d="M9 9.7c0-1.1 1.2-1.7 3-1.7s3 .8 3 1.9-1.2 1.6-3 1.6-3 .6-3 1.8 1.2 1.9 3 1.9 3-.6 3-1.6"/></svg>Fee Master</span>
           </button>
           <button id="settings-item-general" onclick="selectSettingsTab('general')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span>⚙️ General</span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="11" cy="17" r="2" fill="currentColor" stroke="none"/></svg>General</span>
           </button>
           <button id="settings-item-reminders" onclick="selectSettingsTab('reminders')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span>✉️ Reminders</span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M3 6.5 L12 13 L21 6.5"/></svg>Reminders</span>
             <span id="badge-pending-signups" class="ml-auto bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
           </button>
           <button id="settings-item-groupdiscount" onclick="selectSettingsTab('groupdiscount')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span>👥 Group Discount</span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2c2.8.4 5 2.8 5 5.8"/></svg>Group Discount</span>
           </button>
           <button id="settings-item-discount" onclick="selectSettingsTab('discount')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span>🎟️ Discount Code</span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><line x1="14" y1="6" x2="14" y2="18" stroke-dasharray="2.5 2.5"/></svg>Discount Code</span>
           </button>
           <button id="settings-item-users" onclick="selectSettingsTab('users')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span>👤 Users</span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>Users</span>
           </button>
           <button id="settings-item-roles" onclick="selectSettingsTab('roles')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span>🔐 Roles</span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg>Roles</span>
           </button>
           <button id="settings-item-activity" onclick="selectSettingsTab('activity')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span>📋 Logs</span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="6" y="4" width="12" height="17" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/></svg>Logs</span>
           </button>
         </div>
       </div>
