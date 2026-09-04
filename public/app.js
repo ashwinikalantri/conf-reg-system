@@ -2747,8 +2747,13 @@ function paymentRowHtml(p) {
   const balancePill = ((balanceDue || categoryChangedShortfall) && owed > 0)
     ? `<span class="text-[10px] text-orange-700 font-semibold">₹${inr(paidSoFar)} of ₹${inr(Number(p.expected_amount))} · ₹${inr(owed)} due</span>`
     : '';
+  // Same compact-pill shape as everywhere else (phase 03) -- this one and
+  // the three below it used a plain `rounded` corner and lighter tones
+  // instead of `rounded-full` + the standard -100/-800/-300 triad, missed
+  // in that pass for the same reason phase 10's "rejected" tag was: it
+  // doesn't match "rounded-full", the pattern that pass searched for.
   const reviseHint = categoryChangedShortfall
-    ? `<span class="text-[10px] text-orange-700 font-semibold bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5">${ICON('warning')}Category changed — revise</span>`
+    ? `<span class="text-[10px] text-orange-800 font-bold bg-orange-100 border border-orange-300 rounded-full px-2 py-0.5">${ICON('warning')}Category changed — revise</span>`
     : '';
   // Verified payments (net of any already-recorded refund) exceed what was
   // owed -- surfaced here so it's visible while scanning the list, not only
@@ -2757,7 +2762,7 @@ function paymentRowHtml(p) {
   // refunded).
   const overpaidAmt = Number(p.overpaid) || 0;
   const overpaidPill = overpaidAmt > 0
-    ? `<span class="text-[10px] text-amber-700 font-semibold bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">${ICON('coin')}₹${inr(overpaidAmt)} excess paid</span>`
+    ? `<span class="text-[10px] text-amber-800 font-bold bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5">${ICON('coin')}₹${inr(overpaidAmt)} excess paid</span>`
     : '';
   // Link status is now per transaction: show "linked" only when every pending
   // payment has its own bank credit linked. Verified/rejected rows (no pending
@@ -2795,7 +2800,7 @@ function paymentRowHtml(p) {
           <p class="font-semibold text-slate-700 shrink-0">₹${inr(paidSoFar)}</p>
         </div>
         <div class="flex flex-wrap items-center gap-1.5 mt-2">
-          ${p.is_flagged ? `<span class="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">${ICON('warning')}Flagged</span>` : ''}
+          ${p.is_flagged ? `<span class="text-[10px] bg-red-100 text-red-800 px-2 py-0.5 rounded-full border border-red-300 font-bold">${ICON('warning')}Flagged</span>` : ''}
           ${statusPill}${reviseHint}${balancePill}${overpaidPill}${rejectionNote}${linkedPill}${idPill}
         </div>
         <div class="mt-3">${rowActions}</div>
@@ -2804,7 +2809,7 @@ function paymentRowHtml(p) {
       <td class="p-4 font-bold text-sm hidden sm:table-cell">
         ${esc(p.delegate_name)}
         <br><span class="text-[11px] font-normal text-slate-500">${esc(p.category_label)}</span>
-        ${p.is_flagged ? `<br><span class="inline-block mt-1 text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200 font-bold uppercase tracking-wider">${ICON('warning')}Flagged</span>` : ''}
+        ${p.is_flagged ? `<br><span class="inline-block mt-1 text-[10px] bg-red-100 text-red-800 px-2 py-0.5 rounded-full border border-red-300 font-bold">${ICON('warning')}Flagged</span>` : ''}
       </td>
       <td class="p-4 text-sm hidden sm:table-cell">
         <span class="font-semibold text-slate-700">₹${inr(paidSoFar)}</span>

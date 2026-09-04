@@ -67,6 +67,12 @@ check('the Matched table\'s "rejected" tag (found during phase 09/10\'s statemen
   /text-\[10px\] font-bold text-rose-800 bg-rose-100 border border-rose-300 rounded-full px-2 py-0\.5">rejected<\/span>/.test(js));
 check('no more compact badges use plain `rounded` with `font-bold` instead of `rounded-full`',
   !/font-bold[^"]*\brounded\b(?!-)[^"]*px-\d/.test(js) && !/\brounded\b(?!-)[^"]*px-\d[^"]*font-bold/.test(js));
+check('paymentRowHtml\'s "Category changed" hint is canonical (found in phase 14\'s final sweep)',
+  js.includes('bg-orange-100 border border-orange-300 rounded-full px-2 py-0.5">${ICON(\'warning\')}Category changed'));
+check('paymentRowHtml\'s "excess paid" pill is canonical (found in phase 14\'s final sweep)',
+  js.includes('bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5">${ICON(\'coin\')}₹'));
+check('paymentRowHtml\'s two Flagged badges (mobile + desktop) are canonical shape, red kept deliberately (a distinct \'needs scrutiny\' signal from rose=\'rejected\')',
+  (js.match(/bg-red-100 text-red-800 px-2 py-0\.5 rounded-full border border-red-300 font-bold">\$\{ICON\('warning'\)\}Flagged<\/span>/g) || []).length === 2);
 
 console.log('\n== Deliberately untouched: count badges are a different component, not a status pill ==');
 check('nav-tab / header / payments count badges stay as they were (quantity, not state)',
