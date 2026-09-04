@@ -2787,13 +2787,23 @@ function paymentRowHtml(p) {
   const overpaidPill = overpaidAmt > 0
     ? `<span class="text-[10px] text-amber-800 font-bold bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5">${ICON('coin')}₹${inr(overpaidAmt)} excess paid</span>`
     : '';
-  // Link status is now per transaction: show "linked" only when every pending
-  // payment has its own bank credit linked. Verified/rejected rows (no pending
-  // transactions) don't show the pill.
+  // Flags a registration whose claimed payment still has to be found in the
+  // bank statement. Verified/rejected rows (no pending transactions) don't
+  // show it.
+  //
+  // This was a two-state "Linked / Not linked" pill, and both halves were
+  // wrong. The positive half was unreachable: every path that sets
+  // bank_txn_id either sets txn_status = 'VERIFIED' in the same statement
+  // (PUT /api/payment-transactions/:txnId/link and the reconcile paths) or
+  // refuses anything not already VERIFIED (the cash-deposit link), so a
+  // PENDING transaction never carries a bank credit -- true of every
+  // payment row on file, and by construction, not by accident. So the pill
+  // only ever rendered "Not linked". And "linked" named the foreign key
+  // rather than the thing the desk actually needs to know, which is that
+  // this delegate's money hasn't been matched to a credit yet.
   const pendingTxns = (p.transactions || []).filter((t) => t.txn_status === 'PENDING');
-  const allPendingLinked = pendingTxns.length > 0 && pendingTxns.every((t) => t.bank_txn_id != null);
-  const linkedPill = pendingTxns.length === 0 ? ''
-    : `<span class="text-[10px] ${allPendingLinked ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${allPendingLinked ? ICON('link') + 'Linked' : ICON('warning') + 'Not linked'}</span>`;
+  const bankMatchPill = pendingTxns.length === 0 ? ''
+    : `<span class="text-[10px] text-amber-600 font-semibold">${ICON('warning')}Awaiting bank match</span>`;
   const idPill = isStudentCategory(p.category_key)
     ? `<span class="text-[10px] ${p.id_verified ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${p.id_verified ? ICON('gradcap') + 'ID Verified' : ICON('warning') + 'ID Not Verified'}</span>`
     : '';
@@ -2824,7 +2834,7 @@ function paymentRowHtml(p) {
         </div>
         <div class="flex flex-wrap items-center gap-1.5 mt-2">
           ${p.is_flagged ? `<span class="text-[10px] bg-red-100 text-red-800 px-2 py-0.5 rounded-full border border-red-300 font-bold">${ICON('warning')}Flagged</span>` : ''}
-          ${statusPill}${reviseHint}${balancePill}${overpaidPill}${rejectionNote}${linkedPill}${idPill}
+          ${statusPill}${reviseHint}${balancePill}${overpaidPill}${rejectionNote}${bankMatchPill}${idPill}
         </div>
         <div class="mt-3">${rowActions}</div>
       </td>
@@ -2843,7 +2853,7 @@ function paymentRowHtml(p) {
         ${balancePill ? `<br>${balancePill}` : ''}
         ${overpaidPill ? `<br>${overpaidPill}` : ''}
         ${rejectionNote ? `<br>${rejectionNote}` : ''}
-        <br>${linkedPill}
+        <br>${bankMatchPill}
         ${idPill ? `<br>${idPill}` : ''}
       </td>
       <td class="p-4 text-right hidden sm:table-cell">
