@@ -262,41 +262,111 @@ function setLoginMode(mode) {
   setText('login-submit-btn', isOtp ? 'Verify OTP & Login' : 'Login');
 }
 
-// --- PIN CODE API (India Post) ---
+// --- PIN CODE ----------------------------------------------------------
+// Two separate questions, deliberately answered by two different sources:
+//
+//   Does this PIN exist?  -> our own /api/pincode, from the dataset the app
+//                            ships. Authoritative, always reachable, and the
+//                            same list the server enforces at register time.
+//   What is its state and district?
+//                         -> api.postalpincode.in, purely as a convenience.
+//
+// They used to be one question put to the third party, whose failure text
+// said "Invalid PIN Code or API unreachable" -- it genuinely could not tell
+// those apart. A delegate on a slow or filtered connection was told their
+// address was wrong, and since state and district are readonly and filled
+// only by that call, they then had no way to proceed at all.
+//
+// So a lookup failure now unlocks the two fields to be typed instead of
+// blocking the form. State and district are required (see
+// validateSignupStep), but never unfillable.
+function setAddressFieldsEditable(editable) {
+  ['reg-state', 'reg-district'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.readOnly = !editable;
+    el.classList.toggle('bg-slate-100', !editable);
+    el.classList.toggle('text-slate-600', !editable);
+    el.classList.toggle('bg-white', editable);
+  });
+}
+
+// null means "could not check" -- never a rejection. The register endpoint
+// applies the same list and is what actually decides.
+async function checkPincodeKnown(pin) {
+  try {
+    const res = await fetch(`/api/pincode/${encodeURIComponent(pin)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.checkable) return null;
+    return !!data.known;
+  } catch (e) {
+    return null;
+  }
+}
+
 async function fetchAddressDetails(pincode) {
   const statusSpan = document.getElementById('pincode-status');
   const stateInput = document.getElementById('reg-state');
   const districtInput = document.getElementById('reg-district');
+  if (!statusSpan || !stateInput || !districtInput) return;
 
-  if (pincode.length !== 6) {
-    statusSpan.innerText = '';
+  const say = (text, tone) => {
+    statusSpan.innerText = text;
+    statusSpan.className = `text-xs mt-1 block font-medium ${
+      tone === 'ok' ? 'text-emerald-600 font-bold'
+      : tone === 'bad' ? 'text-rose-600 font-bold'
+      : tone === 'warn' ? 'text-amber-700 font-bold' : 'text-indigo-600'}`;
+  };
+
+  const pin = String(pincode || '').trim();
+  if (pin.length !== 6) {
+    say('', 'info');
     stateInput.value = '';
     districtInput.value = '';
+    setAddressFieldsEditable(false);
     return;
   }
 
-  statusSpan.innerText = 'Fetching details...';
-  statusSpan.className = 'text-xs mt-1 block text-indigo-600';
+  say('Checking PIN code…', 'info');
 
+  // 1. Does it exist? Our own list decides.
+  let known = null;   // null = could not check
   try {
-    const res = await fetch(`https://api.postalpincode.in/pincode/${pincode}`);
-    const data = await res.json();
-
-    if (data && data[0].Status === 'Success') {
-      const postOffices = data[0].PostOffice;
-      stateInput.value = postOffices[0].State;
-      districtInput.value = postOffices[0].District;
-
-      statusSpan.innerText = '✓ PIN Code verified';
-      statusSpan.className = 'text-xs mt-1 block text-emerald-600 font-bold';
-    } else {
-      throw new Error("Invalid PIN");
+    const res = await fetch(`/api/pincode/${encodeURIComponent(pin)}`);
+    if (res.ok) {
+      const data = await res.json();
+      known = data.checkable ? !!data.known : null;
+      if (data.checkable && !data.known) {
+        say(`${pin} is not a PIN code we recognise.`, 'bad');
+        stateInput.value = '';
+        districtInput.value = '';
+        setAddressFieldsEditable(false);
+        return;
+      }
     }
-  } catch (err) {
-    statusSpan.innerText = 'Invalid PIN Code or API unreachable';
-    statusSpan.className = 'text-xs mt-1 block text-rose-600 font-bold';
-    stateInput.value = '';
-    districtInput.value = '';
+  } catch (e) { /* fall through: treat as "could not check" */ }
+
+  // 2. What is it called? A convenience, so its failure is not fatal.
+  try {
+    const res = await fetch(`https://api.postalpincode.in/pincode/${encodeURIComponent(pin)}`);
+    const data = await res.json();
+    if (data && data[0] && data[0].Status === 'Success' && data[0].PostOffice && data[0].PostOffice.length) {
+      stateInput.value = data[0].PostOffice[0].State;
+      districtInput.value = data[0].PostOffice[0].District;
+      setAddressFieldsEditable(false);
+      say(known === false ? 'PIN code found' : '✓ PIN code verified', 'ok');
+      return;
+    }
+    throw new Error('no match');
+  } catch (e) {
+    // The PIN is fine (or unverifiable) but we could not name it. Let them
+    // fill it in rather than stopping here.
+    setAddressFieldsEditable(true);
+    if (!stateInput.value) stateInput.focus();
+    say(known === true
+      ? 'PIN code recognised, but we could not look up its state and district. Please type them below.'
+      : 'We could not look up this PIN code just now. Please type your state and district below.', 'warn');
   }
 }
 
@@ -640,6 +710,21 @@ async function validateSignupStep(n) {
     if (!document.getElementById('reg-institute').value.trim()) return 'Please enter your institute or organization.';
     const pw = document.getElementById('reg-password').value;
     if (!pw || pw.length < 8) return 'Please set a password of at least 8 characters.';
+    return null;
+  }
+  // Step 5 is the address, and had no checks at all -- the wizard would let
+  // you finish with an empty one and the server stored whatever arrived.
+  // Indian delegates only: elsewhere these columns hold a free-text region
+  // and city, with no PIN to check (see the register endpoint, which
+  // enforces the same rules and is the one that actually decides).
+  if (n === 5) {
+    if (!signupCountryIsIndia()) return null;
+    const pin = document.getElementById('reg-pincode').value.trim();
+    if (!/^[1-9][0-9]{5}$/.test(pin)) return 'Please enter a valid 6-digit PIN code.';
+    const known = await checkPincodeKnown(pin);
+    if (known === false) return `${pin} is not a PIN code we recognise. Please check and try again.`;
+    if (!document.getElementById('reg-state').value.trim()) return 'Please enter your state.';
+    if (!document.getElementById('reg-district').value.trim()) return 'Please enter your district.';
     return null;
   }
   return null;

@@ -40,6 +40,36 @@ const PAGE_FONTS = '<link rel="preconnect" href="https://fonts.googleapis.com">'
   + '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
   + '<link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">';
 const PAGE_FONT = "'Source Sans 3', system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+// --- PIN CODE VALIDITY ---------------------------------------------------
+// The set of PIN codes that actually exist, from the GeoNames export already
+// shipped for the delegate map (public/data/india-pincodes.json). Using the
+// file we already have means the check needs no third party: signup used to
+// ask api.postalpincode.in whether a PIN was real, and its own error text
+// admitted it could not tell "invalid PIN" from "API unreachable" -- so a
+// delegate on a slow or filtered connection was told their address was
+// wrong. It also means a PIN that passes here is one the map can plot,
+// rather than two datasets disagreeing about what exists.
+//
+// Read once at boot: ~19k keys, and the file is static.
+const INDIA_PINCODES = (() => {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(__dirname, 'public', 'data', 'india-pincodes.json'), 'utf8'));
+    return new Set(Object.keys(raw.pincodes || {}));
+  } catch (err) {
+    // Never fail the boot over this. An empty set disables the existence
+    // check (isKnownPincode below says so) rather than rejecting everyone,
+    // which is the safer way to be wrong: the format check still applies.
+    console.error('PIN code dataset could not be read; existence checks are off:', err.message);
+    return new Set();
+  }
+})();
+
+// True when we can say a PIN does not exist. With no dataset loaded we
+// cannot, so every well-formed PIN passes rather than nobody registering.
+const pincodeChecksAvailable = () => INDIA_PINCODES.size > 0;
+const isKnownPincode = (pin) => !pincodeChecksAvailable() || INDIA_PINCODES.has(String(pin || '').trim());
+
 const PAGE_HEAD_FONT = "'Libre Franklin', 'Source Sans 3', system-ui, sans-serif";
 
 // The short "something stopped you here" pages -- maintenance, not
@@ -3192,6 +3222,24 @@ app.post('/api/setup/create-admin', async (req, res, next) => {
 // submission. This is a convenience only: POST /api/auth/register below
 // re-checks unconditionally and is the real, authoritative gate regardless
 // of what this endpoint says.
+// Is this a real PIN code? Answered from the dataset the app already ships
+// (see INDIA_PINCODES), so the signup wizard no longer has to ask a third
+// party whether an address is valid -- that call could not distinguish an
+// unreachable API from a wrong PIN, and told delegates on a slow connection
+// that their address was invalid.
+//
+// Unauthenticated, like check-contact: it is needed before an account
+// exists, and it discloses nothing that is not in a published postal list.
+app.get('/api/pincode/:pin', (req, res) => {
+  const pin = String(req.params.pin || '').trim();
+  if (!/^[1-9][0-9]{5}$/.test(pin)) {
+    return res.json({ success: true, wellFormed: false, known: false, checkable: pincodeChecksAvailable() });
+  }
+  // `checkable` lets the client tell "we know this is wrong" from "we could
+  // not check" -- the distinction the old third-party call could not make.
+  res.json({ success: true, wellFormed: true, known: isKnownPincode(pin), checkable: pincodeChecksAvailable() });
+});
+
 app.post('/api/auth/check-contact', async (req, res, next) => {
   try {
     const phoneVal = String(req.body.phone || '').trim();
@@ -3287,6 +3335,32 @@ app.post('/api/auth/register', async (req, res, next) => {
     const genderVal = ['Male', 'Female', 'Other'].includes(gender) ? gender : null;
     const emailVal = emailRaw ? normalizeEmail(emailRaw) : null;
 
+    // --- Address ---------------------------------------------------------
+    // Indian delegates only: a PIN code has to be one that exists, and the
+    // state and district it identifies are required. Everywhere else these
+    // columns hold a free-text region and city (there is no PIN to check and
+    // no list to check it against), so the rules below would be meaningless.
+    //
+    // Enforced here as well as in the wizard because the wizard is a
+    // convenience, not a gate -- this endpoint is reachable directly.
+    const pincodeVal = String(pincode || '').trim();
+    const stateVal = String(state || '').trim();
+    const districtVal = String(district || '').trim();
+    if (isIndia) {
+      if (!/^[1-9][0-9]{5}$/.test(pincodeVal)) {
+        return res.status(400).json({ success: false, error: 'Please enter a valid 6-digit PIN code.' });
+      }
+      if (!isKnownPincode(pincodeVal)) {
+        return res.status(400).json({ success: false, error: `${pincodeVal} is not a PIN code we recognise. Please check and try again.` });
+      }
+      if (!stateVal) {
+        return res.status(400).json({ success: false, error: 'State is required.' });
+      }
+      if (!districtVal) {
+        return res.status(400).json({ success: false, error: 'District is required.' });
+      }
+    }
+
     // Prove at least one channel. `otp` is the legacy single-code field and
     // is treated as the phone code, so an older client keeps working.
     const phoneCode = phoneOtp || otp;
@@ -3357,7 +3431,7 @@ app.post('/api/auth/register', async (req, res, next) => {
       `INSERT INTO users (phone_number, phone, phone_verified, email_verified, salutation, full_name, designation, institution, country, pincode, state, district, age, gender, email, password_hash, role, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELEGATE', ?)`,
       [userKey, phoneVal ? toE164(phoneVal) : null, phoneVerified, emailVerified, salutationVal, nameVal, designation, institute,
-       countryVal, pincode || null, state || null, district || null, ageNum, genderVal, emailVal, passwordHash, Date.now()]
+       countryVal, pincodeVal || null, stateVal || null, districtVal || null, ageNum, genderVal, emailVal, passwordHash, Date.now()]
     );
 
     // The account exists now, so the codes have done their job. Spent here
