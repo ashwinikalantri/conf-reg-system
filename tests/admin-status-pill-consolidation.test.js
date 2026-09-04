@@ -63,6 +63,10 @@ check('the payment-mode ledger tag is bordered and font-bold (was font-semibold,
 check('review-category-locked-badge (fixed during the icon pass) already matches the compact spec',
   /text-\[10px\] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0\.5/.test(
     fs.readFileSync(appFile('views', 'admin', 'modals', 'review.ejs'), 'utf8')));
+check('the Matched table\'s "rejected" tag (found during phase 09/10\'s statement pass, missed here because it used plain `rounded` not `rounded-full`)',
+  /text-\[10px\] font-bold text-rose-800 bg-rose-100 border border-rose-300 rounded-full px-2 py-0\.5">rejected<\/span>/.test(js));
+check('no more compact badges use plain `rounded` with `font-bold` instead of `rounded-full`',
+  !/font-bold[^"]*\brounded\b(?!-)[^"]*px-\d/.test(js) && !/\brounded\b(?!-)[^"]*px-\d[^"]*font-bold/.test(js));
 
 console.log('\n== Deliberately untouched: count badges are a different component, not a status pill ==');
 check('nav-tab / header / payments count badges stay as they were (quantity, not state)',

@@ -7815,8 +7815,12 @@ async function markNonRegistration(id, value) {
 // The matched list, cached so the search box can filter it without refetching.
 let cachedMatched = [];
 function matchedRowHtml(m, serial) {
+  // Same compact-pill shape as everywhere else (Phase 3) -- this one used a
+  // plain `rounded` corner and lighter tones instead of `rounded-full` +
+  // the standard rose-100/800/300 triad, which is exactly why it slipped
+  // past that pass: it doesn't match "rounded-full", the pattern searched.
   const rejectedTag = m.bank_status === 'REJECTED'
-    ? ' <span class="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5">rejected</span>' : '';
+    ? ' <span class="text-[10px] font-bold text-rose-800 bg-rose-100 border border-rose-300 rounded-full px-2 py-0.5">rejected</span>' : '';
   // linkedAmount is what THIS delegate's own portion of the credit is -- the
   // full credit amount unless it's split across more than one registration.
   // amountOk now describes the credit as a whole (fully & exactly
