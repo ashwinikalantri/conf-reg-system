@@ -4116,8 +4116,13 @@ async function renderRoleOptions() {
   cachedRoleOptions.forEach((r) => { ROLE_LABELS[r.key] = r.label; });
   // If a user's detail panel is open, its role select was built from the
   // list as it stood at the time -- refresh it in place rather than leaving
-  // it stale until the panel is reopened.
+  // it stale until the panel is reopened. Same for the Users table's Role
+  // filter, which this call is what actually enables (see
+  // populateUserFilterOptions) -- loadBackendUsers() runs before this
+  // during init, so the filter's first paint uses the static fallback list
+  // until this refresh replaces it with the real catalogue.
   if (userDetailData) renderUserDetail();
+  if (document.getElementById('user-table-body')) renderBackendUsers();
 }
 
 async function loadBackendRoles() {
@@ -4382,6 +4387,23 @@ function populateUserFilterOptions() {
     .sort((a, b) => a.localeCompare(b));
   fill('user-filter-designation', uniqSorted('designation'));
   fill('user-filter-institute', uniqSorted('institution'));
+
+  // Role filter: rebuilt from the live role catalogue (cachedRoleOptions),
+  // not the static <option>s users.ejs ships as a pre-load fallback. Without
+  // this, a custom role created via the Role Editor is fully assignable
+  // everywhere (Create Staff User, the detail panel's role select) but has
+  // no way to be filtered TO here -- silently unreachable by role once a
+  // conference actually uses one. Skipped while cachedRoleOptions hasn't
+  // loaded yet; the static fallback stands until renderRoleOptions() calls
+  // back in to refresh this (see there).
+  const roleSel = document.getElementById('user-filter-role');
+  if (roleSel && cachedRoleOptions.length) {
+    const current = roleSel.value;
+    const roleKeys = ['DELEGATE', ...cachedRoleOptions.map((r) => r.key)];
+    roleSel.innerHTML = '<option value="">All roles</option>'
+      + roleKeys.map((k) => `<option value="${esc(k)}">${esc(roleLabel(k))}</option>`).join('');
+    if (roleKeys.includes(current)) roleSel.value = current;
+  }
 }
 
 function renderBackendUsers() {
