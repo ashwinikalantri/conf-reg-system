@@ -1,4 +1,5 @@
-const { call, check, report } = require('./harness');
+const fs=require('fs');
+const { call, check, report, appFile } = require('./harness');
 // Receipt: stub on screen, statement on print, one document.
 sqlite3=require('sqlite3');
 const db=new sqlite3.Database(process.argv[2]);
@@ -153,6 +154,41 @@ const between=(h,a,b)=>h.slice(h.indexOf(a), b?h.indexOf(b):undefined);
  check('no fee-breakdown block', !nr.both.includes('How the fee was worked out') && !nr.both.includes('<div class="hd">Fee</div>'));
  check('hero still says "a fee of"', /received against a fee of/.test(nr.both));
  check('and says nothing about a discount', !/discount/i.test(nr.both));
+
+ console.log('\n== It looks like the portal that issued it ==');
+ // The receipt is a separately authored document -- two layouts, its own
+ // structure, deliberately not the app's CSS (see its header comment). That
+ // made it easy to leave behind: it carried its own indigo (#3B33A8) and its
+ // own three typefaces long after the rest of the app moved to the steel
+ // "Clinical Trust" ramp, which is exactly how the email templates rotted.
+ // Its STRUCTURE is still its own; only the palette and faces are shared.
+ const portalCfg = fs.readFileSync(appFile('views', 'index.ejs'), 'utf8');
+ check('the accent is the app\'s steel, taken from the portal config',
+   r.both.includes('--indigo:#2f5673') && portalCfg.includes("600: '#2f5673'"));
+ check('the tint behind it likewise', r.both.includes('--indigo-2:#eef3f6'));
+ check('text sits on the app\'s slate, not a private grey',
+   r.both.includes('--ink:#0f172a') && r.both.includes('--muted:#64748b'));
+ check('none of its old private palette survives',
+   !/#3B33A8|#16181D|#494E5C|#767C8C|#DDDFE7|#EDECFA|#EEF0F4|#C9C6F2|#332B92/i.test(r.both),
+   (r.both.match(/#3B33A8|#16181D|#C9C6F2|#332B92/i) || [])[0]);
+ check('the note box uses the app\'s amber rather than its own cream',
+   !/#FBF1E0|#E4C489|#7A4B05/i.test(r.both) && r.both.includes('--note-bg:#fffbeb'));
+
+ check('body copy is the app\'s body face', /font-family:"Source Sans 3"/.test(r.both));
+ check('...and Manrope is gone', !/Manrope/.test(r.both));
+ check('the display face is the app\'s, spent on the amount and the name',
+   /\.stub \.amt \{ font-family:"Libre Franklin"/.test(r.both)
+   && /\.stub \.nm \{ font-family:"Libre Franklin"/.test(r.both));
+ check('...and not set as the face for the whole card',
+   !/\.stub \{[^}]*font-family:"Libre Franklin"/.test(r.both));
+ check('the statement titles itself in the display face',
+   /\.stmt \.bar \.cf \{ font-family:"Libre Franklin"/.test(r.both));
+ // Identifiers get transcribed by hand into reimbursement claims, so they
+ // stay in a mono where 0/O and 1/l are told apart.
+ check('registration numbers and UTRs stay monospaced', /IBM Plex Mono/.test(r.both));
+ check('only the faces it actually uses are fetched',
+   /family=IBM\+Plex\+Mono[^"]*family=Libre\+Franklin[^"]*family=Source\+Sans\+3/.test(r.both)
+   && !/IBM\+Plex\+Sans/.test(r.both));
 
  report();
 db.close();

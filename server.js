@@ -4519,34 +4519,44 @@ const renderReceipt = async (req, res, next) => {
      goes to a finance office and has to look like an accounting record.
      Neither is a resized version of the other -- they are different
      documents, so each is authored separately and CSS picks one. */
+  /* The app's own tokens: the steel ramp views/index.ejs remaps Tailwind's
+     indigo onto, and the slate it uses for text, so a receipt looks like it
+     came from the portal that issued it. The variable NAMES are unchanged --
+     --indigo is what every rule below already references, and renaming it
+     across this file would be churn for nothing. */
   :root {
     color-scheme: light;
-    --white:#FFFFFF; --ink:#16181D; --soft:#494E5C; --muted:#767C8C;
-    --rule:#DDDFE7; --rule-2:#EDEEF3; --indigo:#3B33A8; --indigo-2:#EDECFA;
-    --green:#146B3E; --green-2:#E5F3EA; --ground:#EEF0F4; --red:#B3261E;
+    --white:#FFFFFF; --ink:#0f172a; --soft:#334155; --muted:#64748b;
+    --rule:#e2e8f0; --rule-2:#f1f5f9; --indigo:#2f5673; --indigo-2:#eef3f6;
+    --green:#047857; --green-2:#ecfdf5; --ground:#f1f5f9; --red:#9f1239;
+    /* The "please note" box, on the app's amber rather than its own cream. */
+    --note-bg:#fffbeb; --note-rule:#fcd34d; --note-ink:#92400e;
   }
   * { box-sizing:border-box; }
   body { margin:0; padding:2rem 1rem 3rem; background:var(--ground); color:var(--ink);
-         font-family:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+         font-family:"Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
          line-height:1.55; -webkit-font-smoothing:antialiased; }
   .money { font-variant-numeric:tabular-nums; white-space:nowrap; }`;
     const STUB_CSS = `  /* ---------------- Stub (screen) ---------------- */
   .stub { width:380px; max-width:100%; margin:0 auto; border-radius:18px; overflow:hidden;
-          background:var(--white); font-family:"Manrope", system-ui, sans-serif;
-          box-shadow:0 1px 2px rgba(20,22,28,.06), 0 14px 36px rgba(20,22,28,.10); }
+          background:var(--white); font-family:"Source Sans 3", system-ui, -apple-system, sans-serif;
+          box-shadow:0 1px 2px rgba(20,30,40,.05), 0 12px 28px -14px rgba(20,30,40,.18); }
   .stub .top { background:var(--indigo); color:var(--white); padding:22px 26px 26px; }
   .stub .kicker { display:flex; justify-content:space-between; align-items:center; gap:1rem;
-                  font-size:10.5px; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:#C9C6F2; }
+                  font-size:10.5px; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:var(--indigo-2); }
   .stub .kicker .chip { background:rgba(255,255,255,.16); color:var(--white); border-radius:99px; padding:3px 9px; letter-spacing:.1em; }
-  .stub .amt { font-size:44px; font-weight:800; letter-spacing:-.03em; margin-top:16px; line-height:1; }
-  .stub .amt-sub { font-size:12.5px; font-weight:600; color:#C9C6F2; margin-top:7px; }
+  .stub .amt { font-family:"Libre Franklin", "Source Sans 3", system-ui, sans-serif;
+               font-size:44px; font-weight:700; letter-spacing:-.03em; margin-top:16px; line-height:1;
+               font-variant-numeric:tabular-nums; }
+  .stub .amt-sub { font-size:12.5px; font-weight:600; color:var(--indigo-2); margin-top:7px; }
   .stub .perf { position:relative; height:22px; background:var(--indigo); }
   .stub .perf::before, .stub .perf::after { content:""; position:absolute; top:0; width:22px; height:22px;
                                             border-radius:50%; background:var(--ground); }
   .stub .perf::before { left:-11px; } .stub .perf::after { right:-11px; }
   .stub .perf i { position:absolute; left:16px; right:16px; top:10px; border-top:2px dashed rgba(255,255,255,.42); }
   .stub .body { padding:22px 26px 24px; display:flex; flex-direction:column; gap:18px; }
-  .stub .nm { font-size:17px; font-weight:800; letter-spacing:-.01em; }
+  .stub .nm { font-family:"Libre Franklin", "Source Sans 3", system-ui, sans-serif;
+              font-size:17px; font-weight:700; letter-spacing:-.01em; }
   .stub .rl { font-size:12.5px; color:var(--soft); font-weight:500; margin-top:3px; }
   .stub .reg { display:flex; justify-content:space-between; align-items:center; gap:1rem;
                background:var(--indigo-2); border-radius:11px; padding:11px 14px; }
@@ -4560,30 +4570,34 @@ const renderReceipt = async (req, res, next) => {
   /* Not monospace: this carries the venue, not a reference number. The mono
      face is reserved for things you might have to read back digit by digit. */
   .stub .rw .v .sub { display:block; font-size:11px; font-weight:500; color:var(--muted); margin-top:1px; }
-  .stub .split { background:#F7F7FB; border-radius:11px; padding:12px 14px; display:flex; flex-direction:column; gap:8px; }
+  .stub .split { background:var(--rule-2); border-radius:11px; padding:12px 14px; display:flex; flex-direction:column; gap:8px; }
   .stub .split .hd { font-size:10px; font-weight:700; letter-spacing:.11em; text-transform:uppercase; color:var(--muted); }
   .stub .split .ln { display:flex; justify-content:space-between; gap:1rem; font-size:12px; }
   .stub .split .ln .l { color:var(--soft); }
   .stub .split .ln .l em { font-style:normal; display:block; font-family:"IBM Plex Mono", monospace; font-size:10.5px; color:var(--muted); }
   .stub .split .ln .m { font-family:"IBM Plex Mono", monospace; font-weight:600; }
   .stub .split .ln .m.neg { color:var(--red); }
-  .stub .note { background:#FBF1E0; border:1px solid #E4C489; color:#7A4B05; border-radius:10px;
+  .stub .note { background:var(--note-bg); border:1px solid var(--note-rule); color:var(--note-ink); border-radius:10px;
                 padding:10px 12px; font-size:11.5px; line-height:1.5; }
   .stub .foot { font-size:10.5px; color:var(--muted); line-height:1.5; text-align:center;
                 border-top:1px solid var(--rule-2); padding-top:14px; }
   .actions { text-align:center; margin-top:1.5rem; }
   .actions button { font:inherit; font-weight:700; font-size:.85rem; background:var(--indigo); color:var(--white);
                     border:0; border-radius:10px; padding:.7rem 1.5rem; cursor:pointer; }
-  .actions button:hover { background:#332B92; }
+  .actions button:hover { background:#244560; }
   .actions p { margin:.6rem 0 0; font-size:.72rem; color:var(--muted); }
   :focus-visible { outline:2px solid var(--indigo); outline-offset:3px; }`;
     const STMT_CSS = `  /* ---------------- Statement (its own document) ---------------- */
-  .stmt { width:100%; background:var(--white); font-family:"IBM Plex Sans", system-ui, sans-serif; color:var(--ink); }
+  .stmt { width:100%; background:var(--white); font-family:"Source Sans 3", system-ui, sans-serif; color:var(--ink); }
   .stmt .bar { display:flex; justify-content:space-between; align-items:flex-start; gap:2rem;
                padding-bottom:16px; border-bottom:1px solid var(--rule); }
   .stmt .bar .kd { font-family:"IBM Plex Mono", monospace; font-size:10px; letter-spacing:.15em;
                    text-transform:uppercase; color:var(--indigo); font-weight:600; }
-  .stmt .bar .cf { font-size:15px; font-weight:600; line-height:1.3; max-width:36ch; margin-top:4px; }
+  /* The document's title, so it takes the display face. The mono labels
+     around it stay mono -- that is the accounting-record character this
+     copy is meant to have, not staleness. */
+  .stmt .bar .cf { font-family:"Libre Franklin", "Source Sans 3", system-ui, sans-serif;
+                   font-size:15px; font-weight:700; line-height:1.3; max-width:36ch; margin-top:4px; }
   .stmt .bar .dt { font-family:"IBM Plex Mono", monospace; font-size:11px; color:var(--muted); margin-top:3px; }
   .stmt .bar .rgt { text-align:right; }
   .stmt .bar .rgt .k { font-family:"IBM Plex Mono", monospace; font-size:9.5px; letter-spacing:.12em;
@@ -4615,7 +4629,7 @@ const renderReceipt = async (req, res, next) => {
   .stmt .ln.sum { border-top:1.5px solid var(--ink); margin-top:3px; font-size:13.5px; font-weight:600; }
   .stmt .bal { display:flex; justify-content:space-between; padding-top:9px; font-size:12px; color:var(--soft); }
   .stmt .bal .m { font-family:"IBM Plex Mono", monospace; }
-  .stmt .note { margin-top:14px; border:1px solid #E4C489; background:#FBF1E0; color:#7A4B05;
+  .stmt .note { margin-top:14px; border:1px solid var(--note-rule); background:var(--note-bg); color:var(--note-ink);
                 padding:9px 11px; font-size:11px; border-radius:3px; }
   .stmt .foot { margin-top:22px; padding-top:12px; border-top:1px solid var(--rule); font-size:10.5px;
                 color:var(--muted); line-height:1.55; display:flex; justify-content:space-between; gap:1.5rem; }
@@ -4626,7 +4640,7 @@ const renderReceipt = async (req, res, next) => {
 <title>Payment Receipt — ${esc(reg.registration_number)}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Manrope:wght@500;600;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Libre+Franklin:wght@600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap">
 <style>${css}</style></head>
 <body>${body}</body></html>`;
 
