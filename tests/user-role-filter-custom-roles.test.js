@@ -106,5 +106,25 @@ function loadApp(js, driverSrc) {
   check('renderRoleOptions calls renderBackendUsers when the users table is present',
     /if \(document\.getElementById\('user-table-body'\)\) renderBackendUsers\(\);/.test(js));
 
+  console.log('\n== The filter row controls line up ==');
+  // The row sized its controls with padding alone (p-2.5) and no height. An
+  // <input> and a <select> do not agree on intrinsic height, so the search
+  // box came out a different height from the four dropdowns beside it. Every
+  // other control in the admin panel sets h-9 px-3; this row was the
+  // outlier.
+  const usersView = fs.readFileSync(appFile('views', 'admin', 'sections', 'users.ejs'), 'utf8');
+  // Start at the row's opening tag, not at the first id -- slicing from
+  // inside the <input> would drop that tag from the match below.
+  const rowStart = usersView.lastIndexOf('<div', usersView.indexOf('id="user-filter-search"'));
+  const row = usersView.slice(rowStart, usersView.indexOf('id="user-filter-count"'));
+  const controls = [...row.matchAll(/<(?:input|select)\b[^>]*class="([^"]*)"/g)].map((m) => m[1]);
+  check('the row has the search box and all four dropdowns', controls.length === 5, controls.length);
+  check('every one of them sets the same explicit height',
+    controls.every((c) => /\bh-9\b/.test(c)), controls.filter((c) => !/\bh-9\b/.test(c)));
+  check('...and none is sized by padding alone any more',
+    controls.every((c) => !/\bp-2\.5\b/.test(c)), controls.filter((c) => /\bp-2\.5\b/.test(c)));
+  check('they share the panel border colour too',
+    controls.every((c) => /border-slate-300/.test(c)), controls.filter((c) => !/border-slate-300/.test(c)));
+
   report();
 })();
