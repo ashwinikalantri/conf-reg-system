@@ -4,7 +4,36 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin & Backend Portal</title>
+  <!-- Same Direction A ("Clinical Trust") tokens as the delegate portal --
+       Libre Franklin for headings, Source Sans 3 for body text, the portal's
+       steel-blue accent remapped onto Tailwind's own `indigo`. This is a
+       SEPARATE copy of the CDN script from index.ejs's, so the config has to
+       be repeated here rather than shared, but every value matches exactly. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            indigo: {
+              50: '#eef3f6', 100: '#dbe6ec', 200: '#b9cedb', 300: '#8fb0c3',
+              400: '#628ea8', 500: '#46708c', 600: '#2f5673', 700: '#244560',
+              800: '#1c3549', 900: '#142838',
+            },
+          },
+          fontFamily: {
+            sans: ['"Source Sans 3"', 'system-ui', '-apple-system', 'sans-serif'],
+          },
+          boxShadow: {
+            card: '0 1px 2px rgba(20,30,40,.05), 0 12px 28px -14px rgba(20,30,40,.18)',
+          },
+        },
+      },
+    };
+  </script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
   <link rel="stylesheet" href="styles.css">

@@ -3,11 +3,14 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Direction A ("Clinical Trust"): Libre Franklin carries every heading, on
-   the delegate portal only -- this file is shared with the admin panel too,
-   so it's scoped by id to the portal's own containers (the hero, the two
-   pages, every portal modal) rather than a blanket h1-h4 rule, which would
-   also retype every admin heading. */
+/* Direction A ("Clinical Trust"): Libre Franklin carries every heading,
+   across BOTH the delegate portal and the admin panel now -- this file is
+   shared between index.ejs and admin.ejs, so it's scoped by id to each
+   page's own containers rather than a blanket h1-h4 rule, which would also
+   retype EJS partials/components neither page owns exclusively.
+   #modal-confirm and #conf-name-h1 are deliberately listed once: both pages
+   use those exact ids for their own (never simultaneously mounted) version
+   of that element, and both want the same treatment. */
 #conf-name-h1,
 #auth-page h1, #auth-page h2, #auth-page h3, #auth-page h4,
 #dashboard-page h1, #dashboard-page h2, #dashboard-page h3, #dashboard-page h4,
@@ -18,7 +21,31 @@ body {
 #modal-correct h1, #modal-correct h2, #modal-correct h3, #modal-correct h4,
 #modal-group-add h1, #modal-group-add h2, #modal-group-add h3, #modal-group-add h4,
 #modal-set-password h1, #modal-set-password h2, #modal-set-password h3, #modal-set-password h4,
-#modal-verify-email h1, #modal-verify-email h2, #modal-verify-email h3, #modal-verify-email h4 {
+#modal-verify-email h1, #modal-verify-email h2, #modal-verify-email h3, #modal-verify-email h4,
+#section-payments h1, #section-payments h2, #section-payments h3, #section-payments h4,
+#section-abstracts h1, #section-abstracts h2, #section-abstracts h3, #section-abstracts h4,
+#section-statement h1, #section-statement h2, #section-statement h3, #section-statement h4,
+#section-reports h1, #section-reports h2, #section-reports h3, #section-reports h4,
+#section-reminders h1, #section-reminders h2, #section-reminders h3, #section-reminders h4,
+#section-activity h1, #section-activity h2, #section-activity h3, #section-activity h4,
+#section-general h1, #section-general h2, #section-general h3, #section-general h4,
+#section-programs h1, #section-programs h2, #section-programs h3, #section-programs h4,
+#section-fees h1, #section-fees h2, #section-fees h3, #section-fees h4,
+#section-discount h1, #section-discount h2, #section-discount h3, #section-discount h4,
+#section-groupdiscount h1, #section-groupdiscount h2, #section-groupdiscount h3, #section-groupdiscount h4,
+#section-users h1, #section-users h2, #section-users h3, #section-users h4,
+#section-roles h1, #section-roles h2, #section-roles h3, #section-roles h4,
+#modal-create-user h1, #modal-create-user h2, #modal-create-user h3, #modal-create-user h4,
+#modal-abstract-review h1, #modal-abstract-review h2, #modal-abstract-review h3, #modal-abstract-review h4,
+#modal-reject h1, #modal-reject h2, #modal-reject h3, #modal-reject h4,
+#modal-share-discount h1, #modal-share-discount h2, #modal-share-discount h3, #modal-share-discount h4,
+#modal-review h1, #modal-review h2, #modal-review h3, #modal-review h4,
+#modal-program-change h1, #modal-program-change h2, #modal-program-change h3, #modal-program-change h4,
+#modal-register-delegate h1, #modal-register-delegate h2, #modal-register-delegate h3, #modal-register-delegate h4,
+#modal-screenshot h1, #modal-screenshot h2, #modal-screenshot h3, #modal-screenshot h4,
+#user-detail-panel h1, #user-detail-panel h2, #user-detail-panel h3, #user-detail-panel h4,
+#modal-roster h1, #modal-roster h2, #modal-roster h3, #modal-roster h4,
+#modal-role-editor h1, #modal-role-editor h2, #modal-role-editor h3, #modal-role-editor h4 {
   font-family: 'Libre Franklin', system-ui, -apple-system, sans-serif;
   font-weight: 700;
   letter-spacing: -.01em;
