@@ -1,143 +1,68 @@
+<%
+// Eight logs, all the same shape (a subnav pill + a titled panel wrapping
+// one table), previously copy-pasted eight times with only the label, icon,
+// columns and tbody id varying. switchActivityLog()/renderBackendActivity()
+// in app.js key off activity-subnav-<key>/activity-panel-<key>/
+// activity-count-<key>/activity-<key>-body, so as long as this loop keeps
+// producing those exact ids for the same nine keys (ACTIVITY_SUBTABS in
+// app.js), none of that JS needs to change.
+const activityLogs = [
+  { key: 'imports', label: 'Bank Reconciliation',
+    icon: '<path d="M3 10 L12 4 L21 10"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="5" y1="10" x2="5" y2="19"/><line x1="9" y1="10" x2="9" y2="19"/><line x1="15" y1="10" x2="15" y2="19"/><line x1="19" y1="10" x2="19" y2="19"/><line x1="3" y1="19" x2="21" y2="19"/>',
+    minWidth: 700, columns: ['Imported', 'Source File', 'Rows', 'Total Credits', 'By'] },
+  { key: 'mapping', label: 'Transaction Mapping',
+    icon: '<path d="M8 12l-2.5 2.5a3.5 3.5 0 0 0 5 5L13 17"/><path d="M16 12l2.5-2.5a3.5 3.5 0 0 0-5-5L11 7"/><path d="M9 15l6-6"/>',
+    minWidth: 800, columns: ['Time', 'Registration', 'Delegate', 'Change', 'By'] },
+  { key: 'approval', label: 'Registration Approval',
+    icon: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5 L11 15.5 L16 9"/>',
+    minWidth: 850, columns: ['Time', 'Registration', 'Delegate', 'Action', 'Change', 'By'] },
+  { key: 'abstract-approval', label: 'Abstract Approval',
+    icon: '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/>',
+    minWidth: 700, columns: ['Time', 'Abstract', 'Author', 'Change', 'By'] },
+  { key: 'abstract-allotment', label: 'Abstract Allotment',
+    icon: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="9" y1="21" x2="15" y2="21"/>',
+    minWidth: 700, columns: ['Time', 'Abstract', 'Author', 'Change', 'By'] },
+  { key: 'master', label: 'General Logs',
+    icon: '<path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
+    note: 'Every change made on a Settings page: Workshop/QI Master, Fee Master, Discount Codes, Group Discount Rules, and General (SMS/Email/UPI).',
+    minWidth: 800, columns: ['Time', 'Area', 'Change', 'By'] },
+  { key: 'login', label: 'Login',
+    icon: '<circle cx="7" cy="12" r="4"/><line x1="11" y1="12" x2="21" y2="12"/><line x1="17" y1="12" x2="17" y2="16"/><line x1="21" y1="12" x2="21" y2="16"/>',
+    minWidth: 600, columns: ['Time', 'Name', 'Mobile', 'Role'] },
+  { key: 'sms', label: 'SMS',
+    icon: '<rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/>',
+    minWidth: 650, columns: ['Time', 'Mobile', 'Status', 'Detail'] },
+  { key: 'email', label: 'Email',
+    icon: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M3 6.5 L12 13 L21 6.5"/>',
+    minWidth: 700, columns: ['Time', 'To', 'Subject', 'Status'] },
+];
+%>
     <!-- TAB: ACTIVITY LOG -->
     <section id="section-activity" class="hidden space-y-4">
       <p class="text-xs text-slate-500">Who did what, when. Pick a log below — one at a time.</p>
 
       <div class="flex flex-wrap gap-2">
-        <button id="activity-subnav-imports" onclick="switchActivityLog('imports')" class="px-4 py-2 rounded-lg text-xs font-bold bg-indigo-600 text-white flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 10 L12 4 L21 10"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="5" y1="10" x2="5" y2="19"/><line x1="9" y1="10" x2="9" y2="19"/><line x1="15" y1="10" x2="15" y2="19"/><line x1="19" y1="10" x2="19" y2="19"/><line x1="3" y1="19" x2="21" y2="19"/></svg>Bank Reconciliation <span id="activity-count-imports" class="bg-white/20 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
-        <button id="activity-subnav-mapping" onclick="switchActivityLog('mapping')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M8 12l-2.5 2.5a3.5 3.5 0 0 0 5 5L13 17"/><path d="M16 12l2.5-2.5a3.5 3.5 0 0 0-5-5L11 7"/><path d="M9 15l6-6"/></svg>Transaction Mapping <span id="activity-count-mapping" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
-        <button id="activity-subnav-approval" onclick="switchActivityLog('approval')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><circle cx="12" cy="12" r="9"/><path d="M8 12.5 L11 15.5 L16 9"/></svg>Registration Approval <span id="activity-count-approval" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
-        <button id="activity-subnav-abstract-approval" onclick="switchActivityLog('abstract-approval')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/></svg>Abstract Approval <span id="activity-count-abstract-approval" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
-        <button id="activity-subnav-abstract-allotment" onclick="switchActivityLog('abstract-allotment')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="9" y1="21" x2="15" y2="21"/></svg>Abstract Allotment <span id="activity-count-abstract-allotment" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
-        <button id="activity-subnav-master" onclick="switchActivityLog('master')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg>General Logs <span id="activity-count-master" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
-        <button id="activity-subnav-login" onclick="switchActivityLog('login')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><circle cx="7" cy="12" r="4"/><line x1="11" y1="12" x2="21" y2="12"/><line x1="17" y1="12" x2="17" y2="16"/><line x1="21" y1="12" x2="21" y2="16"/></svg>Login <span id="activity-count-login" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
-        <button id="activity-subnav-sms" onclick="switchActivityLog('sms')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>SMS <span id="activity-count-sms" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
-        <button id="activity-subnav-email" onclick="switchActivityLog('email')" class="px-4 py-2 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M3 6.5 L12 13 L21 6.5"/></svg>Email <span id="activity-count-email" class="bg-slate-200 text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+<% activityLogs.forEach((log, i) => { %>
+        <button id="activity-subnav-<%= log.key %>" onclick="switchActivityLog('<%= log.key %>')" class="px-4 py-2 rounded-lg text-xs font-bold <%= i === 0 ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600' %> flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><%- log.icon %></svg><%= log.label %> <span id="activity-count-<%= log.key %>" class="<%= i === 0 ? 'bg-white/20' : 'bg-slate-200' %> text-[10px] px-1.5 py-0.5 rounded-full">0</span></button>
+<% }) %>
       </div>
 
-      <div id="activity-panel-imports" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+<% activityLogs.forEach((log, i) => { %>
+      <div id="activity-panel-<%= log.key %>" class="<%= i === 0 ? '' : 'hidden ' %>bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div class="px-4 py-3 border-b border-slate-100">
-          <h3 class="font-bold text-slate-800 text-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M3 10 L12 4 L21 10"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="5" y1="10" x2="5" y2="19"/><line x1="9" y1="10" x2="9" y2="19"/><line x1="15" y1="10" x2="15" y2="19"/><line x1="19" y1="10" x2="19" y2="19"/><line x1="3" y1="19" x2="21" y2="19"/></svg>Bank Reconciliation</h3>
+          <h3 class="font-bold text-slate-800 text-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><%- log.icon %></svg><%= log.label %></h3>
+<% if (log.note) { %>
+          <p class="text-[11px] text-slate-500"><%= log.note %></p>
+<% } %>
         </div>
         <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse min-w-[700px] text-sm">
+          <table class="w-full text-left border-collapse min-w-[<%= log.minWidth %>px] text-sm">
             <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
-              <th class="py-3 px-4">Imported</th><th class="py-3 px-4">Source File</th><th class="py-3 px-4">Rows</th><th class="py-3 px-4">Total Credits</th><th class="py-3 px-4">By</th>
+<% log.columns.forEach((col) => { %><th class="py-3 px-4"><%= col %></th><% }) %>
             </tr></thead>
-            <tbody id="activity-imports-body" class="divide-y divide-slate-100"></tbody>
+            <tbody id="activity-<%= log.key %>-body" class="divide-y divide-slate-100"></tbody>
           </table>
         </div>
       </div>
-
-      <div id="activity-panel-mapping" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-100">
-          <h3 class="font-bold text-slate-800 text-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M8 12l-2.5 2.5a3.5 3.5 0 0 0 5 5L13 17"/><path d="M16 12l2.5-2.5a3.5 3.5 0 0 0-5-5L11 7"/><path d="M9 15l6-6"/></svg>Transaction Mapping</h3>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse min-w-[800px] text-sm">
-            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
-              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Registration</th><th class="py-3 px-4">Delegate</th><th class="py-3 px-4">Change</th><th class="py-3 px-4">By</th>
-            </tr></thead>
-            <tbody id="activity-mapping-body" class="divide-y divide-slate-100"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div id="activity-panel-approval" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-100">
-          <h3 class="font-bold text-slate-800 text-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="12" cy="12" r="9"/><path d="M8 12.5 L11 15.5 L16 9"/></svg>Registration Approval</h3>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse min-w-[850px] text-sm">
-            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
-              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Registration</th><th class="py-3 px-4">Delegate</th><th class="py-3 px-4">Action</th><th class="py-3 px-4">Change</th><th class="py-3 px-4">By</th>
-            </tr></thead>
-            <tbody id="activity-approval-body" class="divide-y divide-slate-100"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div id="activity-panel-abstract-approval" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-100">
-          <h3 class="font-bold text-slate-800 text-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/></svg>Abstract Approval</h3>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse min-w-[700px] text-sm">
-            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
-              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Abstract</th><th class="py-3 px-4">Author</th><th class="py-3 px-4">Change</th><th class="py-3 px-4">By</th>
-            </tr></thead>
-            <tbody id="activity-abstract-approval-body" class="divide-y divide-slate-100"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div id="activity-panel-abstract-allotment" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-100">
-          <h3 class="font-bold text-slate-800 text-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="9" y1="21" x2="15" y2="21"/></svg>Abstract Allotment</h3>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse min-w-[700px] text-sm">
-            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
-              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Abstract</th><th class="py-3 px-4">Author</th><th class="py-3 px-4">Change</th><th class="py-3 px-4">By</th>
-            </tr></thead>
-            <tbody id="activity-abstract-allotment-body" class="divide-y divide-slate-100"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div id="activity-panel-master" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-100">
-          <h3 class="font-bold text-slate-800 text-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg>General Logs</h3>
-          <p class="text-[11px] text-slate-500">Every change made on a Settings page: Workshop/QI Master, Fee Master, Discount Codes, Group Discount Rules, and General (SMS/Email/UPI).</p>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse min-w-[800px] text-sm">
-            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
-              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Area</th><th class="py-3 px-4">Change</th><th class="py-3 px-4">By</th>
-            </tr></thead>
-            <tbody id="activity-master-body" class="divide-y divide-slate-100"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div id="activity-panel-login" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-100">
-          <h3 class="font-bold text-slate-800 text-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="7" cy="12" r="4"/><line x1="11" y1="12" x2="21" y2="12"/><line x1="17" y1="12" x2="17" y2="16"/><line x1="21" y1="12" x2="21" y2="16"/></svg>Login</h3>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse min-w-[600px] text-sm">
-            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
-              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Name</th><th class="py-3 px-4">Mobile</th><th class="py-3 px-4">Role</th>
-            </tr></thead>
-            <tbody id="activity-login-body" class="divide-y divide-slate-100"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div id="activity-panel-sms" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-100">
-          <h3 class="font-bold text-slate-800 text-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>SMS</h3>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse min-w-[650px] text-sm">
-            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
-              <th class="py-3 px-4">Time</th><th class="py-3 px-4">Mobile</th><th class="py-3 px-4">Status</th><th class="py-3 px-4">Detail</th>
-            </tr></thead>
-            <tbody id="activity-sms-body" class="divide-y divide-slate-100"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div id="activity-panel-email" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-100">
-          <h3 class="font-bold text-slate-800 text-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M3 6.5 L12 13 L21 6.5"/></svg>Email</h3>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse min-w-[700px] text-sm">
-            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
-              <th class="py-3 px-4">Time</th><th class="py-3 px-4">To</th><th class="py-3 px-4">Subject</th><th class="py-3 px-4">Status</th>
-            </tr></thead>
-            <tbody id="activity-email-body" class="divide-y divide-slate-100"></tbody>
-          </table>
-        </div>
-      </div>
+<% }) %>
     </section>
