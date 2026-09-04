@@ -2943,6 +2943,112 @@ async function rescanFlaggedPayments(all = false) {
   await renderBackendPayments();
 }
 
+// The landing screen: one figure per section, each linking to the section
+// that owns it. Nothing here is computed on the server -- every number comes
+// from the same endpoints the sections themselves use, so the overview can
+// never quietly disagree with the tab it summarises.
+//
+// Each block is skipped for a role that cannot open the section behind it.
+// The endpoints would 403 anyway; hiding the card as well means a finance
+// admin is not shown an empty "Abstracts to review" box they can do nothing
+// about and cannot verify.
+async function renderBackendOverview() {
+  const host = document.getElementById('section-overview');
+  if (!host) return;
+
+  const seesPayments = canSee('payments');
+  const seesStatement = canSee('statement');
+  const seesAbstracts = canSee('abstracts');
+
+  const show = (id, on) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', !on);
+  };
+
+  // Fetched in parallel and each guarded on its own: one section being
+  // unreachable, or simply slow, must not stop the rest of the page
+  // resolving (the same reasoning as loadDashboard's own fetches).
+  const getJson = async (url) => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) { return null; }
+  };
+
+  const [regs, abstracts, statement] = await Promise.all([
+    seesPayments ? getJson('/api/registrations') : Promise.resolve(null),
+    seesAbstracts ? getJson('/api/abstracts') : Promise.resolve(null),
+    seesStatement ? getJson('/api/admin/bank-statement/reconcile') : Promise.resolve(null),
+  ]);
+
+  let pending = 0;
+  let balanceCount = 0;
+  let unmatched = 0;
+  let underReview = 0;
+
+  show('overview-money', !!regs);
+  if (regs) {
+    const all = regs.registrations || [];
+    const verified = all.filter((r) => r.bank_status === 'BANK_VERIFIED');
+    const partial = all.filter((r) => r.bank_status === 'PARTIAL_PAYMENT' || isBalanceDue(r));
+    const needsDecision = all.filter((r) => r.bank_status === 'PENDING' && !isBalanceDue(r));
+    pending = needsDecision.length;
+    balanceCount = partial.length;
+
+    // Same figures the Payments tab shows, computed the same way -- see
+    // renderBackendPayments, where this arithmetic is explained.
+    const collected = all.reduce((sum, r) => sum + (Number(r.verified_total) || 0), 0);
+    const outstanding = partial.reduce((sum, r) => {
+      const paidSoFar = Number(r.verified_total) > 0 ? Number(r.verified_total) : (Number(r.paid_amount) || 0);
+      return sum + Math.max(0, Number(r.expected_amount) - paidSoFar);
+    }, 0);
+
+    setText('ov-collected', `₹${inr(collected)}`);
+    setText('ov-collected-sub', `${verified.length} confirmed registration${verified.length === 1 ? '' : 's'}`);
+    setText('ov-outstanding', `₹${inr(outstanding)}`);
+    setText('ov-outstanding-sub', outstanding > 0 ? `across ${partial.length} delegate${partial.length === 1 ? '' : 's'}` : 'nothing owed');
+    setText('ov-delegates', all.length);
+    setText('ov-delegates-sub', 'registrations submitted');
+    setText('ov-confirmed', verified.length);
+    setText('ov-confirmed-sub', all.length ? `${Math.round((verified.length / all.length) * 100)}% of submissions` : 'none yet');
+
+    setText('ov-pending', pending);
+    setText('ov-balance', balanceCount);
+    setText('ov-balance-sub', balanceCount ? 'waiting on the delegate' : 'none outstanding');
+  }
+
+  if (statement) {
+    // The endpoint already counts this (see its `summary`), and its
+    // reconciliation is subtle enough -- split credits, non-registration
+    // markings, debits -- that recomputing it here would be a second
+    // definition free to drift from the tab it summarises.
+    unmatched = Number((statement.summary || {}).unmatchedCredits) || 0;
+    setText('ov-unmatched', unmatched);
+  }
+
+  if (abstracts) {
+    const list = abstracts.abstracts || [];
+    underReview = list.filter((a) => a.status === 'UNDER_REVIEW').length;
+    const accepted = list.filter((a) => a.status === 'ACCEPTED').length;
+    setText('ov-abstracts', underReview);
+    setText('ov-abstracts-sub', `${list.length} submitted · ${accepted} accepted`);
+  }
+
+  // A queue card earns its place by being reachable AND having something in
+  // it. An overview of four zeroes tells the desk less than one sentence.
+  show('ov-q-payments', seesPayments && pending > 0);
+  show('ov-q-balance', seesPayments && balanceCount > 0);
+  show('ov-q-statement', seesStatement && unmatched > 0);
+  show('ov-q-abstracts', seesAbstracts && underReview > 0);
+  const anyQueue = (seesPayments && (pending > 0 || balanceCount > 0))
+    || (seesStatement && unmatched > 0) || (seesAbstracts && underReview > 0);
+  show('overview-all-clear', !anyQueue);
+
+  setText('overview-updated', `Updated ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`);
+  settleSkeletons(host);
+}
+
 async function renderBackendPayments() {
   await ensureReviewCategories(); // warms isStudentCategory() before rows render below
   const res = await fetch('/api/registrations');
@@ -7623,7 +7729,7 @@ document.addEventListener('click', (e) => {
 // main nav-bar tabs. The Settings items highlight in the dropdown; the main
 // tabs highlight in the tab bar.
 const SETTINGS_TABS = ['programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
-const MAIN_TABS = ['payments', 'statement', 'abstracts', 'reports'];
+const MAIN_TABS = ['overview', 'payments', 'statement', 'abstracts', 'reports'];
 
 // Which tabs each role may open -- the single source of truth used both to
 // pick the landing tab and to validate a tab restored from the URL, so a
@@ -7651,7 +7757,8 @@ function switchBackendTab(tab) {
   // each render function already no-ops if its container isn't in the DOM
   // or the API 403s for this role, so it's safe to call regardless of the
   // viewer's role.
-  if (tab === 'payments') { renderBackendPayments(); renderDelegateMap(); }
+  if (tab === 'overview') { renderBackendOverview(); renderDelegateMap(); }
+  if (tab === 'payments') renderBackendPayments();
   if (tab === 'abstracts') renderBackendAbstracts();
   if (tab === 'reports') loadReportWorkshopOptions();
   if (tab === 'programs') renderBackendPrograms();

@@ -250,6 +250,11 @@ const REPORT_PERMISSIONS = {
 // `anyOf` for Reports: it is one tab holding six independently-permissioned
 // reports, so it opens if any of them may be read.
 const SECTION_PERMISSIONS = {
+  // The overview only restates figures the other sections own, so it opens
+  // for anyone who can open at least one of them -- and each card is hidden
+  // individually for a role that cannot reach the section behind it (see
+  // renderBackendOverview). It grants no reach of its own.
+  overview: { anyOf: ['payments.view', 'statement.view', 'abstracts.view'] },
   payments: { permission: 'payments.view' },
   statement: { permission: 'statement.view' },
   abstracts: { permission: 'abstracts.view' },

@@ -176,11 +176,17 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // ID-verification bug below, not a fact independently re-derived from the
   // client. The tab is read-only for them: masters.fees_manage (the actual
   // edit/save/delete actions on the Fee Master page) is untouched.
+  // 'overview' is the landing screen. It restates figures the payments,
+  // statement and abstracts sections own, so it opens for anyone who can
+  // open at least one of those and grants no reach of its own -- every card
+  // is hidden individually for a role that cannot reach the section behind
+  // it. OPERATIONS is deliberately absent: it sees Reports and Users, and
+  // nothing the overview summarises, so it would be an empty screen.
   const CLIENT_TODAY = {
-    SUPER_ADMIN: ['payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'general', 'activity'],
-    FINANCE_ADMIN: ['payments', 'statement', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
-    ACADEMIC_REVIEWER: ['abstracts', 'reports'],
-    FINANCE_ACADEMIC: ['payments', 'statement', 'abstracts', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
+    SUPER_ADMIN: ['overview', 'payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'general', 'activity'],
+    FINANCE_ADMIN: ['overview', 'payments', 'statement', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
+    ACADEMIC_REVIEWER: ['overview', 'abstracts', 'reports'],
+    FINANCE_ACADEMIC: ['overview', 'payments', 'statement', 'abstracts', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
     OPERATIONS: ['reports', 'users'],
   };
   const allSections = Object.keys(perms.SECTION_PERMISSIONS);
