@@ -41,6 +41,7 @@ body {
 #modal-share-discount h1, #modal-share-discount h2, #modal-share-discount h3, #modal-share-discount h4,
 #modal-review h1, #modal-review h2, #modal-review h3, #modal-review h4,
 #modal-program-change h1, #modal-program-change h2, #modal-program-change h3, #modal-program-change h4,
+#modal-fee-category h1, #modal-fee-category h2, #modal-fee-category h3, #modal-fee-category h4,
 #modal-register-delegate h1, #modal-register-delegate h2, #modal-register-delegate h3, #modal-register-delegate h4,
 #modal-screenshot h1, #modal-screenshot h2, #modal-screenshot h3, #modal-screenshot h4,
 #user-detail-panel h1, #user-detail-panel h2, #user-detail-panel h3, #user-detail-panel h4,
@@ -68,4 +69,42 @@ div::-webkit-scrollbar-thumb, section::-webkit-scrollbar-thumb {
 
 div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+
+/* --- Loading skeletons -------------------------------------------------
+   Several elements ship a placeholder in the markup -- "Registration
+   Portal" before the real conference name arrives, "Checking..." on the
+   status chip, a 0 in every metric card -- and JS replaces it once the
+   fetch returns. On a fast connection that is a flicker; on a slow one the
+   page states things that are not true (a delegate's own registration
+   showing 0 verified, a conference name that isn't theirs).
+
+   The placeholder text stays in the markup and keeps its exact size, so
+   nothing shifts when the real value lands -- it is just made transparent
+   and covered by a shimmer while it is still a guess. Which means an
+   element is sized by the text it will hold, not by a hardcoded skeleton
+   width that would have to be maintained alongside it. */
+.skeleton {
+  color: transparent !important;
+  background-image: linear-gradient(90deg, #e8edf1 8%, #f4f7f9 20%, #e8edf1 33%);
+  background-size: 1200px 100%;
+  border-radius: 6px;
+  animation: skeleton-shimmer 1.5s linear infinite;
+  user-select: none;
+  cursor: default;
+}
+/* Any descendant of a skeleton is part of the same guess -- a chip's icon,
+   a metric's currency symbol -- so it hides with it rather than floating
+   on top of the shimmer. */
+.skeleton * { visibility: hidden; }
+
+@keyframes skeleton-shimmer {
+  0%   { background-position: -600px 0; }
+  100% { background-position:  600px 0; }
+}
+
+/* Still a placeholder, just a still one -- the point is to say "not real
+   yet", which the flat tone does on its own. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
 }

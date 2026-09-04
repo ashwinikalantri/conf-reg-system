@@ -7796,8 +7796,14 @@ app.get('/api/admin/fees', requirePermission('masters.fees_view'), async (req, r
     // carries the new name across (see the PUT below), so this counts rows
     // that drifted some other way -- a rename made directly against the
     // database, most likely -- and is what the Realign control acts on.
+    // `registrations` is what makes a category undeletable (see the DELETE
+    // below, which refuses with a 409). Sent here so the edit modal can
+    // disable Delete and say why, rather than letting an admin press it and
+    // find out from an error toast.
     const categories = await dbAll(`
       SELECT fc.*,
+             (SELECT COUNT(*) FROM registrations r
+               WHERE r.category_key = fc.category_key) AS registrations,
              (SELECT COUNT(*) FROM registrations r
                WHERE r.category_key = fc.category_key
                  AND (r.category_label IS NULL OR r.category_label <> fc.label)) AS drifted

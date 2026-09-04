@@ -72,7 +72,10 @@ function applyConferenceInfoToDom() {
     : (c.name || 'Registration Portal');
 
   const nameEl = document.getElementById('conf-name-h1');
-  if (nameEl) nameEl.textContent = (c.name || 'Registration Portal') + (nameEl.dataset.suffix || '');
+  if (nameEl) {
+    nameEl.textContent = (c.name || 'Registration Portal') + (nameEl.dataset.suffix || '');
+    clearSkeleton(nameEl);
+  }
 
   // Hidden until there's something real to show -- rather than a stale
   // placeholder sitting visible before first-run setup fills these in.
@@ -801,6 +804,9 @@ async function loadDashboard() {
     loadAbstractStatus(),
     renderGroupSection(),
   ]);
+  // Every section has had its turn, including the ones that failed -- see
+  // settleSkeletons on why a shimmer must not outlive the attempt.
+  settleSkeletons();
 }
 
 // Paint every part of the dashboard that depends on the registration: the
@@ -2505,27 +2511,42 @@ function setupAdminDelegation() {
 
   const feeBody = document.getElementById('fee-table-body');
   if (feeBody) {
+    // One action on the row now; everything else moved into the modal.
     feeBody.addEventListener('click', (e) => {
-      const save = e.target.closest('.fee-save');
-      if (save) return saveFeeCategory(save.dataset.id);
-      const toggle = e.target.closest('.fee-toggle');
-      if (toggle) return toggleFeeCategory(toggle.dataset.id, toggle.dataset.active === '1' ? 0 : 1);
-      const del = e.target.closest('.fee-delete');
-      if (del) return deleteFeeCategory(del.dataset.id);
-      const realign = e.target.closest('.fee-realign');
-      if (realign) return realignFeeCategory(realign.dataset.id);
       const edit = e.target.closest('.fee-edit');
-      if (edit) return toggleFeeNameEdit(edit.dataset.id, true);
-      const cancel = e.target.closest('.fee-edit-cancel');
-      if (cancel) return toggleFeeNameEdit(cancel.dataset.id, false);
+      if (edit) return openFeeCategoryModal(edit.dataset.id);
     });
   }
+  const fcSave = document.getElementById('fc-save-btn');
+  if (fcSave) fcSave.addEventListener('click', saveFeeCategoryModal);
+  const fcDelete = document.getElementById('fc-delete-btn');
+  if (fcDelete) fcDelete.addEventListener('click', () => deleteFeeCategory(editingFeeCategoryId));
+  const fcRealign = document.getElementById('fc-realign-btn');
+  if (fcRealign) fcRealign.addEventListener('click', () => realignFeeCategory(editingFeeCategoryId));
 }
 
 // Set the text of an element if it exists.
 function setText(id, value) {
   const el = document.getElementById(id);
-  if (el) el.textContent = value;
+  if (el) { el.textContent = value; clearSkeleton(el); }
+}
+
+// --- Loading skeletons ---------------------------------------------------
+// Elements that ship a placeholder in the markup wear .skeleton (see
+// styles.css): the text keeps its size but is transparent under a shimmer,
+// so the layout never moves when the real value lands. Going through
+// setText means most values stop shimmering on their own.
+function clearSkeleton(el) {
+  if (el && el.classList) el.classList.remove('skeleton');
+}
+
+// The safety valve. A skeleton means "not known yet", so it has to end even
+// when the answer never comes -- a failed fetch, a field the response had
+// nothing for, a delegate whose registration simply has no number. Without
+// this an unlucky request leaves part of the page shimmering forever, which
+// reads as broken in a way the old stale placeholder did not.
+function settleSkeletons(root) {
+  (root || document).querySelectorAll('.skeleton').forEach((el) => el.classList.remove('skeleton'));
 }
 
 // Today's calendar date in IST as YYYY-MM-DD, matching the server's
@@ -2995,6 +3016,11 @@ async function renderBackendPayments() {
   setText('badge-verified-count', verified.length);
   if (verifiedSection) verifiedSection.classList.toggle('hidden', !canUnapprove || verified.length === 0);
   if (verifiedBody) verifiedBody.innerHTML = canUnapprove ? verified.map(paymentRowHtml).join('') : '';
+
+  // Each metric above clears its own skeleton through setText; this covers
+  // anything the response had nothing to say about, so no part of the panel
+  // is left shimmering after the data has arrived.
+  settleSkeletons();
 }
 
 // --- DELEGATE LOCATION MAP (approval page overview) ---
@@ -5091,54 +5117,32 @@ async function renderBackendFees() {
     if (conf.startDate) el.max = conf.startDate;
   });
 
+  // The table is a read-only summary; everything is edited in
+  // #modal-fee-category. It used to carry live text and number inputs, so a
+  // stray keystroke could change a fee, or -- once labels became editable --
+  // rename every registration in the category on the next Save. Caching the
+  // rows lets the modal open without a second fetch.
+  feeCategoriesById = Object.fromEntries((data.categories || []).map((c) => [String(c.id), c]));
   tbody.innerHTML = (data.categories || []).map((c) => `
     <tr class="${c.active ? '' : 'opacity-50'}" data-id="${esc(c.id)}">
       <td class="p-4">
-        <!-- Read-only until Edit is pressed. A live text box in a dense
-             table is too easy to change by accident, and a stray keystroke
-             here doesn't just mistitle a row -- saving renames every
-             registration in the category (see the PUT). The name fields
-             only exist in the DOM while editing, so a save that wasn't a
-             deliberate rename sends no label at all, and the server's
-             "absent means no change" rule leaves it alone. -->
-        <div class="fee-name-view" data-id="${esc(c.id)}">
-          <p class="font-semibold text-slate-800">${esc(c.label)}</p>
-          ${c.subtitle ? `<p class="text-xs text-slate-500">${esc(c.subtitle)}</p>` : ''}
-          <button class="fee-edit mt-1 px-2 py-0.5 border border-slate-300 hover:bg-slate-50 text-slate-600 text-[11px] font-semibold rounded" data-id="${esc(c.id)}">Edit name</button>
-        </div>
-        <div class="fee-name-edit hidden" data-id="${esc(c.id)}">
-          <input type="text" value="${esc(c.label)}" aria-label="Category label" data-original="${esc(c.label)}"
-                 class="fee-label w-full p-1.5 border rounded text-sm font-semibold text-slate-800" data-id="${esc(c.id)}">
-          <input type="text" value="${esc(c.subtitle || '')}" placeholder="Subtitle (optional)" aria-label="Category subtitle" data-original="${esc(c.subtitle || '')}"
-                 class="fee-subtitle w-full mt-1 p-1.5 border rounded text-xs text-slate-500" data-id="${esc(c.id)}">
-          <p class="text-[10px] text-slate-500 mt-1">Press <b>Save</b> to apply. Renaming updates this category's existing registrations too.</p>
-          <button class="fee-edit-cancel mt-1 text-[11px] text-slate-500 hover:underline font-semibold" data-id="${esc(c.id)}">Cancel</button>
-        </div>
+        <p class="font-semibold text-slate-800">${esc(c.label)}</p>
+        ${c.subtitle ? `<p class="text-xs text-slate-500">${esc(c.subtitle)}</p>` : ''}
         <!-- The key is shown, never edited: registrations, group discount
              rules and promo-code scopes all join on it. -->
         <p class="text-[10px] font-mono text-slate-400 mt-1">${esc(c.category_key)}${c.active ? '' : ' · inactive'}</p>
         ${Number(c.drifted) > 0 ? `
-        <p class="mt-1.5 text-[10px] text-amber-800 font-bold bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5 inline-block">${ICON('warning')}${esc(c.drifted)} registration${Number(c.drifted) === 1 ? '' : 's'} on an older name</p>
-        <button class="fee-realign block mt-1 text-[11px] text-indigo-600 hover:underline font-semibold" data-id="${esc(c.id)}">Realign them to this label</button>` : ''}
+        <p class="mt-1.5 text-[10px] text-amber-800 font-bold bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5 inline-block">${ICON('warning')}${esc(c.drifted)} registration${Number(c.drifted) === 1 ? '' : 's'} on an older name</p>` : ''}
       </td>
-      <td class="p-4"><input type="number" min="0" value="${esc(c.early_fee)}" class="fee-early w-20 p-1.5 border rounded text-sm" data-id="${esc(c.id)}"></td>
-      <td class="p-4"><input type="number" min="0" value="${esc(c.regular_fee)}" class="fee-regular w-20 p-1.5 border rounded text-sm" data-id="${esc(c.id)}"></td>
-      <td class="p-4"><input type="number" min="0" value="${esc(c.late_fee)}" class="fee-late w-20 p-1.5 border rounded text-sm" data-id="${esc(c.id)}"></td>
-      <td class="p-4"><input type="number" min="0" value="${esc(c.spot_fee)}" class="fee-spot w-20 p-1.5 border rounded text-sm" data-id="${esc(c.id)}"></td>
-      <td class="p-4">
-        <!-- Just whether a card is required. It used to also pick a
-             discipline/level pair, which existed only to tell the ID-card
-             OCR what keywords to look for; that check is gone, so any
-             category can require an ID and an approver judges the card. -->
-        <label class="flex items-center gap-2 text-sm text-slate-600">
-          <input type="checkbox" class="fee-studentid" data-id="${esc(c.id)}" ${c.requires_student_id ? 'checked' : ''}>
-          Required
-        </label>
-      </td>
+      <td class="p-4 text-sm text-slate-700 tabular-nums">₹${inr(c.early_fee)}</td>
+      <td class="p-4 text-sm text-slate-700 tabular-nums">₹${inr(c.regular_fee)}</td>
+      <td class="p-4 text-sm text-slate-700 tabular-nums">₹${inr(c.late_fee)}</td>
+      <td class="p-4 text-sm text-slate-700 tabular-nums">₹${inr(c.spot_fee)}</td>
+      <td class="p-4 text-sm">${c.requires_student_id
+        ? `<span class="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">${ICON('gradcap')}Required</span>`
+        : '<span class="text-slate-400">—</span>'}</td>
       <td class="p-4 text-right whitespace-nowrap">
-        <button class="fee-save px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(c.id)}">Save</button>
-        <button class="fee-toggle px-3 py-1.5 ${c.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(c.id)}" data-active="${c.active ? 1 : 0}">${c.active ? 'Deactivate' : 'Activate'}</button>
-        <button class="fee-delete px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(c.id)}">Delete</button>
+        <button class="fee-edit px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(c.id)}">Edit</button>
       </td>
     </tr>`).join('');
 }
@@ -5344,49 +5348,98 @@ async function handleAddFeeCategory(e) {
   renderBackendFees();
 }
 
-// Show or hide one row's name editor. Cancel puts the fields back to what
-// they held when the row was drawn, so an abandoned edit leaves nothing
-// behind for the next Save to pick up.
-function toggleFeeNameEdit(id, editing) {
-  const view = document.querySelector(`.fee-name-view[data-id="${id}"]`);
-  const edit = document.querySelector(`.fee-name-edit[data-id="${id}"]`);
-  if (!view || !edit) return;
-  if (!editing) {
-    edit.querySelectorAll('input[data-original]').forEach((el) => { el.value = el.dataset.original; });
+// Rows cached by renderBackendFees so the modal opens without refetching.
+let feeCategoriesById = {};
+let editingFeeCategoryId = null;
+
+// Everything about a category is edited here. The table itself is read-only:
+// live inputs in a dense table made a stray keystroke enough to change a fee
+// or, once labels became editable, rename every registration in the category.
+function openFeeCategoryModal(id) {
+  const c = feeCategoriesById[String(id)];
+  if (!c) return showToast('That category is no longer on screen — reloading.');
+  editingFeeCategoryId = String(id);
+
+  setText('fc-key', c.category_key);
+  const set = (elId, value) => { const el = document.getElementById(elId); if (el) el.value = value; };
+  set('fc-label', c.label || '');
+  set('fc-subtitle', c.subtitle || '');
+  set('fc-early', c.early_fee);
+  set('fc-regular', c.regular_fee);
+  set('fc-late', c.late_fee);
+  set('fc-spot', c.spot_fee);
+  const check = (elId, on) => { const el = document.getElementById(elId); if (el) el.checked = !!on; };
+  check('fc-studentid', c.requires_student_id);
+  check('fc-active', c.active);
+
+  // Renaming rewrites registrations.category_label for everyone in the
+  // category -- what receipts and exports print -- so the count is stated
+  // before it happens, not reported afterwards.
+  const note = document.getElementById('fc-rename-note');
+  const regs = Number(c.registrations) || 0;
+  if (note) {
+    note.textContent = regs > 0
+      ? `Renaming also updates ${regs} existing registration${regs === 1 ? '' : 's'} — their receipts and exports will show the new name.`
+      : '';
+    note.classList.toggle('hidden', regs === 0);
   }
-  view.classList.toggle('hidden', editing);
-  edit.classList.toggle('hidden', !editing);
-  if (editing) {
-    const label = edit.querySelector('.fee-label');
-    if (label) { label.focus(); label.select(); }
+
+  // Drift is rows carrying an OLDER name than the saved label, from a rename
+  // made outside the app. Realign applies the saved label, so it is offered
+  // apart from the rename field above rather than folded into Save.
+  const drift = document.getElementById('fc-drift');
+  const drifted = Number(c.drifted) || 0;
+  if (drift) {
+    drift.classList.toggle('hidden', drifted === 0);
+    setText('fc-drift-msg', drifted > 0
+      ? `${drifted} registration${drifted === 1 ? '' : 's'} in this category still show an older name.`
+      : '');
   }
+
+  // Deletion is refused server-side once anything references the category.
+  // Saying so on the button beats letting the press fail.
+  const delBtn = document.getElementById('fc-delete-btn');
+  const delNote = document.getElementById('fc-delete-note');
+  if (delBtn) delBtn.disabled = regs > 0;
+  if (delNote) {
+    delNote.textContent = regs > 0
+      ? `Cannot delete: ${regs} registration${regs === 1 ? '' : 's'} use this category. Untick Active instead — it stays on existing registrations but is no longer offered.`
+      : 'Nothing uses this category yet, so it can be deleted.';
+  }
+
+  openModal('modal-fee-category');
 }
 
-async function saveFeeCategory(id) {
-  const q = (cls) => document.querySelector(`.${cls}[data-id="${id}"]`);
-  // The name is sent only when the row is actually being edited. Otherwise
-  // it is left out entirely, and the server keeps whatever it has -- so
-  // saving a fee change can never rename a category as a side effect.
-  const editing = (document.querySelector(`.fee-name-edit[data-id="${id}"]`) || {}).classList;
-  const renaming = editing && !editing.contains('hidden');
+async function saveFeeCategoryModal() {
+  const id = editingFeeCategoryId;
+  if (!id) return;
+  const val = (elId) => (document.getElementById(elId) || {}).value;
+  const on = (elId) => !!(document.getElementById(elId) || {}).checked;
+  const label = String(val('fc-label') || '').trim();
+  if (!label) return showToast('Label is required.');
+
+  const btn = document.getElementById('fc-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   const data = await (await fetch(`/api/admin/fees/categories/${encodeURIComponent(id)}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      ...(renaming ? { label: q('fee-label').value.trim(), subtitle: q('fee-subtitle').value.trim() } : {}),
-      earlyFee: Number(q('fee-early').value),
-      regularFee: Number(q('fee-regular').value),
-      lateFee: Number(q('fee-late').value),
-      spotFee: Number(q('fee-spot').value),
-      requiresStudentId: q('fee-studentid').checked,
-    })
+      label,
+      subtitle: String(val('fc-subtitle') || '').trim(),
+      earlyFee: Number(val('fc-early')),
+      regularFee: Number(val('fc-regular')),
+      lateFee: Number(val('fc-late')),
+      spotFee: Number(val('fc-spot')),
+      requiresStudentId: on('fc-studentid'),
+      active: on('fc-active') ? 1 : 0,
+    }),
   })).json();
-  if (!data.success) showToast(data.error || 'Update failed.');
-  // A rename carries through to every registration that stored the old
-  // name (receipts and exports print that snapshot, not the master row),
-  // so say how many were touched rather than letting it happen silently.
-  else if (data.renamed > 0) {
-    showToast(`Saved. ${data.renamed} registration${data.renamed === 1 ? '' : 's'} updated to the new name.`, 'success');
-  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Save changes'; }
+
+  if (!data.success) return showToast(data.error || 'Update failed.');
+  showToast(data.renamed > 0
+    ? `Saved. ${data.renamed} registration${data.renamed === 1 ? '' : 's'} updated to the new name.`
+    : 'Category saved.', 'success');
+  closeModal('modal-fee-category');
   reviewCategoryList = null; // requiresStudentId may have changed -- force ensureReviewCategories() to refetch
   renderBackendFees();
 }
@@ -5396,37 +5449,31 @@ async function saveFeeCategory(id) {
 // fee -- but it does alter what already-issued receipts print, so it asks
 // first, like every other irreversible action here.
 async function realignFeeCategory(id) {
-  // Read the SAVED name from the static view, not the edit box -- realign
-  // applies the label the server already holds, so quoting an unsaved edit
-  // would promise something this does not do.
-  const view = document.querySelector(`.fee-name-view[data-id="${id}"] p`);
-  const label = (view && view.textContent) || 'this label';
-  if (!(await showConfirm(`Update every registration in this category to "${String(label).trim()}"? Their receipts and exports will show the new name.`))) return;
+  // The SAVED label, from the cached row -- realign applies what the server
+  // already holds, so quoting the unsaved edit box would promise something
+  // this does not do.
+  const c = feeCategoriesById[String(id)] || {};
+  const label = c.label || 'the saved label';
+  if (!(await showConfirm(`Update every registration in this category to "${label}"? Their receipts and exports will show the new name.`))) return;
   const data = await (await fetch(`/api/admin/fees/categories/${encodeURIComponent(id)}/realign`, { method: 'POST' })).json();
   if (!data.success) return showToast(data.error || 'Could not realign.');
   showToast(`${data.updated} registration${data.updated === 1 ? '' : 's'} updated.`, 'success');
-  renderBackendFees();
-}
-
-async function toggleFeeCategory(id, active) {
-  const q = (cls) => document.querySelector(`.${cls}[data-id="${id}"]`);
-  await fetch(`/api/admin/fees/categories/${encodeURIComponent(id)}`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      active,
-      earlyFee: Number(q('fee-early').value),
-      regularFee: Number(q('fee-regular').value),
-      lateFee: Number(q('fee-late').value),
-      spotFee: Number(q('fee-spot').value),
-    })
-  });
+  closeModal('modal-fee-category');
   renderBackendFees();
 }
 
 async function deleteFeeCategory(id) {
-  if (!(await showConfirm('Delete this category? This cannot be undone.'))) return;
+  const c = feeCategoriesById[String(id)] || {};
+  // Belt and braces: the button is disabled in this case and the server
+  // refuses with a 409 regardless, but nothing here should be the only guard.
+  if (Number(c.registrations) > 0) {
+    return showToast('This category is in use and cannot be deleted. Untick Active instead.');
+  }
+  if (!(await showConfirm(`Delete "${c.label || 'this category'}"? This cannot be undone.`))) return;
   const data = await (await fetch(`/api/admin/fees/categories/${encodeURIComponent(id)}`, { method: 'DELETE' })).json();
-  if (!data.success) showToast(data.error || 'Delete failed.');
+  if (!data.success) return showToast(data.error || 'Delete failed.');
+  showToast('Category deleted.', 'success');
+  closeModal('modal-fee-category');
   reviewCategoryList = null; // category list changed -- force ensureReviewCategories() to refetch
   renderBackendFees();
 }

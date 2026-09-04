@@ -2,7 +2,7 @@
   <section id="dashboard-page" class="hidden w-full max-w-4xl bg-white shadow-card rounded-2xl p-8 border border-slate-200">
     <div class="flex flex-col sm:flex-row justify-between sm:items-center border-b pb-4 mb-6 gap-4">
       <div>
-        <h2 class="text-2xl font-bold text-slate-800">Welcome, <span id="user-display-name" class="text-indigo-600">Delegate</span></h2>
+        <h2 class="text-2xl font-bold text-slate-800">Welcome, <span id="user-display-name" class="skeleton text-indigo-600">Delegate</span></h2>
         <p id="user-display-sub" class="text-xs text-slate-500 mt-0.5"></p>
       </div>
       <div class="self-start sm:self-auto flex items-center gap-2">
@@ -81,7 +81,7 @@
                  in the / route); this is what an anonymous visitor, or a
                  delegate whose session the server could not resolve, sees
                  while applyRegistrationState works it out. -->
-            <span id="payment-status-tag" class="text-xs bg-slate-100 text-slate-600 font-bold px-2.5 py-1 rounded-full border border-slate-200">
+            <span id="payment-status-tag" class="skeleton text-xs bg-slate-100 text-slate-600 font-bold px-2.5 py-1 rounded-full border border-slate-200">
               Checking&hellip;
             </span>
           </div>
@@ -120,7 +120,7 @@
         <div>
           <div class="flex justify-between items-center">
             <span class="text-xs font-bold text-emerald-600 uppercase tracking-wide">Step 2</span>
-            <span id="abstract-status-tag" class="text-xs bg-slate-100 text-slate-600 font-bold px-2.5 py-1 rounded-full border border-slate-200">Not Submitted</span>
+            <span id="abstract-status-tag" class="skeleton text-xs bg-slate-100 text-slate-600 font-bold px-2.5 py-1 rounded-full border border-slate-200">Not Submitted</span>
           </div>
           <h3 class="text-xl font-bold text-slate-800 mt-1">Submit Abstract</h3>
           <p id="abstract-desc" class="text-sm text-slate-600 mt-2">Submit papers or posters under Healthcare Quality &amp; Patient Safety. One abstract per delegate; it cannot be changed once submitted.</p>
