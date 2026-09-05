@@ -20,7 +20,12 @@ const fs = require('fs');
 const vm = require('vm');
 
 const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
-const N = Date.now() % 100000;
+// Padded, because the phone numbers below are built as a 5-digit prefix
+// plus N: an unpadded remainder is four digits for the first 10 seconds of
+// every 100-second window, which builds a 9-digit number the signup route
+// correctly refuses -- and the test then fails for the wrong reason, about
+// one run in ten.
+const N = String(Date.now() % 100000).padStart(5, '0');
 
 const base = {
   salutation: 'Dr', name: 'pin test', age: '30', gender: 'Female',
