@@ -7780,6 +7780,59 @@ app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async 
   }
 });
 
+// Type-ahead for the desk's search box.
+//
+// Deliberately a different endpoint from the lookup above, because it answers
+// a different question. The lookup RESOLVES: given something a delegate
+// produced, who is this one person. This one OFFERS: given a few characters,
+// who might you mean. Folding them together would mean either the lookup
+// guessing on partial input, or the suggestions inheriting its "exactly one
+// match" semantics and showing nothing until the answer was already certain.
+//
+// Matches the same four things the lookup accepts, so what the desk types
+// reaches the same place whether they pick a suggestion or hit enter.
+app.get('/api/desk/search', requirePermission('desk.view'), async (req, res, next) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    // Two characters minimum: one character matches a large fraction of a
+    // conference and would ship the delegate list a keystroke at a time.
+    if (q.length < 2) return res.json({ success: true, results: [] });
+    // LIKE wildcards in user input would otherwise let '%' match everybody.
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const rows = await dbAll(
+      `SELECT u.phone_number, u.full_name, u.email, u.phone,
+              r.registration_number, r.category_label, r.checked_in_at
+         FROM users u
+         LEFT JOIN registrations r ON r.phone_number = u.phone_number
+        WHERE u.full_name LIKE ? ESCAPE '\\'
+           OR u.phone_number LIKE ? ESCAPE '\\'
+           OR u.phone LIKE ? ESCAPE '\\'
+           OR LOWER(u.email) LIKE LOWER(?) ESCAPE '\\'
+           OR UPPER(r.registration_number) LIKE UPPER(?) ESCAPE '\\'
+        ORDER BY
+          -- Somebody whose name STARTS with what was typed is much more
+          -- likely to be the person at the counter than somebody who merely
+          -- contains it, so they come first rather than alphabetically.
+          CASE WHEN u.full_name LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END,
+          u.full_name
+        LIMIT 8`,
+      [like, like, like, like, like, `${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`]);
+    res.json({
+      success: true,
+      results: rows.map((r) => ({
+        phone_number: r.phone_number,
+        full_name: r.full_name,
+        registration_number: r.registration_number,
+        category_label: r.category_label,
+        // So the desk can see at a glance who has already been through.
+        checked_in: !!r.checked_in_at,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // The delegate's own receipt, reprinted at the desk. Identical output to
 // GET /api/registrations/:id/receipt -- the same handler, in fact. It exists
 // twice only because requirePermission takes exactly one key, so a route

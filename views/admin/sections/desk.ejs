@@ -23,9 +23,20 @@
          should land here without anyone reaching for the mouse. -->
     <div class="bg-white p-4 sm:p-5 rounded-2xl shadow-card mb-5">
       <form onsubmit="deskLookup(event)" class="flex flex-col sm:flex-row gap-2">
-        <input id="desk-search" type="text" autocomplete="off"
-               placeholder="Mobile, registration number, email or name…"
-               class="flex-1 p-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200">
+        <!-- relative: the suggestion list is absolutely positioned against
+             this wrapper so it overlays the record below rather than pushing
+             it down the page as the desk types. -->
+        <div class="relative flex-1">
+          <input id="desk-search" type="text" autocomplete="off" role="combobox"
+                 aria-autocomplete="list" aria-expanded="false" aria-controls="desk-suggestions"
+                 oninput="deskSuggest()" onkeydown="deskSuggestKey(event)" onblur="deskSuggestBlur()"
+                 placeholder="Mobile, registration number, email or name…"
+                 class="w-full p-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200">
+          <!-- Populated by deskSuggest(). Hidden rather than emptied so the
+               list keeps its place in the DOM for aria-controls. -->
+          <ul id="desk-suggestions" role="listbox"
+              class="hidden absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-card overflow-hidden max-h-72 overflow-y-auto"></ul>
+        </div>
         <div class="flex gap-2">
           <button type="submit" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm">Find delegate</button>
           <button type="button" id="desk-register-btn" onclick="openRegisterDelegateModal()"

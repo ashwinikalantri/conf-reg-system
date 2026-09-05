@@ -8050,8 +8050,138 @@ function deskCollectorSelect(id) {
   return `<select id="${esc(id)}" class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">${options}</select>`;
 }
 
+// --- desk type-ahead ------------------------------------------------------
+//
+// At a counter the delegate is standing there while you type, so the search
+// has to offer people as you go rather than making you commit, wait, and read
+// an error. Three things this has to get right beyond "fetch on keyup":
+//
+//   * Debounced, so a name is one request rather than one per letter.
+//   * Race-safe. Responses can arrive out of order, and the slow one for "As"
+//     landing after the fast one for "Ashwin" would replace a correct list
+//     with a stale one. Each request carries a sequence number and anything
+//     but the newest is discarded.
+//   * Keyboard-first. Arrow keys move, Enter picks, Escape dismisses -- a
+//     desk should never have to reach for the mouse mid-queue.
+let deskSuggestSeq = 0;
+let deskSuggestTimer = null;
+let deskSuggestions = [];
+let deskSuggestActive = -1;
+
+function deskSuggest() {
+  clearTimeout(deskSuggestTimer);
+  const q = (document.getElementById('desk-search').value || '').trim();
+  // Under two characters there is nothing worth showing: one letter matches a
+  // large share of the conference, and the server declines it anyway.
+  if (q.length < 2) return deskSuggestClose();
+  deskSuggestTimer = setTimeout(() => deskSuggestFetch(q), 180);
+}
+
+async function deskSuggestFetch(q) {
+  const seq = ++deskSuggestSeq;
+  try {
+    const data = await (await fetch(`/api/desk/search?q=${encodeURIComponent(q)}`)).json();
+    // A response from a keystroke the user has already typed past.
+    if (seq !== deskSuggestSeq) return;
+    deskSuggestions = data.success ? (data.results || []) : [];
+    deskSuggestActive = -1;
+    deskSuggestRender();
+  } catch (e) {
+    if (seq === deskSuggestSeq) deskSuggestClose();
+  }
+}
+
+function deskSuggestRender() {
+  const box = document.getElementById('desk-suggestions');
+  const input = document.getElementById('desk-search');
+  if (!deskSuggestions.length) {
+    // Said out loud rather than silently showing nothing, so the desk knows
+    // the search ran and this person is genuinely not on file -- which is the
+    // cue to register them as a walk-in.
+    box.innerHTML = '<li class="px-3 py-2.5 text-xs text-slate-400">Nobody matching — register them as a walk-in.</li>';
+    box.classList.remove('hidden');
+    input.setAttribute('aria-expanded', 'true');
+    return;
+  }
+  box.innerHTML = deskSuggestions.map((s, i) => `
+    <li role="option" id="desk-suggestion-${i}" aria-selected="${i === deskSuggestActive}"
+        onmousedown="event.preventDefault();deskSuggestPick(${i})"
+        onmouseenter="deskSuggestHighlight(${i})"
+        class="px-3 py-2 cursor-pointer flex items-center justify-between gap-3 ${i === deskSuggestActive ? 'bg-indigo-50' : 'hover:bg-slate-50'}">
+      <span class="min-w-0">
+        <span class="block text-sm font-semibold text-slate-800 truncate">${esc(s.full_name || '—')}</span>
+        <span class="block text-[11px] text-slate-500 truncate">${esc(s.category_label || 'Not registered')}</span>
+      </span>
+      <span class="shrink-0 text-right">
+        <span class="block text-[11px] font-mono text-slate-400">${esc(s.registration_number || s.phone_number)}</span>
+        ${s.checked_in ? '<span class="text-[10px] font-bold text-emerald-700">arrived</span>' : ''}
+      </span>
+    </li>`).join('');
+  box.classList.remove('hidden');
+  input.setAttribute('aria-expanded', 'true');
+  input.setAttribute('aria-activedescendant', deskSuggestActive >= 0 ? `desk-suggestion-${deskSuggestActive}` : '');
+}
+
+function deskSuggestHighlight(i) {
+  deskSuggestActive = i;
+  deskSuggestRender();
+}
+
+function deskSuggestClose() {
+  const box = document.getElementById('desk-suggestions');
+  const input = document.getElementById('desk-search');
+  if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+  if (input) { input.setAttribute('aria-expanded', 'false'); input.setAttribute('aria-activedescendant', ''); }
+  deskSuggestions = [];
+  deskSuggestActive = -1;
+}
+
+// mousedown on a suggestion is preventDefault-ed above so this never fires
+// before the click lands -- otherwise the list would close out from under the
+// pointer and the click would hit whatever was underneath.
+function deskSuggestBlur() {
+  setTimeout(deskSuggestClose, 120);
+}
+
+function deskSuggestKey(event) {
+  const open = deskSuggestions.length > 0
+    && !document.getElementById('desk-suggestions').classList.contains('hidden');
+  if (event.key === 'Escape') return deskSuggestClose();
+  if (!open) return;
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    deskSuggestActive = (deskSuggestActive + 1) % deskSuggestions.length;
+    return deskSuggestRender();
+  }
+  if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    deskSuggestActive = (deskSuggestActive - 1 + deskSuggestions.length) % deskSuggestions.length;
+    return deskSuggestRender();
+  }
+  if (event.key === 'Enter' && deskSuggestActive >= 0) {
+    // Only when something is actually highlighted. Enter with no selection
+    // still submits the form, so typing a full number and pressing enter
+    // works exactly as it did before there were suggestions.
+    event.preventDefault();
+    deskSuggestPick(deskSuggestActive);
+  }
+}
+
+async function deskSuggestPick(i) {
+  const picked = deskSuggestions[i];
+  if (!picked) return;
+  // The phone number is the account key, so resolving by it is exact -- the
+  // name that was typed might still be ambiguous.
+  document.getElementById('desk-search').value = picked.phone_number;
+  deskSuggestClose();
+  await deskLookup();
+}
+
 async function deskLookup(event) {
   if (event) event.preventDefault();
+  // Whatever route got us here -- typing and pressing enter, or picking a
+  // suggestion -- the list has served its purpose.
+  deskSuggestClose();
   const input = document.getElementById('desk-search');
   const err = document.getElementById('desk-search-error');
   const candidates = document.getElementById('desk-candidates');

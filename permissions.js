@@ -159,6 +159,7 @@ const ROUTE_PERMISSIONS = {
   // widened guard because requirePermission takes exactly one key.
   'GET /api/desk/delegate/:identifier': 'desk.view',
   'GET /api/desk/registrations/:id/receipt': 'desk.view',
+  'GET /api/desk/search': 'desk.view',
   'GET /api/desk/programmes': 'desk.view',
   'GET /api/desk/staff': 'desk.view',
   'GET /api/desk/cash-in-hand': 'desk.view',
