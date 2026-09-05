@@ -110,6 +110,16 @@
     ],
     "Government District Headquarter Hospital, Kovilpatti, Thoothukudi, Tamil Nadu": [
       "Government district headquarter hospital , Kovilpattii, Thoothukudi district, Tamilnadu"
+    ],
+    "Mahatma Gandhi College of Nursing, Wardha": [
+      "MGCON WARDHA"
+    ],
+    "SMBT Institute of Medical Science & Research Center, Nashik": [
+      "SMBT"
+    ],
+    "Shri Balaji Institute of Medical Science, Raipur": [
+      "Sbims",
+      "Shri Balaji Institute of Medical Sciences, Raipur"
     ]
   },
   "designation": {
@@ -136,6 +146,7 @@
       "Professor of Pediatrics"
     ]
   },
-  "_second_pass": "Reviewed again on 2026-09-05, after ~90 further registrations brought new spellings. Same split as before: entries below are either a merge into a value that already exists, or a rewrite of one institution written badly -- neither needs a judgement about the world. Ten entries that DO were deliberately left out and remain unmerged: 'Mahatma Gandhi Medical College', 'MGCON WARDHA', 'SMBT', 'Sbims', 'MaKNGzMC', 'Ssahe, Ssimsrc -Bangalore Rural', 'Mumbai', 'Self', 'NQOCN se', and the three plain 'District Hospital'.",
-  "_note_iggmc": "IGGMC Nagpur is renamed, NOT merged into 'Government Medical College, Nagpur'. Indira Gandhi GMC is a different college in the same city -- exactly the mistake the first pass rejected nine times over."
+  "_second_pass": "Reviewed again on 2026-09-05, after ~90 further registrations brought new spellings. Same split as before: entries below are either a merge into a value that already exists, or a rewrite of one institution written badly -- neither needs a judgement about the world. Ten entries that DO were deliberately left out and remain unmerged: 'Mahatma Gandhi Medical College', 'MaKNGzMC', 'Ssahe, Ssimsrc -Bangalore Rural', 'Mumbai', 'Self', 'NQOCN se', and the three plain 'District Hospital'.",
+  "_note_iggmc": "IGGMC Nagpur is renamed, NOT merged into 'Government Medical College, Nagpur'. Indira Gandhi GMC is a different college in the same city -- exactly the mistake the first pass rejected nine times over.",
+  "_owner_calls_2": "MGCON WARDHA, SMBT and Sbims were resolved by the owner on 2026-09-05. SMBT stays SEPARATE from 'SMBT Institute of Nursing, Nashik' -- the group runs both, and the bare acronym was the medical college. Shri Balaji took the two existing 'Sciences' rows with it so the institution ends as one entry rather than two spellings."
 }
