@@ -1,4 +1,4 @@
-const { call, check, report, adminLogin } = require('./harness');
+const { call, check, report, ADMIN, adminLogin } = require('./harness');
 ;
 const sqlite3=require('sqlite3').verbose();
 const N=String(Date.now()).slice(-6);
@@ -14,7 +14,7 @@ console.log('\n== Three cash walk-ins at the desk ==');
 const ids=[];
 for (let i=1;i<=3;i++){
   const res=await call('POST','/api/admin/registrations',{phone:P(i),name:`Cash Walkin ${i}`,email:`cash${i}-${N}@example.com`,
-    categoryKey:'chw',optionIds:[],paymentMode:'CASH',amount:200},ac);
+    categoryKey:'chw',optionIds:[],paymentMode:'CASH',collectedBy:ADMIN,amount:200},ac);
   if(!res.body.success){ console.log('   setup failed:',res.body.error); }
   ids.push(res.body.registrationId);
 }
@@ -56,7 +56,7 @@ check('no longer listed', !cash.body.transactions.some(t=>txnIds.includes(t.id))
 console.log('\n== A deposit too small is refused ==');
 for (let i=4;i<=5;i++){
   await call('POST','/api/admin/registrations',{phone:P(i),name:`Cash Walkin ${i}`,email:`cash${i}-${N}@example.com`,
-    categoryKey:'chw',optionIds:[],paymentMode:'CASH',amount:200},ac);
+    categoryKey:'chw',optionIds:[],paymentMode:'CASH',collectedBy:ADMIN,amount:200},ac);
 }
 cash=await call('GET','/api/admin/cash-in-hand',null,ac);
 const two=cash.body.transactions.slice(0,2).map(t=>t.id);

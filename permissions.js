@@ -22,6 +22,7 @@
 // The sections of the admin panel a permission can belong to. Order is the
 // order the role editor will show them in.
 const SECTIONS = [
+  { key: 'desk', label: 'Front desk' },
   { key: 'payments', label: 'Payments' },
   { key: 'statement', label: 'Bank statement' },
   { key: 'abstracts', label: 'Abstracts' },
@@ -37,6 +38,26 @@ const SECTIONS = [
 // shows beside the checkbox, so it is written for the person choosing, not
 // for the person implementing.
 const PERMISSIONS = [
+  // --- Front desk ---
+  //
+  // The desk is the one screen that starts from a person rather than a
+  // queue, and these three exist because every grant that would otherwise
+  // cover its work is far too wide for a volunteer on a conference day:
+  // reprinting a receipt would need payments.view (the entire finance
+  // worklist, every ledger and audit trail), reading one delegate's record
+  // would need users.view (the whole Users & Roles tab), and moving somebody
+  // into a workshop would need masters.programs_manage -- which also confers
+  // the power to delete that workshop and wipe its roster.
+  //
+  // So the desk gets its own narrow routes over the same handlers. What it
+  // does to a delegate's money, ID and category is NOT re-permissioned here:
+  // payments.add_payment, payments.verify_id, payments.revise and
+  // payments.desk_register already exist at exactly the right grain, and
+  // none of them opens a tab.
+  ['desk.view', 'desk', 'Open the front desk', 'Look a delegate up and read their whole record — registration, payment, programme, abstract and arrival — one person at a time.'],
+  ['desk.enroll', 'desk', 'Change a programme choice', 'Move a delegate into a different workshop or QI practice at the desk.'],
+  ['desk.checkin', 'desk', 'Check a delegate in', 'Record that a delegate has physically arrived.'],
+
   // --- Payments ---
   ['payments.view', 'payments', 'View payments', 'Open the Payments tab and read every registration, its ledger and its audit trail.'],
   ['payments.decide', 'payments', 'Approve or reject', 'Settle a pending payment. Approving and rejecting are one action here — they are the same endpoint.'],
@@ -131,6 +152,23 @@ const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
 // roles -- the test asserts it. A key covering two differently-guarded routes
 // would be a permission too coarse to express what the app already does.
 const ROUTE_PERMISSIONS = {
+  // Front desk. Each of these is a thin route over a handler that already
+  // exists elsewhere under a wider permission -- the receipt is literally the
+  // same renderReceipt, and the lookup composes the same helpers as
+  // GET /api/users/:phone/detail. They are separate routes rather than a
+  // widened guard because requirePermission takes exactly one key.
+  'GET /api/desk/delegate/:identifier': 'desk.view',
+  'GET /api/desk/registrations/:id/receipt': 'desk.view',
+  'GET /api/desk/programmes': 'desk.view',
+  'GET /api/desk/staff': 'desk.view',
+  'GET /api/desk/cash-in-hand': 'desk.view',
+  'POST /api/desk/enroll': 'desk.enroll',
+  'POST /api/desk/checkin': 'desk.checkin',
+  // Guarded by the existing "add a payment on the delegate's behalf" key
+  // rather than a new one -- taking cash at the counter is that idea, not a
+  // different one. The desk-specific part is the route, not the permission.
+  'POST /api/desk/collect-cash': 'payments.add_payment',
+
   // Payments
   'GET /api/registrations': 'payments.view',
   'GET /api/admin/finance-summary': 'payments.view_totals',
@@ -269,6 +307,7 @@ const SECTION_PERMISSIONS = {
   // individually for a role that cannot reach the section behind it (see
   // renderBackendOverview). It grants no reach of its own.
   overview: { anyOf: ['payments.view', 'statement.view', 'abstracts.view'] },
+  desk: { permission: 'desk.view' },
   payments: { permission: 'payments.view' },
   statement: { permission: 'statement.view' },
   abstracts: { permission: 'abstracts.view' },
@@ -353,6 +392,29 @@ const SYSTEM_ROLES = [
     // As a permission set it is simply the union, which is what it always
     // meant -- and the reason ROLE_IMPLIES can retire once this lands.
     permissions: null, // filled below: union of the two above
+  },
+  {
+    key: 'FRONT_DESK',
+    label: 'Front Desk',
+    description: 'One delegate at a time on the conference days: look them up, register walk-ins, take cash, fix details, check them in.',
+    permissions: [
+      'desk.view', 'desk.enroll', 'desk.checkin',
+      // Existing keys at exactly the right grain, deliberately reused rather
+      // than re-invented. None of them opens a tab of its own, so the desk
+      // can hold them without seeing the payments worklist: the Payments tab
+      // is gated on payments.view, which the desk does NOT get, and neither
+      // is payments.view_totals -- conference-wide money is not desk work.
+      'payments.desk_register', 'payments.add_payment', 'payments.verify_id', 'payments.revise',
+      // Correcting a delegate's own details is the desk's most ordinary job.
+      // This is a widening of a deliberately narrow permission (see the
+      // comment above PUT /api/users/:phone) and is acknowledged as such in
+      // permission-catalogue's WIDENED_SINCE_BASELINE.
+      'users.edit',
+      // Read the fee categories, for the same reason Finance Admin needs it:
+      // the category picker and the "does this category need a student ID"
+      // question both read that list, and render empty without it.
+      'masters.fees_view',
+    ],
   },
   {
     key: 'OPERATIONS',

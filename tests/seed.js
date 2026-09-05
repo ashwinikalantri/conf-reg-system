@@ -140,6 +140,7 @@ const STAFF = [
   { phone: '9000000003', name: 'Rae Reviewer',     role: 'ACADEMIC_REVIEWER' },
   { phone: '9000000004', name: 'Ops Ostrom',       role: 'OPERATIONS' },
   { phone: '9000000005', name: 'Fay Both',         role: 'FINANCE_ACADEMIC' },
+  { phone: '9000000006', name: 'Dez Counter',      role: 'FRONT_DESK' },
 ];
 
 async function seedRows() {
@@ -495,7 +496,7 @@ async function seedRows() {
 const REQUIRED = [
   ['a super admin', "SELECT 1 FROM users WHERE role='SUPER_ADMIN' AND password_hash IS NOT NULL"],
   ['the full admin pool', `SELECT 1 FROM users WHERE phone_number LIKE '90001%' GROUP BY 1 HAVING COUNT(*)=${ADMIN_POOL_SIZE}`],
-  ['all five staff roles', "SELECT 1 FROM users WHERE role IN ('SUPER_ADMIN','FINANCE_ADMIN','ACADEMIC_REVIEWER','OPERATIONS','FINANCE_ACADEMIC') GROUP BY 1 HAVING COUNT(DISTINCT role)=5"],
+  ['all six staff roles', "SELECT 1 FROM users WHERE role IN ('SUPER_ADMIN','FINANCE_ADMIN','ACADEMIC_REVIEWER','OPERATIONS','FINANCE_ACADEMIC','FRONT_DESK') GROUP BY 1 HAVING COUNT(DISTINCT role)=6"],
   ['a verified single-payment registration', "SELECT 1 FROM registrations r JOIN payment_transactions p ON p.registration_id=r.id WHERE r.bank_status='BANK_VERIFIED' GROUP BY r.id HAVING COUNT(*)=1"],
   ['a verified registration with two verified payments', "SELECT 1 FROM registrations r JOIN payment_transactions p ON p.registration_id=r.id WHERE r.bank_status='BANK_VERIFIED' AND p.txn_status='VERIFIED' GROUP BY r.id HAVING COUNT(*)>1"],
   ['a registration with a discount', "SELECT 1 FROM registrations WHERE discount_amount>0 AND bank_status='BANK_VERIFIED'"],

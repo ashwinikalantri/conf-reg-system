@@ -119,6 +119,24 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
       + 'already see. It exists because the Overview used to SUM /api/registrations in the browser, which '
       + 'meant the totals were only as private as that list and the cards hid nothing.',
     'POST /api/admin/fees/categories/:id/realign': 'Brings registrations that stored an older label for a category up to the current one. Display name only -- no category or fee changes. masters.fees_manage, the same permission as renaming the category in the first place, so it widens nobody\'s access.',
+
+    // --- The front desk ---------------------------------------------------
+    // Six of these seven are guarded by the new desk.* keys, which only
+    // SUPER_ADMIN (grants_all) and the new FRONT_DESK role hold, so no
+    // existing role gains anything from them. They exist as separate routes
+    // rather than as widened guards on the routes they mirror because
+    // requirePermission takes exactly one key: there is no way to say "either
+    // payments.view or desk.view" on GET /api/registrations/:id/receipt.
+    'GET /api/desk/delegate/:identifier': 'The desk lookup: one delegate, whole. Composes the same helpers as GET /api/users/:phone/detail, which needs users.view (the entire Users & Roles tab) and so is far too wide for a desk volunteer.',
+    'GET /api/desk/registrations/:id/receipt': 'Literally renderReceipt, the same handler as GET /api/registrations/:id/receipt. That one is payments.view -- the whole finance worklist, every ledger and audit trail -- which reprinting a receipt should not require.',
+    'GET /api/desk/programmes': 'Programme options with live occupancy, for the change control. Read-only, and the numbers come from fetchProgramGroups, which is the only count that correctly excludes faculty and rejected registrations.',
+    'POST /api/desk/enroll': 'Moves one delegate between options. The admin equivalent needs masters.programs_manage, which also confers deleting a workshop and wiping its roster. This route is also STRICTER than that one: it refuses a full option unless a reason is recorded, where the admin route has never checked capacity at all.',
+    'POST /api/desk/checkin': 'Records physical arrival. New capability -- nothing in the app did this before.',
+    'GET /api/desk/staff': 'Who may be named as having collected cash.',
+    'GET /api/desk/cash-in-hand': "The signed-in collector's own unbanked cash, for hand-over. The conference-wide equivalent is statement.cash_deposit, which the desk does not hold.",
+    'POST /api/desk/collect-cash': 'The seventh, and the only one NOT guarded by a desk.* key: it '
+      + 'carries payments.add_payment, so Finance Admin reaches it too. That widening is recorded '
+      + 'per-role in WIDENED_SINCE_BASELINE below.',
   };
   const added = ROUTES.map((r) => r.route).filter((r) => !BASELINE.roles.SUPER_ADMIN.routes.includes(r));
   check('every route added since the baseline is accounted for',
@@ -141,6 +159,14 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
       + 'fee or a phase date, is untouched and stays Super Admin only.',
     'FINANCE_ACADEMIC GET /api/admin/fees': 'Inherited automatically -- FINANCE_ACADEMIC is the union of '
       + 'FINANCE_ADMIN and ACADEMIC_REVIEWER\'s permission sets, not a separately-curated list. Same reason as above.',
+    'FINANCE_ADMIN POST /api/desk/collect-cash': 'Taking cash from a delegate who already has a '
+      + 'registration -- the balance on a part-paid one. Guarded by payments.add_payment, which '
+      + 'Finance Admin already holds and which already means "add a payment on the delegate\'s '
+      + 'behalf"; this is that same idea at a counter instead of against a bank credit, so it is '
+      + 'deliberately NOT a new permission. Note the existing admin-add-payment route cannot do '
+      + 'this: it starts from a bank credit and has nothing to offer somebody putting notes down.',
+    'FINANCE_ACADEMIC POST /api/desk/collect-cash': 'Inherited automatically, as the union of '
+      + 'FINANCE_ADMIN and ACADEMIC_REVIEWER. Same reason as above.',
   };
 
   // The mirror of the above, for access that SHRINKS. There was no way to
@@ -206,11 +232,19 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // is hidden individually for a role that cannot reach the section behind
   // it. OPERATIONS is deliberately absent: it sees Reports and Users, and
   // nothing the overview summarises, so it would be an empty screen.
+  //
+  // FRONT_DESK is the one role whose list is a single main tab. That is the
+  // point of it: the desk works one delegate at a time and has no business in
+  // the payments worklist, the statement, or conference-wide money. It holds
+  // masters.fees_view (to know which categories need a student ID) but that
+  // grants no section -- 'fees' is the Fee Master screen, which is
+  // masters.fees_view too, so it DOES appear; see the note in the role.
   const CLIENT_TODAY = {
-    SUPER_ADMIN: ['overview', 'payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'general', 'activity'],
+    SUPER_ADMIN: ['overview', 'desk', 'payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'general', 'activity'],
     FINANCE_ADMIN: ['overview', 'payments', 'statement', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
     ACADEMIC_REVIEWER: ['overview', 'abstracts', 'reports'],
     FINANCE_ACADEMIC: ['overview', 'payments', 'statement', 'abstracts', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
+    FRONT_DESK: ['desk', 'fees'],
     OPERATIONS: ['reports', 'users'],
   };
   const allSections = Object.keys(perms.SECTION_PERMISSIONS);

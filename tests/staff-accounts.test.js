@@ -1,4 +1,4 @@
-const { call, check, report, adminLogin } = require('./harness');
+const { call, check, report, ADMIN, adminLogin } = require('./harness');
 ;
 // Unique per run -- these suites get re-run against the same DB copy, and a
 // reused number/address collides with the previous run's fixture.
@@ -19,7 +19,7 @@ check('staff can actually log in', r.body.success===true, r.body.error);
 check('role preserved', r.body.user.role==='OPERATIONS', r.body.user.role);
 
 console.log('\n== Walk-in registration (admin desk) ==');
-r=await call('POST','/api/admin/registrations',{phone:P(2),name:'Walkin Tester',email:`fx-${P(2)}@example.com`,categoryKey:'chw',optionIds:[],paymentMode:'CASH',amount:200},ac);
+r=await call('POST','/api/admin/registrations',{phone:P(2),name:'Walkin Tester',email:`fx-${P(2)}@example.com`,categoryKey:'chw',optionIds:[],paymentMode:'CASH',collectedBy:ADMIN,amount:200},ac);
 check('walk-in registered', r.body.success===true, r.body.error);
 check('temp password issued', !!r.body.tempPassword, r.body.tempPassword);
 const tmp=r.body.tempPassword;

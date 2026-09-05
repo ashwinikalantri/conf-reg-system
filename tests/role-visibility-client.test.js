@@ -21,13 +21,14 @@ const STAFF = {
   ACADEMIC_REVIEWER: '9000000003',
   OPERATIONS: '9000000004',
   FINANCE_ACADEMIC: '9000000005',
+  FRONT_DESK: '9000000006',
 };
 
 // Every element applyRoleVisibility()/allowedBackendTabs() touch, so a role's
 // full visible surface can be read back after driving the real code.
 const ELEMENT_IDS = [
-  'nav-tab-payments', 'nav-tab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
-  'register-delegate-btn', 'settings-menu-btn',
+  'nav-tab-desk', 'nav-tab-payments', 'nav-tab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
+  'settings-menu-btn',
   'settings-item-programs', 'settings-item-fees', 'settings-item-general',
   'settings-item-discount', 'settings-item-activity',
   'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
@@ -49,21 +50,26 @@ const ELEMENT_IDS = [
 // bugfix for the ID-verification/category-picker screens they already use,
 // with this tab-visibility grant as its accepted, read-only side effect.
 const EXPECTED_VISIBLE = {
-  SUPER_ADMIN: ['nav-tab-payments', 'nav-tab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
-    'register-delegate-btn', 'settings-menu-btn', 'settings-item-programs', 'settings-item-fees',
+  SUPER_ADMIN: ['nav-tab-desk', 'nav-tab-payments', 'nav-tab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
+    'settings-menu-btn', 'settings-item-programs', 'settings-item-fees',
     'settings-item-general', 'settings-item-discount', 'settings-item-activity',
     'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
     'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts',
     'abstracts-assignment-block'],
   FINANCE_ADMIN: ['nav-tab-payments', 'nav-tab-statement', 'nav-tab-reports',
-    'register-delegate-btn', 'settings-menu-btn', 'settings-item-fees', 'settings-item-discount',
+    'settings-menu-btn', 'settings-item-fees', 'settings-item-discount',
     'settings-item-reminders', 'settings-item-groupdiscount',
     'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops'],
   ACADEMIC_REVIEWER: ['nav-tab-abstracts', 'nav-tab-reports', 'report-abstracts'],
   FINANCE_ACADEMIC: ['nav-tab-payments', 'nav-tab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
-    'register-delegate-btn', 'settings-menu-btn', 'settings-item-fees', 'settings-item-discount',
+    'settings-menu-btn', 'settings-item-fees', 'settings-item-discount',
     'settings-item-reminders', 'settings-item-groupdiscount',
     'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
+  // One main tab, and that is the point: the desk works a person at a time
+  // and has no business in the payments worklist or the statement. It sees
+  // the Fee Master read-only because masters.fees_view is what tells it which
+  // categories need a student ID.
+  FRONT_DESK: ['nav-tab-desk', 'settings-menu-btn', 'settings-item-fees'],
   OPERATIONS: ['nav-tab-reports', 'settings-menu-btn', 'settings-item-users',
     'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
 };

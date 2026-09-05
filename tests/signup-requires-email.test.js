@@ -42,9 +42,9 @@ check('  email recorded', row.email===E('staff'), row.email);
 check('  and NOT auto-verified', row.email_verified===0, row.email_verified);
 
 console.log('\n== WALK-IN registration requires an email for a new delegate ==');
-r=await call('POST','/api/admin/registrations',{phone:P(8),name:'Walkin NoMail',categoryKey:'chw',optionIds:[],paymentMode:'CASH',amount:200},ac);
+r=await call('POST','/api/admin/registrations',{phone:P(8),name:'Walkin NoMail',categoryKey:'chw',optionIds:[],paymentMode:'CASH',collectedBy:ADMIN,amount:200},ac);
 check('no email refused', r.status===400 && /email address is required/i.test(r.body.error||''), [r.status,r.body&&r.body.error]);
-r=await call('POST','/api/admin/registrations',{phone:P(9),name:'Walkin',email:E('walkin'),categoryKey:'chw',optionIds:[],paymentMode:'CASH',amount:200},ac);
+r=await call('POST','/api/admin/registrations',{phone:P(9),name:'Walkin',email:E('walkin'),categoryKey:'chw',optionIds:[],paymentMode:'CASH',collectedBy:ADMIN,amount:200},ac);
 check('with email accepted', r.body.success===true, r.body.error);
 row=await one(`SELECT email, email_verified FROM users WHERE phone_number='${P(9)}'`);
 check('  email recorded', row.email===E('walkin'), row.email);
@@ -52,7 +52,7 @@ check('  not auto-verified', row.email_verified===0, row.email_verified);
 
 console.log('\n== Existing account reuses its address (no need to retype) ==');
 // P(7) already exists with an email; register them as a walk-in with no email field.
-r=await call('POST','/api/admin/registrations',{phone:P(7),name:'Good Staff',categoryKey:'chw',optionIds:[],paymentMode:'CASH',amount:200},ac);
+r=await call('POST','/api/admin/registrations',{phone:P(7),name:'Good Staff',categoryKey:'chw',optionIds:[],paymentMode:'CASH',collectedBy:ADMIN,amount:200},ac);
 check('accepted, reusing the stored address', r.body.success===true, r.body.error);
 report();
 db.close();

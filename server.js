@@ -1909,10 +1909,19 @@ db.serialize(() => {
       rejection_note TEXT,
       submitted_at INTEGER,
       reviewed_by TEXT,
-      reviewed_at INTEGER
+      reviewed_at INTEGER,
+      collected_by TEXT                  -- for CASH: who physically took the money
     )
   `);
   db.run('CREATE INDEX IF NOT EXISTS idx_paytxn_reg ON payment_transactions(registration_id)');
+  // collected_by is NOT a rename of reviewed_by, and the difference is the
+  // whole point of it. reviewed_by records whose account was signed in; at a
+  // conference desk one laptop is worked by several volunteers in a shift,
+  // so it answers "which login was open", not "who is holding the cash".
+  // Only the second question matters when the float is handed over at the
+  // end of the day, so the two are recorded separately. Nullable: it is
+  // meaningful only for CASH, and every row already on file predates it.
+  db.run('ALTER TABLE payment_transactions ADD COLUMN collected_by TEXT', () => {});
   // Used to be UNIQUE (a bank credit could back at most one payment
   // transaction). One credit can now be split across several delegates --
   // see allocatedForBankTxn() -- so the constraint moved from the schema
@@ -2026,6 +2035,12 @@ db.serialize(() => {
     // on the portal and the fee is fixed to the locked category (see the
     // lock-category endpoint).
     if (!names.includes('category_locked')) pending.push(alter('ALTER TABLE registrations ADD COLUMN category_locked INTEGER DEFAULT 0'));
+    // Physical arrival at the conference, recorded by the front desk. Null
+    // means "has not arrived", which on any day before the conference is
+    // every row -- hence nullable rather than a 0/1 flag with a default, so
+    // "not yet" and "arrived" are never confused with each other.
+    if (!names.includes('checked_in_at')) pending.push(alter('ALTER TABLE registrations ADD COLUMN checked_in_at INTEGER'));
+    if (!names.includes('checked_in_by')) pending.push(alter('ALTER TABLE registrations ADD COLUMN checked_in_by TEXT'));
     // Applied promo/discount code and the rupee amount it took off the fee.
     if (!names.includes('discount_code')) pending.push(alter('ALTER TABLE registrations ADD COLUMN discount_code TEXT'));
     if (!names.includes('discount_amount')) pending.push(alter('ALTER TABLE registrations ADD COLUMN discount_amount REAL DEFAULT 0'));
@@ -6115,6 +6130,15 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
     if (!['CASH', 'BANK_TRANSFER'].includes(paymentMode)) {
       return res.status(400).json({ success: false, error: 'Payment mode must be CASH or BANK_TRANSFER.' });
     }
+    // Cash has no bank credit behind it and never will -- the only record of
+    // who is answerable for it is this field, so it is refused rather than
+    // defaulted. See resolveCashCollector.
+    let cashCollector = null;
+    if (paymentMode === 'CASH') {
+      const resolvedCollector = await resolveCashCollector(req.body.collectedBy);
+      if (resolvedCollector.error) return res.status(400).json({ success: false, error: resolvedCollector.error });
+      cashCollector = resolvedCollector.collector;
+    }
 
     const existingUser = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
     const existingReg = await dbGet('SELECT id FROM registrations WHERE phone_number = ?', [phone]);
@@ -6285,10 +6309,10 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
     } else {
       await dbRun(
         `INSERT INTO payment_transactions
-          (registration_id, phone_number, amount, verified_amount, utr_number, payment_mode, txn_status, bank_txn_id, submitted_at, reviewed_by, reviewed_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'VERIFIED', ?, ?, ?, ?)`,
+          (registration_id, phone_number, amount, verified_amount, utr_number, payment_mode, txn_status, bank_txn_id, submitted_at, reviewed_by, reviewed_at, collected_by)
+         VALUES (?, ?, ?, ?, ?, ?, 'VERIFIED', ?, ?, ?, ?, ?)`,
         [registrationId, phone, paidAmount, paidAmount, utrNumber, paymentMode,
-         bank ? bank.id : null, now, req.session.name || req.session.phone, now]
+         bank ? bank.id : null, now, req.session.name || req.session.phone, now, cashCollector]
       );
     }
 
@@ -6464,7 +6488,7 @@ app.get('/api/admin/cash-in-hand', requirePermission('statement.cash_deposit'), 
     const rows = await dbAll(`
       SELECT pt.id, pt.registration_id, pt.phone_number,
              COALESCE(pt.verified_amount, pt.amount) AS amount,
-             pt.submitted_at, pt.reviewed_by,
+             pt.submitted_at, pt.reviewed_by, pt.collected_by,
              r.registration_number, r.delegate_name, r.category_label
         FROM payment_transactions pt
         LEFT JOIN registrations r ON r.id = pt.registration_id
@@ -7656,6 +7680,342 @@ app.post('/api/admin/backup/request', requirePermission('system.backups'), async
       action: 'BACKUP_REQUESTED', oldValue: null, newValue: 'Manual backup requested from Settings',
     });
     res.json({ success: true, request });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- FRONT DESK -----------------------------------------------------------
+//
+// Every other admin screen is a worklist: a table of everyone, filtered and
+// sorted, for somebody working a queue. On the conference days the shape of
+// the work inverts -- there is one person standing at the desk, and the only
+// question is what to do about them. So this surface starts from a lookup
+// and returns one whole delegate.
+//
+// Almost nothing here is new capability. The lookup composes the same
+// helpers as GET /api/users/:phone/detail, the receipt is renderReceipt
+// verbatim, and enrolment goes through the same capacity rules as the
+// delegate's own form. What is new is the GRAIN: these routes exist so the
+// desk can do its work without holding payments.view (the whole finance
+// worklist), users.view (the Users & Roles tab) or masters.programs_manage
+// (which can delete a workshop and wipe its roster).
+
+// Find a delegate the way a person at a desk would: by whatever they can
+// produce. resolveAccountByIdentifier() already handles a phone number or an
+// email address, so this adds the two things somebody at a counter actually
+// holds -- their registration number, printed on the confirmation they were
+// emailed, and failing that their name.
+async function deskFindDelegate(identifier) {
+  const q = String(identifier || '').trim();
+  if (!q) return { error: 'Enter a mobile number, registration number, email or name.' };
+
+  // Phone or email: exact, unambiguous, and already implemented.
+  const direct = await resolveAccountByIdentifier(q);
+  if (direct.user) return { user: direct.user };
+  if (direct.error === 'ambiguousEmail') {
+    return { error: 'More than one account uses that email address. Use their mobile number instead.' };
+  }
+
+  // Registration number. Matched case-insensitively because it is read off a
+  // phone screen and typed back in by hand.
+  const byReg = await dbGet(
+    `SELECT u.* FROM registrations r JOIN users u ON u.phone_number = r.phone_number
+      WHERE UPPER(r.registration_number) = UPPER(?)`, [q]);
+  if (byReg) return { user: byReg };
+
+  // Name, last. Substring rather than exact -- nobody at a desk types a full
+  // legal name correctly first time -- so this can legitimately match several
+  // people, and when it does the desk is asked to choose rather than being
+  // handed the first alphabetically.
+  const byName = await dbAll(
+    `SELECT u.phone_number, u.full_name, u.email, r.registration_number, r.category_label
+       FROM users u LEFT JOIN registrations r ON r.phone_number = u.phone_number
+      WHERE u.full_name LIKE ? ORDER BY u.full_name LIMIT 12`, [`%${q}%`]);
+  if (byName.length === 1) {
+    const full = await dbGet('SELECT * FROM users WHERE phone_number = ?', [byName[0].phone_number]);
+    return { user: full };
+  }
+  if (byName.length > 1) return { candidates: byName };
+  return { error: 'Nobody found with that number, registration number, email or name.' };
+}
+
+// One delegate, whole: who they are, what they owe, what they chose, what
+// they submitted, and whether they have walked in yet. Composed from the
+// same helpers the admin user-detail panel uses, plus the two things the
+// desk needs that no other screen shows together -- abstracts and arrival.
+app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async (req, res, next) => {
+  try {
+    const found = await deskFindDelegate(req.params.identifier);
+    if (found.error) return res.status(404).json({ success: false, error: found.error });
+    // Several people share the typed name: hand back the shortlist rather
+    // than guessing which one is at the counter.
+    if (found.candidates) return res.json({ success: true, candidates: found.candidates });
+
+    const user = found.user;
+    const reg = await dbGet('SELECT * FROM registrations WHERE phone_number = ?', [user.phone_number]);
+    const [payment, selections, abstracts] = await Promise.all([
+      reg ? getPaymentSummary(reg.id, reg.expected_amount) : null,
+      reg ? fetchRegistrationSelections(reg.id) : [],
+      dbAll(`SELECT id, title, format, status, allocation, revision_note
+               FROM abstracts WHERE phone_number = ? ORDER BY id`, [user.phone_number]),
+    ]);
+
+    res.json({
+      success: true,
+      user: omitPasswordHash(user),
+      registration: reg || null,
+      payment,
+      selections,
+      abstracts,
+      // Arrival is a property of the registration, but the desk reads it as a
+      // property of the person, so it is lifted out rather than left for the
+      // client to dig for.
+      checkedIn: reg && reg.checked_in_at
+        ? { at: reg.checked_in_at, by: reg.checked_in_by }
+        : null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The delegate's own receipt, reprinted at the desk. Identical output to
+// GET /api/registrations/:id/receipt -- the same handler, in fact. It exists
+// twice only because requirePermission takes exactly one key, so a route
+// cannot be reachable by either payments.view or desk.view.
+app.get('/api/desk/registrations/:id/receipt', requirePermission('desk.view'), renderReceipt);
+
+// Every programme option with its live occupancy, for the change control.
+// Reuses fetchProgramGroups(), which is the ONLY correct source for these
+// numbers: `enrolled` there excludes faculty (who are attached to an option
+// so they appear on its roster, but do not occupy a delegate's seat) and
+// excludes rejected registrations. Counting registration_options rows
+// directly overstates a workshop that has faculty on it.
+app.get('/api/desk/programmes', requirePermission('desk.view'), async (req, res, next) => {
+  try {
+    res.json({ success: true, groups: await fetchProgramGroups({ activeOnly: true }) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Move a delegate into a different option within a group.
+//
+// A full option is not a hard stop here: the desk is the last resort on the
+// day, and a rule the counter cannot override just moves the argument to
+// somebody standing behind it. But it is not silent either -- overfilling
+// requires a typed reason, and that reason is what lands in the audit log.
+// (The admin roster route at POST /api/admin/program-options/:id/enroll has
+// never checked capacity at all; this route is deliberately stricter.)
+app.post('/api/desk/enroll', requirePermission('desk.enroll'), async (req, res, next) => {
+  try {
+    const optionId = Number(req.body.optionId);
+    const reason = String(req.body.reason || '').trim();
+    const found = await deskFindDelegate(req.body.identifier);
+    if (found.error) return res.status(404).json({ success: false, error: found.error });
+    if (found.candidates) {
+      return res.status(409).json({ success: false, error: 'That name matches more than one delegate. Look them up first.' });
+    }
+    const reg = await dbGet('SELECT id FROM registrations WHERE phone_number = ?', [found.user.phone_number]);
+    if (!reg) {
+      return res.status(404).json({ success: false, error: 'This delegate has no registration yet -- register them before enrolling.' });
+    }
+    const opt = await dbGet('SELECT * FROM program_options WHERE id = ? AND active = 1', [optionId]);
+    if (!opt) return res.status(404).json({ success: false, error: 'Please choose an available option.' });
+
+    // resolveOption() is the same capacity check the delegate's own form
+    // uses, and it excludes this registration from the count so re-picking
+    // the option someone already holds is never "full".
+    const resolved = await resolveOption(optionId, reg.id);
+    const isFull = Boolean(resolved.error);
+    if (isFull && !reason) {
+      return res.status(409).json({
+        success: false, needsReason: true,
+        error: `"${opt.name}" is full (${opt.capacity} seats). Enrol anyway by recording why.`,
+      });
+    }
+
+    const prev = await dbGet(
+      'SELECT option_id FROM registration_options WHERE registration_id = ? AND group_id = ?',
+      [reg.id, opt.group_id]);
+    // Same replace-within-group semantics as the admin roster route: one
+    // choice per group, and the faculty flag resets because it belongs to a
+    // specific assignment rather than to the person.
+    await dbRun('DELETE FROM registration_options WHERE registration_id = ? AND group_id = ?', [reg.id, opt.group_id]);
+    await dbRun(
+      'INSERT INTO registration_options (registration_id, group_id, option_id, is_faculty) VALUES (?, ?, ?, 0)',
+      [reg.id, opt.group_id, opt.id]);
+
+    await recordAudit({
+      req, entityType: 'registration', entityId: reg.id,
+      action: isFull ? 'DESK_ENROLL_OVER_CAPACITY' : 'DESK_ENROLL',
+      oldValue: prev ? String(prev.option_id) : null,
+      newValue: isFull ? `${opt.id} — over capacity: ${reason}` : String(opt.id),
+    });
+    res.json({ success: true, overCapacity: isFull });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Mark a delegate as physically arrived. Idempotent on purpose: at a busy
+// counter the same person gets scanned twice, and the second scan must not
+// overwrite who actually checked them in or when.
+app.post('/api/desk/checkin', requirePermission('desk.checkin'), async (req, res, next) => {
+  try {
+    const found = await deskFindDelegate(req.body.identifier);
+    if (found.error) return res.status(404).json({ success: false, error: found.error });
+    if (found.candidates) {
+      return res.status(409).json({ success: false, error: 'That name matches more than one delegate. Look them up first.' });
+    }
+    const reg = await dbGet(
+      'SELECT id, checked_in_at, checked_in_by FROM registrations WHERE phone_number = ?',
+      [found.user.phone_number]);
+    if (!reg) return res.status(404).json({ success: false, error: 'This delegate has no registration to check in.' });
+    if (reg.checked_in_at) {
+      return res.json({ success: true, alreadyCheckedIn: true, at: reg.checked_in_at, by: reg.checked_in_by });
+    }
+    const now = Date.now();
+    const by = req.session.name || req.session.phone;
+    await dbRun('UPDATE registrations SET checked_in_at = ?, checked_in_by = ? WHERE id = ?', [now, by, reg.id]);
+    await recordAudit({
+      req, entityType: 'registration', entityId: reg.id,
+      action: 'DESK_CHECKIN', oldValue: null, newValue: new Date(now).toISOString(),
+    });
+    res.json({ success: true, at: now, by });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Validate who is being recorded as having taken cash.
+//
+// The dropdown in the UI is a convenience; this is the rule. Without a
+// server-side check the field is decoration -- any client can post any
+// string, including the name of somebody who has never worked a desk, and
+// the hand-over trail it exists to create would be worthless. So: required
+// whenever money changes hands as cash, and it must name somebody whose role
+// can actually open the front desk.
+async function resolveCashCollector(raw) {
+  const key = String(raw || '').trim();
+  if (!key) return { error: 'Record who collected the cash.' };
+  const staff = await deskStaffList();
+  const match = staff.find((s) => s.key === key || s.name === key);
+  if (!match) {
+    return { error: 'Cash must be recorded against someone authorised to take it.' };
+  }
+  // Stored as the display name, matching what reviewed_by has always held,
+  // so the cash-in-hand screen can show the two side by side without
+  // resolving one of them through a join.
+  return { collector: match.name };
+}
+
+// Take cash from a delegate who already has a registration -- the balance on
+// a part-paid one, or a fee that was never settled online.
+//
+// The existing POST /api/registrations/:id/admin-add-payment cannot do this:
+// it starts from a bank credit and attaches it, so it has nothing to offer
+// somebody putting notes on the counter. This creates the VERIFIED cash row
+// directly, exactly as a desk walk-in registration does, and is guarded by
+// payments.add_payment -- the permission that already means "add a payment
+// on the delegate's behalf" -- rather than a new key for the same idea.
+app.post('/api/desk/collect-cash', requirePermission('payments.add_payment'), async (req, res, next) => {
+  try {
+    const amount = Number(req.body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ success: false, error: 'Enter a valid amount.' });
+    }
+    const resolvedCollector = await resolveCashCollector(req.body.collectedBy);
+    if (resolvedCollector.error) return res.status(400).json({ success: false, error: resolvedCollector.error });
+
+    const found = await deskFindDelegate(req.body.identifier);
+    if (found.error) return res.status(404).json({ success: false, error: found.error });
+    if (found.candidates) {
+      return res.status(409).json({ success: false, error: 'That name matches more than one delegate. Look them up first.' });
+    }
+    const reg = await dbGet('SELECT id, phone_number, expected_amount FROM registrations WHERE phone_number = ?',
+      [found.user.phone_number]);
+    if (!reg) return res.status(404).json({ success: false, error: 'This delegate has no registration to pay against.' });
+
+    const now = Date.now();
+    await dbRun(
+      `INSERT INTO payment_transactions
+        (registration_id, phone_number, amount, verified_amount, utr_number, payment_mode, txn_status, bank_txn_id, submitted_at, reviewed_by, reviewed_at, collected_by)
+       VALUES (?, ?, ?, ?, NULL, 'CASH', 'VERIFIED', NULL, ?, ?, ?, ?)`,
+      [reg.id, reg.phone_number, amount, amount, now, req.session.name || req.session.phone, now,
+       resolvedCollector.collector]);
+
+    // Settle the registration if this closes the gap. Deliberately does NOT
+    // reopen or downgrade anything when it does not: taking part of a
+    // balance is progress, not a change of status.
+    // getPaymentSummary calls it `remaining` (fee minus net verified, floored
+    // at zero), not `balance` -- and `fullyPaid` is the same question already
+    // answered, so ask that rather than re-deriving it with a tolerance.
+    const summary = await getPaymentSummary(reg.id, reg.expected_amount);
+    if (summary.fullyPaid) {
+      await dbRun("UPDATE registrations SET bank_status = 'BANK_VERIFIED' WHERE id = ?", [reg.id]);
+    }
+
+    await recordAudit({
+      req, entityType: 'registration', entityId: reg.id,
+      action: 'DESK_CASH_COLLECTED', oldValue: null,
+      newValue: `₹${inr(amount)} cash, collected by ${resolvedCollector.collector}`,
+    });
+    res.json({ success: true, amount, collectedBy: resolvedCollector.collector, payment: summary });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Who may be recorded as having taken cash.
+//
+// The test is "may this person take cash at all", not "can they open the
+// front desk" -- those are different questions and only the first one is
+// about accountability. A finance admin registering a walk-in holds
+// payments.desk_register without needing the desk tab, and refusing to let
+// them name themselves as the collector would be nonsense. So the list is
+// everyone holding either cash-creating permission.
+//
+// Asked of can() rather than queried out of role_permissions, so a
+// grants_all role (Super Admin) is included without being enumerated, and a
+// custom role appears here the moment it is granted either key.
+const CASH_TAKING_PERMISSIONS = ['payments.desk_register', 'payments.add_payment'];
+
+async function deskStaffList() {
+  const rows = await dbAll(
+    "SELECT phone_number, full_name, role FROM users WHERE role IS NOT NULL AND role != 'DELEGATE' ORDER BY full_name");
+  return rows.filter((u) => CASH_TAKING_PERMISSIONS.some((k) => can(u.role, k)))
+    .map((u) => ({ key: u.phone_number, name: u.full_name || u.phone_number, role: u.role }));
+}
+
+app.get('/api/desk/staff', requirePermission('desk.view'), async (req, res, next) => {
+  try {
+    res.json({ success: true, staff: await deskStaffList() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// What this collector is holding and has not yet banked -- the figure they
+// count against at hand-over. Same source as GET /api/admin/cash-in-hand
+// (unbanked verified cash), narrowed to one person, because the desk sees
+// its own float and not the conference's.
+app.get('/api/desk/cash-in-hand', requirePermission('desk.view'), async (req, res, next) => {
+  try {
+    const me = req.session.name || req.session.phone;
+    const rows = await dbAll(`
+      SELECT pt.id, COALESCE(pt.verified_amount, pt.amount) AS amount, pt.submitted_at,
+             pt.collected_by, r.registration_number, r.delegate_name
+        FROM payment_transactions pt
+        LEFT JOIN registrations r ON r.id = pt.registration_id
+       WHERE pt.payment_mode = 'CASH' AND pt.txn_status = 'VERIFIED'
+         AND pt.bank_txn_id IS NULL AND pt.collected_by = ?
+       ORDER BY pt.submitted_at ASC, pt.id ASC`, [me]);
+    res.json({
+      success: true, collector: me, transactions: rows, count: rows.length,
+      total: rows.reduce((sum, t) => sum + (Number(t.amount) || 0), 0),
+    });
   } catch (err) {
     next(err);
   }

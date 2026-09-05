@@ -1,4 +1,4 @@
-const { call, check, report, adminLogin } = require('./harness');
+const { call, check, report, ADMIN, adminLogin } = require('./harness');
 ;
 const sqlite3=require('sqlite3').verbose();
 const N=String(Date.now()).slice(-6);
@@ -12,10 +12,10 @@ console.log('\n== Student ID is still REQUIRED and still gates verification ==')
 const stu=await one("SELECT category_key FROM fee_categories WHERE requires_student_id=1 LIMIT 1");
 check('a student category still exists', !!stu, stu);
 r=await call('POST','/api/admin/registrations',{phone:'9'+N+'701',name:'Student NoID',email:`sid-${N}@example.com`,
-  categoryKey:stu.category_key,optionIds:[],paymentMode:'CASH',amount:500},ac);
+  categoryKey:stu.category_key,optionIds:[],paymentMode:'CASH',collectedBy:ADMIN,amount:500},ac);
 check('walk-in without the ID confirmation is refused', r.status===400 && /student ID/i.test(r.body.error||''), [r.status,r.body&&r.body.error]);
 r=await call('POST','/api/admin/registrations',{phone:'9'+N+'702',name:'Student WithID',email:`sid2-${N}@example.com`,
-  categoryKey:stu.category_key,optionIds:[],idVerifiedByAdmin:true,paymentMode:'CASH',amount:500},ac);
+  categoryKey:stu.category_key,optionIds:[],idVerifiedByAdmin:true,paymentMode:'CASH',collectedBy:ADMIN,amount:500},ac);
 check('with the confirmation it succeeds', r.body.success===true, r.body.error);
 const reg=await one(`SELECT id_verified, id_verified_by FROM registrations WHERE phone_number='9${N}702'`);
 check('id_verified recorded', reg.id_verified===1 && !!reg.id_verified_by, reg);

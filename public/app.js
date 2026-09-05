@@ -2789,13 +2789,17 @@ function applyRoleVisibility() {
   const tabStatement = document.getElementById('nav-tab-statement');
   const tabAbstracts = document.getElementById('nav-tab-abstracts');
   const tabReports = document.getElementById('nav-tab-reports');
+  const tabDesk = document.getElementById('nav-tab-desk');
+  if (tabDesk) tabDesk.classList.toggle('hidden', !canSee('desk'));
   if (tabPayments) tabPayments.classList.toggle('hidden', !canSee('payments'));
   if (tabStatement) tabStatement.classList.toggle('hidden', !canSee('statement'));
   if (tabAbstracts) tabAbstracts.classList.toggle('hidden', !canSee('abstracts'));
   if (tabReports) tabReports.classList.toggle('hidden', !canSee('reports'));
 
-  const registerBtn = document.getElementById('register-delegate-btn');
-  if (registerBtn) registerBtn.classList.toggle('hidden', !can('payments.desk_register'));
+  // The walk-in registration button now lives on the Front Desk tab
+  // (#desk-register-btn, toggled in initFrontDesk) rather than in the
+  // Payments header, so it is reachable by a role that holds
+  // payments.desk_register without payments.view.
 
   // Step 2 of the Abstracts tab. Assignment is its own permission, so a
   // reviewer who may accept and reject but not decide oral vs poster does
@@ -2871,6 +2875,10 @@ async function initBackendPortal() {
   // the conference stands. Falls through for a role that cannot see it --
   // Operations holds none of the sections it summarises.
   const defaultTab = canSee('overview') ? 'overview'
+    // Before payments: a role that can open the desk is a role whose work IS
+    // the desk, and Overview (which needs payments/statement/abstracts view)
+    // is invisible to it anyway.
+    : canSee('desk') ? 'desk'
     : canSee('payments') ? 'payments'
     : canSee('abstracts') ? 'abstracts'
     : canSee('reports') ? 'reports'
@@ -7670,6 +7678,17 @@ async function openRegisterDelegateModal() {
   const groupsData = groupsRes.ok ? await groupsRes.json() : {};
   rdGroupsCache = groupsData.groups || [];
   renderRegisterDelegateGroups();
+  // The collector list is the front-desk staff, same source as the desk's own
+  // dropdown. Loaded here rather than assumed, because this modal is also
+  // reachable by a finance admin who has never opened the desk tab.
+  if (!deskStaff.length) await loadDeskStaff();
+  const collectorSel = document.getElementById('rd-cash-collected-by');
+  if (collectorSel) {
+    const me = activeAdminUser ? activeAdminUser.full_name : '';
+    collectorSel.innerHTML = deskStaff.map((st) =>
+      `<option value="${esc(st.key)}"${st.name === me ? ' selected' : ''}>${esc(st.name)}</option>`).join('')
+      || '<option value="">No front-desk staff configured</option>';
+  }
   openModal('modal-register-delegate');
 }
 
@@ -7862,6 +7881,8 @@ async function handleRegisterDelegateSubmit(e) {
   };
   if (rdMode === 'CASH') {
     payload.amount = Number(document.getElementById('rd-cash-amount').value);
+    payload.collectedBy = document.getElementById('rd-cash-collected-by').value;
+    if (!payload.collectedBy) return showToast('Record who collected the cash.');
   } else if (rdBankLinkLater) {
     payload.linkLater = true;
     payload.amount = Number(document.getElementById('rd-bank-linklater-amount').value);
@@ -7959,8 +7980,492 @@ document.addEventListener('click', (e) => {
 // Settings sub-menu tabs (each is now its own top-level <section>) vs. the
 // main nav-bar tabs. The Settings items highlight in the dropdown; the main
 // tabs highlight in the tab bar.
+// --- FRONT DESK -----------------------------------------------------------
+//
+// The one admin screen that starts from a person instead of a queue. See
+// views/admin/sections/desk.ejs for why, and the desk block in
+// permissions.js for how it stays narrow.
+
+// The delegate currently on screen, and the front-desk staff list that backs
+// every "collected by" dropdown. Both are per-session state, not per-render.
+let deskDelegate = null;
+let deskStaff = [];
+let deskProgrammeGroups = [];
+
+async function initFrontDesk() {
+  const box = document.getElementById('section-desk');
+  if (!box) return;
+  // Loaded once per visit rather than per render: the staff list changes when
+  // somebody is given a role, not while a delegate is being served.
+  // ensureReviewCategories warms isStudentCategory(), which the payment card's
+  // ID chip reads -- without it every category looks like it needs no student
+  // ID, which is the wrong answer given confidently.
+  await Promise.all([ensureReviewCategories(), loadDeskStaff(), loadDeskProgrammes(), refreshDeskCash()]);
+  const registerBtn = document.getElementById('desk-register-btn');
+  if (registerBtn) registerBtn.classList.toggle('hidden', !can('payments.desk_register'));
+  const search = document.getElementById('desk-search');
+  if (search) search.focus();
+}
+
+async function loadDeskStaff() {
+  try {
+    const data = await (await fetch('/api/desk/staff')).json();
+    deskStaff = data.success ? (data.staff || []) : [];
+  } catch (e) { deskStaff = []; }
+}
+
+async function loadDeskProgrammes() {
+  try {
+    const data = await (await fetch('/api/desk/programmes')).json();
+    deskProgrammeGroups = data.success ? (data.groups || []) : [];
+  } catch (e) { deskProgrammeGroups = []; }
+}
+
+// What this collector is holding and has not yet banked. Shown in the header
+// because it is the number they count against at hand-over, and because a
+// figure nobody can see is a figure nobody reconciles.
+async function refreshDeskCash() {
+  const el = document.getElementById('desk-cash-summary');
+  if (!el) return;
+  try {
+    const data = await (await fetch('/api/desk/cash-in-hand')).json();
+    if (!data.success) return el.textContent = '';
+    el.textContent = data.count
+      ? `Cash in hand: ₹${inr(data.total)} across ${data.count} payment${data.count === 1 ? '' : 's'}`
+      : 'No cash collected yet';
+  } catch (e) { el.textContent = ''; }
+}
+
+// The "collected by" control. Pre-selects the signed-in user because that is
+// who it usually is, but stays changeable because at a shared desk it often
+// is not -- which is the entire reason the field exists separately from
+// reviewed_by (see resolveCashCollector in server.js).
+function deskCollectorSelect(id) {
+  const me = activeAdminUser ? activeAdminUser.full_name : '';
+  const options = deskStaff.map((s) =>
+    `<option value="${esc(s.key)}"${s.name === me ? ' selected' : ''}>${esc(s.name)}</option>`).join('');
+  return `<select id="${esc(id)}" class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">${options}</select>`;
+}
+
+async function deskLookup(event) {
+  if (event) event.preventDefault();
+  const input = document.getElementById('desk-search');
+  const err = document.getElementById('desk-search-error');
+  const candidates = document.getElementById('desk-candidates');
+  const empty = document.getElementById('desk-empty');
+  const record = document.getElementById('desk-record');
+  const q = (input.value || '').trim();
+  if (!q) return;
+
+  err.classList.add('hidden');
+  candidates.classList.add('hidden');
+  try {
+    const data = await (await fetch(`/api/desk/delegate/${encodeURIComponent(q)}`)).json();
+    if (!data.success) {
+      err.textContent = data.error || 'Could not look that up.';
+      err.classList.remove('hidden');
+      record.classList.add('hidden');
+      empty.classList.remove('hidden');
+      return;
+    }
+    if (data.candidates) {
+      renderDeskCandidates(data.candidates);
+      record.classList.add('hidden');
+      empty.classList.add('hidden');
+      return;
+    }
+    deskDelegate = data;
+    renderDeskRecord();
+  } catch (e) {
+    err.textContent = 'Could not reach the server.';
+    err.classList.remove('hidden');
+  }
+}
+
+function renderDeskCandidates(list) {
+  const box = document.getElementById('desk-candidates');
+  document.getElementById('desk-candidate-list').innerHTML = list.map((c) => `
+    <button type="button" onclick="deskPick('${esc(c.phone_number)}')"
+            class="w-full text-left p-3 border border-slate-200 rounded-xl hover:bg-slate-50 flex items-center justify-between gap-3">
+      <span class="min-w-0">
+        <span class="block font-bold text-sm text-slate-800 truncate">${esc(c.full_name || '—')}</span>
+        <span class="block text-[11px] text-slate-500 truncate">${esc(c.category_label || 'Not registered')}</span>
+      </span>
+      <span class="text-[11px] font-mono text-slate-400 shrink-0">${esc(c.registration_number || c.phone_number)}</span>
+    </button>`).join('');
+  box.classList.remove('hidden');
+}
+
+async function deskPick(phone) {
+  document.getElementById('desk-search').value = phone;
+  await deskLookup();
+}
+
+// One card per question the desk gets asked. Order is the order a delegate
+// raises them: who am I, what do I owe, am I cleared, what did I pick, what
+// happened to my abstract, am I checked in.
+function renderDeskRecord() {
+  const box = document.getElementById('desk-record');
+  const empty = document.getElementById('desk-empty');
+  if (!deskDelegate) return;
+  const { user, registration: reg, payment, selections, abstracts, checkedIn } = deskDelegate;
+
+  box.innerHTML = [
+    deskWhoCard(user, reg, checkedIn),
+    reg ? deskMoneyCard(reg, payment) : deskNoRegistrationCard(),
+    reg ? deskProgrammeCard(selections) : '',
+    deskAbstractCard(abstracts),
+  ].filter(Boolean).join('');
+  box.classList.remove('hidden');
+  empty.classList.add('hidden');
+  document.getElementById('desk-candidates').classList.add('hidden');
+}
+
+function deskCard(title, bodyHtml, actionsHtml) {
+  return `<div class="bg-white p-4 sm:p-5 rounded-2xl shadow-card">
+    <div class="flex items-baseline justify-between gap-3 flex-wrap mb-3">
+      <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">${esc(title)}</h3>
+      ${actionsHtml ? `<div class="flex flex-wrap gap-2">${actionsHtml}</div>` : ''}
+    </div>
+    ${bodyHtml}</div>`;
+}
+
+const deskBtn = (label, onclick, tone) => {
+  const tones = {
+    primary: 'bg-indigo-600 hover:bg-indigo-700 text-white',
+    plain: 'border border-slate-300 hover:bg-slate-50 text-slate-700',
+    good: 'bg-emerald-600 hover:bg-emerald-700 text-white',
+  };
+  return `<button type="button" onclick="${onclick}" class="px-3 py-1.5 ${tones[tone || 'plain']} text-xs font-bold rounded-lg">${esc(label)}</button>`;
+};
+
+const deskField = (label, value) =>
+  `<div><dt class="text-[11px] text-slate-400 uppercase tracking-wide">${esc(label)}</dt>
+     <dd class="text-sm text-slate-800">${esc(value || '—')}</dd></div>`;
+
+function deskWhoCard(user, reg, checkedIn) {
+  // Arrival lives on this card rather than one of its own: at a counter it is
+  // a fact about the person, and a card holding one button is a card too many.
+  const arrival = checkedIn
+    ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-emerald-100 text-emerald-800 border-emerald-300">${ICON('check')}Arrived ${esc(fmtRegisteredAt(checkedIn.at))}</span>`
+    : `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 border-slate-300">Not arrived</span>`;
+  const actions = [
+    can('desk.checkin') && !checkedIn && reg ? deskBtn('Check in', 'deskCheckIn()', 'good') : '',
+    can('users.edit') ? deskBtn('Edit details', 'deskOpenEdit()') : '',
+  ].filter(Boolean).join('');
+
+  return deskCard('Delegate', `
+    <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
+      <div class="min-w-0">
+        <p class="font-bold text-slate-800">${esc([user.salutation, user.full_name].filter(Boolean).join(' '))}</p>
+        <p class="text-xs text-slate-500">${esc(reg ? reg.category_label : 'No registration yet')}</p>
+      </div>
+      <div class="flex flex-wrap gap-1.5">
+        ${reg && reg.registration_number ? `<span class="text-[11px] font-mono text-slate-500">${esc(reg.registration_number)}</span>` : ''}
+        ${arrival}
+      </div>
+    </div>
+    <dl class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      ${deskField('Mobile', user.phone)}${deskField('Email', user.email)}
+      ${deskField('Designation', user.designation)}${deskField('Institution', user.institution)}
+      ${deskField('District', user.district)}${deskField('State', user.state)}
+    </dl>
+    <div id="desk-edit-form" class="hidden mt-4 pt-4 border-t border-slate-200"></div>`, actions);
+}
+
+function deskNoRegistrationCard() {
+  return deskCard('Registration', `
+    <p class="text-sm text-slate-500">This person has an account but has not registered.
+    Use <span class="font-semibold">+ Register walk-in</span> to register and take payment.</p>`, '');
+}
+
+function deskMoneyCard(reg, payment) {
+  const fee = Number(reg.expected_amount) || 0;
+  // netVerifiedTotal, not verifiedTotal: a recorded refund reduces what the
+  // delegate has actually paid, and `remaining` is the summary's own name for
+  // the outstanding figure -- there is no `balance` field.
+  const paid = payment ? Number(payment.netVerifiedTotal) || 0 : 0;
+  const balance = payment ? Number(payment.remaining) || 0 : Math.max(0, fee - paid);
+  const needsId = isStudentCategory(reg.category_key);
+  const idChip = !needsId
+    ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 border-slate-300">${ICON('gradcap')}ID n/a</span>`
+    : reg.id_verified
+      ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-emerald-100 text-emerald-800 border-emerald-300">${ICON('gradcap')}ID verified</span>`
+      : `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-100 text-amber-800 border-amber-300">${ICON('warning')}ID pending</span>`;
+
+  const actions = [
+    can('payments.add_payment') && balance > 0.5 ? deskBtn('Collect cash', 'deskOpenCollect()', 'primary') : '',
+    can('payments.verify_id') && needsId && !reg.id_verified ? deskBtn('Verify student ID', 'deskVerifyId()') : '',
+    can('payments.revise') ? deskBtn('Correct category', 'deskOpenCategory()') : '',
+    reg.bank_status === 'BANK_VERIFIED' ? `<a href="/api/desk/registrations/${esc(reg.id)}/receipt" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-lg">Receipt</a>` : '',
+  ].filter(Boolean).join('');
+
+  return deskCard('Payment', `
+    <div class="flex flex-wrap items-end gap-x-8 gap-y-3">
+      <div><p class="text-[11px] text-slate-400 uppercase tracking-wide">Fee</p>
+        <p class="text-lg font-bold text-slate-800 tabular-nums">₹${inr(fee)}</p></div>
+      <div><p class="text-[11px] text-slate-400 uppercase tracking-wide">Paid</p>
+        <p class="text-lg font-bold text-slate-800 tabular-nums">₹${inr(paid)}</p></div>
+      <div><p class="text-[11px] text-slate-400 uppercase tracking-wide">Balance</p>
+        <p class="text-lg font-bold tabular-nums ${balance > 0.5 ? 'text-amber-700' : 'text-emerald-700'}">₹${inr(balance)}</p></div>
+      <div class="flex flex-wrap items-center gap-1.5">${idChip}</div>
+    </div>
+    <div id="desk-collect-form" class="hidden mt-4 pt-4 border-t border-slate-200"></div>`, actions);
+}
+
+function deskProgrammeCard(selections) {
+  const chosen = new Map((selections || []).map((s) => [s.group_id, s]));
+  const body = deskProgrammeGroups.length
+    ? deskProgrammeGroups.map((g) => {
+      const pick = chosen.get(g.id);
+      return `<div class="py-2 border-b border-slate-100 last:border-0">
+        <p class="text-[11px] text-slate-400 uppercase tracking-wide">${esc(g.name)}</p>
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <p class="text-sm text-slate-800">${esc(pick ? pick.option_name : 'Not chosen')}${pick && pick.is_faculty ? ' <span class="text-[11px] text-indigo-700 font-bold">(Faculty)</span>' : ''}</p>
+          ${can('desk.enroll') ? deskBtn('Change', `deskOpenEnroll(${g.id})`) : ''}
+        </div>
+        <div id="desk-enroll-form-${g.id}" class="hidden mt-3"></div>
+      </div>`;
+    }).join('')
+    : '<p class="text-sm text-slate-500">No programmes are set up.</p>';
+  return deskCard('Programme', body, '');
+}
+
+const DESK_ABSTRACT_STATUS = {
+  UNDER_REVIEW: ['due', 'Under review'],
+  ACCEPTED: ['ok', 'Accepted'],
+  REJECTED: ['bad', 'Not accepted'],
+  REVISION_REQUESTED: ['due', 'Revision requested'],
+};
+
+function deskAbstractCard(abstracts) {
+  // Read-only, deliberately: presentation format is abstracts.assign, which is
+  // Super Admin's, and accepting is abstracts.review. The desk answers "what
+  // happened to mine", it does not decide it.
+  if (!abstracts || !abstracts.length) {
+    return deskCard('Abstract', '<p class="text-sm text-slate-500">No abstract submitted.</p>', '');
+  }
+  const tones = {
+    ok: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+    due: 'bg-amber-100 text-amber-800 border-amber-300',
+    bad: 'bg-rose-100 text-rose-800 border-rose-300',
+  };
+  return deskCard('Abstract', abstracts.map((a) => {
+    const [tone, label] = DESK_ABSTRACT_STATUS[a.status] || ['due', a.status || 'Submitted'];
+    return `<div class="py-2 border-b border-slate-100 last:border-0">
+      <p class="text-sm text-slate-800">${esc(a.title || 'Untitled')}</p>
+      <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+        <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${tones[tone]}">${esc(label)}</span>
+        <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${a.allocation ? 'bg-indigo-100 text-indigo-800 border-indigo-300' : 'bg-slate-100 text-slate-500 border-slate-300'}">${esc(a.allocation ? a.allocation : 'Format not assigned')}</span>
+      </div>
+      ${a.revision_note ? `<p class="text-[11px] text-amber-800 mt-1">${esc(a.revision_note)}</p>` : ''}
+    </div>`;
+  }).join(''), '');
+}
+
+// --- desk actions ---------------------------------------------------------
+
+async function deskReload() {
+  const key = deskDelegate && deskDelegate.user ? deskDelegate.user.phone_number : null;
+  if (!key) return;
+  const data = await (await fetch(`/api/desk/delegate/${encodeURIComponent(key)}`)).json();
+  if (data.success && !data.candidates) { deskDelegate = data; renderDeskRecord(); }
+}
+
+async function deskCheckIn() {
+  const res = await fetch('/api/desk/checkin', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier: deskDelegate.user.phone_number }),
+  });
+  const data = await res.json();
+  if (!data.success) return showToast(data.error || 'Could not check in.');
+  showToast(data.alreadyCheckedIn ? 'Already checked in.' : 'Checked in.', 'success');
+  await deskReload();
+}
+
+async function deskVerifyId() {
+  const res = await fetch(`/api/registrations/${deskDelegate.registration.id}/verify-id`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ verified: true }),
+  });
+  const data = await res.json();
+  if (!data.success) return showToast(data.error || 'Could not verify the ID.');
+  showToast('Student ID verified.', 'success');
+  await deskReload();
+}
+
+function deskOpenCollect() {
+  const box = document.getElementById('desk-collect-form');
+  const balance = Number(deskDelegate.payment ? deskDelegate.payment.remaining : 0) || 0;
+  box.innerHTML = `
+    <div class="grid sm:grid-cols-3 gap-3 items-end">
+      <div><label class="block text-[11px] text-slate-500 font-semibold mb-1">Amount (₹)</label>
+        <input id="desk-collect-amount" type="number" min="1" step="1" value="${Math.round(balance)}"
+               class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200"></div>
+      <div><label class="block text-[11px] text-slate-500 font-semibold mb-1">Cash collected by</label>
+        ${deskCollectorSelect('desk-collect-by')}</div>
+      <div class="flex gap-2">
+        ${deskBtn('Record cash', 'deskCollectCash()', 'primary')}
+        ${deskBtn('Cancel', "document.getElementById('desk-collect-form').classList.add('hidden')")}
+      </div>
+    </div>
+    <p class="text-[11px] text-slate-400 mt-2">Recorded as received. Bank it later from Bank Statement → cash deposit.</p>`;
+  box.classList.remove('hidden');
+}
+
+async function deskCollectCash() {
+  const amount = Number(document.getElementById('desk-collect-amount').value);
+  const collectedBy = document.getElementById('desk-collect-by').value;
+  const res = await fetch('/api/desk/collect-cash', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier: deskDelegate.user.phone_number, amount, collectedBy }),
+  });
+  const data = await res.json();
+  if (!data.success) return showToast(data.error || 'Could not record the cash.');
+  showToast(`₹${inr(data.amount)} recorded.`, 'success');
+  document.getElementById('desk-collect-form').classList.add('hidden');
+  await Promise.all([deskReload(), refreshDeskCash()]);
+}
+
+// Correcting a category at the desk -- the "student" who turns out to be
+// faculty, spotted when they hand over an ID that does not match. This is the
+// same PUT .../lock-category the Review modal uses: it changes the category
+// and the fee and locks it, and deliberately does NOT itself demand money or
+// move the registration to balance-due. If the new fee leaves a shortfall the
+// desk takes it with Collect cash, which is right there beside it.
+function deskOpenCategory() {
+  const box = document.getElementById('desk-collect-form');
+  const current = deskDelegate.registration.category_key;
+  const options = (reviewCategoryList || []).map((c) =>
+    `<option value="${esc(c.key)}"${c.key === current ? ' selected' : ''}>${esc(c.label)}</option>`).join('');
+  box.innerHTML = `
+    <div class="grid sm:grid-cols-3 gap-3 items-end">
+      <div class="sm:col-span-2"><label class="block text-[11px] text-slate-500 font-semibold mb-1">Category</label>
+        <select id="desk-category-select" class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">${options}</select></div>
+      <div class="flex gap-2">
+        ${deskBtn('Change category', 'deskSaveCategory()', 'primary')}
+        ${deskBtn('Cancel', "document.getElementById('desk-collect-form').classList.add('hidden')")}
+      </div>
+    </div>
+    <p class="text-[11px] text-slate-400 mt-2">Changes the fee too. Any shortfall can then be taken with Collect cash.</p>`;
+  box.classList.remove('hidden');
+}
+
+async function deskSaveCategory() {
+  const categoryKey = document.getElementById('desk-category-select').value;
+  const res = await fetch(`/api/registrations/${deskDelegate.registration.id}/lock-category`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ categoryKey }),
+  });
+  const data = await res.json();
+  if (!data.success) return showToast(data.error || 'Could not change the category.');
+  showToast(data.remaining > 0
+    ? `Category changed — ₹${inr(data.remaining)} now due.`
+    : 'Category changed.', 'success');
+  document.getElementById('desk-collect-form').classList.add('hidden');
+  await deskReload();
+}
+
+function deskOpenEnroll(groupId) {
+  const group = deskProgrammeGroups.find((g) => g.id === groupId);
+  if (!group) return;
+  const box = document.getElementById(`desk-enroll-form-${groupId}`);
+  // Occupancy comes from the server's own count, which excludes faculty (they
+  // hold a place on the roster but not a delegate's seat) and excludes
+  // rejected registrations. Counting enrolments any other way overstates a
+  // workshop that has faculty attached to it.
+  const options = group.options.map((o) => {
+    const full = o.enrolled >= o.capacity;
+    return `<option value="${o.id}">${esc(o.name)} — ${o.enrolled}/${o.capacity}${full ? ' (full)' : ''}</option>`;
+  }).join('');
+  box.innerHTML = `
+    <div class="grid sm:grid-cols-3 gap-3 items-end">
+      <div class="sm:col-span-2"><label class="block text-[11px] text-slate-500 font-semibold mb-1">Move to</label>
+        <select id="desk-enroll-option-${groupId}" class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">${options}</select></div>
+      <div class="flex gap-2">
+        ${deskBtn('Move', `deskEnroll(${groupId})`, 'primary')}
+        ${deskBtn('Cancel', `document.getElementById('desk-enroll-form-${groupId}').classList.add('hidden')`)}
+      </div>
+    </div>
+    <div id="desk-enroll-reason-${groupId}" class="hidden mt-3"></div>`;
+  box.classList.remove('hidden');
+}
+
+async function deskEnroll(groupId, reason) {
+  const optionId = Number(document.getElementById(`desk-enroll-option-${groupId}`).value);
+  const res = await fetch('/api/desk/enroll', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier: deskDelegate.user.phone_number, optionId, reason: reason || '' }),
+  });
+  const data = await res.json();
+  // A full option is not refused outright -- the desk is the last resort on
+  // the day -- but it cannot be done silently either. The reason typed here
+  // is what lands in the audit log.
+  if (!data.success && data.needsReason) {
+    const box = document.getElementById(`desk-enroll-reason-${groupId}`);
+    box.innerHTML = `
+      <p class="text-xs text-amber-800 font-semibold mb-2">${esc(data.error)}</p>
+      <div class="flex gap-2">
+        <input id="desk-enroll-why-${groupId}" type="text" placeholder="Why is this being allowed?"
+               class="flex-1 p-2 border border-amber-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-amber-200">
+        ${deskBtn('Enrol anyway', `deskEnrollWithReason(${groupId})`, 'primary')}
+      </div>`;
+    box.classList.remove('hidden');
+    return;
+  }
+  if (!data.success) return showToast(data.error || 'Could not change the programme.');
+  showToast(data.overCapacity ? 'Enrolled over capacity — recorded.' : 'Programme changed.', 'success');
+  await Promise.all([loadDeskProgrammes(), deskReload()]);
+}
+
+async function deskEnrollWithReason(groupId) {
+  const reason = (document.getElementById(`desk-enroll-why-${groupId}`).value || '').trim();
+  if (!reason) return showToast('Record why this is being allowed.');
+  await deskEnroll(groupId, reason);
+}
+
+function deskOpenEdit() {
+  const u = deskDelegate.user;
+  const box = document.getElementById('desk-edit-form');
+  const field = (id, label, value, type) =>
+    `<div><label class="block text-[11px] text-slate-500 font-semibold mb-1">${esc(label)}</label>
+      <input id="desk-edit-${id}" type="${type || 'text'}" value="${esc(value == null ? '' : value)}"
+             class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200"></div>`;
+  box.innerHTML = `
+    <div class="grid sm:grid-cols-3 gap-3">
+      ${field('full_name', 'Full name', u.full_name)}
+      ${field('email', 'Email', u.email, 'email')}
+      ${field('age', 'Age', u.age, 'number')}
+      ${field('designation', 'Designation', u.designation)}
+      ${field('institution', 'Institution', u.institution)}
+      ${field('gender', 'Gender', u.gender)}
+      ${field('pincode', 'PIN code', u.pincode)}
+      ${field('district', 'District', u.district)}
+      ${field('state', 'State', u.state)}
+    </div>
+    <div class="flex gap-2 mt-3">
+      ${deskBtn('Save details', 'deskSaveEdit()', 'primary')}
+      ${deskBtn('Cancel', "document.getElementById('desk-edit-form').classList.add('hidden')")}
+    </div>`;
+  box.classList.remove('hidden');
+}
+
+async function deskSaveEdit() {
+  const ids = ['full_name', 'email', 'age', 'designation', 'institution', 'gender', 'pincode', 'district', 'state'];
+  const body = {};
+  for (const id of ids) body[id] = document.getElementById(`desk-edit-${id}`).value;
+  const res = await fetch(`/api/users/${encodeURIComponent(deskDelegate.user.phone_number)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!data.success) return showToast(data.error || 'Could not save.');
+  showToast('Details updated.', 'success');
+  document.getElementById('desk-edit-form').classList.add('hidden');
+  await deskReload();
+}
+
 const SETTINGS_TABS = ['programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
-const MAIN_TABS = ['overview', 'payments', 'statement', 'abstracts', 'reports'];
+const MAIN_TABS = ['overview', 'desk', 'payments', 'statement', 'abstracts', 'reports'];
 
 // Which tabs each role may open -- the single source of truth used both to
 // pick the landing tab and to validate a tab restored from the URL, so a
@@ -7989,6 +8494,7 @@ function switchBackendTab(tab) {
   // or the API 403s for this role, so it's safe to call regardless of the
   // viewer's role.
   if (tab === 'overview') { renderBackendOverview(); renderDelegateMap(); }
+  if (tab === 'desk') initFrontDesk();
   if (tab === 'payments') renderBackendPayments();
   if (tab === 'abstracts') renderBackendAbstracts();
   if (tab === 'reports') loadReportWorkshopOptions();

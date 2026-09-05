@@ -1,0 +1,53 @@
+  <!-- SECTION: FRONT DESK
+       Every other tab is a worklist. This one is not, and that is the whole
+       point of it: on the conference days there is one person at the counter
+       and the only question is what to do about them, so the screen starts
+       with a search box and returns a single delegate, whole.
+
+       Nothing here is a new capability. The record is composed from the same
+       helpers the admin user-detail panel uses, the receipt is the same
+       renderReceipt, and a programme change goes through the same capacity
+       rules as the delegate's own form. What is different is the grain of
+       the permissions behind it -- see the desk block in permissions.js. -->
+  <section id="section-desk" class="hidden">
+
+    <div class="flex items-baseline justify-between flex-wrap gap-2 mb-4">
+      <h2 class="text-lg font-bold text-slate-800">Front Desk</h2>
+      <!-- The float this person is holding. Their own, not the conference's:
+           a desk reconciles what it hands over, and has no business seeing
+           total revenue. -->
+      <p id="desk-cash-summary" class="text-xs text-slate-500"></p>
+    </div>
+
+    <!-- Look-up. Autofocused, because at a counter the first keystroke
+         should land here without anyone reaching for the mouse. -->
+    <div class="bg-white p-4 sm:p-5 rounded-2xl shadow-card mb-5">
+      <form onsubmit="deskLookup(event)" class="flex flex-col sm:flex-row gap-2">
+        <input id="desk-search" type="text" autocomplete="off"
+               placeholder="Mobile, registration number, email or name…"
+               class="flex-1 p-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200">
+        <div class="flex gap-2">
+          <button type="submit" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm">Find delegate</button>
+          <button type="button" id="desk-register-btn" onclick="openRegisterDelegateModal()"
+                  class="hidden px-4 py-2.5 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl">+ Register walk-in</button>
+        </div>
+      </form>
+      <p id="desk-search-error" class="hidden text-xs text-rose-700 font-semibold mt-2"></p>
+    </div>
+
+    <!-- A name can legitimately match several people. Rather than guess which
+         one is at the counter, the desk is asked to pick. -->
+    <div id="desk-candidates" class="hidden bg-white p-4 sm:p-5 rounded-2xl shadow-card mb-5">
+      <p class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">More than one match — choose one</p>
+      <div id="desk-candidate-list" class="space-y-2"></div>
+    </div>
+
+    <!-- The record. Rendered whole by renderDeskRecord(); the empty state is
+         a prompt rather than a blank panel, because a desk with nobody at it
+         should still look like it is working. -->
+    <div id="desk-empty" class="text-center py-16 text-slate-400 text-sm">
+      Look a delegate up to see their registration, payment, programme, abstract and arrival.
+    </div>
+    <div id="desk-record" class="hidden space-y-5"></div>
+
+  </section>
