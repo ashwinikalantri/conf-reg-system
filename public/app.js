@@ -3011,10 +3011,13 @@ function paymentRowHtml(p) {
         ? chip('ok', ICON('link'), 'Bank matched')
         : chip('off', ICON('link'), 'Bank n/a');
 
-  // Only student categories need a card at all -- said out loud instead of
-  // left blank, so a reviewer can tell it was considered.
+  // Only student categories need a card at all, and for the rest there is no
+  // chip -- not a grey "n/a" one. A check that does not apply is not a state
+  // of that check, and putting it on every row costs a column's worth of
+  // attention to say nothing. The chip appears exactly when there is
+  // something to do or something that was done.
   const idChip = !isStudentCategory(p.category_key)
-    ? chip('off', ICON('gradcap'), 'ID n/a')
+    ? ''
     : p.id_verified
       ? chip('ok', ICON('gradcap'), 'ID verified')
       : chip('due', ICON('warning'), 'ID pending');
@@ -8186,9 +8189,10 @@ function deskMoneyCard(reg, payment) {
   // the outstanding figure -- there is no `balance` field.
   const paid = payment ? Number(payment.netVerifiedTotal) || 0 : 0;
   const balance = payment ? Number(payment.remaining) || 0 : Math.max(0, fee - paid);
+  // No chip at all where the category needs no card -- see paymentRowHtml.
   const needsId = isStudentCategory(reg.category_key);
   const idChip = !needsId
-    ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 border-slate-300">${ICON('gradcap')}ID n/a</span>`
+    ? ''
     : reg.id_verified
       ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-emerald-100 text-emerald-800 border-emerald-300">${ICON('gradcap')}ID verified</span>`
       : `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-100 text-amber-800 border-amber-300">${ICON('warning')}ID pending</span>`;

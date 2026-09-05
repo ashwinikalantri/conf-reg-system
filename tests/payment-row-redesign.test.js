@@ -119,13 +119,29 @@ check('...it says n/a, the same as any other nothing-to-match row',
 check('a row whose only transaction was rejected claims no match either',
   !row({ transactions: [{ txn_status: 'REJECTED' }] }).includes('Bank matched'));
 
-console.log('\n== The ID check distinguishes "not required" from "not checked" ==');
+// The ID chip first shipped with three states, the third being a grey "ID
+// n/a" on every non-student row. That was wrong, and deliberately changed: a
+// check that does not apply is not a state of that check. Carrying it on the
+// majority of rows spends a column's worth of attention saying nothing, and
+// makes the rows that DO need looking at harder to pick out. The chip now
+// appears exactly when there is something outstanding or something done.
+console.log('\n== The ID chip appears only where a card is actually required ==');
 check('a student category with no card checked is pending',
   row({ category_key: 'med_student', id_verified: 0 }).includes('ID pending'));
 check('a student category with a checked card is verified',
   row({ category_key: 'med_student', id_verified: 1 }).includes('ID verified'));
-check('a category that needs no card says n/a rather than nothing',
-  row({ category_key: 'faculty_mo' }).includes('ID n/a'));
+check('a category that needs no card gets no ID chip at all',
+  !/ID (pending|verified|n\/a)/.test(row({ category_key: 'faculty_mo' })),
+  (row({ category_key: 'faculty_mo' }).match(/ID [a-z/]+/gi) || []));
+check('...and specifically not a grey "n/a" one',
+  !row({ category_key: 'faculty_mo' }).includes('ID n/a'));
+check('the phrase is gone from the source, not merely unreachable',
+  !js.includes('ID n/a'));
+// The bank chip is a different case and KEEPS its n/a: every registration has
+// a payment question, so a blank there would read as "not looked at" rather
+// than "does not apply".
+check('the bank chip still says n/a, because every row has a money question',
+  row({ bank_status: 'REJECTED' }).includes('Bank n/a'));
 
 console.log('\n== Both checks wear the pill shape everything else uses ==');
 const chips = row({ category_key: 'med_student', id_verified: 1 });
