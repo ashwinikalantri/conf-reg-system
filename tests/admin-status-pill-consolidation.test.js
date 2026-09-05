@@ -16,13 +16,23 @@ const fs = require('fs');
 const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
 
 console.log('\n== Standard-tier pills: payments, review verdict, users, abstracts, group discount ==');
-check('paymentRowHtml\'s status pill is bordered, standard size',
-  /const statusPill = `<span class="\$\{statusTone2\} text-xs px-2\.5 py-1 rounded-full font-bold border">/.test(js));
-check('paymentRowHtml\'s tone map carries a border colour for every state',
-  /statusTone = p\.bank_status === 'REJECTED' \? 'bg-rose-100 text-rose-800 border-rose-300'/.test(js) &&
-  /: p\.bank_status === 'BANK_VERIFIED' \? 'bg-emerald-100 text-emerald-800 border-emerald-300'/.test(js) &&
-  /: p\.bank_status === 'PARTIAL_PAYMENT' \? 'bg-orange-100 text-orange-800 border-orange-300'/.test(js) &&
-  /: 'bg-amber-100 text-amber-800 border-amber-300'/.test(js));
+// paymentRowHtml's own status pill is gone -- the Checks-column overhaul
+// dropped it, because the four tables on that screen already separate
+// pending, balance-due, rejected and verified, so the pill restated the
+// table you were reading (payment-row-redesign). What replaced it is a
+// single chip() helper shared by every mark on the row, which is a stronger
+// version of what this file exists to assert: one shape, tone the only
+// variable, and now impossible to diverge because there is one construction
+// site rather than several.
+check('paymentRowHtml builds its marks from one chip helper, not per-site literals',
+  /const chip = \(tone, icon, label\) => \{/.test(js));
+check('...in the canonical compact shape',
+  /return `<span class="inline-flex items-center text-\[10px\] font-bold px-2 py-0\.5 rounded-full border \$\{tones\[tone\]\}">/.test(js));
+check('...with a bordered tone for every state it can take',
+  /ok: 'bg-emerald-100 text-emerald-800 border-emerald-300'/.test(js)
+  && /due: 'bg-amber-100 text-amber-800 border-amber-300'/.test(js)
+  && /off: 'bg-slate-100 text-slate-500 border-slate-300'/.test(js)
+  && /bad: 'bg-red-100 text-red-800 border-red-300'/.test(js));
 check('review-modal verdict pill is the canonical shape',
   /verdict\.className = `text-xs font-bold px-2\.5 py-1 rounded-full border \$\{pillTone\}`/.test(js));
 check('review verdict tone map is bordered for all four states',
@@ -71,8 +81,16 @@ check('paymentRowHtml\'s "Category changed" hint is canonical (found in phase 14
   js.includes('bg-orange-100 border border-orange-300 rounded-full px-2 py-0.5">${ICON(\'warning\')}Category changed'));
 check('paymentRowHtml\'s "excess paid" pill is canonical (found in phase 14\'s final sweep)',
   js.includes('bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5">${ICON(\'coin\')}₹'));
-check('paymentRowHtml\'s two Flagged badges (mobile + desktop) are canonical shape, red kept deliberately (a distinct \'needs scrutiny\' signal from rose=\'rejected\')',
-  (js.match(/bg-red-100 text-red-800 px-2 py-0\.5 rounded-full border border-red-300 font-bold">\$\{ICON\('warning'\)\}Flagged<\/span>/g) || []).length === 2);
+// Flagged used to be written out twice, once per layout, which is exactly
+// how two copies of a badge drift apart. The redesign builds the row's
+// exception marks once into a `notes` string that both layouts render, so
+// there is now one Flagged badge in the source and the phone and the desktop
+// cannot disagree about it. Red is still deliberate here: 'needs scrutiny'
+// is a different signal from rose='rejected'.
+check('Flagged is built once, from the shared chip helper, and used by both layouts',
+  (js.match(/chip\('bad', ICON\('warning'\), 'Flagged'\)/g) || []).length === 1);
+check('...and both layouts render the same notes string',
+  (js.match(/\$\{notes \? `<div class="flex flex-wrap items-center gap-1\.5 mt-1\.5">\$\{notes\}<\/div>` : ''\}/g) || []).length === 2);
 
 console.log('\n== Deliberately untouched: count badges are a different component, not a status pill ==');
 check('nav-tab / header / payments count badges stay as they were (quantity, not state)',

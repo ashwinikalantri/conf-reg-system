@@ -15,8 +15,20 @@
 //     needs to know, which is that this delegate's money has not yet been
 //     found in the bank statement.
 //
-// It is now a one-state flag reading "Awaiting bank match", shown only while
-// a claimed payment is still unreconciled. This drives the real
+// It became a one-state flag reading "Awaiting bank match", shown only while
+// a claimed payment was still unreconciled.
+//
+// SUPERSEDED, in part, by the Checks-column overhaul (payment-row-redesign):
+// the tag is now one of a matched pair of chips that always show their state,
+// so the row can say "Bank matched" as well as "Bank pending". The premise
+// above -- that a positive state was unreachable -- was true of the OLD
+// condition, which read the bank_txn_id of PENDING transactions and so could
+// never be satisfied. The new one reads txn_status = 'VERIFIED', which is
+// exactly what linking sets, so the positive is both reachable and true.
+//
+// What this file still guards, and payment-row-redesign does not: that the
+// foreign-key wording never comes back to this row, and that the unrelated
+// Google Drive "Not linked" is left alone. This drives the real
 // paymentRowHtml() in a vm sandbox, the same way the other client-side
 // render tests do.
 const { check, report, appFile } = require('./harness');
@@ -84,7 +96,7 @@ const rowVerified = sandbox.paymentRowHtml({
 });
 
 // A rejected payment: also not linked, but it is not awaiting anything --
-// the rejection is the outcome, and the row's status pill already says so.
+// the rejection is the outcome, and the row says so with its own chip.
 const rowRejected = sandbox.paymentRowHtml({
   id: 3, delegate_name: 'Turned Down', phone_number: '9000000003',
   category_key: 'faculty_mo', category_label: 'Doctor',
@@ -92,27 +104,27 @@ const rowRejected = sandbox.paymentRowHtml({
   utr_number: '333333333333', transactions: [{ id: 33, txn_status: 'REJECTED', bank_txn_id: null, amount: 3000 }],
 });
 
-console.log('\n== the tag says what it is for ==');
-check('an unreconciled claim is tagged "Awaiting bank match"',
-  rowWithPending.includes('Awaiting bank match'));
+console.log('\n== the tag says what it is for, not what the column is called ==');
+check('an unreconciled claim is marked outstanding', rowWithPending.includes('Bank pending'));
 check('the old foreign-key wording is gone from the row',
   !/>\s*(Not linked|Linked)\s*</.test(rowWithPending) && !rowWithPending.includes('Not linked'),
   rowWithPending.slice(0, 200));
 
-console.log('\n== it appears only while something is actually outstanding ==');
-check('a verified registration carries no bank-match tag',
-  !rowVerified.includes('Awaiting bank match'));
-check('a rejected payment carries no bank-match tag',
-  !rowRejected.includes('Awaiting bank match'));
+console.log('\n== outstanding means outstanding ==');
+check('a verified registration is not marked outstanding', !rowVerified.includes('Bank pending'));
+check('a rejected payment is not marked outstanding', !rowRejected.includes('Bank pending'));
+check('the outstanding state keeps the amber tone that marks work to do',
+  /bg-amber-100 text-amber-800 border-amber-300"><svg[\s\S]*?<\/svg>Bank pending/.test(rowWithPending));
 
-console.log('\n== one state, not two ==');
-// The unreachable positive branch is gone: there is no emerald/"linked"
-// counterpart for this tag to render in any state.
-check('no emerald "linked" counterpart survives in the row markup',
-  !rowWithPending.includes('text-emerald-600') || !rowWithPending.includes('Linked'));
-check('the tag keeps the amber tone that marks outstanding work',
-  /text-\[10px\] text-amber-600 font-semibold[^>]*>[^<]*Awaiting bank match/.test(rowWithPending)
-    || rowWithPending.includes('text-amber-600'));
+console.log('\n== the positive state is now real, where before it was unreachable ==');
+// The old condition asked whether PENDING transactions carried a bank
+// credit -- which no code path ever produces. This one asks whether a
+// VERIFIED transaction exists, which is precisely what linking creates.
+check('a verified registration says so', rowVerified.includes('Bank matched'));
+check('...in the emerald tone reserved for settled things',
+  /bg-emerald-100 text-emerald-800 border-emerald-300"><svg[\s\S]*?<\/svg>Bank matched/.test(rowVerified));
+check('a rejected one still claims no match', rowRejected.includes('Bank n/a')
+  && !rowRejected.includes('Bank matched'));
 
 console.log('\n== the Google Drive "Not linked" is a different thing and stays ==');
 // renderDriveStatus reports whether a Google account is connected for

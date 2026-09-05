@@ -2736,6 +2736,23 @@ function reviewAmountMark(status, legacyVal) {
 }
 
 // Format an epoch-ms audit timestamp for display; '' when absent.
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// "4 Sep 2026, 2:20 pm" -- when the delegate submitted their registration,
+// which is not when they signed up (users.created_at). Built by hand rather
+// than through toLocaleString: this file runs in a browser with full ICU but
+// its tests run in Node without it, and the same call returns a different
+// string in each -- the reason inr() formats Indian digit grouping manually
+// too. A test that passes on a format the user never sees is worse than none.
+function fmtRegisteredAt(ms) {
+  if (!ms) return '';
+  const d = new Date(Number(ms));
+  if (isNaN(d.getTime())) return '';
+  const h24 = d.getHours();
+  const h12 = h24 % 12 || 12;
+  const mins = String(d.getMinutes()).padStart(2, '0');
+  return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}, ${h12}:${mins} ${h24 < 12 ? 'am' : 'pm'}`;
+}
+
 function fmtAuditTime(ms) {
   if (!ms) return '';
   const d = new Date(Number(ms));
@@ -2849,7 +2866,12 @@ async function initBackendPortal() {
   // after: switching tabs here first means an admin who clicks a different
   // tab while data is still loading stays where they clicked; switching
   // again afterwards would silently snap them back once loading finished.
-  const defaultTab = canSee('payments') ? 'payments'
+  // Overview first: it is the landing screen, and the reason it exists is
+  // that opening straight into a worklist shows work without showing where
+  // the conference stands. Falls through for a role that cannot see it --
+  // Operations holds none of the sections it summarises.
+  const defaultTab = canSee('overview') ? 'overview'
+    : canSee('payments') ? 'payments'
     : canSee('abstracts') ? 'abstracts'
     : canSee('reports') ? 'reports'
     : 'workshops'; // unreachable for the five built-in roles; a defensive fallback for an unrecognised one
@@ -2903,19 +2925,11 @@ function isBalanceDue(r) {
 // checks, screenshot/ID card, transaction link) is already one click away
 // in the review modal -- repeating it here just made the list noisy.
 function paymentRowHtml(p) {
-  const statusTone = p.bank_status === 'REJECTED' ? 'bg-rose-100 text-rose-800 border-rose-300'
-    : p.bank_status === 'BANK_VERIFIED' ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-    : p.bank_status === 'PARTIAL_PAYMENT' ? 'bg-orange-100 text-orange-800 border-orange-300'
-    : 'bg-amber-100 text-amber-800 border-amber-300';
+  // The Status column is gone: the four tables on this screen already
+  // separate pending, balance-due, rejected and verified, so a pill naming
+  // the status only restated which table you were reading. balanceDue
+  // survives because the balance note below still needs it.
   const balanceDue = isBalanceDue(p);
-  const statusLabel = p.bank_status === 'PARTIAL_PAYMENT' ? 'PARTIAL'
-    : (balanceDue ? 'BALANCE DUE' : (BANK_STATUS_LABELS[p.bank_status] || p.bank_status).toUpperCase());
-  const statusTone2 = balanceDue ? 'bg-orange-100 text-orange-800 border-orange-300' : statusTone;
-  // Same pill shape as the delegate dashboard's status tags (Portal phase 04)
-  // and every other status pill in the admin panel (Phase 3 of the admin
-  // redesign) -- text-xs font-bold px-2.5 py-1 rounded-full border, colour
-  // as the only thing that varies.
-  const statusPill = `<span class="${statusTone2} text-xs px-2.5 py-1 rounded-full font-bold border">${esc(statusLabel)}</span>`;
   // Surface how much is still owed at a glance: use the verified total when
   // there is one, else the claimed amount (category-changed, not yet
   // verified). Also what the Amount column itself shows below -- it used to
@@ -2930,7 +2944,7 @@ function paymentRowHtml(p) {
   // in the worklist so the admin knows to link the payment and Revise.
   const categoryChangedShortfall = !!p.category_locked && p.bank_status === 'PENDING' && owed > 0;
   const balancePill = ((balanceDue || categoryChangedShortfall) && owed > 0)
-    ? `<span class="text-[10px] text-orange-700 font-semibold">₹${inr(paidSoFar)} of ₹${inr(Number(p.expected_amount))} · ₹${inr(owed)} due</span>`
+    ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-orange-100 text-orange-800 border-orange-300">${ICON('coin')}₹${inr(paidSoFar)} of ₹${inr(Number(p.expected_amount))} · ₹${inr(owed)} due</span>`
     : '';
   // Same compact-pill shape as everywhere else (phase 03) -- this one and
   // the three below it used a plain `rounded` corner and lighter tones
@@ -2949,28 +2963,62 @@ function paymentRowHtml(p) {
   const overpaidPill = overpaidAmt > 0
     ? `<span class="text-[10px] text-amber-800 font-bold bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5">${ICON('coin')}₹${inr(overpaidAmt)} excess paid</span>`
     : '';
-  // Flags a registration whose claimed payment still has to be found in the
-  // bank statement. Verified/rejected rows (no pending transactions) don't
-  // show it.
+  // --- the two checks, as chips that always say where they stand ---------
   //
-  // This was a two-state "Linked / Not linked" pill, and both halves were
-  // wrong. The positive half was unreachable: every path that sets
-  // bank_txn_id either sets txn_status = 'VERIFIED' in the same statement
-  // (PUT /api/payment-transactions/:txnId/link and the reconcile paths) or
-  // refuses anything not already VERIFIED (the cash-deposit link), so a
-  // PENDING transaction never carries a bank credit -- true of every
-  // payment row on file, and by construction, not by accident. So the pill
-  // only ever rendered "Not linked". And "linked" named the foreign key
-  // rather than the thing the desk actually needs to know, which is that
-  // this delegate's money hasn't been matched to a credit yet.
-  const pendingTxns = (p.transactions || []).filter((t) => t.txn_status === 'PENDING');
-  const bankMatchPill = pendingTxns.length === 0 ? ''
-    : `<span class="text-[10px] text-amber-600 font-semibold">${ICON('warning')}Awaiting bank match</span>`;
-  const idPill = isStudentCategory(p.category_key)
-    ? `<span class="text-[10px] ${p.id_verified ? 'text-emerald-600' : 'text-amber-600'} font-semibold">${p.id_verified ? ICON('gradcap') + 'ID Verified' : ICON('warning') + 'ID Not Verified'}</span>`
-    : '';
+  // Both of these used to be bare coloured text with no pill shape, and both
+  // only ever showed a negative. The bank one appeared as "Awaiting bank
+  // match" and then vanished once matched, so there was no way to confirm a
+  // payment WAS matched -- only to notice when it wasn't. The ID one
+  // rendered solely for student categories, which made "no ID required" and
+  // "ID not checked yet" both look like an empty cell.
+  //
+  // Now each is one of three states, in the canonical compact-pill shape:
+  // done, outstanding, or not applicable.
+  const chip = (tone, icon, label) => {
+    const tones = {
+      ok: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+      due: 'bg-amber-100 text-amber-800 border-amber-300',
+      off: 'bg-slate-100 text-slate-500 border-slate-300',
+      bad: 'bg-red-100 text-red-800 border-red-300',
+    };
+    return `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${tones[tone]}">${icon}${esc(label)}</span>`;
+  };
+
+  // Linking a payment to a bank credit sets txn_status = 'VERIFIED' in the
+  // same statement, so a VERIFIED transaction IS a matched one -- which is
+  // what gives this a truthful positive state at last. "Matched" is asserted
+  // from one of those, never inferred from the absence of anything pending:
+  // a rejected registration, and a Rs0 one fully covered by a discount (the
+  // free path confirms outright and never writes a transaction at all), both
+  // have an empty pending set having matched nothing, and would otherwise
+  // claim a bank credit that does not exist. They fall to n/a instead.
+  const allTxns = p.transactions || [];
+  const pendingTxns = allTxns.filter((t) => t.txn_status === 'PENDING');
+  const matchedTxns = allTxns.filter((t) => t.txn_status === 'VERIFIED');
+  const bankChip = p.bank_status === 'REJECTED'
+    ? chip('off', ICON('link'), 'Bank n/a')
+    : pendingTxns.length > 0
+      ? chip('due', ICON('warning'), 'Bank pending')
+      : matchedTxns.length > 0
+        ? chip('ok', ICON('link'), 'Bank matched')
+        : chip('off', ICON('link'), 'Bank n/a');
+
+  // Only student categories need a card at all -- said out loud instead of
+  // left blank, so a reviewer can tell it was considered.
+  const idChip = !isStudentCategory(p.category_key)
+    ? chip('off', ICON('gradcap'), 'ID n/a')
+    : p.id_verified
+      ? chip('ok', ICON('gradcap'), 'ID verified')
+      : chip('due', ICON('warning'), 'ID pending');
+
+  // The reason becomes a chip like everything else; the free-text note the
+  // reviewer typed can be any length, so it goes on its own line underneath
+  // rather than stretching a pill across the row.
   const rejectionNote = p.bank_status === 'REJECTED' && p.rejection_reason
-    ? `<span class="text-[10px] text-rose-600 font-semibold">${esc(REJECTION_LABELS[p.rejection_reason] || p.rejection_reason)}${p.rejection_note ? ': ' + esc(p.rejection_note) : ''}</span>`
+    ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-rose-100 text-rose-800 border-rose-300">${ICON('cross')}${esc(REJECTION_LABELS[p.rejection_reason] || p.rejection_reason)}</span>`
+    : '';
+  const rejectionDetail = p.bank_status === 'REJECTED' && p.rejection_note
+    ? `<p class="text-[11px] text-rose-700 mt-1">${esc(p.rejection_note)}</p>`
     : '';
   const reviewBtn = `<button class="review-btn px-3 py-1.5 ${p.is_flagged ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white font-semibold rounded-lg text-xs shadow-sm" data-id="${esc(p.id)}">${p.is_flagged ? 'Review (Force Verify)' : 'Review'}</button>`;
   // The delegate's own receipt, opened in a new tab -- the exact document
@@ -2982,43 +3030,56 @@ function paymentRowHtml(p) {
     : '';
   const rowActions = `<div class="flex flex-wrap items-center gap-2 sm:justify-end">${reviewBtn}${receiptBtn}</div>`;
 
+  // Exception notes: things true of THIS delegate that the reviewer needs
+  // to know before opening them. Grouped once and used by both layouts, so
+  // the phone and the desktop cannot drift apart.
+  const notes = [
+    p.is_flagged ? chip('bad', ICON('warning'), 'Flagged') : '',
+    reviseHint, balancePill, overpaidPill, rejectionNote,
+  ].filter(Boolean).join('');
+
+  const registered = fmtRegisteredAt(p.submitted_at);
+
   return `
     <tr class="border-b border-slate-100 ${p.is_flagged ? 'bg-red-50/50' : ''}">
-      <!-- Mobile-only card: same data, no column labels -- meaning comes
-           from layout (name bold top-left, amount top-right, pills below). -->
+      <!-- Phone: one card, read top to bottom -- who, when, how much, what
+           is outstanding, what you can do. No column labels; meaning comes
+           from position and from the chips saying their own names. -->
       <td class="p-4 block sm:hidden">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
-            <p class="font-bold text-sm truncate">${esc(p.delegate_name)}</p>
-            <p class="text-[11px] text-slate-500">${esc(p.category_label)}</p>
+            <p class="font-bold text-sm text-slate-800 truncate">${esc(p.delegate_name)}</p>
+            <p class="text-[11px] text-slate-500 truncate">${esc(p.category_label)}</p>
           </div>
-          <p class="font-semibold text-slate-700 shrink-0">₹${inr(paidSoFar)}</p>
+          <p class="font-bold text-slate-800 shrink-0 tabular-nums">₹${inr(paidSoFar)}</p>
         </div>
-        <div class="flex flex-wrap items-center gap-1.5 mt-2">
-          ${p.is_flagged ? `<span class="text-[10px] bg-red-100 text-red-800 px-2 py-0.5 rounded-full border border-red-300 font-bold">${ICON('warning')}Flagged</span>` : ''}
-          ${statusPill}${reviseHint}${balancePill}${overpaidPill}${rejectionNote}${bankMatchPill}${idPill}
-        </div>
-        <div class="mt-3">${rowActions}</div>
+        ${registered ? `<p class="text-[11px] text-slate-400 mt-1">Registered ${esc(registered)}</p>` : ''}
+        <div class="flex flex-wrap items-center gap-1.5 mt-2">${bankChip}${idChip}</div>
+        ${notes ? `<div class="flex flex-wrap items-center gap-1.5 mt-1.5">${notes}</div>` : ''}
+        ${rejectionDetail}
+        <div class="mt-3 flex flex-wrap gap-2">${rowActions}</div>
       </td>
-      <!-- Desktop columns -->
-      <td class="p-4 font-bold text-sm hidden sm:table-cell">
-        ${esc(p.delegate_name)}
-        <br><span class="text-[11px] font-normal text-slate-500">${esc(p.category_label)}</span>
-        ${p.is_flagged ? `<br><span class="inline-block mt-1 text-[10px] bg-red-100 text-red-800 px-2 py-0.5 rounded-full border border-red-300 font-bold">${ICON('warning')}Flagged</span>` : ''}
+
+      <!-- Desktop columns: Delegate & Category | Registered | Amount |
+           Checks | Action. Status is gone -- the four tables already
+           separate pending, balance-due, rejected and verified, so the
+           column restated the table you were looking at. -->
+      <td class="p-4 hidden sm:table-cell align-top">
+        <p class="font-bold text-sm text-slate-800">${esc(p.delegate_name)}</p>
+        <p class="text-[11px] text-slate-500">${esc(p.category_label)}</p>
+        ${notes ? `<div class="flex flex-wrap items-center gap-1.5 mt-1.5">${notes}</div>` : ''}
+        ${rejectionDetail}
       </td>
-      <td class="p-4 text-sm hidden sm:table-cell">
-        <span class="font-semibold text-slate-700">₹${inr(paidSoFar)}</span>
+      <td class="p-4 hidden sm:table-cell align-top text-[11px] text-slate-500 whitespace-nowrap">
+        ${esc(registered) || '<span class="text-slate-300">—</span>'}
       </td>
-      <td class="p-4 hidden sm:table-cell">
-        ${statusPill}
-        ${reviseHint ? `<br>${reviseHint}` : ''}
-        ${balancePill ? `<br>${balancePill}` : ''}
-        ${overpaidPill ? `<br>${overpaidPill}` : ''}
-        ${rejectionNote ? `<br>${rejectionNote}` : ''}
-        <br>${bankMatchPill}
-        ${idPill ? `<br>${idPill}` : ''}
+      <td class="p-4 hidden sm:table-cell align-top text-sm">
+        <span class="font-semibold text-slate-700 tabular-nums">₹${inr(paidSoFar)}</span>
       </td>
-      <td class="p-4 text-right hidden sm:table-cell">
+      <td class="p-4 hidden sm:table-cell align-top">
+        <div class="flex flex-wrap items-center gap-1.5">${bankChip}${idChip}</div>
+      </td>
+      <td class="p-4 hidden sm:table-cell align-top text-right whitespace-nowrap">
         ${rowActions}
       </td>
     </tr>
@@ -3263,7 +3324,7 @@ async function renderBackendPayments() {
 
   tbody.innerHTML = needsDecision.map(paymentRowHtml).join('');
   if (!needsDecision.length) {
-    tbody.innerHTML = `<tr><td colspan="4" class="p-8 text-center text-sm text-slate-400">Nothing awaiting a decision.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-sm text-slate-400">Nothing awaiting a decision.</td></tr>`;
   }
 
   const rejectedSection = document.getElementById('rejected-section');
