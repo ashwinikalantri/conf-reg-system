@@ -126,6 +126,36 @@
     ],
     "NQOCN": [
       "NQOCN se"
+    ],
+    "AIIMS, Bibinagar": [
+      "AIIMS Bibinagar"
+    ],
+    "AIIMS, Jammu": [
+      "AIIMS Jammu"
+    ],
+    "Dr. Ram Manohar Lohia Institute of Medical Sciences, Lucknow": [
+      "Dr. Ram Manohar Lohia Institute of Medical Sciences Lucknow"
+    ],
+    "Government General Hospital, Nagarkurnool": [
+      "Government General Hospital NagarKurnool"
+    ],
+    "The Aga Khan University Hospital, Karachi, Pakistan": [
+      "The aga Khan University Hospital Karachi Pakistan"
+    ],
+    "Dr. LNP Government Medical College": [
+      "DR LNP Government Medical College"
+    ],
+    "Directorate of Secondary Health Services": [
+      "Directorate of secondary health services"
+    ],
+    "IPE Global CKD": [
+      "IPE global CKD"
+    ],
+    "Saveetha Medical College, SIMATS, Chennai": [
+      "Saveetha Medical College, Simats, Chennai"
+    ],
+    "CMCH, Bhopal, MP": [
+      "CMCH, Bhopal, M.P"
     ]
   },
   "designation": {
@@ -155,5 +185,7 @@
   "_second_pass": "Reviewed again on 2026-09-05, after ~90 further registrations brought new spellings. Same split as before: entries below are either a merge into a value that already exists, or a rewrite of one institution written badly -- neither needs a judgement about the world. Ten entries that DO were deliberately left out and remain unmerged: 'Mahatma Gandhi Medical College', 'MaKNGzMC', 'Ssahe, Ssimsrc -Bangalore Rural', 'Mumbai', 'Self', 'NQOCN se', and the three plain 'District Hospital'.",
   "_note_iggmc": "IGGMC Nagpur is renamed, NOT merged into 'Government Medical College, Nagpur'. Indira Gandhi GMC is a different college in the same city -- exactly the mistake the first pass rejected nine times over.",
   "_owner_calls_2": "MGCON WARDHA, SMBT and Sbims were resolved by the owner on 2026-09-05. SMBT stays SEPARATE from 'SMBT Institute of Nursing, Nashik' -- the group runs both, and the bare acronym was the medical college. Shri Balaji took the two existing 'Sciences' rows with it so the institution ends as one entry rather than two spellings.",
-  "_owner_calls_3": "Ssahe and 'NQOCN se' resolved by the owner on 2026-09-05. Still unresolved: 'Mahatma Gandhi Medical College' (MGIMS Sevagram? MGM Indore? Pondicherry?), 'Mumbai', 'Self', and the three plain 'District Hospital' with no city. 'MaKNGzMC' left the data on its own before it could be decided."
+  "_owner_calls_3": "Ssahe and 'NQOCN se' resolved by the owner on 2026-09-05. Still unresolved: 'Mahatma Gandhi Medical College' (MGIMS Sevagram? MGM Indore? Pondicherry?), 'Mumbai', 'Self', and the three plain 'District Hospital' with no city. 'MaKNGzMC' left the data on its own before it could be decided.",
+  "_third_pass": "Formatting only, 2026-09-05: a comma before the city, and the capitalisation left over. No merges -- every canonical here is a new spelling of one institution, not a collapse of two. Delegate names were audited at the same time and needed nothing: across 446 accounts, zero were all-caps, all-lower-case, untrimmed, double-spaced or comma-separated.",
+  "_still_open": "Needs a decision: 'FH Medical College Etmadpur Former Prof & HOD JNMCH AMU Aligarh 202002' (an institution, a former job title, a second institution and a PIN code in one box); 'Mahatma Gandhi Medical College'; and 'Mumbai', 'Self' and the three 'District Hospital', which name a city, an employment status and a category of hospital rather than misspelling anything."
 }
