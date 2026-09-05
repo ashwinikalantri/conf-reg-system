@@ -280,8 +280,8 @@ function setLoginMode(mode) {
 // So a lookup failure now unlocks the two fields to be typed instead of
 // blocking the form. State and district are required (see
 // validateSignupStep), but never unfillable.
-function setAddressFieldsEditable(editable) {
-  ['reg-state', 'reg-district'].forEach((id) => {
+function setAddressFieldsEditable(editable, prefix = 'reg') {
+  [`${prefix}-state`, `${prefix}-district`].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
     el.readOnly = !editable;
@@ -305,10 +305,16 @@ async function checkPincodeKnown(pin) {
   }
 }
 
-async function fetchAddressDetails(pincode) {
-  const statusSpan = document.getElementById('pincode-status');
-  const stateInput = document.getElementById('reg-state');
-  const districtInput = document.getElementById('reg-district');
+// `prefix` lets the front desk's edit form drive exactly this logic against
+// its own controls rather than growing a second, subtly different copy. The
+// careful part here is the fallback -- an unrecognised PIN blocks, but a PIN
+// we recognise and merely cannot NAME unlocks the two fields to be typed --
+// and that is precisely the part a duplicate would get wrong.
+async function fetchAddressDetails(pincode, prefix = 'reg') {
+  const statusSpan = document.getElementById(`${prefix === 'reg' ? '' : prefix + '-'}pincode-status`)
+    || document.getElementById('pincode-status');
+  const stateInput = document.getElementById(`${prefix}-state`);
+  const districtInput = document.getElementById(`${prefix}-district`);
   if (!statusSpan || !stateInput || !districtInput) return;
 
   const say = (text, tone) => {
@@ -324,7 +330,7 @@ async function fetchAddressDetails(pincode) {
     say('', 'info');
     stateInput.value = '';
     districtInput.value = '';
-    setAddressFieldsEditable(false);
+    setAddressFieldsEditable(false, prefix);
     return;
   }
 
@@ -341,7 +347,7 @@ async function fetchAddressDetails(pincode) {
         say(`${pin} is not a PIN code we recognise.`, 'bad');
         stateInput.value = '';
         districtInput.value = '';
-        setAddressFieldsEditable(false);
+        setAddressFieldsEditable(false, prefix);
         return;
       }
     }
@@ -354,7 +360,7 @@ async function fetchAddressDetails(pincode) {
     if (data && data[0] && data[0].Status === 'Success' && data[0].PostOffice && data[0].PostOffice.length) {
       stateInput.value = data[0].PostOffice[0].State;
       districtInput.value = data[0].PostOffice[0].District;
-      setAddressFieldsEditable(false);
+      setAddressFieldsEditable(false, prefix);
       say(known === false ? 'PIN code found' : '✓ PIN code verified', 'ok');
       return;
     }
@@ -362,7 +368,7 @@ async function fetchAddressDetails(pincode) {
   } catch (e) {
     // The PIN is fine (or unverifiable) but we could not name it. Let them
     // fill it in rather than stopping here.
-    setAddressFieldsEditable(true);
+    setAddressFieldsEditable(true, prefix);
     if (!stateInput.value) stateInput.focus();
     say(known === true
       ? 'PIN code recognised, but we could not look up its state and district. Please type them below.'
@@ -2417,10 +2423,15 @@ const DIRECTORY_FIELDS = {
 };
 
 // Keeps the hidden field in step with whichever control is in play.
-function onDirectorySelect(which) {
-  const sel = document.getElementById(`reg-${which}-select`);
-  const other = document.getElementById(`reg-${which}-other`);
-  const hidden = document.getElementById(`reg-${which}`);
+//
+// `prefix` exists so the front desk's edit form can reuse this untouched.
+// The signup form's controls are reg-designation-select and friends; the
+// desk's are desk-edit-designation-select. Same three-control dance either
+// way, and only one implementation of it.
+function onDirectorySelect(which, prefix = 'reg') {
+  const sel = document.getElementById(`${prefix}-${which}-select`);
+  const other = document.getElementById(`${prefix}-${which}-other`);
+  const hidden = document.getElementById(`${prefix}-${which}`);
   if (!sel || !other || !hidden) return;
   const isOther = sel.value === '__other__';
   other.classList.toggle('hidden', !isOther);
@@ -2433,10 +2444,10 @@ function onDirectorySelect(which) {
   }
 }
 
-async function loadDirectorySuggestions() {
-  const anySelect = document.getElementById('reg-designation-select')
-    || document.getElementById('reg-institute-select');
-  if (!anySelect) return;   // admin page: no signup form
+async function loadDirectorySuggestions(prefix = 'reg') {
+  const anySelect = document.getElementById(`${prefix}-designation-select`)
+    || document.getElementById(`${prefix}-institute-select`);
+  if (!anySelect) return;   // this form is not on the page
   let data = {};
   try {
     const res = await fetch('/api/directory/suggestions');
@@ -2445,7 +2456,7 @@ async function loadDirectorySuggestions() {
     /* offline -- the lists stay empty, and "Other" still lets anyone finish */
   }
   for (const [which, cfg] of Object.entries(DIRECTORY_FIELDS)) {
-    const sel = document.getElementById(`reg-${which}-select`);
+    const sel = document.getElementById(`${prefix}-${which}-select`);
     if (!sel) continue;
     const values = data[cfg.key] || [];
     // "Other" stays last: it is the escape hatch, not a first suggestion.
@@ -2456,12 +2467,12 @@ async function loadDirectorySuggestions() {
     // option is a dead end -- open straight into the text box instead.
     if (!values.length) {
       sel.value = '__other__';
-      onDirectorySelect(which);
+      onDirectorySelect(which, prefix);
     }
   }
   ['designation', 'institute'].forEach((which) => {
-    const other = document.getElementById(`reg-${which}-other`);
-    if (other) other.addEventListener('input', () => onDirectorySelect(which));
+    const other = document.getElementById(`${prefix}-${which}-other`);
+    if (other) other.addEventListener('input', () => onDirectorySelect(which, prefix));
   });
 }
 document.addEventListener('DOMContentLoaded', loadDirectorySuggestions);
@@ -8334,6 +8345,16 @@ function deskMoneyCard(reg, payment) {
     reg.bank_status === 'BANK_VERIFIED' ? `<a href="/api/desk/registrations/${esc(reg.id)}/receipt" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-lg">Receipt</a>` : '',
   ].filter(Boolean).join('');
 
+  // An excess is an obligation to the delegate, so it sits on the record for
+  // as long as it is unsettled rather than only appearing in the moment a
+  // category change creates it.
+  const owedBack = payment ? Number(payment.overpaid) || 0 : 0;
+  const refundNote = owedBack > 0
+    ? `<p class="mt-3 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+        ${ICON('coin')}<b>₹${inr(owedBack)} refundable.</b> Recorded from Payments against the bank
+        debit that pays it out — not settled in cash here, which would leave no record.</p>`
+    : '';
+
   return deskCard('Payment', `
     <div class="flex flex-wrap items-end gap-x-8 gap-y-3">
       <div><p class="text-[11px] text-slate-400 uppercase tracking-wide">Fee</p>
@@ -8344,6 +8365,7 @@ function deskMoneyCard(reg, payment) {
         <p class="text-lg font-bold tabular-nums ${balance > 0.5 ? 'text-amber-700' : 'text-emerald-700'}">₹${inr(balance)}</p></div>
       <div class="flex flex-wrap items-center gap-1.5">${idChip}</div>
     </div>
+    ${refundNote}
     <div id="desk-collect-form" class="hidden mt-4 pt-4 border-t border-slate-200"></div>`, actions);
 }
 
@@ -8493,11 +8515,50 @@ async function deskSaveCategory() {
   });
   const data = await res.json();
   if (!data.success) return showToast(data.error || 'Could not change the category.');
-  showToast(data.remaining > 0
-    ? `Category changed — ₹${inr(data.remaining)} now due.`
-    : 'Category changed.', 'success');
   document.getElementById('desk-collect-form').classList.add('hidden');
   await deskReload();
+
+  // A category correction moves the fee, and the desk has to be told which
+  // way and what to do about it -- otherwise a delegate walks away either
+  // still owing money or owed it, and nobody notices until reconciliation.
+  if (data.remaining > 0) {
+    showToast(`Category changed — ₹${inr(data.remaining)} now due. Collect it below.`, 'success');
+    deskOpenCollect();
+    return;
+  }
+  if (data.overpaid > 0) {
+    // Not offered as a button here on purpose: a refund must be backed by a
+    // real debit row from the imported bank statement (POST /api/registrations/
+    // :id/refund), which is proof the money actually left the account. Cash
+    // handed back over the counter has no such proof, so recording it here
+    // would be a claim rather than a record. Surfaced loudly instead, and
+    // settled from Payments once the transfer is made.
+    deskShowRefundDue(data.overpaid);
+    showToast(`Category changed — ₹${inr(data.overpaid)} now refundable.`, 'success');
+    return;
+  }
+  showToast('Category changed.', 'success');
+}
+
+// The excess a correction has left on this registration. Deliberately a
+// standing notice on the record rather than a toast that disappears: it is
+// an obligation to the delegate, and it survives until somebody acts on it.
+function deskShowRefundDue(amount) {
+  const box = document.getElementById('desk-collect-form');
+  if (!box) return;
+  box.innerHTML = `
+    <div class="flex items-start gap-3 p-3 rounded-xl bg-amber-50 border border-amber-200">
+      <span class="shrink-0 text-amber-700">${ICON('coin')}</span>
+      <div class="min-w-0">
+        <p class="text-sm font-bold text-amber-900">₹${inr(amount)} refundable to this delegate</p>
+        <p class="text-[11px] text-amber-800 mt-0.5">
+          The new category costs less than they have already paid. A refund is recorded
+          against the bank debit that pays it out — from Payments, once the transfer is made.
+          Do not settle it in cash here: there would be no record of it.
+        </p>
+      </div>
+    </div>`;
+  box.classList.remove('hidden');
 }
 
 function deskOpenEnroll(groupId) {
@@ -8558,6 +8619,18 @@ async function deskEnrollWithReason(groupId) {
   await deskEnroll(groupId, reason);
 }
 
+// The desk's edit form. Every control here that used to be free text is a
+// constrained one now, for the same reason the signup form's are: a counter
+// is where "Prof." and "Professor " and "professor" get typed at speed, and
+// the homogenisation pass that had to clean that up afterwards is not an
+// exercise worth repeating.
+//
+// It reuses the signup form's own helpers rather than growing a second copy
+// of them -- loadDirectorySuggestions and fetchAddressDetails both take an id
+// prefix now, so the desk drives the identical logic (including the fallback
+// where a recognised-but-unnameable PIN unlocks the fields to be typed).
+const DESK_GENDERS = ['Male', 'Female', 'Other'];
+
 function deskOpenEdit() {
   const u = deskDelegate.user;
   const box = document.getElementById('desk-edit-form');
@@ -8565,29 +8638,103 @@ function deskOpenEdit() {
     `<div><label class="block text-[11px] text-slate-500 font-semibold mb-1">${esc(label)}</label>
       <input id="desk-edit-${id}" type="${type || 'text'}" value="${esc(value == null ? '' : value)}"
              class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200"></div>`;
+  // Three controls per directory field: a select, a hidden input everything
+  // downstream reads, and an "Other" box that only appears when chosen.
+  const directory = (which, label, value) =>
+    `<div><label class="block text-[11px] text-slate-500 font-semibold mb-1">${esc(label)}</label>
+      <select id="desk-edit-${which}-select" onchange="onDirectorySelect('${which}', 'desk-edit')"
+              class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200"></select>
+      <input id="desk-edit-${which}-other" type="text" placeholder="Type it in"
+             class="hidden w-full mt-1 p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">
+      <input type="hidden" id="desk-edit-${which}" value="${esc(value == null ? '' : value)}"></div>`;
+
+  // A verified address is one the delegate proved they control by opening a
+  // code sent to it, so it is shown and not editable. The server refuses the
+  // change too -- this only saves the desk from typing into a field that was
+  // never going to be saved.
+  const verified = !!u.email_verified;
+  const emailField = verified
+    ? `<div><label class="block text-[11px] text-slate-500 font-semibold mb-1">Email</label>
+        <div class="w-full p-2 border border-slate-200 bg-slate-50 rounded-lg text-sm text-slate-600 flex items-center justify-between gap-2">
+          <span class="truncate">${esc(u.email || '—')}</span>
+          <span class="shrink-0 inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-emerald-100 text-emerald-800 border-emerald-300">${ICON('check')}Verified</span>
+        </div>
+        <p class="text-[11px] text-slate-400 mt-1">Verified by the delegate — cannot be changed here.</p></div>`
+    : field('email', 'Email', u.email, 'email');
+
   box.innerHTML = `
     <div class="grid sm:grid-cols-3 gap-3">
       ${field('full_name', 'Full name', u.full_name)}
-      ${field('email', 'Email', u.email, 'email')}
+      ${emailField}
       ${field('age', 'Age', u.age, 'number')}
-      ${field('designation', 'Designation', u.designation)}
-      ${field('institution', 'Institution', u.institution)}
-      ${field('gender', 'Gender', u.gender)}
-      ${field('pincode', 'PIN code', u.pincode)}
-      ${field('district', 'District', u.district)}
-      ${field('state', 'State', u.state)}
+      ${directory('designation', 'Designation', u.designation)}
+      ${directory('institute', 'Institution', u.institution)}
+      <div><label class="block text-[11px] text-slate-500 font-semibold mb-1">Gender</label>
+        <select id="desk-edit-gender" class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">
+          <option value="">Select</option>
+          ${DESK_GENDERS.map((g) => `<option value="${esc(g)}"${u.gender === g ? ' selected' : ''}>${esc(g)}</option>`).join('')}
+        </select></div>
+      <div><label class="block text-[11px] text-slate-500 font-semibold mb-1">PIN code</label>
+        <input id="desk-edit-pincode" type="text" maxlength="6" value="${esc(u.pincode == null ? '' : u.pincode)}"
+               oninput="fetchAddressDetails(this.value, 'desk-edit')"
+               class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">
+        <span id="desk-edit-pincode-status" class="text-xs mt-1 block font-medium"></span></div>
+      <!-- Filled from the PIN code, not typed. readOnly rather than disabled
+           so the values still read normally and can be unlocked by
+           setAddressFieldsEditable when a PIN cannot be named. -->
+      <div><label class="block text-[11px] text-slate-500 font-semibold mb-1">State</label>
+        <input id="desk-edit-state" type="text" readonly value="${esc(u.state == null ? '' : u.state)}"
+               class="w-full p-2 border border-slate-300 rounded-lg text-sm bg-slate-100 text-slate-600 outline-none"></div>
+      <div><label class="block text-[11px] text-slate-500 font-semibold mb-1">District</label>
+        <input id="desk-edit-district" type="text" readonly value="${esc(u.district == null ? '' : u.district)}"
+               class="w-full p-2 border border-slate-300 rounded-lg text-sm bg-slate-100 text-slate-600 outline-none"></div>
     </div>
     <div class="flex gap-2 mt-3">
       ${deskBtn('Save details', 'deskSaveEdit()', 'primary')}
       ${deskBtn('Cancel', "document.getElementById('desk-edit-form').classList.add('hidden')")}
     </div>`;
   box.classList.remove('hidden');
+
+  // Populate the two dropdowns, then select what this delegate already has.
+  // A value that is not on the list is not silently dropped -- it goes into
+  // "Other" pre-filled, so opening the form and saving it unchanged cannot
+  // quietly erase somebody's institution.
+  loadDirectorySuggestions('desk-edit').then(() => {
+    for (const [which, value] of [['designation', u.designation], ['institute', u.institution]]) {
+      const sel = document.getElementById(`desk-edit-${which}-select`);
+      if (!sel) continue;
+      const known = Array.from(sel.options || []).some((o) => o.value === value);
+      sel.value = known && value ? value : (value ? '__other__' : '');
+      onDirectorySelect(which, 'desk-edit');
+      if (!known && value) {
+        document.getElementById(`desk-edit-${which}-other`).value = value;
+        onDirectorySelect(which, 'desk-edit');
+      }
+    }
+  });
 }
 
 async function deskSaveEdit() {
-  const ids = ['full_name', 'email', 'age', 'designation', 'institution', 'gender', 'pincode', 'district', 'state'];
-  const body = {};
-  for (const id of ids) body[id] = document.getElementById(`desk-edit-${id}`).value;
+  const val = (id) => {
+    const el = document.getElementById(`desk-edit-${id}`);
+    return el ? el.value : undefined;
+  };
+  const body = {
+    full_name: val('full_name'),
+    age: val('age'),
+    designation: val('designation'),
+    institution: val('institute'),
+    gender: val('gender'),
+    pincode: val('pincode'),
+    state: val('state'),
+    district: val('district'),
+  };
+  // Omitted entirely when verified: the field is not on the form, and the
+  // server would refuse the change anyway. Sending the unchanged address
+  // would be harmless but sending `undefined` would blank it.
+  const email = val('email');
+  if (email !== undefined) body.email = email;
+
   const res = await fetch(`/api/users/${encodeURIComponent(deskDelegate.user.phone_number)}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });

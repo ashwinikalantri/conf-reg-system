@@ -5707,8 +5707,20 @@ app.put('/api/registrations/:id/lock-category', requirePermission('payments.revi
       newValue: `${feeInfo.label} (₹${inr(newFee)}) — locked`,
     });
 
+    // Both directions, not just the shortfall. Correcting a category is as
+    // likely to move the fee DOWN (a "doctor" who is really a student) as up,
+    // and a correction that silently leaves a delegate overpaid is how money
+    // goes unreturned. getPaymentSummary already nets refunds off, so
+    // `overpaid` is what is still owed BACK, not merely what was overpaid at
+    // some point.
     const summary = await getPaymentSummary(reg.id, newFee);
-    res.json({ success: true, expectedAmount: newFee, remaining: Math.max(0, newFee - summary.verifiedTotal) });
+    res.json({
+      success: true,
+      expectedAmount: newFee,
+      remaining: Math.max(0, newFee - summary.verifiedTotal),
+      overpaid: summary.overpaid,
+      paid: summary.netVerifiedTotal,
+    });
   } catch (err) {
     next(err);
   }
@@ -6933,8 +6945,33 @@ app.put('/api/users/:phone', requirePermission('users.edit'), async (req, res, n
       if (raw && await emailTakenBy(raw, phone)) {
         return res.status(409).json({ success: false, error: 'Another account already uses that email address.' });
       }
-      const current = await dbGet('SELECT email FROM users WHERE phone_number = ?', [phone]);
+      const current = await dbGet('SELECT email, email_verified FROM users WHERE phone_number = ?', [phone]);
       emailChanged = normalizeEmail(current && current.email) !== normalizeEmail(raw);
+      // A verified address is one the delegate proved they control, by
+      // opening a code sent to it. Editing it away is therefore not a
+      // correction of a typo -- the typo could not have been verified -- it
+      // is pointing their receipts, their abstract decision and their login
+      // channel at an address nobody has proved. Refused, rather than
+      // silently un-verifying it, so the change is a conversation with the
+      // delegate rather than a keystroke at a counter.
+      //
+      // Scoped to desk-level access rather than absolute, deliberately.
+      // Changing a verified address already drops its verified standing (see
+      // below), so the delegate must re-prove the new one before it can even
+      // receive a login code -- that is a working correction path for an
+      // address that is genuinely wrong, and the only one there is. Closing
+      // it for everybody would make a wrong-but-verified address permanent.
+      //
+      // What it is NOT safe to do is that at a counter, at speed, on
+      // somebody's say-so. So it is refused for a role that can edit a user
+      // without being able to open the Users screen -- which is exactly the
+      // front desk, and not Super Admin.
+      if (emailChanged && current && current.email_verified && !can(req.session.role, 'users.view')) {
+        return res.status(409).json({
+          success: false,
+          error: 'This email address has been verified by the delegate and cannot be changed at the desk.',
+        });
+      }
       // Stored normalised, so the uniqueness check above can't be sidestepped
       // by case and LOWER(email) lookups keep matching.
       b.email = raw ? normalizeEmail(raw) : null;
