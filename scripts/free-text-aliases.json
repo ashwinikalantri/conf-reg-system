@@ -10,7 +10,6 @@
     "Professor & HOD / Professor & HOD, Vice Dean": "NOT merged. Vice Dean is a further office.",
     "BSC Nursing student": "NOT merged into MSc Nursing Student. BSc is undergraduate; MSc and PG Nursing Student are postgraduate."
   },
-
   "institution": {
     "Mahatma Gandhi Institute of Medical Sciences, Sevagram": [
       "MGIMS Sevagram",
@@ -23,7 +22,8 @@
       "MGIMS, Sevagram",
       "Mahatma Gandhi Institute of Medical Sciences",
       "Mahatma gabdhi institute of medical sciences,sevagram",
-      "satvikdama@mgims.ac.in"
+      "satvikdama@mgims.ac.in",
+      "MGIMS "
     ],
     "Suretech College of Nursing, Jamtha, Nagpur": [
       "SureTech College of Nursing"
@@ -47,9 +47,71 @@
     "Atal Bihari Vajpayee Government Medical College, Vidisha": [
       "ABVGMC, Vidisha",
       "Atal Bihari Vajpayee Government Medical college, Vidisha"
+    ],
+    "Government Medical College, Nagpur": [
+      "Gmc nagpur"
+    ],
+    "MKSSS Sitabai Nargundkar College of Nursing for Women, Nagpur": [
+      "Mksss SNCON"
+    ],
+    "Indira Gandhi Government Medical College, Nagpur": [
+      "IGGMC ,NAGPUR"
+    ],
+    "Govt. RDBP Jaipuria Hospital, Jaipur": [
+      "GOVT RDBP JAIPURIA HOSPITAL JAIPUR"
+    ],
+    "MKCG Medical College, Berhampur, Odisha": [
+      "MKCG MEDICAL COLLEGE BERHAMPUR ODISHA"
+    ],
+    "Sri Aurobindo Institute of Medical Sciences": [
+      "SRI AUROBINDO INSTITUTE OF MEDICAL SCIENCE"
+    ],
+    "NAMO Medical Education and Research Institute": [
+      "NAMO MEDICAL EDUCATION AND RESEARCH INSTITUTE"
+    ],
+    "Central Health Services": [
+      "CENTRAL HEALTH SERVICES"
+    ],
+    "Dr. Vasantrao Pawar Medical College, Nashik": [
+      "Dr. vasantarao pawar medical college"
+    ],
+    "Kalinga Institute of Medical Sciences, Bhubaneswar": [
+      "Kalinga institute of medical sciences"
+    ],
+    "Rajarajeswari Medical College and Hospital, Bangalore": [
+      "Rajarajeswari medical College and hospital"
+    ],
+    "Government Medical College, Jalgaon": [
+      "Government Medical College and hospital Jalgaon"
+    ],
+    "Government Medical College, Miraj": [
+      "Gmc miraj"
+    ],
+    "B. J. Government Medical College, Pune": [
+      "Bjgmc pune"
+    ],
+    "Pooja Nursing College, Bhandara": [
+      "Pooja Nursing college, Bhandara"
+    ],
+    "Acworth Municipal Hospital for Leprosy, Mumbai": [
+      "Acworth municipal hospital for leprosy"
+    ],
+    "Chirayu Hospital": [
+      "Chirayu hospital"
+    ],
+    "District Hospital, Kabirdham": [
+      "District hospital kabirdham"
+    ],
+    "District Hospital, Katni, MP": [
+      "District Hospital Katni MP"
+    ],
+    "Vedantaa Institute of Medical Sciences, Dahanu, Maharashtra": [
+      "Vedantaa Institute of Medical Sciences, Dahanu,Maharashtra"
+    ],
+    "Government District Headquarter Hospital, Kovilpatti, Thoothukudi, Tamil Nadu": [
+      "Government district headquarter hospital , Kovilpattii, Thoothukudi district, Tamilnadu"
     ]
   },
-
   "designation": {
     "Junior Resident": [
       "Junior Resident 2",
@@ -73,5 +135,7 @@
       "Professor, Department of Pediatrics",
       "Professor of Pediatrics"
     ]
-  }
+  },
+  "_second_pass": "Reviewed again on 2026-09-05, after ~90 further registrations brought new spellings. Same split as before: entries below are either a merge into a value that already exists, or a rewrite of one institution written badly -- neither needs a judgement about the world. Ten entries that DO were deliberately left out and remain unmerged: 'Mahatma Gandhi Medical College', 'MGCON WARDHA', 'SMBT', 'Sbims', 'MaKNGzMC', 'Ssahe, Ssimsrc -Bangalore Rural', 'Mumbai', 'Self', 'NQOCN se', and the three plain 'District Hospital'.",
+  "_note_iggmc": "IGGMC Nagpur is renamed, NOT merged into 'Government Medical College, Nagpur'. Indira Gandhi GMC is a different college in the same city -- exactly the mistake the first pass rejected nine times over."
 }
