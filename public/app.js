@@ -5046,15 +5046,25 @@ function renderUserDetail() {
   if (nameEl) nameEl.innerHTML = `${roleMarkBW(u.role)}${u.salutation ? esc(u.salutation) + ' ' : ''}${esc(u.full_name || '—')}`;
   setText('user-detail-subline', `${u.registration_number || 'No reg no'}${delegateDisplayPhone(u) ? ' · ' + delegateDisplayPhone(u) : ''} · ${roleLabel(u.role)}`);
 
-  if (userDetailEditing) { body.innerHTML = userDetailEditForm(u); return; }
+  if (userDetailEditing) {
+    body.innerHTML = userDetailEditForm(u);
+    // After the form is in the DOM: the selects have to exist before they can
+    // be filled.
+    hydrateUserDetailDirectories(u);
+    return;
+  }
 
   // Demography
   const demography = detailRow('Age', u.age) + detailRow('Gender', u.gender)
     + detailRow('District', u.district) + detailRow('State', u.state)
     + detailRow('Pincode', u.pincode);
 
-  // Contact
-  const contact = detailRow('Email', u.email) + detailRow('Phone', delegateDisplayPhone(u) || '—');
+  // Contact -- its own section, because these two are not descriptions of a
+  // person but the channels the system reaches them through, and once
+  // verified, how they prove who they are. Each shows whether it has been
+  // proved and carries its own Edit.
+  const contact = contactRow('phone', 'Phone', delegateDisplayPhone(u), !!u.phone_verified)
+    + contactRow('email', 'Email', u.email, !!u.email_verified);
 
   // Registration + payment
   let regHtml;
@@ -5143,29 +5153,123 @@ function renderUserDetail() {
     + detailCard('Role', roleSelect);
 }
 
+// Contact is edited on its own, apart from the demography form below.
+//
+// The two are different kinds of change. A district or a designation is a
+// description of somebody; a mobile number or an email address is how the
+// system reaches them and, once verified, how they prove who they are. Mixing
+// them into one form meant a verified address sat in a plain text box beside
+// an age, with nothing saying it had been proved and nothing warning that
+// editing it silently withdraws that proof.
+let userContactEditing = null;   // 'phone' | 'email' | null
+
+const VERIFIED_PILL = `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-emerald-100 text-emerald-800 border-emerald-300">${ICON('check')}Verified</span>`;
+const UNVERIFIED_PILL = `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 border-slate-300">Not verified</span>`;
+
+// One contact channel: what it is, whether it has been proved, and a way to
+// change it. Editing is inline rather than a modal -- there is one field.
+function contactRow(kind, label, value, verified) {
+  if (userContactEditing === kind) {
+    return `<div class="py-2">
+      <label class="block text-[11px] font-semibold text-slate-600 mb-1">${esc(label)}</label>
+      <input id="uc-${esc(kind)}" type="${kind === 'email' ? 'email' : 'tel'}"
+             value="${value == null ? '' : esc(String(value))}"
+             class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">
+      ${verified ? `<p class="text-[11px] text-amber-700 mt-1">${ICON('warning')}This ${esc(label.toLowerCase())} is verified. Changing it withdraws that, and the delegate must prove the new one before it can receive a sign-in code.</p>` : ''}
+      <div class="flex justify-end gap-2 mt-2">
+        <button type="button" onclick="cancelContactEdit()" class="px-3 py-1.5 border rounded-lg text-xs font-semibold text-slate-600">Cancel</button>
+        <button type="button" onclick="saveContactEdit('${esc(kind)}')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold">Save</button>
+      </div>
+    </div>`;
+  }
+  return `<div class="flex justify-between items-center gap-3 py-1.5">
+    <span class="text-slate-500 shrink-0">${esc(label)}</span>
+    <span class="flex items-center gap-2 min-w-0 justify-end">
+      <span class="text-slate-800 font-medium truncate">${value ? esc(String(value)) : '—'}</span>
+      ${value ? (verified ? VERIFIED_PILL : UNVERIFIED_PILL) : ''}
+      ${can('users.edit') ? `<button type="button" onclick="startContactEdit('${esc(kind)}')" class="shrink-0 text-[11px] font-bold text-indigo-600 hover:underline">Edit</button>` : ''}
+    </span>
+  </div>`;
+}
+
+function startContactEdit(kind) {
+  if (!can('users.edit')) return showToast('You do not have permission to edit user details.');
+  userContactEditing = kind;
+  renderUserDetail();
+}
+
+function cancelContactEdit() {
+  userContactEditing = null;
+  renderUserDetail();
+}
+
+async function saveContactEdit(kind) {
+  const el = document.getElementById(`uc-${kind}`);
+  if (!el || !userDetailPhone) return;
+  const body = {};
+  body[kind] = el.value.trim();
+  const data = await (await fetch(`/api/users/${encodeURIComponent(userDetailPhone)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not save.');
+  showToast(`${kind === 'email' ? 'Email' : 'Mobile number'} updated.`, 'success');
+  userContactEditing = null;
+  await loadBackendUsers();
+  await openUserDetail(userDetailPhone);
+}
+
+// The demography form. Every field with a known set of answers offers that
+// set, for the same reason the signup form and the front desk do: this is
+// where "Prof." and "professor" get typed, and the homogenisation passes that
+// had to clean those up afterwards are not worth repeating. It drives the
+// signup form's own helpers through their id prefix rather than growing a
+// second copy of the pincode fallback logic.
 function userDetailEditForm(u) {
   const field = (id, label, val, type = 'text') =>
     `<div><label class="block text-[11px] font-semibold text-slate-600 mb-1">${esc(label)}</label>
-      <input id="ude-${id}" type="${type}" value="${val == null ? '' : esc(String(val))}" class="w-full p-2 border rounded-lg text-sm outline-none"></div>`;
+      <input id="ude-${id}" type="${type}" value="${val == null ? '' : esc(String(val))}" class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200"></div>`;
+  const directory = (which, label, value) =>
+    `<div><label class="block text-[11px] font-semibold text-slate-600 mb-1">${esc(label)}</label>
+      <select id="ude-${which}-select" onchange="onDirectorySelect('${which}', 'ude')"
+              class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200"></select>
+      <input id="ude-${which}-other" type="text" placeholder="Type it in"
+             class="hidden w-full mt-1 p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">
+      <input type="hidden" id="ude-${which}" value="${value == null ? '' : esc(String(value))}"></div>`;
+
+  // Email and phone are absent on purpose -- they are edited from the Contact
+  // section, where their verified standing is visible.
   return `<div class="space-y-3">
     <div class="grid grid-cols-2 gap-3">
       ${field('salutation', 'Salutation', u.salutation)}
       ${field('full_name', 'Full name', u.full_name)}
     </div>
     <div class="grid grid-cols-2 gap-3">
-      ${field('designation', 'Designation', u.designation)}
-      ${field('institution', 'Institute', u.institution)}
+      ${directory('designation', 'Designation', u.designation)}
+      ${directory('institute', 'Institute', u.institution)}
     </div>
-    ${field('email', 'Email', u.email, 'email')}
     <div class="grid grid-cols-2 gap-3">
       ${field('age', 'Age', u.age, 'number')}
-      ${field('gender', 'Gender', u.gender)}
+      <div><label class="block text-[11px] font-semibold text-slate-600 mb-1">Gender</label>
+        <select id="ude-gender" class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">
+          <option value="">Select</option>
+          ${GENDER_OPTIONS.map((g) => `<option value="${esc(g)}"${u.gender === g ? ' selected' : ''}>${esc(g)}</option>`).join('')}
+        </select></div>
+    </div>
+    <div>
+      <label class="block text-[11px] font-semibold text-slate-600 mb-1">Pincode</label>
+      <input id="ude-pincode" type="text" maxlength="6" value="${u.pincode == null ? '' : esc(String(u.pincode))}"
+             oninput="fetchAddressDetails(this.value, 'ude')"
+             class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">
+      <span id="ude-pincode-status" class="text-xs mt-1 block font-medium"></span>
     </div>
     <div class="grid grid-cols-2 gap-3">
-      ${field('district', 'District', u.district)}
-      ${field('state', 'State', u.state)}
+      <div><label class="block text-[11px] font-semibold text-slate-600 mb-1">District</label>
+        <input id="ude-district" type="text" readonly value="${u.district == null ? '' : esc(String(u.district))}"
+               class="w-full p-2 border border-slate-300 rounded-lg text-sm bg-slate-100 text-slate-600 outline-none"></div>
+      <div><label class="block text-[11px] font-semibold text-slate-600 mb-1">State</label>
+        <input id="ude-state" type="text" readonly value="${u.state == null ? '' : esc(String(u.state))}"
+               class="w-full p-2 border border-slate-300 rounded-lg text-sm bg-slate-100 text-slate-600 outline-none"></div>
     </div>
-    ${field('pincode', 'Pincode', u.pincode)}
     <div class="flex justify-end gap-2 pt-2">
       <button type="button" onclick="toggleUserDetailEdit()" class="px-4 py-2 border rounded-xl text-xs font-semibold text-slate-600">Cancel</button>
       <button type="button" onclick="saveUserDetailEdit()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-md">Save changes</button>
@@ -5173,21 +5277,45 @@ function userDetailEditForm(u) {
   </div>`;
 }
 
+// Fills the two dropdowns after the form is in the DOM, and selects what this
+// person already has. A value not on the list opens in "Other" pre-filled, so
+// opening the form and saving it unchanged cannot quietly erase an
+// institution that predates the directory.
+function hydrateUserDetailDirectories(u) {
+  loadDirectorySuggestions('ude').then(() => {
+    for (const [which, value] of [['designation', u.designation], ['institute', u.institution]]) {
+      const sel = document.getElementById(`ude-${which}-select`);
+      if (!sel) continue;
+      const known = Array.from(sel.options || []).some((o) => o.value === value);
+      sel.value = known && value ? value : (value ? '__other__' : '');
+      onDirectorySelect(which, 'ude');
+      if (!known && value) {
+        document.getElementById(`ude-${which}-other`).value = value;
+        onDirectorySelect(which, 'ude');
+      }
+    }
+  });
+}
+
 function toggleUserDetailEdit() {
   if (!can('users.edit')) return showToast('You do not have permission to edit user details.');
   userDetailEditing = !userDetailEditing;
+  userContactEditing = null;
   renderUserDetail();
 }
 
 async function saveUserDetailEdit() {
   if (!userDetailPhone) return;
-  const ids = ['salutation', 'full_name', 'designation', 'institution', 'email',
-    'age', 'gender', 'district', 'state', 'pincode'];
+  // institution reads from the directory control's hidden field, which is
+  // named for the form ("institute") rather than the column ("institution").
+  const ids = ['salutation', 'full_name', 'designation', 'age', 'gender', 'district', 'state', 'pincode'];
   const payload = {};
   ids.forEach((id) => {
     const el = document.getElementById(`ude-${id}`);
     if (el) payload[id] = el.value.trim();
   });
+  const inst = document.getElementById('ude-institute');
+  if (inst) payload.institution = inst.value.trim();
   if (!payload.full_name) return showToast('Full name is required.');
   const data = await (await fetch(`/api/users/${encodeURIComponent(userDetailPhone)}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
@@ -8629,7 +8757,9 @@ async function deskEnrollWithReason(groupId) {
 // of them -- loadDirectorySuggestions and fetchAddressDetails both take an id
 // prefix now, so the desk drives the identical logic (including the fallback
 // where a recognised-but-unnameable PIN unlocks the fields to be typed).
-const DESK_GENDERS = ['Male', 'Female', 'Other'];
+// The same three the signup form offers. Shared by the front desk and the
+// Users panel so the three surfaces cannot drift apart.
+const GENDER_OPTIONS = ['Male', 'Female', 'Other'];
 
 function deskOpenEdit() {
   const u = deskDelegate.user;
@@ -8672,7 +8802,7 @@ function deskOpenEdit() {
       <div><label class="block text-[11px] text-slate-500 font-semibold mb-1">Gender</label>
         <select id="desk-edit-gender" class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">
           <option value="">Select</option>
-          ${DESK_GENDERS.map((g) => `<option value="${esc(g)}"${u.gender === g ? ' selected' : ''}>${esc(g)}</option>`).join('')}
+          ${GENDER_OPTIONS.map((g) => `<option value="${esc(g)}"${u.gender === g ? ' selected' : ''}>${esc(g)}</option>`).join('')}
         </select></div>
       <div><label class="block text-[11px] text-slate-500 font-semibold mb-1">PIN code</label>
         <input id="desk-edit-pincode" type="text" maxlength="6" value="${esc(u.pincode == null ? '' : u.pincode)}"

@@ -2716,6 +2716,20 @@ async function resolveAccountByIdentifier(identifier) {
   return { error: 'invalid' };
 }
 
+// Which account, if any, already holds this mobile number -- as its login
+// channel OR as its account key. Both matter: an account keyed on a
+// synthetic id can carry a real number in `phone`, and pointing a second
+// account at that number would make the login lookup ambiguous.
+async function phoneTakenBy(phone, exceptKey) {
+  const e164 = toE164(phone);
+  if (!e164) return null;
+  const params = phoneMatchParams(phone);
+  const row = await dbGet(
+    `SELECT phone_number FROM users WHERE ${PHONE_MATCH_SQL} AND phone_number != ?`,
+    [...params, exceptKey || '']);
+  return row ? row.phone_number : null;
+}
+
 // Which account, if any, already holds this email -- the uniqueness gate for
 // signup and for adding/changing an address. Optionally excludes one account
 // key, so a user re-saving their own unchanged address isn't blocked by
@@ -6977,7 +6991,54 @@ app.put('/api/users/:phone', requirePermission('users.edit'), async (req, res, n
       b.email = raw ? normalizeEmail(raw) : null;
     }
 
-    const fields = ['salutation', 'full_name', 'designation', 'institution', 'email',
+    // The mobile number as a CONTACT CHANNEL (users.phone), never the account
+    // key (users.phone_number). Changing the key would orphan the
+    // registration, the payments and the audit trail that all join on it;
+    // changing the channel is just correcting how we reach somebody.
+    let phoneChanged = false;
+    if (Object.prototype.hasOwnProperty.call(b, 'phone')) {
+      const rawPhone = String(b.phone || '').trim();
+      if (rawPhone && !isPhoneValue(rawPhone)) {
+        return res.status(400).json({ success: false, error: 'Please enter a valid mobile number, including the country code.' });
+      }
+      const takenBy = rawPhone ? await phoneTakenBy(rawPhone, phone) : null;
+      if (takenBy) {
+        return res.status(409).json({ success: false, error: 'Another account already uses that mobile number.' });
+      }
+      const currentPhone = await dbGet('SELECT phone, phone_verified FROM users WHERE phone_number = ?', [phone]);
+      const wasE164 = toE164(currentPhone && currentPhone.phone);
+      phoneChanged = wasE164 !== toE164(rawPhone);
+      // Same rule as the address below, and for the same reason: a verified
+      // number is one the delegate proved they hold by reading a code sent to
+      // it, and re-pointing it is a conversation with them rather than a
+      // keystroke at a counter. Scoped to desk-level access, so a full admin
+      // can still correct one.
+      if (phoneChanged && currentPhone && currentPhone.phone_verified && !can(req.session.role, 'users.view')) {
+        return res.status(409).json({
+          success: false,
+          error: 'This mobile number has been verified by the delegate and cannot be changed at the desk.',
+        });
+      }
+      // Stored E.164 so the login lookup matches one spelling of it.
+      b.phone = rawPhone ? toE164(rawPhone) : null;
+    }
+
+    // A PIN code that does not exist was already refused at signup; it was
+    // not refused here, so an edit could put one back. Same list, same
+    // message -- and this route is what the front desk's edit form posts to.
+    if (Object.prototype.hasOwnProperty.call(b, 'pincode')) {
+      const pin = String(b.pincode || '').trim();
+      if (pin) {
+        if (!/^[1-9][0-9]{5}$/.test(pin)) {
+          return res.status(400).json({ success: false, error: 'Please enter a valid 6-digit PIN code.' });
+        }
+        if (!isKnownPincode(pin)) {
+          return res.status(400).json({ success: false, error: `${pin} is not a PIN code we recognise. Please check and try again.` });
+        }
+      }
+    }
+
+    const fields = ['salutation', 'full_name', 'designation', 'institution', 'email', 'phone',
       'age', 'gender', 'pincode', 'state', 'district'];
     const sets = [];
     const params = [];
@@ -6996,6 +7057,9 @@ app.put('/api/users/:phone', requirePermission('users.edit'), async (req, res, n
     // verifies the new one themselves (the dashboard banner prompts them)
     // rather than inheriting the old address's verified standing.
     if (emailChanged) sets.push('email_verified = 0');
+    // Same for the number: a changed channel is an unproven one until the
+    // delegate reads a code sent to it.
+    if (phoneChanged) sets.push('phone_verified = 0');
     if (!sets.length) return res.status(400).json({ success: false, error: 'Nothing to update.' });
 
     params.push(phone);
