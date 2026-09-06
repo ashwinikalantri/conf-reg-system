@@ -171,17 +171,34 @@ const emailWrap = (title, bodyHtml) => renderEmail(title, bodyHtml, {
   name: CONFERENCE_NAME, acronym: CONFERENCE_ACRONYM, location: CONFERENCE_LOCATION,
 });
 
+// The pending-approvals table is laid out with table-layout:fixed and
+// percentage column widths, which is what stops it running off the side of a
+// phone. Without it a browser widens each column to fit its longest word, and
+// a 13-character monospace registration number beside "Nurse / Community
+// Health Officer" pushes the table past a 320px viewport -- the mail client
+// then scrolls sideways or shrinks the whole message. Fixed layout caps the
+// columns at the container and makes long values wrap instead.
+//
+// It has to be done with inline declarations rather than a media query:
+// email-template.js returns a fragment with every style inline precisely
+// because Gmail strips <style> blocks, so there is nowhere for a breakpoint
+// to live. (Kept as a JS comment rather than an HTML one -- an explanation
+// this long has no business being posted to every recipient.)
 function buildDigestHtml(pending, pendingCount, verifiedCount, partialCount, abstractsSubmitted, abstractsReviewed, dateLabel) {
+  // The flag has no column of its own any more -- a whole column, mostly
+  // em-dashes, was a poor trade for the width it cost on a phone. The signal
+  // is not lost though: a flagged registration is the one most worth opening,
+  // so it keeps a marker in front of the name, where it costs a character
+  // rather than a column.
   const rows = pending.slice(0, MAX_ROWS_SHOWN).map((r) => `
     <tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:.4rem .3rem;font-family:monospace">${escapeHtml(r.registration_number)}</td>
-      <td style="padding:.4rem .3rem">${escapeHtml(formatDelegateName(r.delegate_name, r.delegate_salutation))}</td>
-      <td style="padding:.4rem .3rem;color:#64748b">${escapeHtml(r.category_label)}</td>
-      <td style="padding:.4rem .3rem;text-align:right">₹${inr(escapeHtml(r.expected_amount))}</td>
-      <td style="padding:.4rem .3rem;text-align:center">${r.is_flagged ? '⚠️' : '—'}</td>
+      <td style="padding:.4rem .3rem;font-family:monospace;word-break:break-word">${escapeHtml(r.registration_number)}</td>
+      <td style="padding:.4rem .3rem;word-break:break-word">${r.is_flagged ? '<span title="Flagged">⚠️ </span>' : ''}${escapeHtml(formatDelegateName(r.delegate_name, r.delegate_salutation))}</td>
+      <td style="padding:.4rem .3rem;color:#64748b;word-break:break-word">${escapeHtml(r.category_label)}</td>
+      <td style="padding:.4rem .3rem;text-align:right;white-space:nowrap">₹${inr(escapeHtml(r.expected_amount))}</td>
     </tr>`).join('');
   const moreRow = pending.length > MAX_ROWS_SHOWN
-    ? `<tr><td colspan="5" style="padding:.5rem .3rem;color:#94a3b8;font-style:italic">…and ${pending.length - MAX_ROWS_SHOWN} more</td></tr>`
+    ? `<tr><td colspan="4" style="padding:.5rem .3rem;color:#94a3b8;font-style:italic">…and ${pending.length - MAX_ROWS_SHOWN} more</td></tr>`
     : '';
 
   const tile = (n, label, bg, border, color) =>
@@ -200,14 +217,13 @@ function buildDigestHtml(pending, pendingCount, verifiedCount, partialCount, abs
     </div>
     ${pending.length ? `
     <p style="font-size:.85rem;margin:0 0 .5rem;font-weight:600;color:#334155">Registrations awaiting approval</p>
-    <table style="width:100%;border-collapse:collapse;font-size:.78rem">
+    <table style="width:100%;max-width:100%;table-layout:fixed;border-collapse:collapse;font-size:.78rem">
       <thead>
         <tr style="text-align:left;color:#64748b;border-bottom:1px solid #e2e8f0">
-          <th style="padding:.4rem .3rem;font-weight:600">Reg No</th>
-          <th style="padding:.4rem .3rem;font-weight:600">Name</th>
-          <th style="padding:.4rem .3rem;font-weight:600">Category</th>
-          <th style="padding:.4rem .3rem;font-weight:600;text-align:right">Amount</th>
-          <th style="padding:.4rem .3rem;font-weight:600;text-align:center">Flag</th>
+          <th style="padding:.4rem .3rem;font-weight:600;width:28%">Reg No</th>
+          <th style="padding:.4rem .3rem;font-weight:600;width:34%">Name</th>
+          <th style="padding:.4rem .3rem;font-weight:600;width:23%">Category</th>
+          <th style="padding:.4rem .3rem;font-weight:600;text-align:right;width:15%">Amount</th>
         </tr>
       </thead>
       <tbody>${rows}${moreRow}</tbody>
@@ -286,4 +302,11 @@ async function main() {
   }
 }
 
-main().catch((err) => { console.error('Daily digest failed:', err); process.exit(1); });
+// Only when run as a script. Exported below so the HTML it builds can be
+// tested without a database, a mail client or a cron tick -- requiring this
+// file used to send the digest as a side effect of importing it.
+if (require.main === module) {
+  main().catch((err) => { console.error('Daily digest failed:', err); process.exit(1); });
+}
+
+module.exports = { buildDigestHtml };
