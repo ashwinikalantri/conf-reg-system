@@ -2154,6 +2154,12 @@ function delegateDisplayPhone(u) {
 // mandatory and unblocks logging in at all next time), then verify email.
 function runPostLoginPrompts() {
   if (!currentDelegate || currentDelegate.role !== 'DELEGATE') return;
+  // Two ways to owe a password, and they need different words. An account
+  // that never had one is being asked to add it; an account whose password a
+  // member of staff just replaced with a one-time value is being told to
+  // replace it back, and should be told that is what happened rather than
+  // left wondering why the prompt appeared.
+  if (currentDelegate.password_reset_required) return openSetPasswordModal(true, 'reset');
   if (!currentDelegate.hasPassword) return openSetPasswordModal(true);
   promptVerifyEmailIfNeeded();
 }
@@ -2177,13 +2183,16 @@ function promptVerifyEmailIfNeeded() {
 // -- the close button and Esc/backdrop dismissal are removed, since the
 // requirement is that they end up with one. The dashboard's 🔑 button opens
 // the same modal voluntarily, where dismissing is fine.
-function openSetPasswordModal(mandatory) {
+function openSetPasswordModal(mandatory, reason) {
   const closeBtn = document.getElementById('set-password-close-btn');
   if (closeBtn) closeBtn.classList.toggle('hidden', !!mandatory);
-  setText('set-password-title', mandatory ? 'Set a password to continue' : 'Set Password');
-  setText('set-password-blurb', mandatory
-    ? 'Your account doesn\u2019t have a password yet. Set one now \u2014 it lets you sign in without waiting for an OTP.'
-    : 'Lets you log in with a password instead of waiting for an OTP each time. OTP still always works as a fallback. Applies immediately.');
+  setText('set-password-title', reason === 'reset' ? 'Choose a new password'
+    : mandatory ? 'Set a password to continue' : 'Set Password');
+  setText('set-password-blurb', reason === 'reset'
+    ? 'Your password was reset by the conference desk, and the one you were given is temporary. Choose your own now \u2014 the temporary one stops working once you do.'
+    : mandatory
+      ? 'Your account doesn\u2019t have a password yet. Set one now \u2014 it lets you sign in without waiting for an OTP.'
+      : 'Lets you log in with a password instead of waiting for an OTP each time. OTP still always works as a fallback. Applies immediately.');
   openModal('modal-set-password');
 }
 
@@ -2202,6 +2211,9 @@ async function submitSetPassword(e) {
     document.getElementById('set-password-value').value = '';
     if (currentDelegate) {
       currentDelegate.hasPassword = true;
+      // Choosing their own is what satisfies a reset, so the prompt must not
+      // come back on the next render.
+      currentDelegate.password_reset_required = 0;
       persistDelegate(currentDelegate);
     }
     closeModal('modal-set-password');
@@ -5144,13 +5156,76 @@ function renderUserDetail() {
     ? `<button type="button" onclick="toggleUserDetailEdit()" class="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold underline">Edit</button>`
     : '';
 
+  // Sign-in, apart from Contact. A phone number and an address are how we
+  // reach somebody; a password is how they get in, and resetting one is not
+  // an edit to their details -- it hands out a credential. Its own card, so
+  // the state is visible before anyone reaches for the button.
+  const signInState = u.password_reset_required
+    ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-100 text-amber-800 border-amber-300">${ICON('warning')}Reset pending</span>`
+    : u.hasPassword
+      ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-emerald-100 text-emerald-800 border-emerald-300">${ICON('check')}Password set</span>`
+      : `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 border-slate-300">OTP only</span>`;
+  const signIn = `<div class="flex justify-between items-center gap-3 py-1.5">
+      <span class="text-slate-500">Password</span>
+      <span class="flex items-center gap-2">${signInState}</span>
+    </div>
+    ${u.password_reset_required
+      ? '<p class="text-[11px] text-amber-800">A one-time password was issued. They must choose their own at their next sign-in.</p>'
+      : ''}`;
+  const resetBtn = can('users.reset_password')
+    ? `<button type="button" onclick="resetUserPassword('${esc(u.phone_number)}', '${esc(u.full_name || '')}')" class="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold underline">Reset password</button>`
+    : '';
+
   body.innerHTML =
     detailCard('Demography', demography, editBtn)
     + detailCard('Contact', contact)
+    + detailCard('Sign-in', signIn, resetBtn)
     + detailCard('Registration', regHtml)
     + (ledger ? detailCard('Payments', ledger) : '')
     + detailCard('Programs', programs)
     + detailCard('Role', roleSelect);
+}
+
+// Reset somebody's password to a one-time value.
+//
+// Shared by the front desk and the Users panel because it is the same act
+// from both: the delegate cannot get in, somebody at a counter or on a phone
+// gives them a temporary password, and the portal makes them replace it
+// before they can do anything else.
+//
+// The value comes back exactly once. It is not stored in plaintext, not
+// written to the audit log, and cannot be looked up afterwards -- so it is
+// shown until dismissed rather than in a toast that slides away while
+// somebody is still writing it down.
+async function resetUserPassword(phone, label) {
+  const who = label ? ` for ${label}` : '';
+  if (!window.confirm(`Reset the password${who}?\n\nThey will be given a one-time password and must choose their own the next time they sign in. Their current password stops working immediately.`)) return;
+  const data = await (await fetch(`/api/users/${encodeURIComponent(phone)}/reset-password`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not reset the password.');
+  showTempPassword(data.tempPassword, data.name || label || '');
+}
+
+// Deliberately a panel that stays until dismissed, in a large monospaced
+// face: this is read out loud or copied onto paper, and the alphabet it is
+// drawn from already excludes the characters that are easy to confuse when
+// that happens (see generateTempPassword).
+function showTempPassword(tempPassword, name) {
+  const box = document.getElementById('temp-password-box');
+  const value = document.getElementById('temp-password-value');
+  const who = document.getElementById('temp-password-who');
+  if (!box || !value) return showToast(`One-time password: ${tempPassword}`, 'success');
+  value.textContent = tempPassword;
+  if (who) who.textContent = name ? `for ${name}` : '';
+  box.classList.remove('hidden');
+  openModal('modal-temp-password');
+}
+
+function closeTempPassword() {
+  closeModal('modal-temp-password');
+  const value = document.getElementById('temp-password-value');
+  if (value) value.textContent = '';
 }
 
 // Contact is edited on its own, apart from the demography form below.
@@ -8424,6 +8499,11 @@ function deskWhoCard(user, reg, checkedIn) {
   const actions = [
     can('desk.checkin') && !checkedIn && reg ? deskBtn('Check in', 'deskCheckIn()', 'good') : '',
     can('users.edit') ? deskBtn('Edit details', 'deskOpenEdit()') : '',
+    // A delegate at the counter who cannot get into their account is the
+    // commonest reason a desk needs this at all.
+    can('users.reset_password')
+      ? deskBtn('Reset password', `resetUserPassword('${esc(user.phone_number)}', '${esc(user.full_name || '')}')`)
+      : '',
   ].filter(Boolean).join('');
 
   return deskCard('Delegate', `

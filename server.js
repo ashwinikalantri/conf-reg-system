@@ -1070,6 +1070,10 @@ async function recordAudit({ req, entityType, entityId, action, oldValue, newVal
 const GENERAL_LOG_ENTITY_TYPES = [
   'program_option', 'fee_config', 'fee_category', 'discount_code', 'group_rule', 'general_settings',
   'bank_statement_transaction', 'role',
+  // Password resets (POST /api/users/:phone/reset-password). Handing out a
+  // credential is precisely the kind of act an audit log exists for, so it
+  // has to be readable somewhere -- and this list is what decides that.
+  'user',
   'settings', // legacy: pre-rename NOTIFICATION_TOGGLE rows only
 ];
 
@@ -1452,6 +1456,12 @@ db.serialize(() => {
    // that report would have failed on any new deployment. Found by building a
    // database from scratch for the test fixtures.
    'ALTER TABLE users ADD COLUMN post_office TEXT',
+   // Set when a member of staff resets somebody's password to a one-time
+   // value. The delegate can sign in with it, but the portal will not let
+   // them past the set-password prompt until they choose their own -- see
+   // POST /api/users/:phone/reset-password and runPostLoginPrompts. Cleared
+   // by POST /api/auth/set-password, which is the only way to satisfy it.
+   'ALTER TABLE users ADD COLUMN password_reset_required INTEGER DEFAULT 0',
   ].forEach((sql) => db.run(sql, () => {}));
 
   db.run("UPDATE users SET country = 'India' WHERE country IS NULL OR country = ''", () => {});
@@ -3646,7 +3656,11 @@ app.post('/api/auth/set-password', requireAuth, async (req, res, next) => {
     if (!password || String(password).length < 8) {
       return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' });
     }
-    await dbRun('UPDATE users SET password_hash = ? WHERE phone_number = ?', [hashPassword(String(password)), req.session.phone]);
+    // Clearing the flag here, and only here, is what makes the requirement
+    // real: a reset can only be satisfied by the delegate choosing their own
+    // password, never by staff setting one for them a second time.
+    await dbRun('UPDATE users SET password_hash = ?, password_reset_required = 0 WHERE phone_number = ?',
+      [hashPassword(String(password)), req.session.phone]);
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -7125,6 +7139,43 @@ app.post('/api/users', requirePermission('users.create'), async (req, res, next)
     if (err.code === 'SQLITE_CONSTRAINT') {
       return res.status(409).json({ success: false, error: 'A user with that phone number already exists.' });
     }
+    next(err);
+  }
+});
+
+// Replace somebody's password with a one-time one, read out at the counter
+// or over the phone.
+//
+// The one-time value is returned ONCE in this response and never stored in
+// plaintext or written to the audit log -- only its scrypt hash reaches the
+// database, exactly as the desk-registration flow already does. Staff who
+// miss it reset again; there is no way to look it up, which is the point.
+//
+// It is deliberately NOT a password the delegate can keep: the reset also
+// raises password_reset_required, and the portal will not let them past the
+// set-password prompt until they choose their own (see runPostLoginPrompts).
+// So a member of staff never ends up knowing a credential that keeps working.
+app.post('/api/users/:phone/reset-password', requirePermission('users.reset_password'), async (req, res, next) => {
+  try {
+    const target = await dbGet('SELECT phone_number, full_name, role FROM users WHERE phone_number = ?',
+      [req.params.phone]);
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+
+    const tempPassword = generateTempPassword();
+    await dbRun('UPDATE users SET password_hash = ?, password_reset_required = 1 WHERE phone_number = ?',
+      [hashPassword(tempPassword), target.phone_number]);
+
+    // Audited like every other thing done TO somebody, and deliberately
+    // without the value: the log records that access was reset and by whom,
+    // which is what an audit needs, and knowing the password afterwards is
+    // what it must not offer.
+    await recordAudit({
+      req, entityType: 'user', entityId: target.phone_number,
+      action: 'PASSWORD_RESET', oldValue: null,
+      newValue: 'one-time password issued; delegate must set their own at next sign-in',
+    });
+    res.json({ success: true, tempPassword, name: target.full_name });
+  } catch (err) {
     next(err);
   }
 });

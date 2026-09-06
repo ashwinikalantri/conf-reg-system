@@ -108,6 +108,12 @@ const PERMISSIONS = [
   ['users.edit', 'users', 'Edit a user', 'Change a person’s name, contact details or demography.'],
   ['users.assign_role', 'users', 'Assign a role', 'Change which role an account holds.'],
   ['users.manage_roles', 'users', 'Manage roles', 'Create and edit the roles themselves, and what each one may do.'],
+  // Separate from users.edit, which changes what an account SAYS. This
+  // changes who can get into it: it replaces the password with a one-time
+  // value read out at the counter. Its own key so it can be granted to a
+  // front desk without also granting demographic editing, and withheld from
+  // a role that has that editing but should not be handing out credentials.
+  ['users.reset_password', 'users', 'Reset a password', 'Replace a delegate’s password with a one-time one to read out, which they must change at their next sign-in.'],
 
   // --- Masters ---
   ['masters.fees_view', 'masters', 'View fees', 'Read the fee categories and date tiers.'],
@@ -216,6 +222,7 @@ const ROUTE_PERMISSIONS = {
   'POST /api/users': 'users.create',
   'PUT /api/users/:phone': 'users.edit',
   'PUT /api/users/:phone/role': 'users.assign_role',
+  'POST /api/users/:phone/reset-password': 'users.reset_password',
   'POST /api/admin/roles/reload': 'users.manage_roles',
   'GET /api/admin/roles': 'users.manage_roles',
   'POST /api/admin/roles': 'users.manage_roles',
@@ -406,6 +413,10 @@ const SYSTEM_ROLES = [
       // is gated on payments.view, which the desk does NOT get, and neither
       // is payments.view_totals -- conference-wide money is not desk work.
       'payments.desk_register', 'payments.add_payment', 'payments.verify_id', 'payments.revise',
+      // A delegate at the counter who cannot get into their account is a desk
+      // problem, and the fix -- a one-time password read out to them -- is
+      // exactly what a desk is for.
+      'users.reset_password',
       // Correcting a delegate's own details is the desk's most ordinary job.
       // This is a widening of a deliberately narrow permission (see the
       // comment above PUT /api/users/:phone) and is acknowledged as such in
