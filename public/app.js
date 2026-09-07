@@ -3765,6 +3765,8 @@ function openReviewModal(id) {
   setHTML('review-utr-check', reviewCheckMark(p.ocr_utr_match, 'The transaction ID'));
   setHTML('review-mode-check', p.payment_mode === 'NEFT_RTGS' ? '' : reviewCheckMark(p.ocr_vpa_match, 'The UPI ID'));
 
+  renderReviewFeeAdjust(p);
+
   const flaggedNote = document.getElementById('review-flagged-note');
   if (flaggedNote) flaggedNote.classList.toggle('hidden', !p.is_flagged);
 
@@ -4404,6 +4406,80 @@ async function ensureReviewCategories() {
 // practice the cache is always warm by the time this runs.
 function isStudentCategory(categoryKey) {
   return !!(reviewCategoryList || []).find((c) => c.key === categoryKey && c.requiresStudentId);
+}
+
+// --- fee adjustment (review modal) ---------------------------------------
+//
+// Two ways what a delegate owes can differ from the price list. The
+// early-phase one is evidenced and the server offers it unprompted; the
+// discretionary one is a judgement and has to be written down. Both are
+// behind payments.adjust_fee, so a role without it sees neither -- and would
+// be refused by the server anyway.
+function renderReviewFeeAdjust(p) {
+  const block = document.getElementById('review-fee-adjust-block');
+  if (!block) return;
+  const allowed = can('payments.adjust_fee');
+  block.classList.toggle('hidden', !allowed);
+  if (!allowed) return;
+
+  const early = document.getElementById('review-early-phase');
+  const done = document.getElementById('review-fee-adjusted');
+  const disc = document.getElementById('review-discretionary');
+
+  // Already adjusted: show what was taken off and why, rather than offering
+  // to do it again. A second reduction is a fresh decision and starts from
+  // Unadjust, which does not exist yet -- deliberately, since undoing a
+  // recorded concession should be its own audited act.
+  const adjusted = Number(p.fee_adjustment) > 0;
+  done.classList.toggle('hidden', !adjusted);
+  if (adjusted) {
+    setText('review-fee-adjusted-text',
+      `₹${inr(p.fee_adjustment)} taken off by ${p.fee_adjustment_by || 'staff'}`
+      + `${p.fee_adjustment_at ? ' on ' + fmtRegisteredAt(p.fee_adjustment_at) : ''}. ${p.fee_adjustment_reason || ''}`);
+  }
+
+  const b = p.early_phase_benefit;
+  early.classList.toggle('hidden', !b || adjusted);
+  if (b && !adjusted) {
+    setText('review-early-phase-text',
+      `Their payment reached the bank on ${b.paidOn}, while the ${b.toPhase} price was still in force, `
+      + `but the form was submitted in the ${b.fromPhase} phase — so they were charged ₹${inr(b.saving)} more `
+      + `than the price on the day they paid. Honouring it makes the fee ₹${inr(b.newExpectedAmount)}.`);
+  }
+
+  disc.classList.toggle('hidden', adjusted);
+  const amt = document.getElementById('review-adjust-amount');
+  if (amt && !adjusted) amt.placeholder = `New fee (₹) — currently ₹${inr(p.expected_amount)}`;
+}
+
+async function reviewHonourEarlyPhase() {
+  // No amount is sent: the server re-derives it from the bank credit, so what
+  // was shown and what is written cannot come from different numbers.
+  await submitFeeAdjustment({ mode: 'EARLY_PHASE' });
+}
+
+async function reviewAdjustFee() {
+  const newAmount = Number(document.getElementById('review-adjust-amount').value);
+  const reason = (document.getElementById('review-adjust-reason').value || '').trim();
+  if (!Number.isFinite(newAmount) || newAmount < 0) return showToast('Enter the new fee.');
+  if (reason.length < 10) return showToast('Give a reason — at least a short sentence.');
+  await submitFeeAdjustment({ mode: 'DISCRETIONARY', newAmount, reason });
+}
+
+async function submitFeeAdjustment(body) {
+  // reviewTargetId is what openReviewModal() sets; there is no
+  // currentReviewId.
+  const id = reviewTargetId;
+  if (!id) return;
+  const data = await (await fetch(`/api/registrations/${id}/fee-adjustment`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not adjust the fee.');
+  showToast(data.settled
+    ? `Fee is now ₹${inr(data.expectedAmount)} — the balance is settled.`
+    : `Fee is now ₹${inr(data.expectedAmount)}.`, 'success');
+  closeModal('modal-review');
+  await renderBackendPayments();
 }
 
 async function renderReviewCategoryLock(p) {

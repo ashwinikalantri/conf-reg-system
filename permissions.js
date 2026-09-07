@@ -69,6 +69,12 @@ const PERMISSIONS = [
   ['payments.refund', 'payments', 'Record a refund', 'Return an excess payment against a real statement debit.'],
   ['payments.verify_id', 'payments', 'Verify a student ID', 'Confirm a student ID card and unlock verification.'],
   ['payments.desk_register', 'payments', 'Register at the desk', 'Create a registration for a walk-in, with the payment already settled.'],
+  // Reducing what a delegate owes for a reason a person decided, as opposed
+  // to payments.revise, which re-prices them because a FACT changed (their
+  // category). Its own key so it can be withheld from the front desk, which
+  // holds payments.revise: correcting a category at a counter is desk work,
+  // writing off a fee is not.
+  ['payments.adjust_fee', 'payments', 'Adjust a fee', 'Reduce what a delegate owes — to honour a price they paid before a deadline, or as a discretionary discount with a recorded reason.'],
   ['payments.rescan', 'payments', 'Re-run slip checks', 'Re-judge stored screenshots against the current OCR logic.'],
   // Conference-wide money, as opposed to one delegate's. Separate from
   // payments.view because they are different disclosures: working the
@@ -186,6 +192,7 @@ const ROUTE_PERMISSIONS = {
   'PUT /api/registrations/:id/unapprove': 'payments.unapprove',
   'PUT /api/registrations/:id/lock-category': 'payments.revise',
   'POST /api/registrations/:id/revise-payment': 'payments.revise',
+  'POST /api/registrations/:id/fee-adjustment': 'payments.adjust_fee',
   'DELETE /api/registrations/:id/lock-category': 'payments.unlock_category',
   'GET /api/registrations/:id/candidate-transactions': 'payments.link',
   'PUT /api/registrations/:id/link-transaction': 'payments.link',

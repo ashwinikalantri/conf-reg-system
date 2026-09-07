@@ -200,6 +200,43 @@
                 </div>
                 <p class="text-[11px] text-slate-500 mt-1">Locking recalculates the fee and prevents the delegate from changing category.</p>
               </div>
+
+              <!-- FEE ADJUSTMENT
+                   Two ways what a delegate owes can differ from the price
+                   list. The first is evidenced and offered by the server when
+                   it applies (early-phase banner); the second is a judgement
+                   and must be written down. Both are behind
+                   payments.adjust_fee, which the front desk does not hold. -->
+              <div id="review-fee-adjust-block" class="hidden border-t border-slate-100 pt-3">
+                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Fee</p>
+
+                <!-- Shown only when a linked bank credit is dated inside a
+                     cheaper phase than the one they were charged at. -->
+                <div id="review-early-phase" class="hidden rounded-xl border border-amber-200 bg-amber-50 p-3 mb-2">
+                  <p id="review-early-phase-text" class="text-[11px] text-amber-900"></p>
+                  <button type="button" onclick="reviewHonourEarlyPhase()"
+                          class="mt-2 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold">Honour that price</button>
+                </div>
+
+                <!-- Already adjusted: the row explains itself rather than
+                     leaving "why is this less than the category fee?" to the
+                     audit log. -->
+                <div id="review-fee-adjusted" class="hidden rounded-xl border border-emerald-200 bg-emerald-50 p-3 mb-2">
+                  <p id="review-fee-adjusted-text" class="text-[11px] text-emerald-900"></p>
+                </div>
+
+                <div id="review-discretionary" class="hidden">
+                  <div class="flex items-center gap-2">
+                    <input id="review-adjust-amount" type="number" min="0" step="1" placeholder="New fee (₹)"
+                           class="flex-1 p-2 border rounded-lg text-sm bg-white outline-none">
+                    <button type="button" onclick="reviewAdjustFee()"
+                            class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shrink-0">Adjust</button>
+                  </div>
+                  <input id="review-adjust-reason" type="text" placeholder="Reason — recorded against this registration"
+                         class="w-full mt-2 p-2 border rounded-lg text-sm bg-white outline-none">
+                  <p class="text-[11px] text-slate-500 mt-1">Reduces what this delegate owes. The reason is stored on the registration and in the audit log.</p>
+                </div>
+              </div>
             </div>
           </details>
         </div>

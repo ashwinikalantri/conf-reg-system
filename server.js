@@ -2049,6 +2049,17 @@ db.serialize(() => {
     // means "has not arrived", which on any day before the conference is
     // every row -- hence nullable rather than a 0/1 flag with a default, so
     // "not yet" and "arrived" are never confused with each other.
+    // A deliberate reduction of what this delegate owes, and why. Kept as its
+    // own field rather than only adjusting expected_amount, so the row can
+    // explain itself: "why is this Rs3,000 when the category is Rs3,500" is a
+    // question the receipt, the review screen and any later audit all ask, and
+    // an amount alone cannot answer it. expected_amount stays the
+    // authoritative figure everything downstream already reads.
+    if (!names.includes('fee_adjustment')) pending.push(alter('ALTER TABLE registrations ADD COLUMN fee_adjustment REAL DEFAULT 0'));
+    if (!names.includes('fee_adjustment_reason')) pending.push(alter('ALTER TABLE registrations ADD COLUMN fee_adjustment_reason TEXT'));
+    if (!names.includes('fee_adjustment_basis')) pending.push(alter('ALTER TABLE registrations ADD COLUMN fee_adjustment_basis TEXT'));
+    if (!names.includes('fee_adjustment_by')) pending.push(alter('ALTER TABLE registrations ADD COLUMN fee_adjustment_by TEXT'));
+    if (!names.includes('fee_adjustment_at')) pending.push(alter('ALTER TABLE registrations ADD COLUMN fee_adjustment_at INTEGER'));
     if (!names.includes('checked_in_at')) pending.push(alter('ALTER TABLE registrations ADD COLUMN checked_in_at INTEGER'));
     if (!names.includes('checked_in_by')) pending.push(alter('ALTER TABLE registrations ADD COLUMN checked_in_by TEXT'));
     // Applied promo/discount code and the rupee amount it took off the fee.
@@ -5294,6 +5305,9 @@ app.get('/api/registrations', requirePermission('payments.view'), async (req, re
     const rows = await dbAll(`
       SELECT ${REGISTRATION_PUBLIC_COLUMNS},
         registrations.bank_txn_id,
+        registrations.fee_adjustment, registrations.fee_adjustment_reason,
+        registrations.fee_adjustment_basis, registrations.fee_adjustment_by,
+        registrations.fee_adjustment_at,
         u.designation AS delegate_designation, u.institution AS delegate_institution,
         u.age AS delegate_age, u.gender AS delegate_gender,
         t.post_date AS bank_txn_date, t.description AS bank_txn_description,
@@ -5334,6 +5348,22 @@ app.get('/api/registrations', requirePermission('payments.view'), async (req, re
     const refundsByReg = {};
     for (const r of allRefunds) (refundsByReg[r.registration_id] ||= []).push(r);
 
+    // Fee tables and phase cutoffs, read once for the whole list rather than
+    // per row: earlyPhaseBenefit() needs them for every registration, and a
+    // query each would be 200+ round trips to answer one question.
+    const feeCats = await dbAll('SELECT * FROM fee_categories');
+    const feeCfg = await getFeeConfig();
+    const catByKey = Object.fromEntries(feeCats.map((c) => [c.category_key, c]));
+    const phaseOn = (isoDate) => (feeCfg && feeCfg.early_until && isoDate <= feeCfg.early_until ? 'early'
+      : feeCfg && feeCfg.regular_until && isoDate <= feeCfg.regular_until ? 'regular'
+        : feeCfg && feeCfg.late_until && isoDate <= feeCfg.late_until ? 'late' : 'spot');
+    const feeOn = (categoryKey, isoDate) => {
+      const c = catByKey[categoryKey];
+      if (!c || !isoDate) return null;
+      const phase = phaseOn(isoDate);
+      return { phase, amount: Number({ early: c.early_fee, regular: c.regular_fee, late: c.late_fee, spot: c.spot_fee }[phase]) || 0 };
+    };
+
     const enriched = (rows || []).map((r) => {
       const txns = txnsByReg[r.id] || [];
       const verifiedTotal = txns
@@ -5351,6 +5381,26 @@ app.get('/api/registrations', requirePermission('payments.view'), async (req, re
       row.remaining = Math.max(0, fee - netVerifiedTotal);
       row.overpaid = Math.max(0, netVerifiedTotal - fee);
       row.pending_txn_count = txns.filter((t) => t.txn_status === 'PENDING').length;
+
+      // Did their money arrive while a cheaper price was in force? Surfaced
+      // as a proposal on the row, never applied here -- POST
+      // /api/registrations/:id/fee-adjustment re-derives it from the same
+      // evidence when somebody authorises it, so what is shown and what is
+      // written can never come from different numbers.
+      row.early_phase_benefit = null;
+      if (!(Number(row.fee_adjustment) > 0)) {
+        const dates = txns.map((t) => t.bank_txn_date).filter(Boolean).map(String).sort();
+        const paidOn = dates.length ? dates[0].slice(0, 10) : null;
+        const then = paidOn ? feeOn(row.category_key, paidOn) : null;
+        const nowFee = feeOn(row.category_key, istDateString(row.submitted_at || Date.now()));
+        if (then && nowFee && then.amount < nowFee.amount) {
+          row.early_phase_benefit = {
+            paidOn, toPhase: then.phase, fromPhase: nowFee.phase,
+            saving: Math.round(nowFee.amount - then.amount),
+            newExpectedAmount: Math.max(0, Math.round(fee - (nowFee.amount - then.amount))),
+          };
+        }
+      }
       return row;
     });
     res.json({ registrations: enriched });
@@ -5709,6 +5759,183 @@ app.put('/api/registrations/:id/unapprove', requirePermission('payments.unapprov
 // the portal. Any payments already verified are preserved; the registration's
 // status is re-derived from the new fee (PARTIAL_PAYMENT if a balance is now
 // due, PENDING otherwise) so the delegate is prompted for the difference.
+// --- FEE ADJUSTMENTS ------------------------------------------------------
+//
+// Two situations where what a delegate owes is not what the price list says
+// on the day they filled the form.
+//
+// The first is a timing accident and not their fault: they paid while the
+// early-bird price was live and submitted the form after it closed. The money
+// left their account at the cheaper price; only the paperwork is late. The
+// system charged them the later phase, so they look short by the difference
+// and get chased for it.
+//
+// The second is discretion -- a discrepancy somebody decides to settle in the
+// delegate's favour. That one has no evidence behind it by definition, so it
+// requires a reason in writing.
+//
+// Both land in the same three columns, because both answer the same question
+// on the row afterwards: what was taken off, and why.
+
+// What phase was in force on a given calendar date, and what that category
+// would have cost then. Returns null when the date or category is unusable
+// rather than guessing at a price.
+async function feeAtDate(categoryKey, isoDate) {
+  if (!categoryKey || !isoDate) return null;
+  const cat = await dbGet('SELECT * FROM fee_categories WHERE category_key = ?', [categoryKey]);
+  if (!cat) return null;
+  const config = await getFeeConfig();
+  // currentPhase() reads an IST calendar date; a bank statement's post_date is
+  // already one, so it is passed straight through rather than round-tripped
+  // through a timestamp and shifted twice.
+  const phase = config && config.early_until && isoDate <= config.early_until ? 'early'
+    : config && config.regular_until && isoDate <= config.regular_until ? 'regular'
+      : config && config.late_until && isoDate <= config.late_until ? 'late'
+        : 'spot';
+  const amount = { early: cat.early_fee, regular: cat.regular_fee, late: cat.late_fee, spot: cat.spot_fee }[phase];
+  return { phase, amount: Number(amount) || 0, label: cat.label };
+}
+
+// The date this delegate's money actually reached the account: the earliest
+// bank credit linked to any of their payments.
+//
+// The bank statement is what this app treats as proof everywhere else -- a
+// payment is not verified and a refund not recordable without one -- so it is
+// what decides a price here too. A delegate's own claim about when they paid
+// is not evidence, and is deliberately not consulted.
+//
+// Asked of the database rather than of a caller's transaction list:
+// getPaymentSummary() selects payment_transactions without joining the
+// statement, so its rows carry no credit date at all. Reading it from there
+// silently found nothing and quietly refused every benefit -- the list
+// enrichment joined for the date and this did not, so the screen offered a
+// reduction the route then denied.
+async function earliestCreditDateFor(registrationId) {
+  const row = await dbGet(
+    `SELECT MIN(b.post_date) AS earliest
+       FROM payment_transactions pt
+       JOIN bank_statement_transactions b ON b.id = pt.bank_txn_id
+      WHERE pt.registration_id = ?`, [registrationId]);
+  return row && row.earliest ? String(row.earliest).slice(0, 10) : null;
+}
+
+// Would an earlier phase have charged this delegate less than they were
+// charged? Returns the proposal, or null when there is nothing to offer.
+// Read-only: it decides nothing and writes nothing.
+async function earlyPhaseBenefit(reg) {
+  if (!reg || reg.fee_adjustment > 0) return null;          // already settled
+  const paidOn = await earliestCreditDateFor(reg.id);
+  if (!paidOn) return null;                                  // no proof yet
+  const then = await feeAtDate(reg.category_key, paidOn);
+  const now = await feeAtDate(reg.category_key, istDateString(reg.submitted_at || Date.now()));
+  if (!then || !now) return null;
+  if (!(then.amount < now.amount)) return null;              // no benefit owed
+  // The category fee is one part of what they owe. Options and any discount
+  // are unaffected by the phase, so the saving is the difference between the
+  // two category prices -- not a recomputation of the whole bill, which would
+  // silently re-derive a discount that was calculated against the old fee.
+  const saving = Math.round(now.amount - then.amount);
+  return {
+    paidOn,
+    fromPhase: now.phase,
+    toPhase: then.phase,
+    wasFee: now.amount,
+    nowFee: then.amount,
+    saving,
+    newExpectedAmount: Math.max(0, Math.round((Number(reg.expected_amount) || 0) - saving)),
+  };
+}
+
+// Apply an adjustment. Two modes, deliberately not one:
+//
+//   EARLY_PHASE  -- the server re-derives the figure from the bank credit
+//                   date. The caller sends no amount at all, so a favourable
+//                   number cannot be posted in; the evidence decides it.
+//   DISCRETIONARY -- the caller names the new amount and must say why.
+app.post('/api/registrations/:id/fee-adjustment', requirePermission('payments.adjust_fee'), async (req, res, next) => {
+  try {
+    const reg = await dbGet('SELECT * FROM registrations WHERE id = ?', [req.params.id]);
+    if (!reg) return res.status(404).json({ success: false, error: 'Registration not found.' });
+    const mode = String(req.body.mode || '').toUpperCase();
+
+    let newAmount;
+    let reason;
+    let basis;
+
+    if (mode === 'EARLY_PHASE') {
+      const benefit = await earlyPhaseBenefit(reg);
+      if (!benefit) {
+        return res.status(409).json({
+          success: false,
+          error: 'No earlier-phase benefit applies here — either no bank credit is linked yet, it is not dated before a cheaper phase, or an adjustment was already made.',
+        });
+      }
+      newAmount = benefit.newExpectedAmount;
+      basis = 'EARLY_PHASE';
+      // The reason writes itself, and carries the evidence rather than a
+      // person's summary of it.
+      reason = `Paid ₹${inr(benefit.wasFee - benefit.saving)} on ${benefit.paidOn}, within the ${benefit.toPhase} phase; `
+        + `the form was submitted in the ${benefit.fromPhase} phase. Honouring the price in force when the money was paid.`;
+    } else if (mode === 'DISCRETIONARY') {
+      newAmount = Math.round(Number(req.body.newAmount));
+      reason = String(req.body.reason || '').trim();
+      basis = 'DISCRETIONARY';
+      if (!Number.isFinite(newAmount) || newAmount < 0) {
+        return res.status(400).json({ success: false, error: 'Enter a valid amount.' });
+      }
+      if (newAmount > (Number(reg.expected_amount) || 0)) {
+        return res.status(400).json({ success: false, error: 'This can reduce what a delegate owes, not increase it.' });
+      }
+      // A discretionary reduction with no reason is indistinguishable from a
+      // mistake six months later, which is the whole argument for requiring
+      // one. Long enough to be a sentence, not a keystroke.
+      if (reason.length < 10) {
+        return res.status(400).json({ success: false, error: 'Give a reason for this adjustment — at least a short sentence.' });
+      }
+    } else {
+      return res.status(400).json({ success: false, error: 'Unknown adjustment mode.' });
+    }
+
+    const previous = Number(reg.expected_amount) || 0;
+    const adjustment = Math.round(previous - newAmount);
+    if (adjustment <= 0) {
+      return res.status(409).json({ success: false, error: 'That would not change what this delegate owes.' });
+    }
+
+    const now = Date.now();
+    const by = req.session.name || req.session.phone;
+    await dbRun(
+      `UPDATE registrations
+          SET expected_amount = ?, fee_adjustment = ?, fee_adjustment_reason = ?,
+              fee_adjustment_basis = ?, fee_adjustment_by = ?, fee_adjustment_at = ?
+        WHERE id = ?`,
+      [newAmount, adjustment, reason, basis, by, now, reg.id]);
+
+    // If the money already on file now covers the reduced fee, the
+    // registration is settled -- which is the point of the early-phase case:
+    // the delegate paid in full at the time and should stop being chased.
+    // Deliberately only ever settles; it never re-opens a verified one.
+    const after = await getPaymentSummary(reg.id, newAmount);
+    let settled = false;
+    if (after.fullyPaid && reg.bank_status === 'PARTIAL_PAYMENT') {
+      await dbRun("UPDATE registrations SET bank_status = 'PENDING' WHERE id = ?", [reg.id]);
+      settled = true;
+    }
+
+    await recordAudit({
+      req, entityType: 'registration', entityId: reg.id,
+      action: basis === 'EARLY_PHASE' ? 'FEE_ADJUSTED_EARLY_PHASE' : 'FEE_ADJUSTED_DISCRETIONARY',
+      oldValue: `₹${inr(previous)}`,
+      newValue: `₹${inr(newAmount)} (−₹${inr(adjustment)}) — ${reason}`,
+    });
+
+    res.json({ success: true, expectedAmount: newAmount, adjustment, reason, basis, settled,
+      payment: after });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.put('/api/registrations/:id/lock-category', requirePermission('payments.revise'), async (req, res, next) => {
   try {
     const { categoryKey } = req.body;
