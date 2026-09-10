@@ -2457,6 +2457,9 @@ function onDirectorySelect(which, prefix = 'reg') {
 }
 
 async function loadDirectorySuggestions(prefix = 'reg') {
+  // Belt and braces for the listener above: anything that is not an id prefix
+  // (an Event, most likely) means the signup form.
+  if (typeof prefix !== 'string' || !prefix) prefix = 'reg';
   const anySelect = document.getElementById(`${prefix}-designation-select`)
     || document.getElementById(`${prefix}-institute-select`);
   if (!anySelect) return;   // this form is not on the page
@@ -2487,7 +2490,13 @@ async function loadDirectorySuggestions(prefix = 'reg') {
     if (other) other.addEventListener('input', () => onDirectorySelect(which, prefix));
   });
 }
-document.addEventListener('DOMContentLoaded', loadDirectorySuggestions);
+// Wrapped, not passed by reference. A listener is called with the Event as
+// its first argument, and loadDirectorySuggestions takes an id prefix there:
+// a default parameter only applies when the argument is undefined, so passing
+// the function directly made prefix the Event, the lookup search for
+// "[object Event]-designation-select", and the guard below return silently --
+// leaving signup's dropdowns empty and its Other box unwired. That shipped.
+document.addEventListener('DOMContentLoaded', () => loadDirectorySuggestions());
 // Public (no login required) -- runs on both the delegate landing page and
 // the admin panel, so conference name/dates/location/acronym shown as static
 // page text everywhere reflect the current Settings → General value.
