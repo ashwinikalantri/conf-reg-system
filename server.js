@@ -10389,12 +10389,55 @@ function reportHtml(rep) {
   tr:nth-child(even) td{background:#f8fafc;}
   .actions{margin:1.25rem 0;}
   button{background:#2f5673;color:#fff;border:0;border-radius:8px;padding:.55rem 1.25rem;font-weight:700;cursor:pointer;}
-  @media print{body{margin:0;}.actions{display:none;}}
+  /* Print setup, modelled on the payment receipt -- which prints correctly in
+     Safari while this report printed blank pages. Both send the same
+     no-store header and load the same webfonts, so neither of those is the
+     cause; what differed was that the receipt defines its page and resets
+     html/body for print, and is a single page of divs, while this is a
+     12-column table running to ~15 pages with no print setup at all. Large
+     paginated tables are where WebKit's printing is fragile, so beyond
+     matching the receipt this also keeps the table inside the page width
+     and tells the paginator how to break it.
+     (Verified structurally; Safari itself was not available to test on.) */
+  @media print{
+    /* A defined page box, landscape because a 12-column table does not fit
+       a portrait sheet without shrinking. */
+    @page{size:A4 landscape;margin:12mm;}
+    html,body{background:#fff;margin:0;padding:0;}
+    .actions{display:none;}
+    table{width:100%;}
+    /* An email address has no spaces to break at; without this its column
+       sets a minimum width the table cannot shrink below, and the table
+       overruns the page. */
+    th,td{word-break:break-word;overflow-wrap:anywhere;}
+    /* Repeat the header on every page, never split a row across two, and
+       never strand a section title at the foot of a page. */
+    thead{display:table-header-group;}
+    tr{break-inside:avoid;page-break-inside:avoid;}
+    h2{break-after:avoid;page-break-after:avoid;}
+    /* As on the receipt: keep the header fill and zebra rows. */
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  }
 </style></head><body>
   <h1>${escapeHtml(CONFERENCE.acronym)} · ${escapeHtml(rep.title)}</h1>
   <p class="sub">Generated ${escapeHtml(now)} · ${total} record(s)</p>
-  <div class="actions"><button onclick="window.print()">Print / Save as PDF</button></div>
+  <div class="actions"><button type="button" id="print-report">Print / Save as PDF</button></div>
   ${rep.sections.map(table).join('')}
+  <script>
+    // Print once the webfonts have settled, as the receipt does, so the
+    // paginated output is laid out with the same fonts as the screen --
+    // but never wait more than a moment if they do not resolve.
+    (function () {
+      var btn = document.getElementById('print-report');
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        var go = function () { window.print(); };
+        if (document.fonts && document.fonts.ready) {
+          Promise.race([document.fonts.ready, new Promise(function (r) { setTimeout(r, 1500); })]).then(go);
+        } else { go(); }
+      });
+    }());
+  </script>
 </body></html>`;
 }
 
