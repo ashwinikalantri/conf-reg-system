@@ -124,6 +124,10 @@
           </div>
           <h3 class="text-xl font-bold text-slate-800 mt-1">Submit Abstract</h3>
           <p id="abstract-desc" class="text-sm text-slate-600 mt-2">Submit papers or posters under Healthcare Quality &amp; Patient Safety. One abstract per delegate; it cannot be changed once submitted.</p>
+          <!-- The last date, on its own line so it is not lost in the paragraph
+               above. Filled by renderAbstractDeadlineNote() from the server's
+               submission window; hidden once it no longer concerns them. -->
+          <p id="abstract-deadline-note" class="hidden mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800 bg-white border border-emerald-200 rounded-full px-2.5 py-1"></p>
           <button type="button" id="abstract-preview-toggle" onclick="toggleAbstractPreview()" class="hidden text-xs text-indigo-600 hover:underline font-semibold mt-2">View my submission</button>
           <div id="abstract-preview-box" class="hidden mt-2 p-3 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 space-y-2"></div>
         </div>

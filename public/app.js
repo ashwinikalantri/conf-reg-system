@@ -1168,8 +1168,10 @@ async function loadAbstractStatus() {
   const previewToggle = document.getElementById('abstract-preview-toggle');
   const previewBox = document.getElementById('abstract-preview-box');
   try {
-    const abs = (await (await fetch('/api/abstracts/me')).json()).abstract;
+    const mine = await (await fetch('/api/abstracts/me')).json();
+    const abs = mine.abstract;
     cachedOwnAbstract = abs;
+    cachedAbstractSubmission = mine.submission || { open: true, deadline: '' };
     if (abs) {
       let [label, cls] = STYLES[abs.status] || ['Submitted', 'bg-slate-100 text-slate-600'];
       if (abs.status === 'ACCEPTED' && abs.allocation) {
@@ -1205,17 +1207,50 @@ async function loadAbstractStatus() {
       if (previewToggle) previewToggle.classList.remove('hidden');
       if (previewBox) previewBox.classList.add('hidden'); // collapsed by default each load
     } else {
-      tag.className = 'text-xs bg-slate-100 text-slate-600 font-bold px-2.5 py-1 rounded-full border border-slate-200';
-      tag.innerText = 'Not Submitted';
-      if (btn) { btn.innerText = 'Submit Abstract'; btn.disabled = false; btn.classList.remove('opacity-60', 'cursor-not-allowed'); }
+      const { open, deadline } = cachedAbstractSubmission;
+      if (!open) {
+        // Past the last date: the server refuses a new abstract (POST
+        // /api/abstracts), so the card says so instead of offering a form
+        // that would only fail on submit.
+        tag.className = 'text-xs bg-rose-50 text-rose-700 font-bold px-2.5 py-1 rounded-full border border-rose-200';
+        tag.innerText = 'Submission Closed';
+        if (btn) { btn.innerText = 'Submission Closed'; btn.disabled = true; btn.classList.add('opacity-60', 'cursor-not-allowed'); }
+        if (desc) desc.innerHTML = `Abstract submission closed on <b>${esc(formatFullDateWithDay(deadline))}</b>. New abstracts can no longer be accepted.`;
+      } else {
+        tag.className = 'text-xs bg-slate-100 text-slate-600 font-bold px-2.5 py-1 rounded-full border border-slate-200';
+        tag.innerText = 'Not Submitted';
+        if (btn) { btn.innerText = 'Submit Abstract'; btn.disabled = false; btn.classList.remove('opacity-60', 'cursor-not-allowed'); }
+        if (desc) desc.innerHTML = 'Submit papers or posters under Healthcare Quality &amp; Patient Safety. One abstract per delegate; it cannot be changed once submitted.';
+      }
       if (previewToggle) previewToggle.classList.add('hidden');
       if (previewBox) previewBox.classList.add('hidden');
     }
+    renderAbstractDeadlineNote(abs, cachedAbstractSubmission);
   } catch (e) { /* leave as-is */ }
+}
+
+// "Last date for submission: Tuesday, 15 September 2026", on the dashboard
+// card and at the top of the submission form. Shown only while it is still
+// the delegate's to act on: once they have submitted, the date no longer
+// concerns them -- and a resubmission the committee asked for is not held to
+// it (see POST /api/abstracts), so showing it there would mislead. Once
+// closed, the card's own text already says when.
+function renderAbstractDeadlineNote(abs, sub) {
+  const text = (!abs && sub && sub.open && sub.deadline)
+    ? `Last date for submission: ${formatFullDateWithDay(sub.deadline)}` : '';
+  const icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 shrink-0"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/></svg>';
+  for (const id of ['abstract-deadline-note', 'abstract-modal-deadline']) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.innerHTML = text ? `${icon}<span>${esc(text)}</span>` : '';
+    el.classList.toggle('hidden', !text);
+  }
 }
 
 // Cached so the preview toggle doesn't need a second round trip.
 let cachedOwnAbstract = null;
+// The submission window from the same response -- { open, deadline }.
+let cachedAbstractSubmission = { open: true, deadline: '' };
 
 // Read-only structured preview. abs.background/aim/methods/results/
 // conclusion already went through sanitizeAbstractHtml() server-side (a
@@ -2020,6 +2055,11 @@ async function handleAbstractSubmit(e) {
 }
 
 function openModal(id) {
+  if (id === 'modal-abstract' && !cachedAbstractSubmission.open
+    && !(cachedOwnAbstract && cachedOwnAbstract.status === 'REVISION_REQUESTED')) {
+    showToast('Abstract submission has closed.');
+    return;
+  }
   document.getElementById(id).classList.remove('hidden');
   if (id === 'modal-abstract') {
     // A delegate whose abstract was sent back for corrections
@@ -6745,6 +6785,8 @@ async function renderGeneralSettings() {
   setVal('gs-conf-startdate', data.conference.startDate);
   setVal('gs-conf-enddate', data.conference.endDate);
   setVal('gs-conf-regprefix', data.conference.regPrefix);
+  setVal('gs-conf-abstractdeadline', data.conference.abstractDeadline);
+  renderAbstractDeadlineState(data.conference);
   // A conference being set up is always in the future, and it can't end
   // before it starts -- nudged here, enforced server-side regardless (see
   // PUT /api/admin/general-settings).
@@ -6779,6 +6821,25 @@ async function renderGeneralSettings() {
   const otpEchoEl = document.getElementById('gs-env-otpecho');
   if (otpEchoEl && document.activeElement !== otpEchoEl) otpEchoEl.checked = !!(envByKey.OTP_ECHO && envByKey.OTP_ECHO.value === 'true');
   setText('gs-env-nodeenv', (envByKey.NODE_ENV && envByKey.NODE_ENV.value) || '(unset)');
+}
+
+// The line under the deadline field says what delegates see right now, from
+// the server's own verdict (abstractSubmissionOpen), not a browser-clock
+// guess -- the two can differ by the IST offset around midnight.
+function renderAbstractDeadlineState(conf) {
+  const el = document.getElementById('gs-conf-abstract-state');
+  if (!el) return;
+  const day = formatFullDateWithDay(conf.abstractDeadline);
+  if (!conf.abstractDeadline) {
+    el.className = 'text-[11px] font-semibold mt-1 text-slate-500';
+    el.textContent = 'Open — no deadline set.';
+  } else if (conf.abstractSubmissionOpen) {
+    el.className = 'text-[11px] font-semibold mt-1 text-emerald-700';
+    el.textContent = `Open — closes at the end of ${day} (IST).`;
+  } else {
+    el.className = 'text-[11px] font-semibold mt-1 text-rose-700';
+    el.textContent = `Closed — the last date was ${day}. New abstracts are refused.`;
+  }
 }
 
 // Turning this on locks every delegate and non-super admin out of the portal,
@@ -6855,6 +6916,7 @@ async function saveGeneralSettings(e, group) {
       startDate: document.getElementById('gs-conf-startdate').value,
       endDate: document.getElementById('gs-conf-enddate').value,
       regPrefix: document.getElementById('gs-conf-regprefix').value,
+      abstractDeadline: document.getElementById('gs-conf-abstractdeadline').value,
     } };
   } else if (group === 'maintenance') {
     body = { maintenance: { message: document.getElementById('gs-maintenance-message').value } };
@@ -8695,7 +8757,11 @@ function deskAbstractCard(abstracts) {
   // Super Admin's, and accepting is abstracts.review. The desk answers "what
   // happened to mine", it does not decide it.
   if (!abstracts || !abstracts.length) {
-    return deskCard('Abstract', '<p class="text-sm text-slate-500">No abstract submitted.</p>', '');
+    // Past the deadline "none" is final, which is the answer the desk is
+    // usually being asked for.
+    const closed = conferenceInfo.abstractSubmissionOpen === false && conferenceInfo.abstractDeadline
+      ? ` Submission closed on ${esc(formatFullDate(conferenceInfo.abstractDeadline))}.` : '';
+    return deskCard('Abstract', `<p class="text-sm text-slate-500">No abstract submitted.${closed}</p>`, '');
   }
   const tones = {
     ok: 'bg-emerald-100 text-emerald-800 border-emerald-300',

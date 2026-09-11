@@ -27,6 +27,12 @@
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Start Date <span class="font-normal text-slate-400">(optional)</span></label><input id="gs-conf-startdate" type="date" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">End Date <span class="font-normal text-slate-400">(optional)</span></label><input id="gs-conf-enddate" type="date" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
           <div class="sm:col-span-2 border-t pt-3">
+            <label class="block text-[10px] font-semibold text-slate-600 mb-1">Abstract Submission Deadline <span class="font-normal text-slate-400">(last date)</span></label>
+            <input id="gs-conf-abstractdeadline" type="date" class="w-full sm:w-1/2 h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+            <p id="gs-conf-abstract-state" class="text-[11px] font-semibold mt-1"></p>
+            <p class="text-[10px] text-slate-400 mt-1">The last day a delegate can submit a new abstract — submission locks at midnight (IST) at the end of this day. Abstracts the committee has sent back for corrections can still be resubmitted after it. Leave blank to keep submission open.</p>
+          </div>
+          <div class="sm:col-span-2 border-t pt-3">
             <label class="block text-[10px] font-semibold text-slate-600 mb-1">Registration Number Prefix</label>
             <input id="gs-conf-regprefix" required pattern="[A-Za-z0-9]{1,20}" placeholder="e.g. CONF2026" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
             <p class="text-[10px] text-slate-400 mt-1">Letters/numbers only. Prefixed to every new registration number going forward (e.g. CONF20261188) — changing it does <b>not</b> renumber existing registrations.</p>

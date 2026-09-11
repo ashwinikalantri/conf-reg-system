@@ -153,6 +153,10 @@ async function seedRows() {
     ['conference_location', 'Fixture Hall, Testville'],
     ['conference_start_date', ymd(120)],
     ['conference_end_date', ymd(121)],
+    // Relative, like the dates above: the boot default is the real 15 Sept
+    // 2026, and a fixture that inherited it would lock every abstract test
+    // the day after.
+    ['conference_abstract_deadline', ymd(30)],
     ['conference_reg_prefix', 'FIXCON2099'],
     ['upi_id', 'fixture@examplebank'],
     ['upi_payee_name', 'FIXCON 2099'],

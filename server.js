@@ -262,6 +262,9 @@ const CONFERENCE = {
   endDate: '',
   location: '',
   regPrefix: '',
+  // Last day (YYYY-MM-DD, IST) on which a new abstract may be submitted;
+  // blank means submission stays open. See abstractSubmissionOpen().
+  abstractDeadline: '',
 };
 // `let`: admin-editable, applies immediately (read fresh wherever it's used).
 let PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
@@ -295,6 +298,16 @@ function formatDMY(dateStr) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr || '');
   if (!m) return '';
   return `${Number(m[3])} ${SHORT_MONTHS[Number(m[2]) - 1]} ${m[1]}`;
+}
+
+// Abstract submission is open through the whole of the deadline day in IST
+// -- "last date 15 Sept" means a delegate can still submit at 23:59 that
+// night, and not at 00:00 on the 16th. Same IST calendar-date comparison as
+// the fee phases (currentPhase), for the same reason: the server clock is UTC
+// and a UTC date would close submission at 05:30 IST instead of midnight.
+function abstractSubmissionOpen(when = Date.now()) {
+  const d = CONFERENCE.abstractDeadline;
+  return !d || istDateString(when) <= d;
 }
 
 // --- .ENV FILE HELPERS ---------------------------------------------------
@@ -411,6 +424,7 @@ const GENERAL_SETTINGS_KEYS = {
   conference_name: ['CONFERENCE', 'name'], conference_acronym: ['CONFERENCE', 'acronym'],
   conference_start_date: ['CONFERENCE', 'startDate'], conference_end_date: ['CONFERENCE', 'endDate'],
   conference_location: ['CONFERENCE', 'location'], conference_reg_prefix: ['CONFERENCE', 'regPrefix'],
+  conference_abstract_deadline: ['CONFERENCE', 'abstractDeadline'],
 };
 
 // The rest of "Other Environment Variables" -- PORT, PORTAL_URL, COOKIE_NAME,
@@ -428,6 +442,11 @@ const RUNTIME_ENV_SETTERS = {
 };
 
 async function loadGeneralSettings() {
+  // The announced last date for abstracts, written once so a deployment that
+  // predates this setting closes on the right day without anyone having to
+  // visit Settings first. INSERT OR IGNORE: never overwrites a date an admin
+  // has since changed -- or cleared, since a cleared field is stored as ''.
+  await dbRun("INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('conference_abstract_deadline', '2026-09-15')");
   const keys = [...Object.keys(GENERAL_SETTINGS_KEYS), ...Object.keys(RUNTIME_ENV_SETTERS)];
   const rows = await dbAll(`SELECT key, value FROM schema_meta WHERE key IN (${keys.map(() => '?').join(',')})`, keys);
   const targets = { SMS, EMAIL, UPI, BANK, CONFERENCE };
@@ -4345,6 +4364,8 @@ app.get('/api/conference', (req, res) => {
     endDate: CONFERENCE.endDate,
     location: CONFERENCE.location,
     dateLabel: formatConferenceDates(),
+    abstractDeadline: CONFERENCE.abstractDeadline,
+    abstractSubmissionOpen: abstractSubmissionOpen(),
   });
 });
 
@@ -5111,6 +5132,21 @@ const ABSTRACT_MAX_WORDS = 400;
 
 app.post('/api/abstracts', requireAuth, async (req, res, next) => {
   try {
+    // Closed after the deadline -- checked first, so a late submitter is told
+    // that rather than being walked through validation errors on a form that
+    // can no longer be accepted. The one exception is a resubmission the
+    // committee asked for (REVISION_REQUESTED): that was reopened by a
+    // reviewer, not started by the delegate, and locking it would strand an
+    // abstract the committee is still waiting on.
+    if (!abstractSubmissionOpen()) {
+      const own = await dbGet('SELECT status FROM abstracts WHERE phone_number = ?', [req.session.phone]);
+      if (!own || own.status !== 'REVISION_REQUESTED') {
+        return res.status(403).json({
+          success: false, code: 'ABSTRACT_SUBMISSION_CLOSED',
+          error: `Abstract submission closed on ${formatDMY(CONFERENCE.abstractDeadline)}.`,
+        });
+      }
+    }
     const { format, title } = req.body;
     if (!title || !String(title).trim()) {
       return res.status(400).json({ success: false, error: 'Abstract title is required.' });
@@ -5199,7 +5235,10 @@ app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
          FROM abstracts WHERE phone_number = ?`,
       [req.session.phone]
     );
-    res.json({ abstract: row || null });
+    res.json({
+      abstract: row || null,
+      submission: { open: abstractSubmissionOpen(), deadline: CONFERENCE.abstractDeadline },
+    });
   } catch (err) {
     next(err);
   }
@@ -9099,7 +9138,7 @@ app.get('/api/admin/general-settings', requirePermission('system.settings_view')
       },
       upi: { id: UPI.id, payeeName: UPI.payeeName },
       bank: { accountName: BANK.accountName, accountNumber: BANK.accountNumber, ifsc: BANK.ifsc, branch: BANK.branch },
-      conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym, startDate: CONFERENCE.startDate, endDate: CONFERENCE.endDate, location: CONFERENCE.location, regPrefix: CONFERENCE.regPrefix },
+      conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym, startDate: CONFERENCE.startDate, endDate: CONFERENCE.endDate, location: CONFERENCE.location, regPrefix: CONFERENCE.regPrefix, abstractDeadline: CONFERENCE.abstractDeadline, abstractSubmissionOpen: abstractSubmissionOpen() },
       maintenance: { enabled: maintenance.enabled, message: maintenance.message },
       otherEnvVars: await describeOtherEnvVars(),
     });
@@ -9192,6 +9231,12 @@ app.put('/api/admin/general-settings', requirePermission('system.settings_edit')
       if (startDate && endDate && endDate < startDate) {
         return res.status(400).json({ success: false, error: 'End Date cannot be before Start Date.' });
       }
+      // A past date is allowed on purpose: it is how submission is closed
+      // early. Blank reopens it with no deadline.
+      if (conference.abstractDeadline !== undefined && String(conference.abstractDeadline).trim()
+        && !DATE_RE.test(String(conference.abstractDeadline).trim())) {
+        return res.status(400).json({ success: false, error: 'Abstract Submission Deadline must be YYYY-MM-DD.' });
+      }
     }
 
     // "Other Environment Variables". portalUrl/port/cookieName are required
@@ -9257,8 +9302,8 @@ app.put('/api/admin/general-settings', requirePermission('system.settings_edit')
     await applyFields(bank, BANK, { accountName: 'bank_account_name', accountNumber: 'bank_account_number', ifsc: 'bank_ifsc', branch: 'bank_branch' },
       new Set(['accountName', 'accountNumber', 'ifsc', 'branch']));
     await applyFields(conference, CONFERENCE,
-      { name: 'conference_name', acronym: 'conference_acronym', startDate: 'conference_start_date', endDate: 'conference_end_date', location: 'conference_location', regPrefix: 'conference_reg_prefix' },
-      new Set(['acronym', 'startDate', 'endDate', 'location']));
+      { name: 'conference_name', acronym: 'conference_acronym', startDate: 'conference_start_date', endDate: 'conference_end_date', location: 'conference_location', regPrefix: 'conference_reg_prefix', abstractDeadline: 'conference_abstract_deadline' },
+      new Set(['acronym', 'startDate', 'endDate', 'location', 'abstractDeadline']));
 
     // Credentials persist to .env, never to schema_meta. The change log records
     // only that a key changed, never any bytes of a bearer secret (SMS API key,
