@@ -2323,6 +2323,13 @@ async function seedRolesOnBoot() {
 // grants_all role, which needs no rows at all.
 const PERMISSION_BACKFILLS = [
   { permission: 'payments.view_totals', ifRoleHas: 'payments.view' },
+  // The summary report opens for any role that can already open a report,
+  // and shows it only the blocks its other report permissions cover. One
+  // entry per report key, so a custom role holding any single one of them
+  // (the live ABSTRACT_ASSIGN holds only reports.abstracts) gains it too.
+  ...['reports.delegates', 'reports.delegate_programs', 'reports.payments',
+    'reports.programs', 'reports.abstracts', 'reports.users']
+    .map((key) => ({ permission: 'reports.summary', ifRoleHas: key })),
 ];
 
 async function backfillNewSystemPermissions() {
@@ -5272,28 +5279,12 @@ app.get('/api/admin/finance-summary', requirePermission('payments.view_totals'),
     // Gross, not net of refunds, which is what this card has always shown.
     // Netting them off would be defensible but is a change to what the
     // number MEANS, and this change is about who may see it.
-    const row = await dbGet(`
-      SELECT COALESCE(SUM(COALESCE(verified_amount, amount, 0)), 0) AS collected
-        FROM payment_transactions
-       WHERE txn_status = 'VERIFIED'`);
-    // Only PARTIAL_PAYMENT registrations can owe a balance -- the client's
-    // isBalanceDue() is exactly that test.
-    const owing = await dbAll(`
-      SELECT r.expected_amount, r.paid_amount,
-             (SELECT COALESCE(SUM(COALESCE(t.verified_amount, t.amount, 0)), 0)
-                FROM payment_transactions t
-               WHERE t.registration_id = r.id AND t.txn_status = 'VERIFIED') AS verified_total
-        FROM registrations r
-       WHERE r.bank_status = 'PARTIAL_PAYMENT'`);
-    const outstanding = owing.reduce((sum, r) => {
-      const paidSoFar = Number(r.verified_total) > 0 ? Number(r.verified_total) : (Number(r.paid_amount) || 0);
-      return sum + Math.max(0, Number(r.expected_amount) - paidSoFar);
-    }, 0);
+    const totals = await computeFinanceTotals();
     res.json({
       success: true,
-      collected: Number(row.collected) || 0,
-      outstanding,
-      owingCount: owing.length,
+      collected: totals.collected,
+      outstanding: totals.outstanding,
+      owingCount: totals.owingCount,
     });
   } catch (err) {
     next(err);
@@ -10158,7 +10149,274 @@ const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT / RTGS', CASH: 'Cash 
 // displayed (reports, etc.) instead of the raw DB constant (e.g. BANK_VERIFIED).
 const BANK_STATUS_LABELS = { PENDING: 'Pending', BANK_VERIFIED: 'Verified', REJECTED: 'Rejected', PARTIAL_PAYMENT: 'Partial Payment' };
 
+// Conference-wide money: what has been collected and what is still owed.
+// One definition, used by the Overview's cards (GET /api/admin/finance-summary)
+// and the summary report, so the two can never show different figures for
+// the same thing.
+//
+// verified_total is NOT a column -- it is derived per registration from its
+// VERIFIED payment_transactions, exactly as GET /api/registrations builds it.
+// Collected is gross, not net of refunds, which is what the Overview card has
+// always meant; refunds are reported beside it rather than silently netted.
+// Only PARTIAL_PAYMENT registrations can owe a balance -- the client's
+// isBalanceDue() is exactly that test.
+// A share for the summary report, as a whole percentage -- except at the two
+// edges where rounding would state something false. One rejection in 240 is
+// 0.4%, which rounds to "0%" and reads as none; 239 confirmed of 240 is 99.6%,
+// which rounds to "100%" and reads as all. Both happened on the live data the
+// first time this report was rendered, so they say "<1%" and ">99%" instead.
+function summaryShare(part, whole) {
+  if (!(whole > 0)) return '—';
+  const pct = Math.round((part / whole) * 100);
+  if (part > 0 && pct === 0) return '<1%';
+  if (part < whole && pct === 100) return '>99%';
+  return `${pct}%`;
+}
+
+async function computeFinanceTotals() {
+  const row = await dbGet(`
+    SELECT COALESCE(SUM(COALESCE(verified_amount, amount, 0)), 0) AS collected,
+           COUNT(*) AS verified_count
+      FROM payment_transactions
+     WHERE txn_status = 'VERIFIED'`);
+  const owing = await dbAll(`
+    SELECT r.expected_amount, r.paid_amount,
+           (SELECT COALESCE(SUM(COALESCE(t.verified_amount, t.amount, 0)), 0)
+              FROM payment_transactions t
+             WHERE t.registration_id = r.id AND t.txn_status = 'VERIFIED') AS verified_total
+      FROM registrations r
+     WHERE r.bank_status = 'PARTIAL_PAYMENT'`);
+  const outstanding = owing.reduce((sum, r) => {
+    const paidSoFar = Number(r.verified_total) > 0 ? Number(r.verified_total) : (Number(r.paid_amount) || 0);
+    return sum + Math.max(0, Number(r.expected_amount) - paidSoFar);
+  }, 0);
+  return {
+    collected: Number(row.collected) || 0,
+    verifiedCount: Number(row.verified_count) || 0,
+    outstanding,
+    owingCount: owing.length,
+  };
+}
+
 async function buildReport(type, opts = {}) {
+  // The one report with no line list. Every other report is a table of
+  // people or payments; this is the handful of numbers somebody asks for
+  // first -- how many, how much, how full -- and nothing that identifies a
+  // person. It keeps the same {title, sections} shape as the others, so the
+  // on-screen view, the Excel download and the printable PDF all work
+  // without a line of their own.
+  //
+  // Each block appears only to a viewer who already holds the permission that
+  // governs its data, so the summary never reveals a figure the viewer could
+  // not get from a report they may open. Money totals sit behind
+  // payments.view_totals rather than reports.payments, following the decision
+  // that conference-wide money is for finance roles only -- which is why
+  // Operations, who may open the Payments line list, sees counts here but no
+  // rupee totals.
+  if (type === 'summary') {
+    const may = (key) => can(opts.role, key);
+    const num = (v) => Number(v) || 0;
+    const rupees = (v) => `₹${inr(Math.round(num(v)))}`;
+    const share = summaryShare;
+    const sections = [];
+
+    // Registrations -- counted wherever a registration list is already open
+    // to this role.
+    if (may('reports.payments') || may('reports.delegates') || may('reports.delegate_programs')) {
+      const counts = Object.fromEntries((await dbAll(
+        'SELECT bank_status AS s, COUNT(*) AS n FROM registrations GROUP BY bank_status'))
+        .map((r) => [r.s, num(r.n)]));
+      const submitted = Object.values(counts).reduce((x, y) => x + y, 0);
+      // Every status listed, zeros included, so the table has the same shape
+      // from one day to the next.
+      const STATUSES = [
+        ['BANK_VERIFIED', 'Confirmed — paid and verified'],
+        ['PENDING', 'Awaiting approval'],
+        ['PARTIAL_PAYMENT', 'Balance due'],
+        ['REJECTED', 'Rejected'],
+      ];
+      sections.push({
+        name: 'Registrations',
+        columns: ['Measure', 'Count', 'Share'],
+        rows: [['Registrations submitted', submitted, share(submitted, submitted)],
+          ...STATUSES.map(([st, label]) => [label, counts[st] || 0, share(counts[st] || 0, submitted)])],
+      });
+      const cats = await dbAll(
+        `SELECT category_label AS c, COUNT(*) AS n FROM registrations
+          WHERE bank_status = 'BANK_VERIFIED'
+          GROUP BY category_label ORDER BY n DESC, category_label`);
+      const confirmed = cats.reduce((x, r) => x + num(r.n), 0);
+      if (cats.length) {
+        sections.push({
+          name: 'Confirmed registrations by category',
+          columns: ['Category', 'Delegates', 'Share'],
+          rows: [...cats.map((r) => [r.c || '(no category)', num(r.n), share(num(r.n), confirmed)]),
+            ['Total confirmed', confirmed, share(confirmed, confirmed)]],
+        });
+      }
+    }
+
+    // Money -- conference-wide totals, finance roles only.
+    if (may('payments.view_totals')) {
+      const t = await computeFinanceTotals();
+      const disc = await dbGet(
+        `SELECT COUNT(*) AS n, COALESCE(SUM(discount_amount), 0) AS t FROM registrations
+          WHERE discount_amount > 0 AND bank_status != 'REJECTED'`);
+      const adj = await dbGet(
+        'SELECT COUNT(*) AS n, COALESCE(SUM(fee_adjustment), 0) AS t FROM registrations WHERE fee_adjustment > 0');
+      const ref = await dbGet('SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS t FROM payment_refunds');
+      const cash = await dbGet(
+        `SELECT COUNT(*) AS n, COALESCE(SUM(COALESCE(verified_amount, amount, 0)), 0) AS t
+           FROM payment_transactions
+          WHERE payment_mode = 'CASH' AND txn_status = 'VERIFIED' AND bank_txn_id IS NULL`);
+      sections.push({
+        name: 'Money',
+        columns: ['Measure', 'Count', 'Amount'],
+        rows: [
+          ['Collected — verified payments', t.verifiedCount, rupees(t.collected)],
+          ['Outstanding — balances due', t.owingCount, rupees(t.outstanding)],
+          ['Discounts given — codes and groups', num(disc.n), rupees(disc.t)],
+          ['Fee adjustments', num(adj.n), rupees(adj.t)],
+          ['Refunds recorded', num(ref.n), rupees(ref.t)],
+          ['Cash collected, not yet banked', num(cash.n), rupees(cash.t)],
+        ],
+      });
+      const modes = await dbAll(
+        `SELECT payment_mode AS m, COUNT(*) AS n, COALESCE(SUM(COALESCE(verified_amount, amount, 0)), 0) AS t
+           FROM payment_transactions WHERE txn_status = 'VERIFIED'
+          GROUP BY payment_mode ORDER BY t DESC`);
+      if (modes.length) {
+        sections.push({
+          name: 'Collected by payment method',
+          columns: ['Method', 'Payments', 'Amount'],
+          rows: modes.map((r) => [PAYMENT_MODE_LABELS[r.m] || r.m || '(not recorded)', num(r.n), rupees(r.t)]),
+        });
+      }
+    }
+
+    // Delegates -- the same population as the Registered Delegates report:
+    // confirmed registrations only.
+    if (may('reports.delegates')) {
+      const people = await dbAll(
+        `SELECT u.gender AS g, u.state AS st, r.checked_in_at AS ci
+           FROM registrations r LEFT JOIN users u ON u.phone_number = r.phone_number
+          WHERE r.bank_status = 'BANK_VERIFIED'`);
+      const total = people.length;
+      const female = people.filter((x) => x.g === 'Female').length;
+      const male = people.filter((x) => x.g === 'Male').length;
+      const arrived = people.filter((x) => x.ci).length;
+      const states = new Map();
+      for (const x of people) {
+        const k = String(x.st || '').trim() || '(not stated)';
+        states.set(k, (states.get(k) || 0) + 1);
+      }
+      sections.push({
+        name: 'Confirmed delegates',
+        columns: ['Measure', 'Count', 'Share'],
+        rows: [
+          ['Confirmed delegates', total, share(total, total)],
+          ['Female', female, share(female, total)],
+          ['Male', male, share(male, total)],
+          ['Other or not stated', total - female - male, share(total - female - male, total)],
+          ['States represented', [...states.keys()].filter((k) => k !== '(not stated)').length, ''],
+          ['Arrived at the conference', arrived, share(arrived, total)],
+        ],
+      });
+      // The ten largest by name; the long tail as one line, so this stays a
+      // summary rather than a list of every state.
+      const ranked = [...states.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]));
+      const rest = ranked.slice(10);
+      const restN = rest.reduce((x, [, n]) => x + n, 0);
+      if (ranked.length) {
+        sections.push({
+          name: 'Confirmed delegates by state',
+          columns: ['State', 'Delegates', 'Share'],
+          rows: [...ranked.slice(0, 10).map(([st, n]) => [st, n, share(n, total)]),
+            ...(rest.length ? [[`${rest.length} other state${rest.length === 1 ? '' : 's'}`, restN, share(restN, total)]] : [])],
+        });
+      }
+    }
+
+    // Programmes -- fetchProgramGroups is the only correct source for these
+    // numbers: its `enrolled` excludes faculty (who hold a place on a roster
+    // without taking a delegate's seat) and rejected registrations.
+    if (may('reports.programs') || may('reports.delegate_programs')) {
+      const groups = await fetchProgramGroups({ activeOnly: true });
+      const rows = [];
+      for (const g of groups) {
+        for (const o of g.options) {
+          rows.push([g.name, o.name, num(o.enrolled), num(o.capacity),
+            Math.max(0, num(o.capacity) - num(o.enrolled)), num(o.faculty_count)]);
+        }
+      }
+      if (rows.length) {
+        sections.push({
+          name: 'Programme occupancy',
+          columns: ['Programme', 'Option', 'Enrolled', 'Capacity', 'Seats left', 'Faculty'],
+          rows,
+        });
+      }
+    }
+
+    if (may('reports.abstracts')) {
+      const st = Object.fromEntries((await dbAll(
+        'SELECT status AS s, COUNT(*) AS n FROM abstracts GROUP BY status')).map((r) => [r.s, num(r.n)]));
+      const submitted = Object.values(st).reduce((x, y) => x + y, 0);
+      const ABS = [
+        ['UNDER_REVIEW', 'Under review'],
+        ['REVISION_REQUESTED', 'Revision requested'],
+        ['ACCEPTED', 'Accepted'],
+        ['REJECTED', 'Not accepted'],
+      ];
+      const known = new Set(ABS.map((x) => x[0]));
+      const alloc = await dbAll(
+        "SELECT allocation AS a, COUNT(*) AS n FROM abstracts WHERE status = 'ACCEPTED' GROUP BY allocation");
+      const fmt = (a) => (a ? a.charAt(0).toUpperCase() + a.slice(1).toLowerCase() : 'format not yet assigned');
+      sections.push({
+        name: 'Abstracts',
+        columns: ['Measure', 'Count', 'Share'],
+        rows: [
+          ['Abstracts submitted', submitted, share(submitted, submitted)],
+          ...ABS.map(([k, label]) => [label, st[k] || 0, share(st[k] || 0, submitted)]),
+          ...Object.entries(st).filter(([k]) => !known.has(k)).map(([k, n]) => [k, n, share(n, submitted)]),
+          ...alloc.map((r) => [`Accepted — ${fmt(r.a)}`, num(r.n), share(num(r.n), st.ACCEPTED || 0)]),
+        ],
+      });
+    }
+
+    if (may('reports.users')) {
+      const roles = await dbAll(
+        `SELECT u.role AS r, COALESCE(ro.label, u.role) AS label, COUNT(*) AS n
+           FROM users u LEFT JOIN roles ro ON ro.key = u.role
+          GROUP BY u.role ORDER BY (u.role = 'DELEGATE') DESC, n DESC`);
+      const total = roles.reduce((x, r) => x + num(r.n), 0);
+      const ver = await dbGet(
+        `SELECT SUM(CASE WHEN phone_verified = 1 THEN 1 ELSE 0 END) AS p,
+                SUM(CASE WHEN email_verified = 1 THEN 1 ELSE 0 END) AS e,
+                SUM(CASE WHEN COALESCE(phone_verified, 0) = 0 AND COALESCE(email_verified, 0) = 0 THEN 1 ELSE 0 END) AS none
+           FROM users`);
+      sections.push({
+        name: 'Accounts',
+        columns: ['Measure', 'Count', 'Share'],
+        rows: [
+          ['Accounts', total, share(total, total)],
+          ...roles.map((r) => [r.r === 'DELEGATE' ? 'Delegate accounts' : `Staff — ${r.label}`, num(r.n), share(num(r.n), total)]),
+          ['Mobile number verified', num(ver.p), share(num(ver.p), total)],
+          ['Email address verified', num(ver.e), share(num(ver.e), total)],
+          ['No verified contact channel', num(ver.none), share(num(ver.none), total)],
+        ],
+      });
+    }
+
+    // Only reachable by a custom role granted this report and no other; say
+    // so rather than hand back an empty page.
+    if (!sections.length) {
+      sections.push({ name: 'Nothing to show', columns: ['Note'],
+        rows: [['This role cannot see any of the figures in this report.']] });
+    }
+    return { title: 'Summary — Headline Figures', kind: 'summary', sections };
+  }
+
   if (type === 'delegates') {
     const rows = (await dbAll(
       `SELECT registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number AS phone_number,
@@ -10370,7 +10628,7 @@ function reportHtml(rep) {
     const th = sec.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join('');
     const trs = sec.rows.map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('') ||
       `<tr><td colspan="${sec.columns.length}" style="text-align:center;color:#94a3b8">No records</td></tr>`;
-    return `${sec.name ? `<h2>${escapeHtml(sec.name)} <span class="count">(${sec.rows.length})</span></h2>` : ''}
+    return `${sec.name ? `<h2>${escapeHtml(sec.name)}${rep.kind === 'summary' ? '' : ` <span class="count">(${sec.rows.length})</span>`}</h2>` : ''}
       <table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
   };
   const now = new Date().toLocaleString('en-IN', { dateStyle: 'long', timeStyle: 'short' });
@@ -10420,7 +10678,7 @@ function reportHtml(rep) {
   }
 </style></head><body>
   <h1>${escapeHtml(CONFERENCE.acronym)} · ${escapeHtml(rep.title)}</h1>
-  <p class="sub">Generated ${escapeHtml(now)} · ${total} record(s)</p>
+  <p class="sub">Generated ${escapeHtml(now)} · ${rep.kind === 'summary' ? 'Summary figures — no individual records' : `${total} record(s)`}</p>
   <div class="actions"><button type="button" id="print-report">Print / Save as PDF</button></div>
   ${rep.sections.map(table).join('')}
   <script>
@@ -10468,7 +10726,7 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
     if (type === 'workshops' && !req.query.optionId) {
       return res.status(400).json({ success: false, error: 'Select a workshop or QI practice first.' });
     }
-    const rep = await buildReport(type, { optionId: req.query.optionId });
+    const rep = await buildReport(type, { optionId: req.query.optionId, role: req.session.role });
     res.set('Cache-Control', 'private, no-store');
     if (req.query.format === 'csv') {
       res.set('Content-Type', 'text/csv; charset=utf-8');

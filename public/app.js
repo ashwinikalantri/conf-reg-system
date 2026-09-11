@@ -2864,6 +2864,7 @@ function applyRoleVisibility() {
   // is its own permission (see permissions.js), so this is not one
   // isFinance/isReviewer/isOperations question but six separate ones.
   const reportCards = {
+    'report-summary': 'reports.summary',
     'report-delegates': 'reports.delegates',
     'report-delegate-programs': 'reports.delegate_programs',
     'report-payments': 'reports.payments',
@@ -7636,7 +7637,7 @@ async function viewReport(type, extraQuery) {
 
   const table = (sec, idx) => `
     <div class="report-section" data-section-idx="${idx}">
-      ${sec.name ? `<h3 class="text-sm font-bold text-indigo-800 mt-4 mb-2">${esc(sec.name)} <span class="report-section-count text-slate-400 font-normal">(${sec.rows.length})</span></h3>` : ''}
+      ${sec.name ? `<h3 class="text-sm font-bold text-indigo-800 mt-4 mb-2">${esc(sec.name)} <span class="report-section-count text-slate-400 font-normal${rep.kind === 'summary' ? ' hidden' : ''}">(${sec.rows.length})</span></h3>` : ''}
       <div class="overflow-x-auto border border-slate-200 rounded-xl">
         <table class="w-full text-left border-collapse text-xs sm:min-w-[600px]">
           <thead class="hidden sm:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 font-bold text-slate-500 uppercase">
@@ -7657,7 +7658,9 @@ async function viewReport(type, extraQuery) {
     <div class="flex justify-between items-center flex-wrap gap-3">
       <div>
         <h3 class="font-bold text-slate-800">${esc(rep.title)}</h3>
-        <p class="text-xs text-slate-500 mt-0.5">Total: <span id="report-total-count" class="font-bold text-slate-700">${totalRows}</span> record${totalRows === 1 ? '' : 's'}<span id="report-filtered-note" class="hidden text-slate-400"> (filtered from ${totalRows})</span></p>
+        <p class="text-xs text-slate-500 mt-0.5">${rep.kind === 'summary'
+          ? `Summary figures — no individual records<span id="report-total-count" class="hidden">${totalRows}</span>`
+          : `Total: <span id="report-total-count" class="font-bold text-slate-700">${totalRows}</span> record${totalRows === 1 ? '' : 's'}`}<span id="report-filtered-note" class="hidden text-slate-400"> (filtered from ${totalRows})</span></p>
       </div>
       <div class="flex items-center gap-2">
         <input id="report-search-input" type="text" placeholder="Search rows…" oninput="filterReportRows()" class="p-2 border rounded-lg text-xs w-52 outline-none focus:ring-2 focus:ring-indigo-200">

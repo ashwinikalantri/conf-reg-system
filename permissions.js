@@ -107,6 +107,12 @@ const PERMISSIONS = [
   ['reports.programs', 'reports', 'Programme roster report', 'The roster for one workshop or practice.'],
   ['reports.abstracts', 'reports', 'Abstracts report', 'Submissions and their review status.'],
   ['reports.users', 'reports', 'Users report', 'Accounts, contact details and roles.'],
+  // The one report with no line list: headline counts and totals, nothing
+  // that identifies a person. It opens for a role, but what it SHOWS is
+  // decided block by block by that role's other permissions (see the
+  // 'summary' branch of buildReport), so holding it never reveals a figure
+  // the role could not already get from a report it may open.
+  ['reports.summary', 'reports', 'Summary report', 'Headline figures across registrations, money, programmes, abstracts and accounts, with no individual records. Each block appears only to a role that may already see its data.'],
 
   // --- Users & roles ---
   ['users.view', 'users', 'View users', 'Open Users & Roles and read any account.'],
@@ -307,6 +313,7 @@ const REPORT_PERMISSIONS = {
   workshops: 'reports.programs',
   abstracts: 'reports.abstracts',
   users: 'reports.users',
+  summary: 'reports.summary',
 };
 
 // Which permission opens each screen of the admin panel -- one entry per file
@@ -327,7 +334,7 @@ const SECTION_PERMISSIONS = {
   statement: { permission: 'statement.view' },
   abstracts: { permission: 'abstracts.view' },
   reports: { anyOf: ['reports.delegates', 'reports.delegate_programs', 'reports.payments',
-    'reports.programs', 'reports.abstracts', 'reports.users'] },
+    'reports.programs', 'reports.abstracts', 'reports.users', 'reports.summary'] },
   users: { permission: 'users.view' },
   roles: { permission: 'users.manage_roles' },
   fees: { permission: 'masters.fees_view' },
@@ -391,13 +398,14 @@ const SYSTEM_ROLES = [
       // deliberately-left-alone ones above.
       'masters.fees_view',
       'reports.delegates', 'reports.delegate_programs', 'reports.payments', 'reports.programs',
+      'reports.summary',
     ],
   },
   {
     key: 'ACADEMIC_REVIEWER',
     label: 'Academic Reviewer',
     description: 'Abstracts and the abstracts report. Nothing financial.',
-    permissions: ['abstracts.view', 'abstracts.review', 'reports.abstracts'],
+    permissions: ['abstracts.view', 'abstracts.review', 'reports.abstracts', 'reports.summary'],
   },
   {
     key: 'FINANCE_ACADEMIC',
@@ -442,7 +450,7 @@ const SYSTEM_ROLES = [
     permissions: [
       'users.view', 'users.create', 'users.assign_role',
       'reports.delegates', 'reports.delegate_programs', 'reports.payments',
-      'reports.programs', 'reports.abstracts', 'reports.users',
+      'reports.programs', 'reports.abstracts', 'reports.users', 'reports.summary',
     ],
   },
 ];

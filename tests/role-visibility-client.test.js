@@ -32,7 +32,7 @@ const ELEMENT_IDS = [
   'settings-item-programs', 'settings-item-fees', 'settings-item-general',
   'settings-item-discount', 'settings-item-activity',
   'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
-  'report-delegates', 'report-delegate-programs', 'report-payments',
+  'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments',
   'report-workshops', 'report-abstracts',
   // Step 2 of the Abstracts tab, gated on abstracts.assign rather than on
   // seeing the section -- a reviewer who cannot set oral vs poster should not
@@ -54,24 +54,24 @@ const EXPECTED_VISIBLE = {
     'settings-menu-btn', 'settings-item-programs', 'settings-item-fees',
     'settings-item-general', 'settings-item-discount', 'settings-item-activity',
     'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
-    'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts',
+    'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts',
     'abstracts-assignment-block'],
   FINANCE_ADMIN: ['nav-tab-payments', 'nav-tab-statement', 'nav-tab-reports',
     'settings-menu-btn', 'settings-item-fees', 'settings-item-discount',
     'settings-item-reminders', 'settings-item-groupdiscount',
-    'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops'],
-  ACADEMIC_REVIEWER: ['nav-tab-abstracts', 'nav-tab-reports', 'report-abstracts'],
+    'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops'],
+  ACADEMIC_REVIEWER: ['nav-tab-abstracts', 'nav-tab-reports', 'report-summary', 'report-abstracts'],
   FINANCE_ACADEMIC: ['nav-tab-payments', 'nav-tab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
     'settings-menu-btn', 'settings-item-fees', 'settings-item-discount',
     'settings-item-reminders', 'settings-item-groupdiscount',
-    'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
+    'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
   // One main tab, and that is the point: the desk works a person at a time
   // and has no business in the payments worklist or the statement. It sees
   // the Fee Master read-only because masters.fees_view is what tells it which
   // categories need a student ID.
   FRONT_DESK: ['nav-tab-desk', 'settings-menu-btn', 'settings-item-fees'],
   OPERATIONS: ['nav-tab-reports', 'settings-menu-btn', 'settings-item-users',
-    'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
+    'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
 };
 
 // A minimal element/document, same shape tests/dashboard-first-paint.test.js

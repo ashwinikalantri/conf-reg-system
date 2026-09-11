@@ -73,11 +73,28 @@ function boot(work, port) {
       WHERE rp.permission = ? AND r.grants_all = 0 ORDER BY rp.role_key`, [SOURCE_KEY]);
   await run(db, 'DELETE FROM role_permissions WHERE permission = ?', [NEW_KEY]);
   const afterDelete = await all(db, 'SELECT role_key FROM role_permissions WHERE permission = ?', [NEW_KEY]);
+
+  // The summary report is the other backfilled key, and a different shape of
+  // case: not a split of one key but a new report for every role that can
+  // already open ANY report. So it is staled the same way and expected back
+  // on each role holding at least one report key -- including a role whose
+  // only report is abstracts, which is what the live custom ABSTRACT_ASSIGN
+  // role looks like.
+  const REPORT_KEYS = ['reports.delegates', 'reports.delegate_programs', 'reports.payments',
+    'reports.programs', 'reports.abstracts', 'reports.users'];
+  const summaryExpected = (await all(db,
+    `SELECT DISTINCT rp.role_key FROM role_permissions rp JOIN roles r ON r.key = rp.role_key
+      WHERE r.grants_all = 0 AND rp.permission IN (${REPORT_KEYS.map(() => '?').join(',')})
+      ORDER BY rp.role_key`, REPORT_KEYS)).map((r) => r.role_key);
+  await run(db, "DELETE FROM role_permissions WHERE permission = 'reports.summary'");
+  const summaryStale = await all(db, "SELECT role_key FROM role_permissions WHERE permission = 'reports.summary'");
   await close(db);
 
   console.log('\n== The stale database really is stale ==');
   check('there are roles holding the source permission', before.length > 0, before);
   check('and none of them holds the new one yet', afterDelete.length === 0, afterDelete);
+  check('there are roles that open some report', summaryExpected.length > 0, summaryExpected);
+  check('and none of them holds the summary report yet', summaryStale.length === 0, summaryStale);
 
   console.log('\n== Booting restores it ==');
   const out = await boot(work, 34100 + (process.pid % 900));
@@ -93,10 +110,23 @@ function boot(work, port) {
   check('...and nothing else was granted it',
     restored.every((r) => expected.includes(r)), { expected, restored });
 
+  console.log('\n== ...and the summary report reaches every role that opens a report ==');
+  check('the server announced that backfill too', /Backfilled reports\.summary/.test(out),
+    out.split('\n').filter((l) => /Backfill/.test(l)).join(' | '));
+  const summaryNow = (await all(db,
+    "SELECT role_key FROM role_permissions WHERE permission = 'reports.summary' ORDER BY role_key")).map((r) => r.role_key);
+  check('every role holding any report key has it', summaryExpected.every((r) => summaryNow.includes(r)),
+    { summaryExpected, summaryNow });
+  check('...and no other role was granted it', summaryNow.every((r) => summaryExpected.includes(r)),
+    { summaryExpected, summaryNow });
+  check('...including a role whose only report is abstracts', summaryNow.includes('ACADEMIC_REVIEWER'), summaryNow);
+  check('the Front Desk, which holds no report key, did not get it', !summaryNow.includes('FRONT_DESK'), summaryNow);
+
   console.log('\n== It is idempotent, and does not resurrect a deliberate removal ==');
   // Second boot: nothing to do, and no duplicate rows.
   const out2 = await boot(work, 34100 + ((process.pid + 1) % 900));
   check('a second boot reports no backfill', !/Backfilled payments\.view_totals/.test(out2));
+  check('...for the summary report either', !/Backfilled reports\.summary/.test(out2));
   db = await open(file);
   const dupes = await all(db,
     'SELECT role_key, COUNT(*) n FROM role_permissions WHERE permission = ? GROUP BY role_key HAVING n > 1', [NEW_KEY]);

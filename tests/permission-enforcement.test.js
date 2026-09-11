@@ -58,6 +58,7 @@ const REPORT_PROBES = [
   { report: 'payments', permission: 'reports.payments' },
   { report: 'abstracts', permission: 'reports.abstracts' },
   { report: 'users', permission: 'reports.users' },
+  { report: 'summary', permission: 'reports.summary' },
 ];
 
 (async () => {

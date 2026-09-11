@@ -206,17 +206,39 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   }
   check('no role changed at all', mismatched === 0, mismatched);
 
-  console.log('\n== The six reports keep their own rules ==');
+  console.log('\n== The reports keep their own rules ==');
+  // Reports that did not exist when the baseline was taken. Each names the
+  // roles expected to reach it and why, so a new report is acknowledged once,
+  // deliberately, in a diff somebody reads -- rather than absorbed silently
+  // into "every role runs the same reports".
+  const REPORTS_ADDED_SINCE_BASELINE = {
+    summary: {
+      roles: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC', 'OPERATIONS'],
+      why: 'Headline counts and totals with no individual records. Opens for every role that could '
+        + 'already open some report; what it SHOWS is decided block by block by that role\'s other '
+        + 'permissions, so it reveals nothing a role could not already see. Money totals sit behind '
+        + 'payments.view_totals. The Front Desk holds no report key and does not get it.',
+    },
+  };
+  // Not `added`: that name is already taken earlier in this scope by the
+  // route comparison.
+  const addedReports = new Set(Object.keys(REPORTS_ADDED_SINCE_BASELINE));
   const reportNames = Object.keys(perms.REPORT_PERMISSIONS);
-  check('the baseline knows the same reports',
-    reportNames.length === setOf(Object.values(BASELINE.roles).flatMap((r) => r.reports)).size,
-    reportNames.length);
+  const baselineReports = reportNames.filter((n) => !addedReports.has(n));
+  check('the baseline knows the same reports, besides those acknowledged as new',
+    baselineReports.length === setOf(Object.values(BASELINE.roles).flatMap((r) => r.reports)).size,
+    baselineReports.length);
   for (const role of ROLES) {
     const before = setOf(BASELINE.roles[role].reports);
-    const nowReach = setOf(reportNames.filter((n) => perms.roleCan(role, perms.REPORT_PERMISSIONS[n])));
+    const nowReach = setOf(baselineReports.filter((n) => perms.roleCan(role, perms.REPORT_PERMISSIONS[n])));
     check(`${role} runs the same reports`,
       diff(nowReach, before).length === 0 && diff(before, nowReach).length === 0,
       { baseline: [...before], now: [...nowReach] });
+  }
+  for (const [name, ack] of Object.entries(REPORTS_ADDED_SINCE_BASELINE)) {
+    const reach = ROLES.filter((role) => perms.roleCan(role, perms.REPORT_PERMISSIONS[name])).sort();
+    check(`the new ${name} report reaches exactly the roles acknowledged for it`,
+      JSON.stringify(reach) === JSON.stringify([...ack.roles].sort()), { reach, acknowledged: ack.roles });
   }
 
   console.log('\n== Sections open to the same roles the browser opens them to ==');
