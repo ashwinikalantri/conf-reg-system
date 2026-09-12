@@ -10472,7 +10472,7 @@ async function buildReport(type, opts = {}) {
          WHERE registrations.bank_status = 'BANK_VERIFIED'
          ORDER BY registrations.registration_number`)).map(withDelegateSalutation);
     return {
-      title: 'Registered Delegates — Demography & Institute Details',
+      title: 'Registered Delegates',
       sections: [{
         columns: ['Reg No', 'Name', 'Age', 'Gender', 'Mobile', 'Email', 'Designation', 'Institution', 'District', 'State', 'Pincode', 'Country'],
         rows: rows.map((r) => [r.registration_number, r.delegate_name, r.age, r.gender, displayPhone(r), r.email, r.designation, r.institution, r.district, r.state, r.pincode, r.country || 'India']),
