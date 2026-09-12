@@ -25,6 +25,7 @@ const {
   SECTIONS, PERMISSIONS,
   roleCan, permissionsForRole,
 } = require('./permissions');
+const { renderReportPdf } = require('./report-pdf');
 
 const multer = require('multer');
 const XLSX = require('xlsx');
@@ -10668,7 +10669,7 @@ function toCsv(rep) {
   }).join('\r\n\r\n');
 }
 
-function reportHtml(rep) {
+function reportHtml(rep, opts = {}) {
   const table = (sec) => {
     const th = sec.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join('');
     const trs = sec.rows.map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('') ||
@@ -10676,8 +10677,6 @@ function reportHtml(rep) {
     return `${sec.name ? `<h2>${escapeHtml(sec.name)}${rep.kind === 'summary' ? '' : ` <span class="count">(${sec.rows.length})</span>`}</h2>` : ''}
       <table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
   };
-  const now = new Date().toLocaleString('en-IN', { dateStyle: 'long', timeStyle: 'short' });
-  const total = rep.sections.reduce((n, s) => n + s.rows.length, 0);
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${PAGE_FONTS}
 <title>${escapeHtml(rep.title)}</title>
 <style>
@@ -10691,7 +10690,7 @@ function reportHtml(rep) {
   th{background:#f1f5f9;text-transform:uppercase;font-size:.68rem;letter-spacing:.04em;color:#475569;}
   tr:nth-child(even) td{background:#f8fafc;}
   .actions{margin:1.25rem 0;}
-  button{background:#2f5673;color:#fff;border:0;border-radius:8px;padding:.55rem 1.25rem;font-weight:700;cursor:pointer;}
+  .actions a{display:inline-block;background:#2f5673;color:#fff;border-radius:8px;padding:.55rem 1.25rem;font-weight:700;text-decoration:none;}
   /* Print setup, modelled on the payment receipt -- which prints correctly in
      Safari while this report printed blank pages. Both send the same
      no-store header and load the same webfonts, so neither of those is the
@@ -10722,26 +10721,22 @@ function reportHtml(rep) {
     *{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
   }
 </style></head><body>
-  <h1>${escapeHtml(CONFERENCE.acronym)} · ${escapeHtml(rep.title)}</h1>
-  <p class="sub">Generated ${escapeHtml(now)} · ${rep.kind === 'summary' ? 'Summary figures — no individual records' : `${total} record(s)`}</p>
-  <div class="actions"><button type="button" id="print-report">Print / Save as PDF</button></div>
+  <h1>${escapeHtml(reportHeading(rep))}</h1>
+  <p class="sub">${escapeHtml(reportSubline(rep))}</p>
+  ${opts.pdfHref ? `<div class="actions"><a id="download-pdf" href="${escapeHtml(opts.pdfHref)}">Download PDF</a></div>` : ''}
   ${rep.sections.map(table).join('')}
-  <script>
-    // Print once the webfonts have settled, as the receipt does, so the
-    // paginated output is laid out with the same fonts as the screen --
-    // but never wait more than a moment if they do not resolve.
-    (function () {
-      var btn = document.getElementById('print-report');
-      if (!btn) return;
-      btn.addEventListener('click', function () {
-        var go = function () { window.print(); };
-        if (document.fonts && document.fonts.ready) {
-          Promise.race([document.fonts.ready, new Promise(function (r) { setTimeout(r, 1500); })]).then(go);
-        } else { go(); }
-      });
-    }());
-  </script>
 </body></html>`;
+}
+
+// The heading and sub-line every format of a report shares, so the PDF
+// cannot drift from the page it replaces.
+function reportHeading(rep) {
+  return [CONFERENCE.acronym, rep.title].filter(Boolean).join(' · ');
+}
+function reportSubline(rep) {
+  const now = new Date().toLocaleString('en-IN', { dateStyle: 'long', timeStyle: 'short' });
+  const total = rep.sections.reduce((n, s) => n + s.rows.length, 0);
+  return `Generated ${now} · ${rep.kind === 'summary' ? 'Summary figures — no individual records' : `${total} record(s)`}`;
 }
 
 // Lets the workshops report's "one at a time" picker populate without
@@ -10781,7 +10776,19 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
     if (req.query.format === 'json') {
       return res.json({ success: true, report: rep });
     }
-    res.type('html').send(reportHtml(rep));
+    // A real PDF, drawn here -- Safari printed the HTML page below blank
+    // (see report-pdf.js for why this is no longer left to the browser).
+    const pdfHref = `/api/admin/reports/${encodeURIComponent(type)}?format=pdf`
+      + (req.query.optionId ? `&optionId=${encodeURIComponent(req.query.optionId)}` : '');
+    if (req.query.format === 'pdf') {
+      const pdf = await renderReportPdf(rep, {
+        heading: reportHeading(rep), subline: reportSubline(rep), footer: reportHeading(rep),
+      });
+      res.set('Content-Type', 'application/pdf');
+      res.set('Content-Disposition', `attachment; filename="${reportFilePrefix()}-${type}-report.pdf"`);
+      return res.send(pdf);
+    }
+    res.type('html').send(reportHtml(rep, { pdfHref }));
   } catch (err) {
     next(err);
   }

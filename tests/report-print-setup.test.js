@@ -17,7 +17,6 @@
 // Safari itself was not available where this was written: these checks pin
 // the structure that makes the two pages alike, not a Safari rendering.
 const { call, check, report, adminLogin } = require('./harness');
-const vm = require('vm');
 
 (async () => {
   const admin = await adminLogin();
@@ -70,42 +69,19 @@ const vm = require('vm');
   check('long-token breaking applies only when printing', !/word-break/.test(screenCss));
   check('row-break rules apply only when printing', !/break-inside/.test(screenCss));
 
-  console.log('\n== Printing waits for the fonts, as the receipt does ==');
-  check('the button no longer prints from an inline handler', !/onclick="window\.print\(\)"/.test(html));
-  check('it is wired by id instead', /<button type="button" id="print-report">Print \/ Save as PDF<\/button>/.test(html));
-  const script = (html.match(/<script>([\s\S]*?)<\/script>/) || [])[1] || '';
-  check('a script handles it', script.includes("getElementById('print-report')"));
-  check('...waiting for document.fonts.ready, but never more than a moment',
-    /Promise\.race\(\[document\.fonts\.ready, new Promise\(function \(r\) \{ setTimeout\(r, 1500\); \}\)\]\)/.test(script));
-
-  // Drive that script for real: click the button, let the fonts settle, and
-  // confirm it prints exactly once -- and not before the fonts are ready.
-  let clickHandler = null;
-  let printed = 0;
-  let releaseFonts;
-  const fontsReady = new Promise((r) => { releaseFonts = r; });
-  const sandbox = {
-    document: {
-      getElementById: (id) => (id === 'print-report'
-        ? { addEventListener: (type, fn) => { if (type === 'click') clickHandler = fn; } }
-        : null),
-      fonts: { ready: fontsReady },
-    },
-    window: { print: () => { printed++; } },
-    setTimeout, Promise,
-  };
-  sandbox.window.document = sandbox.document;
-  vm.createContext(sandbox);
-  vm.runInContext(script, sandbox, { filename: 'report-print.js' });
-  check('the script attaches a click handler', typeof clickHandler === 'function');
-  if (clickHandler) {
-    clickHandler();
-    await new Promise((r) => setTimeout(r, 20));
-    check('clicking does not print before the fonts are ready', printed === 0, printed);
-    releaseFonts();
-    await new Promise((r) => setTimeout(r, 20));
-    check('...and prints exactly once when they are', printed === 1, printed);
-  }
+  console.log('\n== The page hands PDF-making to the server ==');
+  // Safari printed this page blank however it was set up -- even the
+  // one-page Summary -- so its button is now a link to a PDF the server
+  // draws (report-pdf.js). The print CSS above stays, for anyone who still
+  // prints the page itself from another browser.
+  check('no print button is left to go blank', !/window\.print\(\)/.test(html) && !/id="print-report"/.test(html));
+  check('a Download PDF link is offered instead',
+    /<a id="download-pdf" href="\/api\/admin\/reports\/delegates\?format=pdf">Download PDF<\/a>/.test(html),
+    (html.match(/<a id="download-pdf"[^>]*>/) || [])[0]);
+  const ws = await call('GET', '/api/admin/reports/workshops?optionId=1', null, admin);
+  check('...keeping the workshop the page was opened for',
+    ws.status !== 200 || /href="\/api\/admin\/reports\/workshops\?format=pdf&amp;optionId=1"/.test(String(ws.body)),
+    (String(ws.body).match(/<a id="download-pdf"[^>]*>/) || [ws.status])[0]);
 
   report();
 })();

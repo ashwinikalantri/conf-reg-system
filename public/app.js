@@ -7572,13 +7572,37 @@ async function sendCustomReminders() {
   if (btn) btn.disabled = false;
 }
 
-// CSV downloads; HTML opens a printable report (Print / Save as PDF).
-// `extraQuery` is an already-encoded query fragment like "&optionId=5"
-// (used by the workshops report's one-at-a-time picker).
-function downloadReport(type, format, extraQuery) {
-  const params = (format === 'csv' ? 'format=csv' : '') + (extraQuery || '');
-  const url = `/api/admin/reports/${encodeURIComponent(type)}` + (params ? '?' + params.replace(/^&/, '') : '');
-  window.open(url, '_blank');
+// Downloads a report file: CSV ("Excel") or a PDF the server draws (PDF is
+// the default -- the browser no longer prints it, see report-pdf.js).
+// Fetched and saved as a file rather than opened in a tab, so a refusal
+// (no permission, no workshop picked) shows its message as a toast instead
+// of replacing the panel with raw JSON. `extraQuery` is an already-encoded
+// fragment like "&optionId=5" (the workshops report's picker).
+async function downloadReport(type, format, extraQuery) {
+  const fmt = format === 'csv' ? 'csv' : 'pdf';
+  const url = `/api/admin/reports/${encodeURIComponent(type)}?format=${fmt}${extraQuery || ''}`;
+  if (fmt === 'pdf') showToast('Preparing the PDF…', 'info');
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      let msg = 'Could not download the report.';
+      try { msg = (await res.json()).error || msg; } catch (e) { /* not JSON */ }
+      showToast(msg);
+      return;
+    }
+    const blob = await res.blob();
+    const named = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = named ? named[1] : `${type}-report.${fmt}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // Kept alive a while: Safari reads the blob after click() returns.
+    setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+  } catch (err) {
+    showToast(`Download failed: ${err.message}`);
+  }
 }
 
 // Render a report directly in the page (one table per section) instead of
