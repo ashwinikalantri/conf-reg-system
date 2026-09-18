@@ -1029,6 +1029,8 @@ function applyRegistrationState(reg) {
 const GROUP_STATUS_LABEL = { BANK_VERIFIED: 'Paid ✓', PARTIAL_PAYMENT: 'Balance due', PENDING: 'Pending', REJECTED: 'Rejected', NOT_REGISTERED: 'Not paid' };
 // Shared by both branches of renderGroupSection() below, so the heading
 // icon has exactly one source instead of two copies that could drift.
+// The how-to page, linked wherever a delegate is looking at the group panel.
+const GROUP_HELP_URL = '/help/group-registration';
 const GROUP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2c2.8.4 5 2.8 5 5.8"/></svg>';
 async function renderGroupSection() {
   const box = document.getElementById('group-section');
@@ -1071,7 +1073,7 @@ async function renderGroupSection() {
         ${g.isLeader ? `<button onclick="openAddGroupMember()" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">+ Add member</button>` : ''}
         <button onclick="leaveGroup()" class="px-3 py-2 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-lg">Leave group</button>
       </div>
-      <p class="text-[11px] text-slate-500 mt-3">Each member pays their own (discounted) fee. The discount is confirmed once every member's payment is verified.</p>`;
+      <p class="text-[11px] text-slate-500 mt-3">Each member pays their own (discounted) fee. The discount is confirmed once every member's payment is verified. <a href="${GROUP_HELP_URL}" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline">How group registration works</a></p>`;
     box.classList.remove('hidden');
     return;
   }
@@ -1084,7 +1086,7 @@ async function renderGroupSection() {
       <h3 class="text-lg font-bold text-slate-800">${GROUP_ICON}Group Registration</h3>
       <span class="text-xs text-slate-500">Save with 5+ delegates</span>
     </div>
-    <p class="text-xs text-slate-600 mb-3">Registering as a group? Start a group and add fellow delegates in the same category to unlock a group discount for everyone.</p>
+    <p class="text-xs text-slate-600 mb-3">Registering as a group? Start a group and add fellow delegates in the same category to unlock a group discount for everyone. <a href="${GROUP_HELP_URL}" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline">How it works</a></p>
     <div class="flex flex-wrap gap-2 items-end">
       <select id="group-start-cat" class="h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
         ${eligible.map((c) => `<option value="${esc(c.category_key)}">${esc(c.label)} — ${c.discount_type === 'PERCENT' ? esc(c.discount_value) + '%' : '₹' + inr(c.discount_value)} off for ${esc(c.min_size)}+</option>`).join('')}

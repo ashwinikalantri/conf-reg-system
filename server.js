@@ -4353,6 +4353,35 @@ app.get('/api/program-options', requireAuth, async (req, res, next) => {
   }
 });
 
+// How-to for group registration. Public and outside the portal app (no
+// session needed) so a group leader can send the link to colleagues who have
+// not signed up yet -- step 1 of the page is them creating an account.
+//
+// The offers are read live from the group-discount rules rather than written
+// into the page, so it can never quote a discount the portal would not give.
+// Deliberately the same query as GET /api/groups/eligible-categories -- the
+// page says a group can only be formed for a category listed here, which is
+// only true while it lists exactly what that picker offers.
+app.get('/help/group-registration', async (req, res, next) => {
+  try {
+    const rows = await dbAll(`
+      SELECT r.category_key, r.min_size, r.discount_type, r.discount_value, c.label
+        FROM group_discount_rules r JOIN fee_categories c ON c.category_key = r.category_key
+       WHERE r.active = 1 ORDER BY c.sort_order, c.id`);
+    res.render('help/group-registration', {
+      conferenceName: CONFERENCE.name,
+      rules: rows.map((r) => ({
+        ...r,
+        // Same wording as the portal's own "start a group" picker.
+        discountLabel: r.discount_type === 'PERCENT'
+          ? `${Number(r.discount_value)}%` : `₹${Number(r.discount_value).toLocaleString('en-IN')}`,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Conference name/acronym/dates/location, for both the pre-login delegate
 // landing page and the admin header -- deliberately public (no requireAuth):
 // none of this is sensitive, and the landing page needs it before anyone has

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Group Registration — How To<%= conferenceName ? ' · ' + conferenceName : '' %></title>
+  <!-- Same shell as the portal (index.ejs): Libre Franklin headings via
+       styles.css, Source Sans 3 body, and Tailwind's `indigo` remapped onto
+       the steel-blue ramp, so every indigo utility here matches the portal
+       a delegate just came from. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            indigo: {
+              50: '#eef3f6', 100: '#dbe6ec', 200: '#b9cedb', 300: '#8fb0c3',
+              400: '#628ea8', 500: '#46708c', 600: '#2f5673', 700: '#244560',
+              800: '#1c3549', 900: '#142838',
+            },
+          },
+          fontFamily: {
+            sans: ['"Source Sans 3"', 'system-ui', '-apple-system', 'sans-serif'],
+          },
+          boxShadow: {
+            card: '0 1px 2px rgba(20,30,40,.05), 0 12px 28px -14px rgba(20,30,40,.18)',
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    /* styles.css scopes the heading face by container id, so this page names
+       its own -- otherwise every heading falls back to the body face. */
+    #help-page h1, #help-page h2, #help-page h3 { font-family: 'Libre Franklin', 'Source Sans 3', system-ui, sans-serif; }
+    @media print {
+      @page { size: A4; margin: 14mm; }
+      html, body { background: #fff; }
+      .no-print { display: none; }
+      a[href^="/"]::after { content: ''; }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 font-sans min-h-screen">
+<div id="help-page" class="max-w-3xl mx-auto p-4 sm:p-8">
+
+  <header class="mb-6">
+    <a href="/" class="no-print inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-700 hover:text-indigo-900 mb-4">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M15 18l-6-6 6-6"/></svg>
+      Back to the portal
+    </a>
+    <% if (conferenceName) { %><p class="text-xs font-semibold text-indigo-700 uppercase tracking-wide"><%= conferenceName %></p><% } %>
+    <h1 class="text-2xl sm:text-3xl font-bold text-slate-900 mt-1">Group Registration — How To</h1>
+    <p class="text-sm text-slate-600 mt-2">Colleagues registering together can claim a group discount. One person starts the group, adds the others, and everyone pays their own reduced fee.</p>
+  </header>
+
+  <!-- What is actually on offer today, read from the group-discount rules the
+       organising team has set -- so this page cannot quote a figure the
+       portal would not honour. -->
+  <section class="bg-white rounded-2xl border border-slate-200 shadow-card p-5 sm:p-6 mb-5">
+    <h2 class="text-lg font-bold text-slate-800 mb-1">What's on offer right now</h2>
+    <% if (rules && rules.length) { %>
+      <p class="text-xs text-slate-500 mb-3">A group can only be formed for a category listed here.</p>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm border-collapse">
+          <thead>
+            <tr class="text-left text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-200">
+              <th class="py-2 pr-3 font-semibold">Category</th>
+              <th class="py-2 px-3 font-semibold">Members needed</th>
+              <th class="py-2 pl-3 font-semibold">Discount each</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% rules.forEach(function (r) { %>
+            <tr class="border-b border-slate-100 last:border-0">
+              <td class="py-2 pr-3 text-slate-800"><%= r.label %></td>
+              <td class="py-2 px-3 text-slate-700"><%= r.min_size %> or more</td>
+              <td class="py-2 pl-3 font-semibold text-emerald-700"><%= r.discountLabel %> off</td>
+            </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
+      <p class="text-xs text-slate-500 mt-3">The discount applies to the registration fee for that category. Paid workshops and QI practice sessions are charged in full on top.</p>
+    <% } else { %>
+      <p class="text-sm text-slate-600">No group discount is open at the moment. If your institution is sending a delegation, write to the organising team — they can set one up for your category.</p>
+    <% } %>
+  </section>
+
+  <section class="bg-white rounded-2xl border border-slate-200 shadow-card p-5 sm:p-6 mb-5">
+    <h2 class="text-lg font-bold text-slate-800 mb-3">How to register as a group</h2>
+    <ol class="space-y-4">
+      <li class="flex gap-3">
+        <span class="shrink-0 w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">1</span>
+        <div>
+          <p class="text-sm font-semibold text-slate-800">Everyone signs up on the portal first</p>
+          <p class="text-sm text-slate-600">Each delegate creates their own account with their own mobile number or email address. Nobody can be added to a group before they have an account — there is no way to add someone by typing their name.</p>
+        </div>
+      </li>
+      <li class="flex gap-3">
+        <span class="shrink-0 w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">2</span>
+        <div>
+          <p class="text-sm font-semibold text-slate-800">One person starts the group</p>
+          <p class="text-sm text-slate-600">On the dashboard, find <b>Group Registration</b>, choose your category and click <b>Start a group</b>. Whoever does this becomes the group leader and its first member.</p>
+        </div>
+      </li>
+      <li class="flex gap-3">
+        <span class="shrink-0 w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">3</span>
+        <div>
+          <p class="text-sm font-semibold text-slate-800">The leader adds the others</p>
+          <p class="text-sm text-slate-600">Click <b>+ Add member</b> and enter each colleague's registered mobile number or email address — one at a time. They get an email telling them they have been added. Only the leader can add people.</p>
+        </div>
+      </li>
+      <li class="flex gap-3">
+        <span class="shrink-0 w-6 h-6 rounded-full bg-amber-500 text-white text-xs font-bold flex items-center justify-center">4</span>
+        <div>
+          <p class="text-sm font-semibold text-slate-800">Reach the minimum <span class="text-amber-700">before anyone pays</span></p>
+          <p class="text-sm text-slate-600">The discount is worked out at the moment a delegate submits their payment. Someone who pays while the group is still short of the minimum pays the full fee, and it is not refunded automatically when the group fills up later. The panel shows how many more members are needed.</p>
+        </div>
+      </li>
+      <li class="flex gap-3">
+        <span class="shrink-0 w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">5</span>
+        <div>
+          <p class="text-sm font-semibold text-slate-800">Each member pays their own fee</p>
+          <p class="text-sm text-slate-600">There is no single group invoice. Once the group qualifies, every member sees the reduced fee on their own dashboard and pays it themselves. Their receipt shows it as <b>Group discount</b>.</p>
+        </div>
+      </li>
+      <li class="flex gap-3">
+        <span class="shrink-0 w-6 h-6 rounded-full bg-emerald-600 text-white text-xs font-bold flex items-center justify-center">6</span>
+        <div>
+          <p class="text-sm font-semibold text-slate-800">The group is complete when every payment is verified</p>
+          <p class="text-sm text-slate-600">The panel lists each member as Not paid, Pending, Balance due or Paid, so the leader can see who is still outstanding.</p>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <section class="bg-white rounded-2xl border border-slate-200 shadow-card p-5 sm:p-6 mb-5">
+    <h2 class="text-lg font-bold text-slate-800 mb-3">Rules worth knowing</h2>
+    <ul class="space-y-2 text-sm text-slate-700 list-disc list-inside marker:text-indigo-400">
+      <li><b>One group per delegate.</b> To join a different group, leave the current one first.</li>
+      <li><b>Everyone in a group shares one category.</b> A delegate whose registration is already confirmed under another category cannot join.</li>
+      <li><b>A group discount and a promo code do not add up.</b> Whichever is worth more is applied.</li>
+      <li><b>The discount covers the registration fee only.</b> Paid workshops and QI practice sessions are charged in full.</li>
+      <li><b>Anyone can leave</b> from their own dashboard, and the leader can remove a member.</li>
+      <li><b>If the leader leaves</b>, the longest-standing remaining member becomes leader. If the last member leaves, the group is dissolved.</li>
+      <li><b>If the group drops below the minimum</b>, the discount stops applying. Anyone who already paid the reduced fee is emailed and owes the difference, which shows on their dashboard as a balance due.</li>
+    </ul>
+  </section>
+
+  <section class="bg-white rounded-2xl border border-slate-200 shadow-card p-5 sm:p-6 mb-5">
+    <h2 class="text-lg font-bold text-slate-800 mb-3">If the portal will not let you add someone</h2>
+    <dl class="space-y-3 text-sm">
+      <div>
+        <dt class="font-semibold text-slate-800">“No registered delegate with that mobile number or email address.”</dt>
+        <dd class="text-slate-600">They have not signed up yet, or they signed up with a different number or address. Ask them which one they used.</dd>
+      </div>
+      <div>
+        <dt class="font-semibold text-slate-800">“More than one account uses that email address.”</dt>
+        <dd class="text-slate-600">Add them by mobile number instead.</dd>
+      </div>
+      <div>
+        <dt class="font-semibold text-slate-800">“That delegate is already in a group.”</dt>
+        <dd class="text-slate-600">They must leave the other group before you can add them.</dd>
+      </div>
+      <div>
+        <dt class="font-semibold text-slate-800">“That delegate is already confirmed under a different category.”</dt>
+        <dd class="text-slate-600">Their paid registration is for another category, so they cannot be part of this group.</dd>
+      </div>
+      <div>
+        <dt class="font-semibold text-slate-800">Someone paid the full fee before the group filled up</dt>
+        <dd class="text-slate-600">The portal will not refund that on its own. Contact the organising team with the registration numbers — they can adjust the fee or arrange a refund.</dd>
+      </div>
+    </dl>
+  </section>
+
+  <p class="no-print text-center text-xs text-slate-500 mb-4">
+    <a href="/" class="font-semibold text-indigo-700 hover:text-indigo-900">Back to the portal</a>
+  </p>
+</div>
+</body>
+</html>
