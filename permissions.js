@@ -284,8 +284,10 @@ const ROUTE_PERMISSIONS = {
   // Communications
   'GET /api/admin/reminders/pending-signups': 'comms.reminders_view',
   'GET /api/admin/reminders/balance-due': 'comms.reminders_view',
+  'GET /api/admin/reminders/registered': 'comms.reminders_view',
   'POST /api/admin/reminders/send': 'comms.reminders_send',
   'POST /api/admin/reminders/balance-due/send': 'comms.reminders_send',
+  'POST /api/admin/reminders/registered/send': 'comms.reminders_send',
   'POST /api/admin/reminders/test-send': 'comms.reminders_test',
   'POST /api/admin/reminders/balance-due/test-send': 'comms.reminders_test',
   'POST /api/admin/reminders/custom-send': 'comms.custom_send',

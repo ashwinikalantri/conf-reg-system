@@ -14,6 +14,7 @@
 // rule and removes it again in `finally`, pass or fail.
 const { call, check, report, appFile, adminLogin, openDb } = require('./harness');
 const fs = require('fs');
+const vm = require('vm');
 
 const URL = '/help/group-registration';
 const strip = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&#39;|&#x27;/g, "'")
@@ -115,13 +116,63 @@ const strip = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').rep
     check('every value from the database is escaped', !/<%-/.test(view),
       (view.match(/<%-[^%]*%>/g) || []).slice(0, 3));
 
-    console.log('\n== The portal points at it ==');
+    console.log('\n== The group panel in the delegate portal points at it ==');
+    // Rendered for real, both states of the panel: a regex over app.js would
+    // pass on a link inside a template that never renders.
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
-    check('one address for the page, not a copy per link', /const GROUP_HELP_URL = '\/help\/group-registration';/.test(js));
-    check('a delegate already in a group is offered it',
-      /Each member pays their own[\s\S]{0,260}\$\{GROUP_HELP_URL\}/.test(js));
-    check('...and so is one who has not started a group yet',
-      /Registering as a group\?[\s\S]{0,300}\$\{GROUP_HELP_URL\}/.test(js));
+    check('one link, defined once, so the two states cannot drift',
+      (js.match(/const GROUP_HELP_LINK = /g) || []).length === 1);
+
+    const panelHtml = async (groupReply) => {
+      const box = { id: 'group-section', innerHTML: '', hidden: false,
+        classList: { add() {}, remove() {}, toggle() {}, contains: () => false } };
+      const doc = { getElementById: (id) => (id === 'group-section' ? box : null),
+        querySelector: () => null, querySelectorAll: () => [], addEventListener() {},
+        createElement: () => ({ style: {}, classList: { add() {}, remove() {} }, addEventListener() {}, appendChild() {}, remove() {} }),
+        body: { appendChild() {}, classList: { add() {}, remove() {} } },
+        documentElement: {}, readyState: 'loading', cookie: '' };
+      const sandbox = {
+        document: doc,
+        window: { addEventListener() {}, location: { href: '', hash: '', pathname: '/', search: '' },
+          matchMedia: () => ({ matches: false, addEventListener() {} }), history: { replaceState() {} } },
+        localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+        sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+        navigator: { userAgent: 'node' },
+        fetch: async (u) => ({ json: async () => (u === '/api/groups/me' ? groupReply
+          : { categories: [{ category_key: 'doctor', label: 'Doctor', min_size: 5, discount_type: 'FLAT', discount_value: 500 }] }) }),
+        console: { log() {}, warn() {}, error() {}, info() {} },
+        setTimeout: (fn, ms) => (ms >= 1000 ? 0 : setTimeout(fn, ms)), clearTimeout, setInterval: () => 0, clearInterval,
+        URL, Intl, Date, Math, JSON, Promise, requestAnimationFrame: () => 0,
+      };
+      sandbox.window.document = doc; sandbox.self = sandbox; sandbox.globalThis = sandbox;
+      vm.createContext(sandbox);
+      vm.runInContext(`${js}\n globalThis.__render = renderGroupSection;`, sandbox, { filename: 'app.js+driver' });
+      await sandbox.__render();
+      return box.innerHTML;
+    };
+
+    const inGroup = await panelHtml({ group: {
+      categoryLabel: 'Doctor', size: 3, minSize: 5, qualifies: false, allVerified: false, isLeader: true,
+      leaderPhone: '9000000001', members: [{ phone: '9000000001', name: 'A Leader', status: 'PENDING' }] } });
+    check('a delegate already in a group sees the link', inGroup.includes(`href="${URL}"`), inGroup.slice(0, 200));
+    check('...labelled as help, not buried in a sentence', /How group registration works<\/a>/.test(inGroup));
+    // Asked for as a bigger target: it is a full-size control, not the small
+    // outlined button the other two in the row are.
+    check('...and sized as a real button, full width on a phone',
+      /class="[^"]*w-full sm:w-auto[^"]*px-5 py-3[^"]*text-sm font-bold[^"]*"/.test(inGroup), (inGroup.match(/<a href="\/help[^>]*>/) || [])[0]);
+    check('...among the panel\'s buttons, beside Leave group',
+      /Leave group<\/button>[\s\S]{0,600}href="\/help\/group-registration"/.test(inGroup), inGroup.slice(-700));
+    check('...opening in its own tab, so a half-filled panel is not lost',
+      /href="\/help\/group-registration"[^>]*target="_blank"[^>]*rel="noopener"/.test(inGroup));
+    check('...once, not twice', (inGroup.match(/\/help\/group-registration/g) || []).length === 1,
+      (inGroup.match(/\/help\/group-registration/g) || []).length);
+
+    const noGroup = await panelHtml({ group: null });
+    check('a delegate who has not started one sees it too', noGroup.includes(`href="${URL}"`), noGroup.slice(0, 200));
+    check('...beside Start a group', /Start a group<\/button>[\s\S]{0,600}href="\/help\/group-registration"/.test(noGroup), noGroup.slice(-700));
+    check('...and the panel still offers what it did before',
+      /Start a group/.test(noGroup) && /Doctor/.test(noGroup));
+
     const modal = fs.readFileSync(appFile('views', 'portal', 'modals', 'add-group-member.ejs'), 'utf8');
     check('the add-member dialog links it, where the errors it explains happen',
       /href="\/help\/group-registration"/.test(modal));

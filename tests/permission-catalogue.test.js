@@ -118,6 +118,8 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
       + 'roles that already saw these figures on the Overview, so nobody gains a number they could not '
       + 'already see. It exists because the Overview used to SUM /api/registrations in the browser, which '
       + 'meant the totals were only as private as that list and the cards hid nothing.',
+    'GET /api/admin/reminders/registered': 'The audience for an announcement to delegates who have registered (an abstract deadline moving, say) -- the existing cards only address people who never registered, or who owe a balance. comms.reminders_view, the same key as reading those audiences, so no role sees a recipient list it could not already see.',
+    'POST /api/admin/reminders/registered/send': 'Sends that announcement. comms.reminders_send -- the same key, cooldown and audit shape as the other bulk sends, so nobody gains the ability to email delegates who could not already do it.',
     'POST /api/admin/fees/categories/:id/realign': 'Brings registrations that stored an older label for a category up to the current one. Display name only -- no category or fee changes. masters.fees_manage, the same permission as renaming the category in the first place, so it widens nobody\'s access.',
 
     // --- The front desk ---------------------------------------------------

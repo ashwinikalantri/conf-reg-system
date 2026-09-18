@@ -4514,11 +4514,14 @@ app.post('/api/groups', requireAuth, async (req, res, next) => {
     if (!rule) return res.status(400).json({ success: false, error: 'This category has no group discount.' });
     const already = await dbGet('SELECT group_id FROM group_members WHERE phone_number = ?', [req.session.phone]);
     if (already) return res.status(409).json({ success: false, error: 'You are already in a group. Leave it first.' });
-    // A verified/locked registration in a different category can't join a group
-    // for this one.
+    // A confirmed registration is settled: the fee was worked out and paid,
+    // and nothing applies a group discount to it afterwards (the discount is
+    // computed when a payment is submitted -- see getGroupDiscountAmount).
+    // Joining a group could only mislead, or -- if the group later shrank --
+    // saddle them with a balance for a discount they never received.
     const reg = await dbGet('SELECT category_key, bank_status FROM registrations WHERE phone_number = ?', [req.session.phone]);
-    if (reg && reg.bank_status === 'BANK_VERIFIED' && reg.category_key !== categoryKey) {
-      return res.status(400).json({ success: false, error: 'Your registration is already confirmed under a different category.' });
+    if (reg && reg.bank_status === 'BANK_VERIFIED') {
+      return res.status(400).json({ success: false, error: 'Your registration is already confirmed and paid, so it cannot be part of a group.' });
     }
     const result = await dbRun(
       'INSERT INTO delegate_groups (name, category_key, leader_phone, created_at) VALUES (?, ?, ?, ?)',
@@ -4558,9 +4561,11 @@ app.post('/api/groups/:id/members', requireAuth, async (req, res, next) => {
     const phone = user.phone_number;
     const inGroup = await dbGet('SELECT group_id FROM group_members WHERE phone_number = ?', [phone]);
     if (inGroup) return res.status(409).json({ success: false, error: 'That delegate is already in a group.' });
+    // Same rule as starting a group: a confirmed, paid registration cannot
+    // take a group discount any more, so it does not belong in a group.
     const reg = await dbGet('SELECT category_key, bank_status FROM registrations WHERE phone_number = ?', [phone]);
-    if (reg && reg.bank_status === 'BANK_VERIFIED' && reg.category_key !== group.category_key) {
-      return res.status(400).json({ success: false, error: 'That delegate is already confirmed under a different category.' });
+    if (reg && reg.bank_status === 'BANK_VERIFIED') {
+      return res.status(400).json({ success: false, error: 'That delegate has already paid and had their registration confirmed, so they cannot join a group.' });
     }
     await dbRun('INSERT INTO group_members (group_id, phone_number, joined_at) VALUES (?, ?, ?)', [group.id, phone, Date.now()]);
     notifyDelegate(phone, 'You’ve been added to a group registration',
@@ -7597,6 +7602,93 @@ app.post('/api/admin/reminders/send', requirePermission('comms.reminders_send'),
       await recordAudit({
         req, entityType: 'reminder_email', entityId: u.phone_number,
         action: 'REGISTRATION_REMINDER_SENT', oldValue: null, newValue: subject,
+      });
+      sent++;
+    }
+
+    res.json({ success: true, sent, skippedNoEmail, skippedSentRecently, total: recipients.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Everyone who HAS registered -- the audience for an announcement that
+// concerns delegates rather than prospects (an abstract deadline moving, a
+// programme change). Deliberately every registration whatever its payment
+// status: a delegate whose payment is still pending has registered and needs
+// to hear it just as much as a confirmed one.
+const REGISTERED_DELEGATE_QUERY =
+  `SELECT registrations.id, registrations.phone_number, registrations.registration_number,
+     delegate_name, ${DELEGATE_SALUTATION_COLUMN}, category_label, registrations.bank_status, u.email,
+     (SELECT MAX(created_at) FROM audit_log a
+        WHERE a.entity_type = 'reminder_email' AND a.action = 'REGISTERED_DELEGATE_REMINDER_SENT' AND a.entity_id = registrations.phone_number
+     ) AS last_reminder_sent_at
+     FROM registrations
+     LEFT JOIN users u ON u.phone_number = registrations.phone_number
+     ORDER BY delegate_name`;
+
+app.get('/api/admin/reminders/registered', requirePermission('comms.reminders_view'), async (req, res, next) => {
+  try {
+    const rows = (await dbAll(REGISTERED_DELEGATE_QUERY)).map(withDelegateSalutation);
+    res.json({ users: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The bulk send. Same shape as POST /api/admin/reminders/send (its own 24h
+// cooldown, its own audit action, {{name}} per recipient), so an admin who
+// knows one card knows this one. Testing the wording still goes through
+// POST /api/admin/reminders/test-send, which is audience-agnostic.
+app.post('/api/admin/reminders/registered/send', requirePermission('comms.reminders_send'), async (req, res, next) => {
+  try {
+    const { subject, bodyHtml, phones } = req.body;
+    if (!subject || !String(subject).trim()) {
+      return res.status(400).json({ success: false, error: 'Subject is required.' });
+    }
+    if (!bodyHtml || !String(bodyHtml).trim()) {
+      return res.status(400).json({ success: false, error: 'Email body is required.' });
+    }
+    if (!emailEnabled()) {
+      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
+    }
+    if (!Array.isArray(phones) || !phones.length) {
+      return res.status(400).json({ success: false, error: 'Select at least one delegate to send to.' });
+    }
+    const phoneSet = new Set(phones.map(String));
+
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    const sentRecentlyRows = await dbAll(
+      `SELECT DISTINCT entity_id FROM audit_log
+        WHERE entity_type = 'reminder_email' AND action = 'REGISTERED_DELEGATE_REMINDER_SENT' AND created_at >= ?`,
+      [since]
+    );
+    const sentRecentlySet = new Set(sentRecentlyRows.map((r) => r.entity_id));
+
+    // One email per person, not per registration, so a delegate who somehow
+    // has two rows is not written to twice.
+    const recipients = [];
+    const seen = new Set();
+    for (const r of (await dbAll(REGISTERED_DELEGATE_QUERY)).map(withDelegateSalutation)) {
+      if (!phoneSet.has(r.phone_number) || seen.has(r.phone_number)) continue;
+      seen.add(r.phone_number);
+      recipients.push(r);
+    }
+
+    let sent = 0;
+    let skippedNoEmail = 0;
+    let skippedSentRecently = 0;
+    for (const u of recipients) {
+      if (sentRecentlySet.has(u.phone_number)) { skippedSentRecently++; continue; }
+      if (!u.email) { skippedNoEmail++; continue; }
+      // withDelegateSalutation() has already folded the salutation into the
+      // name ("Dr Priya Sharma") and dropped the separate column.
+      const name = u.delegate_name || 'Delegate';
+      const personalizedBody = String(bodyHtml).split('{{name}}').join(escapeHtml(name));
+      await sendEmail(u.email, subject, emailWrap(subject, personalizedBody));
+      await recordAudit({
+        req, entityType: 'reminder_email', entityId: u.phone_number,
+        action: 'REGISTERED_DELEGATE_REMINDER_SENT', oldValue: null, newValue: subject,
       });
       sent++;
     }

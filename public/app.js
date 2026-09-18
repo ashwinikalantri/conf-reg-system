@@ -1030,7 +1030,14 @@ const GROUP_STATUS_LABEL = { BANK_VERIFIED: 'Paid ✓', PARTIAL_PAYMENT: 'Balanc
 // Shared by both branches of renderGroupSection() below, so the heading
 // icon has exactly one source instead of two copies that could drift.
 // The how-to page, linked wherever a delegate is looking at the group panel.
+// It sits in the panel's row of buttons rather than trailing a sentence: a
+// leader looking for "what do I do next" scans the controls, not the note
+// under them.
 const GROUP_HELP_URL = '/help/group-registration';
+const GROUP_HELP_LINK = `<a href="${GROUP_HELP_URL}" target="_blank" rel="noopener"
+  class="w-full sm:w-auto justify-center px-5 py-3 bg-indigo-50 border-2 border-indigo-300 text-indigo-800 hover:bg-indigo-100 hover:border-indigo-400 text-sm font-bold rounded-xl shadow-sm inline-flex items-center gap-2">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 shrink-0"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3 2.45V14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>
+  How group registration works</a>`;
 const GROUP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2c2.8.4 5 2.8 5 5.8"/></svg>';
 async function renderGroupSection() {
   const box = document.getElementById('group-section');
@@ -1072,8 +1079,9 @@ async function renderGroupSection() {
       <div class="flex flex-wrap gap-2">
         ${g.isLeader ? `<button onclick="openAddGroupMember()" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">+ Add member</button>` : ''}
         <button onclick="leaveGroup()" class="px-3 py-2 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-lg">Leave group</button>
+        ${GROUP_HELP_LINK}
       </div>
-      <p class="text-[11px] text-slate-500 mt-3">Each member pays their own (discounted) fee. The discount is confirmed once every member's payment is verified. <a href="${GROUP_HELP_URL}" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline">How group registration works</a></p>`;
+      <p class="text-[11px] text-slate-500 mt-3">Each member pays their own (discounted) fee. The discount is confirmed once every member's payment is verified.</p>`;
     box.classList.remove('hidden');
     return;
   }
@@ -1086,12 +1094,13 @@ async function renderGroupSection() {
       <h3 class="text-lg font-bold text-slate-800">${GROUP_ICON}Group Registration</h3>
       <span class="text-xs text-slate-500">Save with 5+ delegates</span>
     </div>
-    <p class="text-xs text-slate-600 mb-3">Registering as a group? Start a group and add fellow delegates in the same category to unlock a group discount for everyone. <a href="${GROUP_HELP_URL}" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline">How it works</a></p>
+    <p class="text-xs text-slate-600 mb-3">Registering as a group? Start a group and add fellow delegates in the same category to unlock a group discount for everyone.</p>
     <div class="flex flex-wrap gap-2 items-end">
       <select id="group-start-cat" class="h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
         ${eligible.map((c) => `<option value="${esc(c.category_key)}">${esc(c.label)} — ${c.discount_type === 'PERCENT' ? esc(c.discount_value) + '%' : '₹' + inr(c.discount_value)} off for ${esc(c.min_size)}+</option>`).join('')}
       </select>
       <button onclick="startGroup()" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Start a group</button>
+      ${GROUP_HELP_LINK}
     </div>`;
   box.classList.remove('hidden');
   } catch (e) { box.classList.add('hidden'); }
@@ -7090,6 +7099,118 @@ async function renderBackendReminders() {
     testBtn.title = can('comms.reminders_test') ? '' : 'You do not have permission to send reminder emails.';
   }
   updateReminderSelectedCount();
+  renderRegisteredDelegateEmails();
+}
+
+// --- All Registered Delegates --------------------------------------------
+// The same card shape as the two audiences above, for people who HAVE
+// registered: announcements that concern delegates rather than prospects.
+let cachedRegisteredDelegates = [];
+
+async function renderRegisteredDelegateEmails() {
+  const list = document.getElementById('regdelegates-list');
+  if (!list) return;
+  const res = await fetch('/api/admin/reminders/registered');
+  if (!res.ok) return;
+  cachedRegisteredDelegates = (await res.json()).users || [];
+  setText('regdelegates-count', String(cachedRegisteredDelegates.length));
+
+  list.innerHTML = cachedRegisteredDelegates.length
+    ? cachedRegisteredDelegates.map((u) => {
+      const onCooldown = reminderOnCooldown(u);
+      const disabled = !u.email || onCooldown;
+      return `
+      <div class="px-3 py-2 flex items-center gap-2">
+        <input type="checkbox" class="regdelegate-recipient-checkbox shrink-0" value="${esc(u.phone_number)}" ${disabled ? 'disabled' : ''} onchange="updateRegisteredDelegateSelectedCount()">
+        <div class="min-w-0 flex-1">
+          <p class="font-semibold text-slate-700 truncate">${esc(u.delegate_name || '')}</p>
+          <p class="text-xs text-slate-400 truncate">${esc(u.email || 'No email on file')}${u.last_reminder_sent_at ? ` · last sent ${esc(fmtAuditTime(u.last_reminder_sent_at))}` : ''}</p>
+        </div>
+        ${!u.email ? '<span class="text-[10px] bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-full font-bold shrink-0">No email</span>' : ''}
+        ${onCooldown ? '<span class="text-[10px] bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">Sent within 24h</span>' : ''}
+      </div>`;
+    }).join('')
+    : '<div class="px-3 py-6 text-center text-slate-400 text-sm">Nobody has registered yet.</div>';
+
+  const testBtn = document.getElementById('regdelegate-test-btn');
+  if (testBtn) {
+    testBtn.disabled = !can('comms.reminders_test');
+    testBtn.title = can('comms.reminders_test') ? '' : 'You do not have permission to send reminder emails.';
+  }
+  updateRegisteredDelegateSelectedCount();
+}
+
+function updateRegisteredDelegateSelectedCount() {
+  const boxes = Array.from(document.querySelectorAll('.regdelegate-recipient-checkbox'));
+  const selectable = boxes.filter((b) => !b.disabled);
+  const selected = boxes.filter((b) => b.checked);
+
+  setText('regdelegate-selected-count', String(selected.length));
+  setText('regdelegate-send-count', String(selected.length));
+
+  const selectAll = document.getElementById('regdelegates-select-all');
+  if (selectAll) {
+    selectAll.checked = selectable.length > 0 && selected.length === selectable.length;
+    selectAll.disabled = selectable.length === 0;
+  }
+  const sendBtn = document.getElementById('regdelegate-send-btn');
+  if (sendBtn) {
+    sendBtn.disabled = selected.length === 0 || !can('comms.reminders_send');
+    sendBtn.title = can('comms.reminders_send') ? '' : 'You do not have permission to send bulk reminder emails.';
+  }
+}
+
+function toggleAllRegisteredDelegates(checked) {
+  document.querySelectorAll('.regdelegate-recipient-checkbox').forEach((b) => {
+    if (!b.disabled) b.checked = checked;
+  });
+  updateRegisteredDelegateSelectedCount();
+}
+
+// Test sends go through the audience-agnostic route, same as the card above.
+async function sendRegisteredDelegateTest() {
+  const subject = document.getElementById('regdelegate-subject').value.trim();
+  const bodyHtml = document.getElementById('regdelegate-body').value.trim();
+  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
+  const data = await (await fetch('/api/admin/reminders/test-send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject, bodyHtml }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not send the test.');
+  showToast(`Test sent to ${data.sentTo}.`, 'success');
+}
+
+async function sendRegisteredDelegateEmails() {
+  const subject = document.getElementById('regdelegate-subject').value.trim();
+  const bodyHtml = document.getElementById('regdelegate-body').value.trim();
+  const phones = Array.from(document.querySelectorAll('.regdelegate-recipient-checkbox:checked')).map((b) => b.value);
+  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
+  if (!phones.length) return showToast('Select at least one delegate.');
+  if (!(await showConfirm(`Send this announcement to ${phones.length} registered ${phones.length === 1 ? 'delegate' : 'delegates'}? This can't be undone.`))) return;
+
+  const btn = document.getElementById('regdelegate-send-btn');
+  const resultEl = document.getElementById('regdelegate-send-result');
+  if (btn) btn.disabled = true;
+  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending…'; }
+
+  const data = await (await fetch('/api/admin/reminders/registered/send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject, bodyHtml, phones }),
+  })).json();
+
+  if (!data.success) {
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Send failed.'; }
+    showToast(data.error || 'Could not send.');
+  } else {
+    const notes = [
+      data.skippedNoEmail ? `${data.skippedNoEmail} no email on file` : null,
+      data.skippedSentRecently ? `${data.skippedSentRecently} already sent in the last 24h` : null,
+    ].filter(Boolean).join(', ');
+    const msg = `Sent to ${data.sent} of ${data.total}${notes ? ` (${notes})` : ''}.`;
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
+    showToast(msg, 'success');
+  }
+  renderRegisteredDelegateEmails();
 }
 
 // Keeps the "Select all" checkbox, the selected-count label, and the Send
@@ -7434,6 +7555,76 @@ ${programLine ? `<p>Alongside the main conference, there are ${programLine}</p>`
 <p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
 }
 
+// The abstract deadline moving. Like the early-bird templates, the date comes
+// from the app itself (Settings -> General -> Conference, surfaced on
+// /api/conference), so this email cannot announce a date the portal would
+// refuse a submission on.
+async function buildAbstractExtensionBody() {
+  const c = conferenceInfo;
+  const deadline = c.abstractDeadline ? formatFullDateWithDay(c.abstractDeadline) : '';
+  const start = formatFullDate(c.startDate);
+  const end = formatFullDate(c.endDate);
+  const dateRange = (start && end && c.startDate !== c.endDate) ? `${start} &ndash; ${end}` : (start || end);
+
+  return `<p>Dear {{name}},</p>
+<p>Thank you for registering for <b>${esc(c.name || 'the conference')}</b>. We have had a number of requests for more time to prepare abstracts, and the scientific committee has agreed to <b>extend the last date for abstract submission</b>.</p>
+${deadline ? `<div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:1rem 1.25rem;margin:1.25rem 0">
+  <div style="font-size:.7rem;letter-spacing:.09em;text-transform:uppercase;color:#4338ca;font-weight:700">New last date for abstracts</div>
+  <div style="font-size:1.2rem;font-weight:800;color:#312e81;margin-top:.25rem">${esc(deadline)}</div>
+  <div style="font-size:.78rem;color:#4338ca;margin-top:.4rem">Submissions close at the end of this day (IST). After that the portal cannot accept a new abstract.</div>
+</div>` : '<p><b>The last date for abstract submission has been extended.</b> Log in to the portal for the new date.</p>'}
+<p>Your abstract is submitted from your own dashboard, under <b>Submit Abstract</b>. A reminder of what is expected:</p>
+<ul style="padding-left:1.1rem;margin:.5rem 0">
+  <li>A <b>structured abstract</b> &mdash; Background, Aim, Methods, Results, Conclusion &mdash; of at most <b>400 words</b>.</li>
+  <li>One abstract per delegate, on <b>Healthcare Quality &amp; Patient Safety</b>.</li>
+  <li>Submitted for <b>oral</b> or <b>poster</b> presentation; the committee decides which.</li>
+</ul>
+<p>If you have already submitted, nothing changes and no action is needed. If the committee has asked you for corrections, you can still resubmit from the same place.</p>
+${dateRange || c.location ? `<table style="width:100%;margin:1rem 0;font-size:.85rem">
+  ${dateRange ? `<tr><td style="padding:.2rem 0;color:#64748b;width:90px">📅 Dates</td><td style="padding:.2rem 0;font-weight:600">${dateRange}</td></tr>` : ''}
+  ${c.location ? `<tr><td style="padding:.2rem 0;color:#64748b">📍 Venue</td><td style="padding:.2rem 0;font-weight:600">${esc(c.location)}</td></tr>` : ''}
+</table>` : ''}
+<p style="text-align:center;margin:1.5rem 0">
+  <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Submit Your Abstract</a>
+</p>
+<p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
+}
+
+// The group discount, for people who have an account but have not registered.
+// The categories, minimums and amounts are read from the group-discount rules
+// in force, so the offer in the email is the offer the portal will honour --
+// and the how-to page carries the detail rather than the email repeating it.
+async function buildGroupDiscountBody() {
+  const c = conferenceInfo;
+  let offers = [];
+  try {
+    offers = (await (await fetch('/api/groups/eligible-categories')).json()).categories || [];
+  } catch { /* best-effort -- the email still reads without the table */ }
+  const amount = (o) => (o.discount_type === 'PERCENT' ? `${Number(o.discount_value)}%` : `₹${inr(o.discount_value)}`);
+  const minimum = offers.length ? Math.min(...offers.map((o) => Number(o.min_size))) : 5;
+
+  return `<p>Dear {{name}},</p>
+<p>You created an account for <b>${esc(c.name || 'the conference')}</b> but have not completed your registration. If colleagues from your institution are coming too, it is worth registering together: <b>a group of ${esc(minimum)} or more pays less, each.</b></p>
+${offers.length ? `<table style="width:100%;border-collapse:collapse;margin:1.25rem 0;font-size:.85rem">
+  <tr style="background:#eef2ff">
+    <th align="left" style="padding:.5rem .6rem;border:1px solid #c7d2fe;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:#4338ca">Category</th>
+    <th align="left" style="padding:.5rem .6rem;border:1px solid #c7d2fe;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:#4338ca">Group of</th>
+    <th align="left" style="padding:.5rem .6rem;border:1px solid #c7d2fe;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:#4338ca">Each saves</th>
+  </tr>
+  ${offers.map((o) => `<tr>
+    <td style="padding:.5rem .6rem;border:1px solid #e2e8f0">${esc(o.label)}</td>
+    <td style="padding:.5rem .6rem;border:1px solid #e2e8f0">${esc(o.min_size)}+</td>
+    <td style="padding:.5rem .6rem;border:1px solid #e2e8f0;font-weight:700;color:#047857">${amount(o)}</td>
+  </tr>`).join('')}
+</table>` : ''}
+<p><b>How it works:</b> everyone signs up on the portal, one of you starts a group and adds the others by their registered mobile number or email address, and each person then pays their own reduced fee. The one thing to get right is the order &mdash; the discount is applied when you pay, so gather the group first.</p>
+<p style="text-align:center;margin:1.5rem 0">
+  <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">Complete Your Registration</a>
+  <a href="${window.location.origin}/help/group-registration" style="background:#fff;color:#4f46e5;border:2px solid #4f46e5;padding:.65rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">How Group Registration Works</a>
+</p>
+<p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
+}
+
 // The announcements this card gets used for, in one place so the picker and
 // the initial seed can't drift apart. Subjects are async too, because the
 // "ending soon" one has to know whether the cutoff is actually today.
@@ -7463,7 +7654,51 @@ const CUSTOM_REMINDER_TEMPLATES = {
     },
     body: buildEarlyBirdExtensionBody,
   },
+  'abstract-deadline-extended': {
+    label: 'Abstracts — last date extended',
+    async subject() {
+      const until = conferenceInfo.abstractDeadline;
+      const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
+      return until
+        ? `Abstract Submission${who} Extended to ${formatFullDate(until)}`
+        : `Abstract Submission${who} Has Been Extended`;
+    },
+    body: buildAbstractExtensionBody,
+  },
+  'group-discount': {
+    label: 'Group discount — register with colleagues',
+    async subject() {
+      const who = conferenceInfo.acronym ? ` at ${conferenceInfo.acronym}` : '';
+      return `Registering with colleagues${who}? Your group pays less`;
+    },
+    body: buildGroupDiscountBody,
+  },
 };
+
+// Which card's fields a picker fills. The templates themselves are shared:
+// the same announcement can go to a pasted list or to a real audience.
+const REMINDER_TEMPLATE_FIELDS = {
+  signups: { picker: 'reminder-template', subject: 'reminder-subject', body: 'reminder-body' },
+  registered: { picker: 'regdelegate-template', subject: 'regdelegate-subject', body: 'regdelegate-body' },
+};
+
+// Same behaviour as the Custom Recipients picker: anything already typed is
+// confirmed over first, since these are long fields.
+async function applyReminderTemplate(which, key) {
+  const fields = REMINDER_TEMPLATE_FIELDS[which];
+  if (!fields || !key) return;
+  const picker = document.getElementById(fields.picker);
+  const tpl = CUSTOM_REMINDER_TEMPLATES[key];
+  if (picker) picker.value = '';
+  if (!tpl) return;
+  const subjectInput = document.getElementById(fields.subject);
+  const bodyBox = document.getElementById(fields.body);
+  const hasContent = (subjectInput && subjectInput.value.trim()) || (bodyBox && bodyBox.value.trim());
+  if (hasContent && !(await showConfirm(`Replace the subject and body with the "${tpl.label}" template?`))) return;
+  if (subjectInput) subjectInput.value = await tpl.subject();
+  if (bodyBox) bodyBox.value = await tpl.body();
+  showToast(`Loaded the "${tpl.label}" template.`, 'success');
+}
 
 // Fill the subject and body from a template. Anything already typed is
 // confirmed over first -- these are long fields and losing a half-written
