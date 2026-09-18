@@ -91,6 +91,28 @@ const phones = { leader: `93${N}`, confirmed: `92${N}`, pending: `91${N}`, start
     const nowAllowed = await call('POST', '/api/groups', { categoryKey: cat.category_key }, starter);
     check('with a balance still due, they can start one', nowAllowed.body.success === true, nowAllowed.body.error);
 
+    console.log('\n== ...and the portal is told, so it can hide the offer ==');
+    // The panel asks /api/groups/me; without this it would offer a category
+    // and then be refused on the click.
+    const confirmedView = (await call('GET', '/api/groups/me', null, await (async () => {
+      const r = await call('POST', `/api/users/${phones.confirmed}/reset-password`, {}, admin);
+      const l = await call('POST', '/api/auth/login-password', { identifier: phones.confirmed, password: r.body.tempPassword });
+      return l.cookie;
+    })())).body;
+    check('a confirmed delegate is told they cannot start one', confirmedView.canStart === false, confirmedView);
+    check('...and why, so the panel can say nothing rather than guess',
+      confirmedView.reason === 'REGISTRATION_CONFIRMED', confirmedView.reason);
+    check('...and they are in no group', confirmedView.group === null, confirmedView.group);
+
+    const pendingView = (await call('GET', '/api/groups/me', null, await (async () => {
+      const r = await call('POST', `/api/users/${phones.pending}/reset-password`, {}, admin);
+      const l = await call('POST', '/api/auth/login-password', { identifier: phones.pending, password: r.body.tempPassword });
+      return l.cookie;
+    })())).body;
+    check('someone already in a group still sees it', !!pendingView.group, pendingView.group && pendingView.group.size);
+    check('...and is told there is nothing to start', pendingView.canStart === false
+      && pendingView.reason === 'ALREADY_IN_GROUP', pendingView.reason);
+
     console.log('\n== The portal says so where a leader will read it ==');
     const help = String((await call('GET', '/help/group-registration')).body);
     check('the how-to states the rule',

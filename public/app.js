@@ -1086,6 +1086,12 @@ async function renderGroupSection() {
     return;
   }
 
+  // Not eligible: a delegate whose registration is already confirmed and paid
+  // cannot be in a group (the fee is settled and the discount is worked out at
+  // payment), so offering one would only lead to a refusal. Hidden only on an
+  // explicit no, so a response that never arrived leaves the panel as it was.
+  if (data.canStart === false) { box.classList.add('hidden'); return; }
+
   // Not in a group: offer to start one for any category that has a rule.
   const eligible = (await (await fetch('/api/groups/eligible-categories')).json().catch(() => ({}))).categories || [];
   if (!eligible.length) { box.classList.add('hidden'); return; }

@@ -124,8 +124,11 @@ const strip = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').rep
       (js.match(/const GROUP_HELP_LINK = /g) || []).length === 1);
 
     const panelHtml = async (groupReply) => {
-      const box = { id: 'group-section', innerHTML: '', hidden: false,
-        classList: { add() {}, remove() {}, toggle() {}, contains: () => false } };
+      const classes = new Set(['hidden']);
+      const box = { id: 'group-section', innerHTML: '',
+        classList: { add: (...c) => c.forEach((x) => classes.add(x)), remove: (...c) => c.forEach((x) => classes.delete(x)),
+          toggle() {}, contains: (c) => classes.has(c) } };
+      box.isHidden = () => classes.has('hidden');
       const doc = { getElementById: (id) => (id === 'group-section' ? box : null),
         querySelector: () => null, querySelectorAll: () => [], addEventListener() {},
         createElement: () => ({ style: {}, classList: { add() {}, remove() {} }, addEventListener() {}, appendChild() {}, remove() {} }),
@@ -148,12 +151,12 @@ const strip = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').rep
       vm.createContext(sandbox);
       vm.runInContext(`${js}\n globalThis.__render = renderGroupSection;`, sandbox, { filename: 'app.js+driver' });
       await sandbox.__render();
-      return box.innerHTML;
+      return { html: box.innerHTML, hidden: box.isHidden() };
     };
 
-    const inGroup = await panelHtml({ group: {
+    const inGroup = (await panelHtml({ canStart: false, reason: 'ALREADY_IN_GROUP', group: {
       categoryLabel: 'Doctor', size: 3, minSize: 5, qualifies: false, allVerified: false, isLeader: true,
-      leaderPhone: '9000000001', members: [{ phone: '9000000001', name: 'A Leader', status: 'PENDING' }] } });
+      leaderPhone: '9000000001', members: [{ phone: '9000000001', name: 'A Leader', status: 'PENDING' }] } })).html;
     check('a delegate already in a group sees the link', inGroup.includes(`href="${URL}"`), inGroup.slice(0, 200));
     check('...labelled as help, not buried in a sentence', /How group registration works<\/a>/.test(inGroup));
     // Asked for as a bigger target: it is a full-size control, not the small
@@ -167,11 +170,20 @@ const strip = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').rep
     check('...once, not twice', (inGroup.match(/\/help\/group-registration/g) || []).length === 1,
       (inGroup.match(/\/help\/group-registration/g) || []).length);
 
-    const noGroup = await panelHtml({ group: null });
+    const noGroup = (await panelHtml({ group: null, canStart: true, reason: null })).html;
     check('a delegate who has not started one sees it too', noGroup.includes(`href="${URL}"`), noGroup.slice(0, 200));
     check('...beside Start a group', /Start a group<\/button>[\s\S]{0,600}href="\/help\/group-registration"/.test(noGroup), noGroup.slice(-700));
     check('...and the panel still offers what it did before',
       /Start a group/.test(noGroup) && /Doctor/.test(noGroup));
+
+    // Nobody who cannot use it should be looking at it.
+    const notEligible = await panelHtml({ group: null, canStart: false, reason: 'REGISTRATION_CONFIRMED' });
+    check('a delegate who cannot be in a group is not shown the panel at all', notEligible.hidden, notEligible.html.slice(0, 120));
+    check('...and is not offered a category first', !/Start a group/.test(notEligible.html));
+    // An answer that never came is not a "no": the panel behaves as before.
+    const unknown = await panelHtml({ group: null });
+    check('a response without the field still offers what it used to',
+      !unknown.hidden && /Start a group/.test(unknown.html), unknown.hidden);
 
     const modal = fs.readFileSync(appFile('views', 'portal', 'modals', 'add-group-member.ejs'), 'utf8');
     check('the add-member dialog links it, where the errors it explains happen',

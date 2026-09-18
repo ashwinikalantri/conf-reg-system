@@ -4475,16 +4475,29 @@ async function groupView(group) {
   };
 }
 
-// The caller's group (or null), from their own perspective.
+// The caller's group (or null), from their own perspective -- plus whether
+// starting one is open to them at all. The portal hides the whole Group
+// Registration panel when it is not: a delegate whose registration is already
+// confirmed and paid would otherwise be offered a category, only to be
+// refused on the click (see POST /api/groups).
 app.get('/api/groups/me', requireAuth, async (req, res, next) => {
   try {
+    const reg = await dbGet('SELECT bank_status FROM registrations WHERE phone_number = ?', [req.session.phone]);
+    const confirmed = !!reg && reg.bank_status === 'BANK_VERIFIED';
     const m = await dbGet('SELECT group_id FROM group_members WHERE phone_number = ?', [req.session.phone]);
-    if (!m) return res.json({ group: null });
+    const notInOne = {
+      group: null,
+      canStart: !confirmed,
+      reason: confirmed ? 'REGISTRATION_CONFIRMED' : null,
+    };
+    if (!m) return res.json(notInOne);
     const group = await dbGet('SELECT * FROM delegate_groups WHERE id = ?', [m.group_id]);
-    if (!group) return res.json({ group: null });
+    if (!group) return res.json(notInOne);
     const view = await groupView(group);
     view.isLeader = group.leader_phone === req.session.phone;
-    res.json({ group: view });
+    // Already in one, so there is nothing to start -- but the panel still
+    // shows, because it is how they see and manage that group.
+    res.json({ group: view, canStart: false, reason: 'ALREADY_IN_GROUP' });
   } catch (err) {
     next(err);
   }
