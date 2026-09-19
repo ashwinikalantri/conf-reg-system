@@ -201,14 +201,27 @@ function buildDigestHtml(pending, pendingCount, verifiedCount, partialCount, abs
     ? `<tr><td colspan="4" style="padding:.5rem .3rem;color:#94a3b8;font-style:italic">…and ${pending.length - MAX_ROWS_SHOWN} more</td></tr>`
     : '';
 
+  // Inline-block, not flex: several mail clients honour `display:flex` but not
+  // `flex-wrap`, so five tiles with a 110px floor sat in one row that ran off
+  // the side of the card. Inline-block wraps by itself -- about three across
+  // on a desktop, two on a phone -- and Outlook, which ignores widths on
+  // inline-block, stacks them full width instead. As with the table below,
+  // there is no media query to reach for: email-template.js is a fragment
+  // with everything inline because Gmail strips <style> blocks.
+  //
+  // The width is a percentage so it can never exceed the card, and box-sizing
+  // keeps the padding inside that percentage. min-width is what makes it
+  // responsive rather than merely small: below ~390px the percentage would
+  // give a 90px tile, so the floor takes over and a tile drops to the next
+  // row instead.
   const tile = (n, label, bg, border, color) =>
-    `<div style="flex:1;min-width:110px;background:${bg};border:1px solid ${border};border-radius:10px;padding:.85rem 1rem">
+    `<div style="display:inline-block;vertical-align:top;box-sizing:border-box;width:31%;min-width:120px;margin:0 2% 12px 0;background:${bg};border:1px solid ${border};border-radius:10px;padding:.85rem 1rem">
        <div style="font-size:1.5rem;font-weight:700;color:${color}">${n}</div>
-       <div style="font-size:.72rem;color:${color};font-weight:600">${label}</div>
+       <div style="font-size:.72rem;color:${color};font-weight:600;word-break:break-word">${label}</div>
      </div>`;
 
   const body = `
-    <div style="display:flex;flex-wrap:wrap;gap:12px;margin:0 0 1.25rem">
+    <div style="margin:0 0 1.25rem;font-size:0">
       ${tile(pendingCount, 'Pending Approval', '#fffbeb', '#fde68a', '#92400e')}
       ${tile(partialCount, 'Partial Payment', '#fff7ed', '#fed7aa', '#9a3412')}
       ${tile(verifiedCount, 'Paid &amp; Verified', '#ecfdf5', '#a7f3d0', '#065f46')}

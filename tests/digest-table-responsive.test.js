@@ -93,6 +93,42 @@ check('the digest adds no <style> block', !/<style[\s>]/i.test(html));
 check('...and no media query', !/@media/.test(html));
 check('...so the fix lives in inline declarations', /style="[^"]*table-layout:fixed/.test(html));
 
+console.log('\n== The summary tiles wrap instead of running off the card ==');
+// They were a flex row: `display:flex; flex-wrap:wrap` with `flex:1;
+// min-width:110px`. Mail clients that honour display:flex but not flex-wrap
+// laid all five in one row, which overflowed the card on a phone.
+const tiles = [...html.matchAll(/<div style="(display:inline-block[^"]*)"/g)].map((m) => m[1]);
+check('all five tiles are there', tiles.length === 5, tiles.length);
+check('none of them relies on flexbox', !/display:flex|flex-wrap|flex:1/.test(html),
+  (html.match(/display:flex[^"]*/) || [])[0]);
+check('...nor on gap, which those clients drop with it', !/gap:\s*\d/.test(html));
+check('every tile lays out inline-block, so a row that will not fit wraps',
+  tiles.every((t) => /display:inline-block/.test(t) && /vertical-align:top/.test(t)));
+
+// A percentage width can never be wider than the card it sits in; a pixel
+// width can.
+const tileWidths = tiles.map((t) => Number((t.match(/width:(\d+)%/) || [])[1]));
+check('each is sized as a share of the card, not a fixed pixel width',
+  tileWidths.every((w) => w > 0 && w <= 33), tileWidths);
+const tileGutters = tiles.map((t) => Number((t.match(/margin:0 (\d+)%/) || [])[1]));
+check('...and three of them plus their gutters still fit one row',
+  tileWidths[0] * 3 + tileGutters[0] * 2 <= 100, tileWidths[0] * 3 + tileGutters[0] * 2);
+check('padding counts inside that share, so it cannot push a tile over',
+  tiles.every((t) => /box-sizing:border-box/.test(t)));
+check('a floor stops them shrinking to unreadable slivers -- they wrap instead',
+  tiles.every((t) => /min-width:1[0-9]{2}px/.test(t)), tiles[0]);
+// Two tiles at the floor, plus gutters, still sit inside a 320px screen.
+const tileFloor = Number((tiles[0].match(/min-width:(\d+)px/) || [])[1]);
+check('...and two at that floor fit the narrowest phone', tileFloor * 2 + 16 <= 320, tileFloor);
+const labelDivs = [...html.matchAll(/<div style="(font-size:\.72rem[^"]*)">([^<]+)<\/div>/g)];
+check('fixture: the longest label is one of them',
+  labelDivs.some((m) => m[2].trim() === 'Abstracts Submitted'), labelDivs.map((m) => m[2]));
+check('a long label wraps rather than widening its tile',
+  labelDivs.length === 5 && labelDivs.every((m) => /word-break:break-word/.test(m[1])),
+  labelDivs.map((m) => m[1]).slice(0, 1));
+check('the container holding them sets no width of its own',
+  !/<div style="margin:0 0 1\.25rem;[^"]*width:/.test(html));
+
 console.log('\n== The rest of the digest still reads correctly ==');
 check('both pending rows render', rows.length === 2, rows.length);
 check('the amounts are formatted', html.includes('₹2,000') && html.includes('₹1,500'));
