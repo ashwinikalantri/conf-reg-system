@@ -51,7 +51,10 @@ check('refused for a different account', r.body.success===false, r.body);
 
 console.log('\n== Promo code scope errors ==');
 r=await call('POST','/api/admin/discount-codes',{code:('NOSUCH1'+N),discountType:'PERCENT',discountValue:10,scopeType:'INDIVIDUAL',scopeValue:'ghost@nowhere.example'},ac);
-check('unknown email -> 404', r.status===404, [r.status,r.body.error]);
+// An address nobody has signed up with used to be refused. It now issues a
+// code that waits on the address and becomes theirs once they sign up and
+// verify it -- see discount-codes-pending-and-fixed.test.js for that journey.
+check('unknown email -> a code waiting for them to sign up', r.status===200 && r.body.pendingEmail==='ghost@nowhere.example', [r.status,r.body]);
 r=await call('POST','/api/admin/discount-codes',{code:('AMBIG1'+N),discountType:'PERCENT',discountValue:10,scopeType:'INDIVIDUAL',scopeValue:AMBIG_EMAIL},ac);
 check('ambiguous email -> 409', r.status===409, [r.status,r.body.error]);
 r=await call('POST','/api/admin/discount-codes',{code:('BYPHONE1'+N),discountType:'PERCENT',discountValue:10,scopeType:'INDIVIDUAL',scopeValue:ADMIN},ac);

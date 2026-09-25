@@ -1342,7 +1342,9 @@ async function applyPromoCode() {
     })).json();
     if (!data.success) { clearAppliedPromo(); showMsg(data.error || 'Invalid code.', false); calculateFee(); return; }
     appliedPromo = { code: data.code, discountAmount: data.discountAmount, finalFee: data.finalFee, categoryKey: catKey };
-    showMsg(`Code applied — you save ₹${inr(data.discountAmount)}. New fee: ₹${inr(data.finalFee)}.`, true);
+    showMsg(data.discountType === 'FIXED_FEE'
+      ? `Code applied — your fee is now ₹${inr(data.finalFee)}${data.discountAmount ? ` (you save ₹${inr(data.discountAmount)})` : ''}.`
+      : `Code applied — you save ₹${inr(data.discountAmount)}. New fee: ₹${inr(data.finalFee)}.`, true);
     // The input+Apply row is no longer needed once a code is applied -- the
     // Discount line above (with its own ✕) is now the applied-state UI.
     const inputRow = document.getElementById('promo-input-row');
@@ -6194,9 +6196,11 @@ function openShareDiscountModal(id) {
   const c = (cachedDiscountCodes || []).find((x) => String(x.id) === String(id));
   if (!c) return;
 
-  const discountLine = c.discount_type === 'PERCENT' ? `${Number(c.discount_value)}% off` : `₹${inr(Number(c.discount_value))} off`;
+  const discountLine = describeDiscountCode(c);
   let scopeLine = '';
-  if (c.scope_type === 'INDIVIDUAL') {
+  if (c.scope_type === 'INDIVIDUAL' && c.pending_email) {
+    scopeLine = `\nThis code is reserved for ${c.pending_email}. Sign up with that email address to use it.`;
+  } else if (c.scope_type === 'INDIVIDUAL') {
     const u = (cachedUsers || []).find((x) => x.phone_number === c.scope_value);
     scopeLine = `\nThis code is reserved for ${u ? u.full_name : 'you'} only.`;
   } else if (c.scope_type === 'CATEGORY') {
@@ -6287,6 +6291,26 @@ function generateDiscCode() {
   if (el) el.value = s;
 }
 
+// "50% off" / "₹500 off" / "Fee set to ₹1,000" -- same wording as the
+// server's describeDiscount(), which the voucher and emails use.
+function describeDiscountCode(c) {
+  const v = Number(c.discount_value);
+  if (c.discount_type === 'PERCENT') return `${v}% off`;
+  if (c.discount_type === 'FIXED_FEE') return `Fee set to ₹${inr(v)}`;
+  return `₹${inr(v)} off`;
+}
+
+// The value field means something different for a fee-setting code: the fee
+// itself, which may be ₹0 (complimentary), rather than an amount to take off.
+function updateDiscTypeHints() {
+  const type = document.getElementById('new-disc-type').value;
+  const input = document.getElementById('new-disc-value');
+  const label = document.getElementById('new-disc-value-label');
+  const fixed = type === 'FIXED_FEE';
+  if (input) { input.min = fixed ? '0' : '1'; input.placeholder = fixed ? '1000' : '20'; }
+  if (label) label.textContent = fixed ? 'Fee (₹)' : type === 'PERCENT' ? 'Value (%)' : 'Value (₹)';
+}
+
 function updateDiscScopeHints() {
   const scope = document.getElementById('new-disc-scope').value;
   const catWrap = document.getElementById('new-disc-scope-cat-wrap');
@@ -6318,12 +6342,23 @@ function searchDiscDelegate(query) {
   const matches = (cachedUsers || [])
     .filter((u) => `${u.full_name || ''} ${delegateDisplayPhone(u)} ${u.email || ''} ${u.registration_number || ''}`.toLowerCase().includes(q))
     .slice(0, 8);
-  box.innerHTML = matches.length
+  // A full email address that no account uses can still be chosen: the code
+  // waits on it and becomes that person's when they sign up with it.
+  const typed = String(query || '').trim();
+  const isNewEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(typed)
+    && !(cachedUsers || []).some((u) => (u.email || '').toLowerCase() === typed.toLowerCase());
+  const newEmailOption = isNewEmail
+    ? `<button type="button" class="w-full text-left px-3 py-2 hover:bg-amber-50" onclick="pickDiscPendingEmail('${esc(typed.replace(/'/g, "\\'"))}')">
+        <p class="font-semibold text-amber-800 text-sm">Issue to ${esc(typed)}</p>
+        <p class="text-[11px] text-slate-500">No account uses this address yet — the code activates when they sign up with it.</p>
+      </button>` : '';
+  box.innerHTML = (matches.length
     ? matches.map((u) => `<button type="button" class="w-full text-left px-3 py-2 hover:bg-indigo-50" onclick="pickDiscDelegate('${esc(u.phone_number)}', '${esc((u.full_name || '').replace(/'/g, "\\'"))}', '${esc(discDelegateContact(u))}')">
         <p class="font-semibold text-slate-800 text-sm">${esc(u.full_name || '—')}</p>
         <p class="text-[11px] text-slate-500">${esc(discDelegateContact(u))}${u.registration_number ? ' · ' + esc(u.registration_number) : ''}</p>
       </button>`).join('')
-    : '<p class="text-xs text-slate-400 p-3">No matching delegate.</p>';
+    : (newEmailOption ? '' : '<p class="text-xs text-slate-400 p-3">No matching delegate. Type their full email address to issue a code before they sign up.</p>'))
+    + newEmailOption;
   box.classList.remove('hidden');
 }
 
@@ -6341,6 +6376,17 @@ function pickDiscDelegate(key, name, contact) {
   document.getElementById('new-disc-delegate-results').classList.add('hidden');
   const sel = document.getElementById('new-disc-delegate-selected');
   sel.textContent = `✓ ${name || ''}${contact ? ` (${contact})` : ''}`;
+  sel.classList.remove('hidden');
+}
+
+function pickDiscPendingEmail(email) {
+  // The server resolves an email to an account if one exists by then, and
+  // otherwise stores it as waiting -- so the address itself is what is sent.
+  document.getElementById('new-disc-scope-phone').value = email;
+  document.getElementById('new-disc-delegate-search').value = email;
+  document.getElementById('new-disc-delegate-results').classList.add('hidden');
+  const sel = document.getElementById('new-disc-delegate-selected');
+  sel.textContent = `✓ ${email} — waiting for them to sign up`;
   sel.classList.remove('hidden');
 }
 
@@ -6375,11 +6421,12 @@ async function renderDiscountCodes() {
   cachedDiscountCodes = codes; // reused by openShareDiscountModal() below
   const catLabel = (key) => (cats.find((c) => c.key === key) || {}).label || key;
   tbody.innerHTML = codes.length ? codes.map((c) => {
-    const disc = c.discount_type === 'PERCENT' ? `${Number(c.discount_value)}%` : `₹${inr(Number(c.discount_value))}`;
+    const disc = esc(describeDiscountCode(c));
     const indivName = c.scope_type === 'INDIVIDUAL'
       ? ((cachedUsers || []).find((u) => u.phone_number === c.scope_value) || {}).full_name : null;
     const scope = c.scope_type === 'GLOBAL' ? 'All delegates'
       : c.scope_type === 'CATEGORY' ? `Category: ${esc(catLabel(c.scope_value))}`
+      : c.pending_email ? `${esc(c.pending_email)} <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-100 text-amber-800 border-amber-300">Waiting for signup</span>`
       : `Delegate: ${esc(indivName ? indivName + ' (' + c.scope_value + ')' : c.scope_value || '')}`;
     const usedTxt = `${c.applied_count}${c.max_uses ? ' / ' + c.max_uses : ''}${c.verified_count ? ` (${c.verified_count} verified)` : ''}`;
     return `<tr class="${c.active ? '' : 'opacity-50'}">
@@ -6403,7 +6450,7 @@ async function handleAddDiscountCode(e) {
   e.preventDefault();
   const scopeType = document.getElementById('new-disc-scope').value;
   if (scopeType === 'INDIVIDUAL' && !document.getElementById('new-disc-scope-phone').value) {
-    return showToast('Search and select the delegate this code is for.');
+    return showToast('Choose the delegate, or type the full email address of someone who has not signed up yet.');
   }
   const body = {
     code: document.getElementById('new-disc-code').value,
@@ -6423,7 +6470,9 @@ async function handleAddDiscountCode(e) {
     if (/already exists/i.test(data.error || '')) generateDiscCode();
     return showToast(data.error || 'Could not add code.');
   }
-  showToast(`Discount code ${body.code} added.`, 'success');
+  showToast(data.pendingEmail
+    ? `Discount code ${body.code} added. No account uses ${data.pendingEmail} yet — it will work for them once they sign up with that address.`
+    : `Discount code ${body.code} added.`, 'success');
   generateDiscCode(); // fresh code ready for the next one
   document.getElementById('new-disc-value').value = '';
   document.getElementById('new-disc-max').value = '';

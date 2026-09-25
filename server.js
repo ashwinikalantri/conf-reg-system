@@ -1260,12 +1260,44 @@ async function resolveFee(categoryKey) {
 }
 
 // The rupee discount a code takes off a base fee (never more than the fee).
+// FIXED_FEE sets the fee rather than cutting it: it takes off whatever brings
+// the fee down to its value. A value at or above the fee takes off nothing --
+// a code never raises what someone pays. Group rules share this function but
+// are only ever PERCENT or FLAT.
 function computeDiscountAmount(codeRow, baseFee) {
   if (!codeRow) return 0;
-  const raw = codeRow.discount_type === 'PERCENT'
-    ? Math.round((baseFee * codeRow.discount_value) / 100)
-    : codeRow.discount_value;
+  let raw;
+  if (codeRow.discount_type === 'PERCENT') raw = (baseFee * codeRow.discount_value) / 100;
+  else if (codeRow.discount_type === 'FIXED_FEE') raw = baseFee - codeRow.discount_value;
+  else raw = codeRow.discount_value;
   return Math.max(0, Math.min(Math.round(raw), Math.round(baseFee)));
+}
+
+// "50% off" / "₹500 off" / "Fee set to ₹1,000" -- the one wording used by the
+// voucher, the emailed voucher and the audit trail.
+function describeDiscount(type, value) {
+  const v = Number(value);
+  if (type === 'PERCENT') return `${v}% off`;
+  if (type === 'FIXED_FEE') return `Fee set to ₹${inr(v)}`;
+  return `₹${inr(v)} off`;
+}
+
+// Attach every personal code waiting on this email address to the account
+// that has just verified it. Called where an address becomes verified (email
+// signup, "verify your email") and, as a safety net, when someone tries to
+// redeem a waiting code. Only a VERIFIED address may claim: anyone can type
+// an email at signup, and a code issued to a person must not go to whoever
+// typed their address first.
+async function bindPendingDiscountCodes(accountKey, email) {
+  const addr = email ? normalizeEmail(email) : '';
+  if (!addr || !accountKey) return 0;
+  const waiting = await dbAll(
+    "SELECT id, code FROM discount_codes WHERE scope_type = 'INDIVIDUAL' AND pending_email = ?", [addr]);
+  for (const c of waiting) {
+    await dbRun('UPDATE discount_codes SET scope_value = ?, pending_email = NULL WHERE id = ?', [accountKey, c.id]);
+    await writeAuditRow('discount_code', c.id, 'DISCOUNT_CODE_BOUND', addr, accountKey, null, null, null);
+  }
+  return waiting.length;
 }
 
 // Validate a promo code for a specific delegate + category. Returns
@@ -1286,8 +1318,20 @@ async function validateDiscountCode(rawCode, phone, categoryKey) {
   if (row.scope_type === 'CATEGORY' && row.scope_value !== categoryKey) {
     return { ok: false, error: 'This promo code does not apply to your delegate category.' };
   }
-  if (row.scope_type === 'INDIVIDUAL' && row.scope_value !== phone) {
-    return { ok: false, error: 'This promo code is not valid for your account.' };
+  if (row.scope_type === 'INDIVIDUAL') {
+    if (row.pending_email) {
+      const me = await dbGet('SELECT email, email_verified FROM users WHERE phone_number = ?', [phone]);
+      const mine = !!(me && me.email && normalizeEmail(me.email) === row.pending_email);
+      if (!mine) return { ok: false, error: 'This promo code is not valid for your account.' };
+      if (!me.email_verified) {
+        return { ok: false, error: 'This code was issued to your email address. Verify your email address to use it.' };
+      }
+      await bindPendingDiscountCodes(phone, me.email);
+      row.scope_value = phone;
+      row.pending_email = null;
+    } else if (row.scope_value !== phone) {
+      return { ok: false, error: 'This promo code is not valid for your account.' };
+    }
   }
   if (row.max_uses && row.max_uses > 0) {
     const used = await dbGet(
@@ -1834,6 +1878,16 @@ db.serialize(() => {
       created_by TEXT
     )
   `);
+
+  // An INDIVIDUAL code issued to an email address no account uses yet waits on
+  // that address here (scope_value stays NULL) until an account VERIFIES it --
+  // see bindPendingDiscountCodes. Additive, for tables created before it.
+  db.all('PRAGMA table_info(discount_codes)', (err, cols) => {
+    if (err) return console.error('Schema check failed:', err.message);
+    if (!cols.map((c) => c.name).includes('pending_email')) {
+      db.run('ALTER TABLE discount_codes ADD COLUMN pending_email TEXT');
+    }
+  });
 
   // Group-discount rules (admin Masters): per category, the minimum group size
   // that unlocks a discount and the discount itself. One rule per category.
@@ -3581,6 +3635,9 @@ app.post('/api/auth/register', async (req, res, next) => {
     // usable for the retry.
     if (phoneOk) await burnOtp(phoneVal);
     if (emailOk) await burnOtp(emailVal);
+    // Signed up with a verified email: any personal code issued to that
+    // address before the account existed is now theirs.
+    if (emailOk && emailVal) await bindPendingDiscountCodes(userKey, emailVal);
 
     await assignUserRegNumber(userKey); // ensure a registration number exists
     const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [userKey]);
@@ -3773,6 +3830,9 @@ app.post('/api/auth/verify-contact/confirm', requireAuth, async (req, res, next)
 
     if (channel === 'email') {
       await dbRun('UPDATE users SET email = ?, email_verified = 1 WHERE phone_number = ?', [normalizeEmail(value), req.session.phone]);
+      // Just proved they own this address -- the same moment as signing up
+      // with it, for an account that began with a mobile number.
+      await bindPendingDiscountCodes(req.session.phone, value);
     } else {
       await dbRun('UPDATE users SET phone = ?, phone_verified = 1 WHERE phone_number = ?', [value, req.session.phone]);
     }
@@ -8998,7 +9058,7 @@ app.get('/api/admin/discount-codes', requirePermission('discounts.view'), async 
 
 function parseDiscountBody(body) {
   const code = String(body.code || '').trim().toUpperCase();
-  const discountType = body.discountType === 'FLAT' ? 'FLAT' : 'PERCENT';
+  const discountType = ['PERCENT', 'FLAT', 'FIXED_FEE'].includes(body.discountType) ? body.discountType : 'PERCENT';
   const discountValue = Number(body.discountValue);
   const scopeType = ['GLOBAL', 'CATEGORY', 'INDIVIDUAL'].includes(body.scopeType) ? body.scopeType : 'GLOBAL';
   let scopeValue = scopeType === 'GLOBAL' ? null : String(body.scopeValue || '').trim();
@@ -9017,7 +9077,11 @@ function parseDiscountBody(body) {
 
 function validateDiscountFields(f) {
   if (!f.code || !/^[A-Z0-9_-]{2,40}$/.test(f.code)) return 'Code must be 2–40 letters, digits, hyphens or underscores.';
-  if (!Number.isFinite(f.discountValue) || f.discountValue <= 0) return 'Discount value must be greater than zero.';
+  // A set fee may be ₹0 -- a complimentary registration -- but not negative;
+  // a discount must take something off.
+  if (f.discountType === 'FIXED_FEE') {
+    if (!Number.isFinite(f.discountValue) || f.discountValue < 0) return 'Enter the fee this code sets, in rupees (0 or more).';
+  } else if (!Number.isFinite(f.discountValue) || f.discountValue <= 0) return 'Discount value must be greater than zero.';
   if (f.discountType === 'PERCENT' && f.discountValue > 100) return 'A percentage discount cannot exceed 100.';
   if (f.scopeType === 'CATEGORY' && !f.scopeValue) return 'Choose a category for a category-scoped code.';
   if (f.scopeType === 'INDIVIDUAL' && !isPhoneValue(f.scopeValue) && !isEmailValue(f.scopeValue)) {
@@ -9037,26 +9101,36 @@ app.post('/api/admin/discount-codes', requirePermission('discounts.manage'), asy
     // typed -- mobile or email -- to that key before storing. For a
     // phone-based account the two are the same value, which is why every
     // code issued before email signup existed keeps working untouched.
+    // An email nobody has signed up with yet is not an error any more: the
+    // code waits on that address and becomes theirs when an account verifies
+    // it (bindPendingDiscountCodes). A mobile number still has to belong to an
+    // account -- there is no way to "verify" a number someone has not used.
+    let pendingEmail = null;
     if (f.scopeType === 'INDIVIDUAL') {
       const found = await resolveAccountByIdentifier(f.scopeValue);
       if (found.error === 'ambiguousEmail') {
         return res.status(409).json({ success: false, error: 'More than one account uses that email address. Use the delegate\u2019s mobile number instead.' });
       }
-      if (found.error) {
-        return res.status(404).json({ success: false, error: 'No delegate found with that mobile number or email address.' });
+      if (found.error && isEmailValue(f.scopeValue)) {
+        pendingEmail = normalizeEmail(f.scopeValue);
+        f.scopeValue = null;
+      } else if (found.error) {
+        return res.status(404).json({ success: false, error: 'No delegate found with that mobile number.' });
+      } else {
+        f.scopeValue = found.user.phone_number;
       }
-      f.scopeValue = found.user.phone_number;
     }
 
     const result = await dbRun(
-      `INSERT INTO discount_codes (code, discount_type, discount_value, scope_type, scope_value, max_uses, expires_at, active, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-      [f.code, f.discountType, f.discountValue, f.scopeType, f.scopeValue, f.maxUses, f.expiresAt, Date.now(), req.session.name || req.session.phone]);
+      `INSERT INTO discount_codes (code, discount_type, discount_value, scope_type, scope_value, pending_email, max_uses, expires_at, active, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      [f.code, f.discountType, f.discountValue, f.scopeType, f.scopeValue, pendingEmail, f.maxUses, f.expiresAt, Date.now(), req.session.name || req.session.phone]);
     await recordAudit({
       req, entityType: 'discount_code', entityId: result.lastID, action: 'DISCOUNT_CODE_CREATE',
-      oldValue: null, newValue: `${f.code} — ${f.discountType === 'PERCENT' ? f.discountValue + '%' : '₹' + inr(f.discountValue)} (${f.scopeType}${f.scopeValue ? ':' + f.scopeValue : ''})`,
+      oldValue: null,
+      newValue: `${f.code} — ${describeDiscount(f.discountType, f.discountValue)} (${f.scopeType}${pendingEmail ? ':waiting for ' + pendingEmail : f.scopeValue ? ':' + f.scopeValue : ''})`,
     });
-    res.json({ success: true });
+    res.json({ success: true, ...(pendingEmail ? { pendingEmail } : {}) });
   } catch (err) {
     if (err.code === 'SQLITE_CONSTRAINT') return res.status(409).json({ success: false, error: 'A code with that name already exists.' });
     next(err);
@@ -9117,6 +9191,8 @@ async function discountCodeLines(code) {
   if (code.scope_type === 'CATEGORY') {
     const cat = await dbGet('SELECT label FROM fee_categories WHERE category_key = ?', [code.scope_value]);
     scopeLine = `Valid for the "${escapeHtml(cat ? cat.label : code.scope_value)}" category only.`;
+  } else if (code.scope_type === 'INDIVIDUAL' && code.pending_email) {
+    scopeLine = `Reserved for ${escapeHtml(code.pending_email)}. Sign up with this email address to use it.`;
   } else if (code.scope_type === 'INDIVIDUAL') {
     // scope_value is the delegate's account key, which is only a real
     // number for phone-based accounts -- show the email for an email-only
@@ -9126,7 +9202,7 @@ async function discountCodeLines(code) {
     const contact = shownPhone || ((u && u.email) || '');
     scopeLine = `Reserved for ${escapeHtml(u ? u.full_name : 'this delegate')}${contact ? ` (${escapeHtml(contact)})` : ''} only.`;
   }
-  const discountLine = code.discount_type === 'PERCENT' ? `${Number(code.discount_value)}% off` : `₹${inr(Number(code.discount_value))} off`;
+  const discountLine = describeDiscount(code.discount_type, code.discount_value);
   const expiryLine = code.expires_at ? `Valid through ${escapeHtml(formatDMY(code.expires_at))}.` : 'No expiry date set.';
   return { scopeLine, discountLine, expiryLine };
 }
