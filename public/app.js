@@ -6427,7 +6427,8 @@ async function renderDiscountCodes() {
     const scope = c.scope_type === 'GLOBAL' ? 'All delegates'
       : c.scope_type === 'CATEGORY' ? `Category: ${esc(catLabel(c.scope_value))}`
       : c.pending_email ? `${esc(c.pending_email)} <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-100 text-amber-800 border-amber-300">Waiting for signup</span>`
-      : `Delegate: ${esc(indivName ? indivName + ' (' + c.scope_value + ')' : c.scope_value || '')}`;
+      : `Delegate: ${esc(indivName ? indivName + ' (' + c.scope_value + ')' : c.scope_value || '')}`
+        + (c.issued_email ? ` <span class="text-[11px] text-slate-400">· issued to ${esc(c.issued_email)}, needs it verified</span>` : '');
     const usedTxt = `${c.applied_count}${c.max_uses ? ' / ' + c.max_uses : ''}${c.verified_count ? ` (${c.verified_count} verified)` : ''}`;
     return `<tr class="${c.active ? '' : 'opacity-50'}">
       <td class="p-4"><span class="font-mono font-bold text-slate-800">${esc(c.code)}</span>${c.active ? '' : ' <span class="text-[10px] text-slate-400">· inactive</span>'}</td>
@@ -6471,8 +6472,10 @@ async function handleAddDiscountCode(e) {
     return showToast(data.error || 'Could not add code.');
   }
   showToast(data.pendingEmail
-    ? `Discount code ${body.code} added. No account uses ${data.pendingEmail} yet — it will work for them once they sign up with that address.`
-    : `Discount code ${body.code} added.`, 'success');
+    ? `Discount code ${body.code} added. No account uses ${data.pendingEmail} yet — it will work for them once they sign up with that address and verify it.`
+    : data.needsVerification
+      ? `Discount code ${body.code} added. ${data.issuedEmail} is not verified on their account yet — the code will work once they verify it.`
+      : `Discount code ${body.code} added.`, 'success');
   generateDiscCode(); // fresh code ready for the next one
   document.getElementById('new-disc-value').value = '';
   document.getElementById('new-disc-max').value = '';

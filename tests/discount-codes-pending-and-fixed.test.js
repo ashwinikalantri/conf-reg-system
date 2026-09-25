@@ -48,6 +48,7 @@ const base = { salutation: 'Dr', name: 'Code Tester', age: '34', gender: 'Female
     check('...and the admin is told it is waiting on that address', pend.body.pendingEmail === waitingFor, pend.body);
     const stored = await codeRow(`PEND${N}`);
     check('it is held against the address, not an account', stored.pending_email === waitingFor && stored.scope_value === null, stored);
+    check('...and remembers the address it was issued to, for after it is claimed', stored.issued_email === waitingFor, stored.issued_email);
     const list = (await call('GET', '/api/admin/discount-codes', null, admin)).body.codes || [];
     check('the admin list shows what it is waiting on', (list.find((c) => c.code === `PEND${N}`) || {}).pending_email === waitingFor);
     const voucher = String((await call('GET', `/api/admin/discount-codes/${stored.id}/share`, null, admin)).body);
@@ -106,6 +107,60 @@ const base = { salutation: 'Dr', name: 'Code Tester', age: '34', gender: 'Female
     const known = await create({ code: `KNOWN${N}`, discountType: 'PERCENT', discountValue: 20, scopeType: 'INDIVIDUAL', scopeValue: `other-${N}@example.test` });
     check('no waiting for someone already signed up', known.body.success && !known.body.pendingEmail, known.body);
     check('...it is theirs immediately', (await codeRow(`KNOWN${N}`)).scope_value === other.key);
+    const knownUse = await call('POST', '/api/discounts/validate', { code: `KNOWN${N}`, categoryKey: cat.category_key }, other.cookie);
+    check('...and works, since they verified that address when they signed up', knownUse.body.success === true, knownUse.body);
+
+    console.log('\n== Issued by email to an account that has not verified it: not until they do ==');
+    // The gap this closes: a code issued to an address that already had an
+    // account attached straight to the account and worked whether or not
+    // the address had ever been verified.
+    const loginAs = async (phoneKey) => {
+      const r = await call('POST', `/api/users/${phoneKey}/reset-password`, {}, admin);
+      const l = await call('POST', '/api/auth/login-password', { identifier: phoneKey, password: r.body.tempPassword });
+      await call('POST', '/api/auth/set-password', { password: 'their-own-99' }, l.cookie);
+      return l.cookie;
+    };
+    const holderPhone = '6' + N.padStart(9, '4');
+    const holderEmail = `holder-${N}@example.test`;
+    await call('POST', '/api/users', { phone: holderPhone, name: 'Holds Address', email: holderEmail, role: 'DELEGATE' }, admin);
+    const holderRow = await db.get('SELECT email_verified FROM users WHERE phone_number = ?', [holderPhone]);
+    check('fixture: an account with the address on it, unverified', !!holderRow && !holderRow.email_verified, holderRow);
+    const toHolder = await create({ code: `EXIST${N}`, discountType: 'PERCENT', discountValue: 30, scopeType: 'INDIVIDUAL', scopeValue: holderEmail });
+    check('the code is created for them', toHolder.body.success === true, toHolder.body.error);
+    check('...and the admin is told it will not work until they verify',
+      toHolder.body.needsVerification === true && toHolder.body.issuedEmail === holderEmail, toHolder.body);
+    const holderCode = await codeRow(`EXIST${N}`);
+    check('it is their account\'s, and remembers the address', holderCode.scope_value === holderPhone && holderCode.issued_email === holderEmail, holderCode);
+    const holder = await loginAs(holderPhone);
+    const tooSoon = await call('POST', '/api/discounts/validate', { code: `EXIST${N}`, categoryKey: cat.category_key }, holder);
+    check('using it before verifying is refused', tooSoon.body.success === false, tooSoon.body);
+    check('...and says why', /Verify your email address to use it/.test(tooSoon.body.error || ''), tooSoon.body.error);
+    const vr = await call('POST', '/api/auth/verify-contact/request', { channel: 'email', value: holderEmail }, holder);
+    const vc = await call('POST', '/api/auth/verify-contact/confirm', { channel: 'email', value: holderEmail, otp: vr.body.devOtp }, holder);
+    check('fixture: they verify it', vc.body.success === true, vc.body.error);
+    const afterVerify = await call('POST', '/api/discounts/validate', { code: `EXIST${N}`, categoryKey: cat.category_key }, holder);
+    check('...and then it works', afterVerify.body.success === true, afterVerify.body);
+
+    // Moving to another address -- even a verified one -- takes them off the
+    // address the code was issued to.
+    const moved = `moved-${N}@example.test`;
+    const mr = await call('POST', '/api/auth/verify-contact/request', { channel: 'email', value: moved }, holder);
+    await call('POST', '/api/auth/verify-contact/confirm', { channel: 'email', value: moved, otp: mr.body.devOtp }, holder);
+    const afterMove = await call('POST', '/api/discounts/validate', { code: `EXIST${N}`, categoryKey: cat.category_key }, holder);
+    check('if the account no longer holds that address, it stops working',
+      afterMove.body.success === false && /not on your account/.test(afterMove.body.error || ''), afterMove.body);
+
+    console.log('\n== Issued by picking the delegate, it needs no email at all ==');
+    // Issued to a person, not an address: the rule is about codes issued TO
+    // AN EMAIL, and this one was not.
+    const pickedPhone = '6' + N.padStart(9, '5');
+    await call('POST', '/api/users', { phone: pickedPhone, name: 'Picked By Name', email: `picked-${N}@example.test`, role: 'DELEGATE' }, admin);
+    const byPick = await create({ code: `PICK${N}`, discountType: 'PERCENT', discountValue: 15, scopeType: 'INDIVIDUAL', scopeValue: pickedPhone });
+    check('a code issued by choosing the account records no address', byPick.body.success && (await codeRow(`PICK${N}`)).issued_email === null);
+    check('...and does not ask the admin about verification', !byPick.body.needsVerification);
+    const picked = await loginAs(pickedPhone);
+    const pickUse = await call('POST', '/api/discounts/validate', { code: `PICK${N}`, categoryKey: cat.category_key }, picked);
+    check('...so it works with their email still unverified', pickUse.body.success === true, pickUse.body);
 
     console.log('\n== A code can set the fee instead of discounting it ==');
     const fix = await create({ code: `FIX${N}`, discountType: 'FIXED_FEE', discountValue: 1000, scopeType: 'GLOBAL' });

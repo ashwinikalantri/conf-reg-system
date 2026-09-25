@@ -1319,18 +1319,31 @@ async function validateDiscountCode(rawCode, phone, categoryKey) {
     return { ok: false, error: 'This promo code does not apply to your delegate category.' };
   }
   if (row.scope_type === 'INDIVIDUAL') {
-    if (row.pending_email) {
+    // A code still waiting on an address has no account yet; any other
+    // personal code belongs to one account and nobody else.
+    if (!row.pending_email && row.scope_value !== phone) {
+      return { ok: false, error: 'This promo code is not valid for your account.' };
+    }
+    // Issued TO AN EMAIL -- waiting on it, or already claimed: whoever uses it
+    // must hold that address and have verified it. Holding it proves nothing
+    // (anyone can type an address onto an account); verifying it does.
+    const address = row.pending_email || row.issued_email;
+    if (address) {
       const me = await dbGet('SELECT email, email_verified FROM users WHERE phone_number = ?', [phone]);
-      const mine = !!(me && me.email && normalizeEmail(me.email) === row.pending_email);
-      if (!mine) return { ok: false, error: 'This promo code is not valid for your account.' };
+      const holds = !!(me && me.email && normalizeEmail(me.email) === address);
+      if (!holds) {
+        return { ok: false, error: row.pending_email
+          ? 'This promo code is not valid for your account.'
+          : 'This code was issued to an email address that is not on your account.' };
+      }
       if (!me.email_verified) {
         return { ok: false, error: 'This code was issued to your email address. Verify your email address to use it.' };
       }
-      await bindPendingDiscountCodes(phone, me.email);
-      row.scope_value = phone;
-      row.pending_email = null;
-    } else if (row.scope_value !== phone) {
-      return { ok: false, error: 'This promo code is not valid for your account.' };
+      if (row.pending_email) {
+        await bindPendingDiscountCodes(phone, me.email);
+        row.scope_value = phone;
+        row.pending_email = null;
+      }
     }
   }
   if (row.max_uses && row.max_uses > 0) {
@@ -1886,6 +1899,14 @@ db.serialize(() => {
     if (err) return console.error('Schema check failed:', err.message);
     if (!cols.map((c) => c.name).includes('pending_email')) {
       db.run('ALTER TABLE discount_codes ADD COLUMN pending_email TEXT');
+    }
+    // The address a personal code was ISSUED TO, when the admin issued it by
+    // email -- kept after it is claimed, because the rule outlives the claim:
+    // whoever uses it must hold that address and have verified it. NULL for a
+    // code issued by picking a delegate (a person, not an address) and for
+    // every code created before this existed.
+    if (!cols.map((c) => c.name).includes('issued_email')) {
+      db.run('ALTER TABLE discount_codes ADD COLUMN issued_email TEXT');
     }
   });
 
@@ -9106,7 +9127,10 @@ app.post('/api/admin/discount-codes', requirePermission('discounts.manage'), asy
     // it (bindPendingDiscountCodes). A mobile number still has to belong to an
     // account -- there is no way to "verify" a number someone has not used.
     let pendingEmail = null;
+    let issuedEmail = null;
+    let needsVerification = false;
     if (f.scopeType === 'INDIVIDUAL') {
+      if (isEmailValue(f.scopeValue)) issuedEmail = normalizeEmail(f.scopeValue);
       const found = await resolveAccountByIdentifier(f.scopeValue);
       if (found.error === 'ambiguousEmail') {
         return res.status(409).json({ success: false, error: 'More than one account uses that email address. Use the delegate\u2019s mobile number instead.' });
@@ -9118,19 +9142,26 @@ app.post('/api/admin/discount-codes', requirePermission('discounts.manage'), asy
         return res.status(404).json({ success: false, error: 'No delegate found with that mobile number.' });
       } else {
         f.scopeValue = found.user.phone_number;
+        // Issued by email to an account that has not verified that email yet:
+        // it is theirs, but will not work until they verify -- worth telling
+        // the admin now rather than the delegate at the payment step.
+        if (issuedEmail) {
+          const acct = await dbGet('SELECT email_verified FROM users WHERE phone_number = ?', [f.scopeValue]);
+          needsVerification = !(acct && acct.email_verified);
+        }
       }
     }
 
     const result = await dbRun(
-      `INSERT INTO discount_codes (code, discount_type, discount_value, scope_type, scope_value, pending_email, max_uses, expires_at, active, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-      [f.code, f.discountType, f.discountValue, f.scopeType, f.scopeValue, pendingEmail, f.maxUses, f.expiresAt, Date.now(), req.session.name || req.session.phone]);
+      `INSERT INTO discount_codes (code, discount_type, discount_value, scope_type, scope_value, pending_email, issued_email, max_uses, expires_at, active, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      [f.code, f.discountType, f.discountValue, f.scopeType, f.scopeValue, pendingEmail, issuedEmail, f.maxUses, f.expiresAt, Date.now(), req.session.name || req.session.phone]);
     await recordAudit({
       req, entityType: 'discount_code', entityId: result.lastID, action: 'DISCOUNT_CODE_CREATE',
       oldValue: null,
       newValue: `${f.code} — ${describeDiscount(f.discountType, f.discountValue)} (${f.scopeType}${pendingEmail ? ':waiting for ' + pendingEmail : f.scopeValue ? ':' + f.scopeValue : ''})`,
     });
-    res.json({ success: true, ...(pendingEmail ? { pendingEmail } : {}) });
+    res.json({ success: true, ...(pendingEmail ? { pendingEmail } : {}), ...(needsVerification ? { needsVerification: true, issuedEmail } : {}) });
   } catch (err) {
     if (err.code === 'SQLITE_CONSTRAINT') return res.status(409).json({ success: false, error: 'A code with that name already exists.' });
     next(err);
