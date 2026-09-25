@@ -9853,10 +9853,44 @@ function extractStatementRef(description) {
 }
 
 // Stable fingerprint of a statement row, used to dedupe across uploads of
-// overlapping date ranges.
+// overlapping date ranges. It includes the description, so on its own it only
+// catches a row re-imported word for word -- see findSameStatementTransaction
+// for the same transaction arriving with different wording.
 function statementRowHash(row) {
   return sha256([row.post_date, row.value_date, row.branch_code, row.cheque_number,
     row.description, row.debit, row.credit, row.balance].map((v) => (v == null ? '' : String(v).trim())).join('|'));
+}
+
+// The bank's narration for one transaction is not stable between exports: a
+// UPI credit can appear as "UPI/RRN 6123.../<payer>/..." in one statement and
+// as a bare "By Transfer" in another (either way round -- a later, wider-range
+// export was seen to abbreviate rows an earlier daily one had in full). With
+// the description in the fingerprint above, each rewording was stored as a
+// second transaction: 14 phantom credits, all sitting in Unmatched Credits
+// looking exactly like money nobody had claimed.
+const PLACEHOLDER_NARRATION = /^(by|to)\s+transfer$/i;
+function isPlaceholderNarration(description) {
+  return PLACEHOLDER_NARRATION.test(String(description || '').trim());
+}
+
+// The row already on file for this transaction, if any, whatever its wording.
+// A transaction is its dates, branch, cheque number, amount and the running
+// balance after it: the balance is what makes two same-day credits of the same
+// amount distinguishable, so a row without one is only ever matched exactly,
+// by the fingerprint. The one case that key cannot separate -- a credit, an
+// equal debit and an equal credit on the same day, which puts the balance back
+// where it was -- is caught by the reference: two rows that both carry one,
+// and different ones, are two transactions.
+async function findSameStatementTransaction(row) {
+  if (row.balance == null) return null;
+  const candidates = await dbAll(
+    `SELECT id, description, extracted_ref FROM bank_statement_transactions
+      WHERE post_date = ? AND value_date = ? AND branch_code = ? AND cheque_number = ?
+        AND COALESCE(debit, -1) = COALESCE(?, -1) AND COALESCE(credit, -1) = COALESCE(?, -1)
+        AND balance = ?
+      ORDER BY id`,
+    [row.post_date, row.value_date, row.branch_code, row.cheque_number, row.debit, row.credit, row.balance]);
+  return candidates.find((c) => !c.extracted_ref || !row.extracted_ref || c.extracted_ref === row.extracted_ref) || null;
 }
 
 // Parse an uploaded statement workbook into transaction rows. The bank's
@@ -9992,7 +10026,26 @@ app.post('/api/admin/bank-statement/upload', requirePermission('statement.import
       await fs.promises.writeFile(path.join(STATEMENT_DIR, savedName), req.file.buffer);
 
       let imported = 0;
+      let narrationsFilled = 0;
       for (const row of rows) {
+        // Already on file under other wording: keep the one row, and keep
+        // whichever narration says more. Updating in place rather than
+        // replacing keeps every link and refund pointing at it, and gives a
+        // row that was linked while it still read "By Transfer" the reference
+        // it was missing.
+        const existing = await findSameStatementTransaction(row);
+        if (existing) {
+          if (isPlaceholderNarration(existing.description) && !isPlaceholderNarration(row.description)) {
+            await dbRun('UPDATE bank_statement_transactions SET description = ?, extracted_ref = ? WHERE id = ?',
+              [row.description, row.extracted_ref, existing.id]);
+            await recordAudit({
+              req, entityType: 'bank_statement_transaction', entityId: existing.id,
+              action: 'STATEMENT_NARRATION_FILLED', oldValue: existing.description, newValue: row.description,
+            });
+            narrationsFilled++;
+          }
+          continue;
+        }
         const hash = statementRowHash(row);
         const result = await dbRun(
           `INSERT OR IGNORE INTO bank_statement_transactions
@@ -10004,7 +10057,7 @@ app.post('/api/admin/bank-statement/upload', requirePermission('statement.import
         if (result.changes > 0) imported++;
       }
       const linked = await autoLinkTransactions();
-      res.json({ success: true, total: rows.length, imported, duplicates: rows.length - imported, linked });
+      res.json({ success: true, total: rows.length, imported, duplicates: rows.length - imported, narrationsFilled, linked });
     } catch (err) {
       next(err);
     }

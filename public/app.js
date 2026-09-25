@@ -9480,6 +9480,7 @@ async function handleStatementUpload(e) {
     }
     resultEl.className = 'text-xs font-semibold text-emerald-600';
     resultEl.textContent = `Imported ${data.imported} new row(s) of ${data.total} (${data.duplicates} already imported)`
+      + (data.narrationsFilled ? `, filled in the bank's description for ${data.narrationsFilled} that read "By Transfer"` : '')
       + (data.linked ? `, auto-linked ${data.linked} to registrations.` : '.');
     fileInput.value = '';
     // Auto-linking can change registrations' bank_txn_id, so the Registration
