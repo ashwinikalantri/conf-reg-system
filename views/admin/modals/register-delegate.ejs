@@ -15,7 +15,28 @@
       </div>
 
       <form id="register-delegate-form" onsubmit="handleRegisterDelegateSubmit(event)" class="flex-1 min-h-0 overflow-y-auto p-6 pt-4 space-y-4">
-        <div>
+        <!-- Registering on behalf of someone who already signed up: pick their
+             account so the registration joins it, instead of retyping details
+             that could only ever match by mobile number (and never matched a
+             delegate who signed up by email). See GET /api/desk/signups. -->
+        <div id="rd-link-wrap" class="bg-indigo-50/60 border border-indigo-100 rounded-xl p-3">
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Already signed up? <span class="text-slate-400 font-normal">(find their account)</span></label>
+          <div id="rd-link-search-wrap" class="relative">
+            <input type="text" id="rd-link-search" autocomplete="off" oninput="searchRegisterDelegateSignups(this.value)" placeholder="Their name, mobile or email" class="w-full p-2.5 border rounded-lg text-sm bg-white outline-none">
+            <div id="rd-link-results" class="hidden absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto divide-y divide-slate-100"></div>
+          </div>
+          <div id="rd-linked" class="hidden flex items-center justify-between gap-2">
+            <div class="min-w-0">
+              <p class="text-[11px] text-indigo-700 font-semibold uppercase tracking-wide">Registering for their existing account</p>
+              <p class="text-sm font-bold text-slate-800 truncate" id="rd-linked-name"></p>
+              <p class="text-[11px] text-slate-500 truncate" id="rd-linked-contact"></p>
+            </div>
+            <button type="button" onclick="unlinkRegisterDelegateAccount()" class="shrink-0 px-3 py-1.5 border border-slate-300 hover:bg-white text-slate-700 text-xs font-semibold rounded-lg">Change</button>
+          </div>
+          <p id="rd-link-hint" class="text-[11px] text-slate-500 mt-1">Leave blank for someone new — a new account is created from the details below.</p>
+        </div>
+
+        <div id="rd-phone-wrap">
           <label class="block text-xs font-semibold text-slate-700 mb-1">Mobile Number (+91)</label>
           <input type="tel" id="rd-phone" maxlength="10" required autocomplete="off" class="w-full p-2.5 border rounded-lg text-sm font-mono outline-none">
         </div>

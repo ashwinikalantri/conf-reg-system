@@ -6546,11 +6546,27 @@ app.get('/api/admin/bank-credit-candidates', requirePermission('payments.link'),
 // limits, same discount rules.
 app.post('/api/admin/registrations', requirePermission('payments.desk_register'), async (req, res, next) => {
   try {
-    const phone = String(req.body.phone || '').trim();
-    // Desk registrations stay Indian-only for now, same reasoning as
-    // POST /api/users: the number becomes the account key here.
-    if (!isIndianPhone(phone)) {
-      return res.status(400).json({ success: false, error: 'Enter a valid 10-digit Indian mobile number.' });
+    // Staff registering someone who has already signed up choose their
+    // account (accountKey, from GET /api/desk/signups) rather than retyping
+    // a number: typing only ever found an account whose key WAS that number,
+    // so a delegate who signed up by email -- whose account has no phone --
+    // could never be reached, and got a second account instead.
+    const accountKey = req.body.accountKey ? String(req.body.accountKey).trim() : '';
+    let linkedAccount = null;
+    let phone;
+    if (accountKey) {
+      linkedAccount = await dbGet("SELECT * FROM users WHERE phone_number = ? AND role = 'DELEGATE'", [accountKey]);
+      if (!linkedAccount) {
+        return res.status(404).json({ success: false, error: 'That signed-up account could not be found. Search for them again.' });
+      }
+      phone = accountKey;
+    } else {
+      phone = String(req.body.phone || '').trim();
+      // Desk registrations stay Indian-only for now, same reasoning as
+      // POST /api/users: the number becomes the account key here.
+      if (!isIndianPhone(phone)) {
+        return res.status(400).json({ success: false, error: 'Enter a valid 10-digit Indian mobile number.' });
+      }
     }
     const paymentMode = req.body.paymentMode;
     if (!['CASH', 'BANK_TRANSFER'].includes(paymentMode)) {
@@ -6566,7 +6582,7 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
       cashCollector = resolvedCollector.collector;
     }
 
-    const existingUser = await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
+    const existingUser = linkedAccount || await dbGet('SELECT * FROM users WHERE phone_number = ?', [phone]);
     const existingReg = await dbGet('SELECT id FROM registrations WHERE phone_number = ?', [phone]);
     if (existingReg) {
       return res.status(409).json({ success: false, error: 'This delegate already has a registration.' });
@@ -8462,6 +8478,34 @@ app.get('/api/desk/search', requirePermission('desk.view'), async (req, res, nex
 // GET /api/registrations/:id/receipt -- the same handler, in fact. It exists
 // twice only because requirePermission takes exactly one key, so a route
 // cannot be reachable by either payments.view or desk.view.
+// "Already signed up? Find their account" in the walk-in form: people with a
+// delegate account and no registration yet -- the ones staff can register on
+// their behalf. Guarded by the walk-in permission itself, so a role that may
+// register walk-ins can find who to register without holding users.view (the
+// whole Users & Roles tab). Staff accounts are left out: they are not
+// delegates. Registered people are left out too -- they have nothing to link
+// to, and the desk lookup is where they are found.
+app.get('/api/desk/signups', requirePermission('payments.desk_register'), async (req, res, next) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ success: true, results: [] });
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const rows = await dbAll(
+      `SELECT u.phone_number, u.phone, u.salutation, u.full_name, u.email, u.designation, u.institution
+         FROM users u
+        WHERE u.role = 'DELEGATE'
+          AND NOT EXISTS (SELECT 1 FROM registrations r WHERE r.phone_number = u.phone_number)
+          AND (u.full_name LIKE ? ESCAPE '\\' OR u.phone_number LIKE ? ESCAPE '\\'
+               OR u.phone LIKE ? ESCAPE '\\' OR LOWER(u.email) LIKE LOWER(?) ESCAPE '\\')
+        ORDER BY CASE WHEN u.full_name LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END, u.full_name
+        LIMIT 8`,
+      [like, like, like, like, `${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`]);
+    res.json({ success: true, results: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get('/api/desk/registrations/:id/receipt', requirePermission('desk.view'), renderReceipt);
 
 // Every programme option with its live occupancy, for the change control.

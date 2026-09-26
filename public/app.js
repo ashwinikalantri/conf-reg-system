@@ -8351,8 +8351,9 @@ let rdMode = 'CASH';
 let rdSelectedBankTxn = null;
 let rdBankLinkLater = false;
 
-async function openRegisterDelegateModal() {
+async function openRegisterDelegateModal(linkAccount) {
   resetRegisterDelegateForm();
+  if (linkAccount) linkRegisterDelegateAccount(linkAccount);
   const [feesRes, groupsRes] = await Promise.all([fetch('/api/fees'), fetch('/api/program-options')]);
   const feesData = feesRes.ok ? await feesRes.json() : {};
   rdCategoriesCache = feesData.categories || [];
@@ -8378,7 +8379,75 @@ async function openRegisterDelegateModal() {
   openModal('modal-register-delegate');
 }
 
+// The signed-up account a walk-in is being registered against, or null for
+// someone new. Set by linkRegisterDelegateAccount().
+let rdLinkedAccount = null;
+let rdLinkSearchSeq = 0;
+
+// "Already signed up?" -- people with an account and no registration yet.
+async function searchRegisterDelegateSignups(query) {
+  const box = document.getElementById('rd-link-results');
+  if (!box) return;
+  const q = String(query || '').trim();
+  if (q.length < 2) { box.classList.add('hidden'); return; }
+  const seq = ++rdLinkSearchSeq; // a slow reply to an older keystroke must not win
+  let results = [];
+  try {
+    results = ((await (await fetch(`/api/desk/signups?q=${encodeURIComponent(q)}`)).json()).results) || [];
+  } catch (e) { /* leave the list empty */ }
+  if (seq !== rdLinkSearchSeq) return;
+  rdLinkCandidates = results;
+  box.innerHTML = results.length
+    ? results.map((u, i) => `<button type="button" onclick="linkRegisterDelegateAccount(rdLinkCandidates[${i}])" class="w-full text-left px-3 py-2 hover:bg-indigo-50">
+        <p class="font-semibold text-slate-800 text-sm">${esc([u.salutation, u.full_name].filter(Boolean).join(' ') || '—')}</p>
+        <p class="text-[11px] text-slate-500">${esc(rdAccountContact(u))}${u.institution ? ' · ' + esc(u.institution) : ''}</p>
+      </button>`).join('')
+    : '<p class="text-xs text-slate-400 p-3">No signed-up delegate without a registration matches. Leave this blank to register someone new.</p>';
+  box.classList.remove('hidden');
+}
+let rdLinkCandidates = [];
+
+// Their mobile when they have one, else their email -- never the account key,
+// which is synthetic for someone who signed up by email.
+function rdAccountContact(u) {
+  const mobile = delegateDisplayPhone(u);
+  return [mobile, u.email].filter(Boolean).join(' · ');
+}
+
+// Link the walk-in to an existing account: its name, contact details and
+// email are theirs already, so those fields are hidden -- and made optional,
+// or the browser would refuse to submit a form with a hidden required field.
+function linkRegisterDelegateAccount(account) {
+  if (!account) return;
+  rdLinkedAccount = account;
+  document.getElementById('rd-link-results').classList.add('hidden');
+  document.getElementById('rd-link-search-wrap').classList.add('hidden');
+  document.getElementById('rd-link-hint').classList.add('hidden');
+  document.getElementById('rd-linked').classList.remove('hidden');
+  setText('rd-linked-name', [account.salutation, account.full_name].filter(Boolean).join(' ') || '—');
+  setText('rd-linked-contact', rdAccountContact(account));
+  for (const id of ['rd-phone-wrap', 'rd-name-fields']) document.getElementById(id).classList.add('hidden');
+  for (const id of ['rd-phone', 'rd-name']) document.getElementById(id).required = false;
+}
+
+function unlinkRegisterDelegateAccount() {
+  rdLinkedAccount = null;
+  const search = document.getElementById('rd-link-search');
+  if (search) search.value = '';
+  for (const id of ['rd-link-search-wrap', 'rd-link-hint', 'rd-phone-wrap', 'rd-name-fields']) {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('hidden');
+  }
+  const linked = document.getElementById('rd-linked');
+  if (linked) linked.classList.add('hidden');
+  for (const id of ['rd-phone', 'rd-name']) {
+    const el = document.getElementById(id);
+    if (el) el.required = true;
+  }
+}
+
 function resetRegisterDelegateForm() {
+  unlinkRegisterDelegateAccount();
   const form = document.getElementById('register-delegate-form');
   const result = document.getElementById('register-delegate-result');
   if (form) { form.reset(); form.classList.remove('hidden'); }
@@ -8545,7 +8614,7 @@ function selectRegisterDelegateBankTxn(txn) {
 async function handleRegisterDelegateSubmit(e) {
   e.preventDefault();
   const phone = document.getElementById('rd-phone').value.trim();
-  if (!isPhoneValue(phone)) return showToast('Enter a valid mobile number.');
+  if (!rdLinkedAccount && !isPhoneValue(phone)) return showToast('Enter a valid mobile number.');
   const categoryKey = document.getElementById('rd-category').value;
   if (!categoryKey) return showToast('Select a delegate category.');
   const cat = rdCategoriesCache.find((c) => c.key === categoryKey);
@@ -8553,18 +8622,20 @@ async function handleRegisterDelegateSubmit(e) {
     return showToast('Confirm the student ID card before continuing.');
   }
 
-  const payload = {
+  const payload = rdLinkedAccount ? { accountKey: rdLinkedAccount.phone_number } : {
     phone,
     name: document.getElementById('rd-name').value.trim(),
     designation: document.getElementById('rd-designation').value.trim(),
     institute: document.getElementById('rd-institute').value.trim(),
     email: document.getElementById('rd-email').value.trim(),
+  };
+  Object.assign(payload, {
     categoryKey,
     optionIds: collectRegisterDelegateOptionIds(),
     discountCode: document.getElementById('rd-discount-code').value.trim(),
     idVerifiedByAdmin: cat && cat.requiresStudentId ? true : undefined,
     paymentMode: rdMode,
-  };
+  });
   if (rdMode === 'CASH') {
     payload.amount = Number(document.getElementById('rd-cash-amount').value);
     payload.collectedBy = document.getElementById('rd-cash-collected-by').value;
@@ -8995,9 +9066,22 @@ function deskWhoCard(user, reg, checkedIn) {
 }
 
 function deskNoRegistrationCard() {
+  // Registered on the spot against the account they already have -- the
+  // walk-in form opens linked to them, so nothing is retyped and no second
+  // account is created.
+  const canRegister = can('payments.desk_register');
   return deskCard('Registration', `
-    <p class="text-sm text-slate-500">This person has an account but has not registered.
-    Use <span class="font-semibold">+ Register walk-in</span> to register and take payment.</p>`, '');
+    <p class="text-sm text-slate-500">This person has an account but has not registered.${canRegister ? ' Register them here to take their payment.' : ''}</p>`,
+  canRegister ? deskBtn('Register this delegate', 'registerDeskDelegate()', 'primary') : '');
+}
+
+function registerDeskDelegate() {
+  if (!deskDelegate || !deskDelegate.user) return;
+  const u = deskDelegate.user;
+  openRegisterDelegateModal({
+    phone_number: u.phone_number, phone: u.phone, salutation: u.salutation,
+    full_name: u.full_name, email: u.email, institution: u.institution,
+  });
 }
 
 function deskMoneyCard(reg, payment) {
