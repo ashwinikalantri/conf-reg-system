@@ -129,6 +129,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     // rather than as widened guards on the routes they mirror because
     // requirePermission takes exactly one key: there is no way to say "either
     // payments.view or desk.view" on GET /api/registrations/:id/receipt.
+    'POST /api/desk/quote': 'Prices a walk-in live -- a typed code, the linked delegate\'s own personal code, or a group discount -- so the fee shown and the cash pre-filled match what the registration will record. payments.desk_register, the permission to register the walk-in at all; it writes nothing.',
     'GET /api/desk/signups': 'Search for someone who has signed up but not registered, so a walk-in can be registered against their existing account. payments.desk_register -- the permission for registering a walk-in at all -- so it reaches exactly the roles that could already register them, and needs no users.view.',
     'GET /api/desk/delegate/:identifier': 'The desk lookup: one delegate, whole. Composes the same helpers as GET /api/users/:phone/detail, which needs users.view (the entire Users & Roles tab) and so is far too wide for a desk volunteer.',
     'GET /api/desk/registrations/:id/receipt': 'Literally renderReceipt, the same handler as GET /api/registrations/:id/receipt. That one is payments.view -- the whole finance worklist, every ledger and audit trail -- which reprinting a receipt should not require.',

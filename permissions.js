@@ -178,6 +178,7 @@ const ROUTE_PERMISSIONS = {
   'GET /api/desk/delegate/:identifier': 'desk.view',
   'GET /api/desk/registrations/:id/receipt': 'desk.view',
   'GET /api/desk/signups': 'payments.desk_register',
+  'POST /api/desk/quote': 'payments.desk_register',
   'GET /api/desk/search': 'desk.view',
   'GET /api/desk/programmes': 'desk.view',
   'GET /api/desk/staff': 'desk.view',

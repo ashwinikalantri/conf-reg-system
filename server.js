@@ -1357,6 +1357,40 @@ async function validateDiscountCode(rawCode, phone, categoryKey) {
   return { ok: true, code: row };
 }
 
+// The best personal code a delegate holds for a category, so it can be
+// applied without their typing it: every active INDIVIDUAL code that is
+// theirs -- bound to their account, or still waiting on their email address
+// -- run through validateDiscountCode (expiry, scope, and the verified-email
+// rule), keeping the one that takes the most off. A code that takes nothing
+// off for this category (a set fee above it) is not "applied". Also reports
+// whether a code was held back only because their email is not verified yet,
+// so they can be told rather than left wondering where their discount went.
+async function bestPersonalCode(accountKey, categoryKey) {
+  const feeInfo = await resolveFee(categoryKey);
+  if (!feeInfo || !accountKey) return { feeInfo, best: null, needsVerification: false };
+  const me = await dbGet('SELECT email FROM users WHERE phone_number = ?', [accountKey]);
+  const addr = me && me.email ? normalizeEmail(me.email) : null;
+  const rows = await dbAll(
+    `SELECT code FROM discount_codes
+      WHERE active = 1 AND scope_type = 'INDIVIDUAL'
+        AND (scope_value = ? OR (? IS NOT NULL AND pending_email = ?))`,
+    [accountKey, addr, addr]);
+  let best = null;
+  let needsVerification = false;
+  for (const r of rows) {
+    const v = await validateDiscountCode(r.code, accountKey, categoryKey);
+    if (!v.ok) {
+      if (/Verify your email address/.test(v.error)) needsVerification = true;
+      continue;
+    }
+    const amount = computeDiscountAmount(v.code, feeInfo.amount);
+    if (amount > 0 && (!best || amount > best.discountAmount)) {
+      best = { code: v.code.code, discountType: v.code.discount_type, discountValue: v.code.discount_value, discountAmount: amount };
+    }
+  }
+  return { feeInfo, best, needsVerification: !best && needsVerification };
+}
+
 // A delegate's group and whether it currently qualifies for its category's
 // group discount (member count >= the rule's min_size). Returns null if the
 // delegate isn't in a group.
@@ -4508,6 +4542,23 @@ app.get('/api/fees', requireAuth, async (req, res, next) => {
 
 // Validate a promo code for the caller against a chosen category, and return
 // the resulting discounted fee so the payment form can preview it.
+// The payment form asks this when a category is chosen, and applies the
+// answer: a personal code issued to this delegate is theirs to use without
+// typing it. Nothing is written -- the code is re-validated when they submit.
+app.get('/api/discounts/mine', requireAuth, async (req, res, next) => {
+  try {
+    const { feeInfo, best, needsVerification } = await bestPersonalCode(req.session.phone, req.query.categoryKey);
+    if (!feeInfo) return res.status(400).json({ success: false, error: 'Select a valid category first.' });
+    res.json({
+      success: true,
+      code: best ? { ...best, baseFee: feeInfo.amount, finalFee: feeInfo.amount - best.discountAmount } : null,
+      needsVerification,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.post('/api/discounts/validate', requireAuth, async (req, res, next) => {
   try {
     const { code, categoryKey } = req.body;
@@ -8506,6 +8557,50 @@ app.get('/api/desk/signups', requirePermission('payments.desk_register'), async 
   }
 });
 
+// The walk-in form's fee, priced live. It used to show the category fee
+// whatever promo code was typed, and pre-fill that as the cash amount, while
+// the registration recorded the discounted fee -- so staff collected the full
+// fee. Same resolution as POST /api/admin/registrations: a typed code, or
+// else the linked delegate's own best personal code (applied for them, as it
+// would be on their own payment form), and a qualifying group discount
+// instead if that takes off more -- they never stack.
+app.post('/api/desk/quote', requirePermission('payments.desk_register'), async (req, res, next) => {
+  try {
+    const feeInfo = await resolveFee(req.body.categoryKey);
+    if (!feeInfo) return res.status(400).json({ success: false, error: 'Select a delegate category.' });
+    const accountKey = req.body.accountKey ? String(req.body.accountKey).trim() : '';
+    const who = accountKey || String(req.body.phone || '').trim();
+    const typed = String(req.body.discountCode || '').trim();
+
+    let promo = null;
+    let promoError = null;
+    if (typed) {
+      const v = await validateDiscountCode(typed, who, req.body.categoryKey);
+      if (v.ok) promo = { code: v.code.code, discountAmount: computeDiscountAmount(v.code, feeInfo.amount), auto: false };
+      else promoError = v.error;
+    } else if (accountKey) {
+      const { best } = await bestPersonalCode(accountKey, req.body.categoryKey);
+      if (best) promo = { code: best.code, discountAmount: best.discountAmount, auto: true };
+    }
+    let groupAmount = 0;
+    if (who) {
+      const g = await getDelegateGroup(who);
+      if (g && g.qualifies && g.group.category_key === req.body.categoryKey) groupAmount = computeDiscountAmount(g.rule, feeInfo.amount);
+    }
+    const useGroup = groupAmount > 0 && groupAmount >= (promo ? promo.discountAmount : 0);
+    res.json({
+      success: true,
+      baseFee: feeInfo.amount,
+      discountAmount: useGroup ? groupAmount : (promo ? promo.discountAmount : 0),
+      code: useGroup ? 'GROUP' : (promo ? promo.code : null),
+      auto: !useGroup && !!(promo && promo.auto),
+      ...(promoError ? { error: promoError } : {}),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get('/api/desk/registrations/:id/receipt', requirePermission('desk.view'), renderReceipt);
 
 // Every programme option with its live occupancy, for the change control.
@@ -9131,7 +9226,13 @@ function parseDiscountBody(body) {
   // delegate. Digits-only stripping would destroy an email, so only a value
   // that already looks like a phone is normalised that way; the POST handler
   // resolves whichever it is to that delegate's account key before storing.
-  if (scopeType === 'INDIVIDUAL' && !isEmailValue(scopeValue)) scopeValue = scopeValue.replace(/\D/g, '');
+  // Only something phone-SHAPED is stripped to digits: the admin picker sends
+  // the account key, and for someone who signed up by email that key is
+  // synthetic ("u_...") -- stripping it left a few digits that matched nobody,
+  // so picking an email-only delegate could never issue them a code.
+  if (scopeType === 'INDIVIDUAL' && !isEmailValue(scopeValue) && /^[+\d\s()-]+$/.test(scopeValue)) {
+    scopeValue = scopeValue.replace(/\D/g, '');
+  }
   // An individual code is single-delegate by nature, so a usage cap is
   // irrelevant -- always store it as unlimited (the scope check limits use).
   const maxUses = scopeType === 'INDIVIDUAL' ? null
@@ -9149,7 +9250,9 @@ function validateDiscountFields(f) {
   } else if (!Number.isFinite(f.discountValue) || f.discountValue <= 0) return 'Discount value must be greater than zero.';
   if (f.discountType === 'PERCENT' && f.discountValue > 100) return 'A percentage discount cannot exceed 100.';
   if (f.scopeType === 'CATEGORY' && !f.scopeValue) return 'Choose a category for a category-scoped code.';
-  if (f.scopeType === 'INDIVIDUAL' && !isPhoneValue(f.scopeValue) && !isEmailValue(f.scopeValue)) {
+  // A mobile number, an email address, or an account key from the picker --
+  // the route works out which.
+  if (f.scopeType === 'INDIVIDUAL' && !f.scopeValue) {
     return 'Enter the delegate\u2019s mobile number or email address for an individual code.';
   }
   return null;
@@ -9173,8 +9276,17 @@ app.post('/api/admin/discount-codes', requirePermission('discounts.manage'), asy
     let pendingEmail = null;
     let issuedEmail = null;
     let needsVerification = false;
-    if (f.scopeType === 'INDIVIDUAL') {
+    // Exactly an account's key -- what the picker sends: issued to that person
+    // directly. No address is recorded, so it needs no email verified.
+    const byKey = f.scopeType === 'INDIVIDUAL'
+      ? await dbGet("SELECT phone_number FROM users WHERE phone_number = ? AND role = 'DELEGATE'", [f.scopeValue]) : null;
+    if (byKey) {
+      f.scopeValue = byKey.phone_number;
+    } else if (f.scopeType === 'INDIVIDUAL') {
       if (isEmailValue(f.scopeValue)) issuedEmail = normalizeEmail(f.scopeValue);
+      else if (!isPhoneValue(f.scopeValue)) {
+        return res.status(404).json({ success: false, error: 'No delegate found with that mobile number or email address.' });
+      }
       const found = await resolveAccountByIdentifier(f.scopeValue);
       if (found.error === 'ambiguousEmail') {
         return res.status(409).json({ success: false, error: 'More than one account uses that email address. Use the delegate\u2019s mobile number instead.' });

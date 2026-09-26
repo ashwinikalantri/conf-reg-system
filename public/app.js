@@ -1299,10 +1299,51 @@ function clearAppliedPromo() {
   if (inputRow) inputRow.classList.remove('hidden');
 }
 
+// A personal code issued to this delegate is applied without their typing
+// it: when a category is chosen, the server names their best valid personal
+// code for it (GET /api/discounts/mine), and it goes in exactly as if typed.
+// Removing it with ✕ is respected for the rest of this form -- they chose to
+// pay without it -- and each category is only asked about once.
+let personalCodeState = { dismissed: false, checked: {} };
+async function autoApplyPersonalCode(catKey) {
+  if (!catKey || personalCodeState.dismissed || personalCodeState.checked[catKey]) return;
+  personalCodeState.checked[catKey] = true;
+  let data;
+  try {
+    data = await (await fetch(`/api/discounts/mine?categoryKey=${encodeURIComponent(catKey)}`)).json();
+  } catch (e) { return; }
+  // The category may have changed, or a code been typed, while this was asked.
+  const current = document.getElementById('payment-category');
+  if (!data || !data.success || personalCodeState.dismissed || !current || current.value !== catKey || appliedPromo) return;
+  const msg = document.getElementById('promo-msg');
+  if (data.code) {
+    appliedPromo = { code: data.code.code, discountAmount: data.code.discountAmount, finalFee: data.code.finalFee, categoryKey: catKey, auto: true };
+    const codeInput = document.getElementById('promo-code');
+    if (codeInput) codeInput.value = data.code.code;
+    const inputRow = document.getElementById('promo-input-row');
+    if (inputRow) inputRow.classList.add('hidden');
+    if (msg) {
+      msg.textContent = data.code.discountType === 'FIXED_FEE'
+        ? `Your personal code ${data.code.code} has been applied — your fee is now ₹${inr(data.code.finalFee)}.`
+        : `Your personal code ${data.code.code} has been applied — you save ₹${inr(data.code.discountAmount)}.`;
+      msg.className = 'text-xs mt-1 text-emerald-700 font-semibold';
+    }
+    calculateFee();
+  } else if (data.needsVerification && msg) {
+    msg.textContent = 'A personal discount code was issued to your email address. Verify your email address to use it.';
+    msg.className = 'text-xs mt-1 text-amber-700 font-semibold';
+    const field = document.getElementById('promo-field');
+    if (field && field.classList.contains('hidden')) togglePromoField();
+  }
+}
+
 // Explicit remove action once a code is applied -- clearing the input text
 // and re-clicking Apply worked but wasn't a discoverable way to drop a code.
 // Triggered by the small ✕ shown next to the "Discount (CODE)" line.
 function removeAppliedPromo() {
+  // Removing a code -- the one applied for them included -- is their choice;
+  // it is not put back when they change category.
+  personalCodeState.dismissed = true;
   const codeInput = document.getElementById('promo-code');
   if (codeInput) codeInput.value = '';
   clearAppliedPromo();
@@ -1385,6 +1426,7 @@ function calculateFee() {
   // A promo code only applies to the category it was validated against; if the
   // category changed, the applied discount is dropped (re-apply required).
   if (appliedPromo && appliedPromo.categoryKey !== catKey) clearAppliedPromo();
+  if (catKey && !appliedPromo) autoApplyPersonalCode(catKey);
   const discount = (appliedPromo && appliedPromo.categoryKey === catKey) ? appliedPromo.discountAmount : 0;
   // Chosen program options (e.g. a paid pre-conference workshop) add their
   // own fee on top -- not discounted themselves, matching the server (see
@@ -1583,6 +1625,7 @@ async function loadFees() {
 
 // Refresh capacity + fees then open the payment modal.
 async function openPaymentModal() {
+  personalCodeState = { dismissed: false, checked: {} };
   await Promise.all([loadProgramOptions(), loadFees()]);
   clearAppliedPromo();
   const promoInput = document.getElementById('promo-code');
@@ -8428,6 +8471,7 @@ function linkRegisterDelegateAccount(account) {
   setText('rd-linked-contact', rdAccountContact(account));
   for (const id of ['rd-phone-wrap', 'rd-name-fields']) document.getElementById(id).classList.add('hidden');
   for (const id of ['rd-phone', 'rd-name']) document.getElementById(id).required = false;
+  refreshRegisterDelegateQuote();
 }
 
 function unlinkRegisterDelegateAccount() {
@@ -8444,6 +8488,15 @@ function unlinkRegisterDelegateAccount() {
     const el = document.getElementById(id);
     if (el) el.required = true;
   }
+  // Their personal code was theirs, not the next walk-in's.
+  if (rdPromoAuto) {
+    const promo = document.getElementById('rd-discount-code');
+    if (promo) promo.value = '';
+    rdPromoAuto = false;
+  }
+  rdQuote = null;
+  const note = document.getElementById('rd-discount-note');
+  if (note) note.className = 'hidden';
 }
 
 function resetRegisterDelegateForm() {
@@ -8477,6 +8530,7 @@ function onRegisterDelegateCategoryChange() {
   const idWrap = document.getElementById('rd-idverify-wrap');
   if (idWrap) idWrap.classList.toggle('hidden', !(cat && cat.requiresStudentId));
   updateRegisterDelegateFee();
+  refreshRegisterDelegateQuote();
 }
 
 // One block per active program group, same single-select-vs-checkbox split
@@ -8519,6 +8573,65 @@ function collectRegisterDelegateOptionIds() {
 // pre-discount estimate the admin can still act on (default cash amount,
 // bank-credit search target); the real figure comes back in the response
 // after submit.
+// The walk-in's discount, priced by the server (POST /api/desk/quote) with the
+// same rules the registration will apply: { categoryKey, discountAmount, code,
+// auto }. Without it the fee shown -- and the cash pre-filled -- ignored any
+// code, while the registration recorded the discounted fee.
+let rdQuote = null;
+let rdQuoteSeq = 0;
+let rdPromoAuto = false; // the code field was filled in for them, not typed
+let rdPromoTimer = null;
+
+async function refreshRegisterDelegateQuote() {
+  const categoryKey = document.getElementById('rd-category').value;
+  const promoInput = document.getElementById('rd-discount-code');
+  const note = document.getElementById('rd-discount-note');
+  const seq = ++rdQuoteSeq;
+  if (!categoryKey) { rdQuote = null; if (note) note.classList.add('hidden'); updateRegisterDelegateFee(); return; }
+  const typed = rdPromoAuto ? '' : (promoInput ? promoInput.value.trim() : '');
+  let data = null;
+  try {
+    data = await (await fetch('/api/desk/quote', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        categoryKey, discountCode: typed,
+        accountKey: rdLinkedAccount ? rdLinkedAccount.phone_number : undefined,
+        phone: rdLinkedAccount ? undefined : document.getElementById('rd-phone').value.trim(),
+      }),
+    })).json();
+  } catch (e) { data = null; }
+  if (seq !== rdQuoteSeq) return; // an older answer arriving late
+  rdQuote = data && data.success ? { categoryKey, discountAmount: data.discountAmount || 0, code: data.code, auto: !!data.auto } : null;
+  // Their own personal code goes in the field, so it is what gets submitted.
+  if (rdQuote && rdQuote.auto && promoInput && (!promoInput.value.trim() || rdPromoAuto)) {
+    promoInput.value = rdQuote.code;
+    rdPromoAuto = true;
+  }
+  if (note) {
+    const off = rdQuote ? rdQuote.discountAmount : 0;
+    if (data && data.error) {
+      note.textContent = data.error;
+      note.className = 'text-[11px] font-semibold text-rose-600';
+    } else if (off > 0) {
+      note.textContent = rdQuote.code === 'GROUP' ? `Group discount applied — ₹${inr(off)} off.`
+        : rdQuote.auto ? `Their personal code ${rdQuote.code} is applied automatically — ₹${inr(off)} off.`
+          : `Code ${rdQuote.code} applied — ₹${inr(off)} off.`;
+      note.className = 'text-[11px] font-semibold text-emerald-700';
+    } else {
+      note.textContent = '';
+      note.className = 'hidden';
+    }
+  }
+  updateRegisterDelegateFee();
+}
+
+function onRegisterDelegatePromoInput() {
+  // Typing replaces a code that was filled in for them.
+  rdPromoAuto = false;
+  clearTimeout(rdPromoTimer);
+  rdPromoTimer = setTimeout(refreshRegisterDelegateQuote, 400);
+}
+
 function updateRegisterDelegateFee() {
   const key = document.getElementById('rd-category').value;
   const cat = rdCategoriesCache.find((c) => c.key === key);
@@ -8527,7 +8640,8 @@ function updateRegisterDelegateFee() {
     const opt = rdGroupsCache.flatMap((g) => g.options).find((o) => o.id === id);
     return sum + (opt ? Number(opt.fee) || 0 : 0);
   }, 0);
-  const total = base + optionsFee;
+  const discount = rdQuote && rdQuote.categoryKey === key ? rdQuote.discountAmount : 0;
+  const total = Math.max(0, base - discount) + optionsFee;
   setText('rd-fee-display', `₹${inr(total)}`);
   const cashInput = document.getElementById('rd-cash-amount');
   if (cashInput && (cashInput.value === '' || Number(cashInput.dataset.auto) === 1)) {
