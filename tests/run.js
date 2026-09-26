@@ -141,11 +141,20 @@ async function waitForServer(port, child, log) {
   const broken = [];
   const started = Date.now();
 
+  // A file that never finishes -- a network wait, a promise nothing settles --
+  // used to hang the whole run with no word of which file it was (the OCR
+  // rescan did exactly that, waiting on a CDN download). Each file now has a
+  // limit, is reported by name when it runs over, and the run carries on.
+  const FILE_TIMEOUT_MS = Number(process.env.TEST_FILE_TIMEOUT_MS) || 180000;
+
   for (const file of files) {
     const res = spawnSync(process.execPath, [path.join(__dirname, file), dbPath], {
       encoding: 'utf8',
       env: { ...process.env, TEST_PORT: String(port) },
+      timeout: FILE_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
     });
+    const timedOut = !!(res.error && res.error.code === 'ETIMEDOUT');
     const out = `${res.stdout || ''}${res.stderr || ''}`;
     const p = (out.match(/ {2}PASS/g) || []).length;
     const f = (out.match(/ {2}FAIL/g) || []).length;
@@ -154,11 +163,12 @@ async function waitForServer(port, child, log) {
 
     // A file that crashes reports neither -- and must not be mistaken for one
     // that simply has nothing to say.
-    const crashed = res.status !== 0 && f === 0;
-    if (crashed) broken.push(file);
+    const crashed = !timedOut && res.status !== 0 && f === 0;
+    if (crashed || timedOut) broken.push(file);
 
     const name = file.replace(/\.test\.js$/, '').padEnd(32);
-    if (crashed) console.log(`${red('✗')} ${name} ${red('crashed')}`);
+    if (timedOut) console.log(`${red('✗')} ${name} ${red(`timed out after ${FILE_TIMEOUT_MS / 1000}s`)}${p ? dim(` (${p} passed first)`) : ''}`);
+    else if (crashed) console.log(`${red('✗')} ${name} ${red('crashed')}`);
     else if (f) console.log(`${red('✗')} ${name} ${green(`${p} passed`)}, ${red(`${f} failed`)}`);
     else if (p) console.log(`${green('✓')} ${name} ${p} passed`);
     else console.log(`${dim('·')} ${dim(`${name} no assertions`)}`);
@@ -170,7 +180,7 @@ async function waitForServer(port, child, log) {
 
   const secs = ((Date.now() - started) / 1000).toFixed(1);
   console.log('');
-  const summary = `${passed} passed, ${failed} failed${broken.length ? `, ${broken.length} crashed` : ''}  ${dim(`(${secs}s)`)}`;
+  const summary = `${passed} passed, ${failed} failed${broken.length ? `, ${broken.length} crashed or timed out` : ''}  ${dim(`(${secs}s)`)}`;
   console.log(failed || broken.length ? red(bold(summary)) : green(bold(summary)));
 
   stop();

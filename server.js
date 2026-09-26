@@ -794,12 +794,52 @@ process.on('uncaughtException', (err) => {
 });
 
 // Lazily-created, reused OCR worker (creating one per request is expensive).
-// The language model is cached under .ocr-cache/ (git-ignored) rather than
-// the working directory.
+//
+// The English language model ships as an npm dependency
+// (@tesseract.js-data/eng) and is read from disk. Left to itself tesseract.js
+// downloads it from the jsdelivr CDN whenever it has no cached copy -- and
+// where the cache folder was missing (every checkout: .ocr-cache/ is
+// git-ignored) that meant on EVERY start. On a slow day that one download
+// made the test suite take five minutes instead of one, and once hung it
+// outright. 4.0.0_best_int is exactly the file tesseract.js fetches for OEM 1
+// (LSTM only, what is used here), so recognition is unchanged -- the local
+// copy is byte-identical to the CDN one. If the package were ever missing,
+// langPath is left unset and the CDN is still there as before.
+const OCR_CACHE_DIR = path.join(__dirname, '.ocr-cache');
+const OCR_LANG_PATH = (() => {
+  try {
+    return path.join(path.dirname(require.resolve('@tesseract.js-data/eng/package.json')), '4.0.0_best_int');
+  } catch (e) {
+    return undefined;
+  }
+})();
+// Starting the worker had no time limit, unlike recognize() (15s, below).
+// OCR is serialised, so a start that never finished did not just hang one
+// request: it hung every OCR request queued behind it -- slip checks at
+// payment submission included -- until the process restarted. A start that
+// runs out of time now fails like any other OCR failure (the checks read as
+// unreadable, never blocking the submission), and the next request tries
+// again rather than waiting on the stalled one.
+const OCR_INIT_TIMEOUT_MS = Number(process.env.OCR_INIT_TIMEOUT_MS) || 30000;
 let ocrWorkerPromise = null;
 function getOcrWorker() {
   if (!ocrWorkerPromise) {
-    ocrWorkerPromise = createWorker('eng', 1, { cachePath: path.join(__dirname, '.ocr-cache') });
+    try { fs.mkdirSync(OCR_CACHE_DIR, { recursive: true }); } catch (e) { /* the link in Docker, or read-only: caching is optional */ }
+    const starting = createWorker('eng', 1, { cachePath: OCR_CACHE_DIR, ...(OCR_LANG_PATH ? { langPath: OCR_LANG_PATH } : {}) });
+    let timer;
+    const limit = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`OCR engine did not start within ${OCR_INIT_TIMEOUT_MS / 1000}s`)), OCR_INIT_TIMEOUT_MS);
+    });
+    const attempt = Promise.race([starting, limit]).then(
+      (worker) => { clearTimeout(timer); return worker; },
+      (err) => {
+        clearTimeout(timer);
+        if (ocrWorkerPromise === attempt) ocrWorkerPromise = null; // the next request starts afresh
+        // If the slow start does finish after all, do not leak its worker.
+        starting.then((w) => w.terminate()).catch(() => {});
+        throw err;
+      });
+    ocrWorkerPromise = attempt;
   }
   return ocrWorkerPromise;
 }
