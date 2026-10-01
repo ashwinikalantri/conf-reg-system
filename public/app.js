@@ -6478,7 +6478,7 @@ async function renderDiscountCodes() {
       <td class="p-4 font-semibold">${disc}</td>
       <td class="p-4 text-slate-600">${scope}</td>
       <td class="p-4">${usedTxt}</td>
-      <td class="p-4 text-slate-600">${c.expires_at ? esc(c.expires_at) : '—'}</td>
+      <td class="p-4 text-slate-600">${discountExpiryCell(c)}</td>
       <td class="p-4 text-right whitespace-nowrap">
         <button onclick="openShareDiscountModal(${esc(c.id)})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">${ICON('send')}Share</button>
       </td>
@@ -6525,6 +6525,89 @@ async function handleAddDiscountCode(e) {
   document.getElementById('new-disc-expires').value = '';
   clearDiscDelegate();
   renderDiscountCodes();
+}
+
+// The expiry column: the last date in words, an Expired marker once it has
+// passed (a code works through its last day, IST), and -- for whoever may
+// manage codes -- a way to change it, usually to extend a code rather than
+// issue a new one.
+function discountExpiryCell(c) {
+  const expired = !!c.expires_at && c.expires_at < istDateString();
+  const date = c.expires_at ? esc(formatFullDate(c.expires_at)) : '<span class="text-slate-400">No expiry</span>';
+  const pill = expired
+    ? ' <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-rose-100 text-rose-700 border-rose-300">Expired</span>' : '';
+  const change = can('discounts.manage')
+    ? `<button type="button" onclick="openDiscountValidityModal(${esc(c.id)})" class="block mt-1 text-[11px] font-semibold text-indigo-600 hover:underline">${expired ? 'Extend' : 'Change'}</button>` : '';
+  return `${date}${pill}${change}`;
+}
+
+let validityCodeId = null;
+function openDiscountValidityModal(id) {
+  const c = (cachedDiscountCodes || []).find((x) => String(x.id) === String(id));
+  if (!c) return;
+  validityCodeId = c.id;
+  const today = istDateString();
+  setText('validity-code', c.code);
+  setText('validity-current', c.expires_at
+    ? `${c.expires_at < today ? 'Expired after' : 'Currently valid through'} ${formatFullDateWithDay(c.expires_at)}.`
+    : 'Currently has no expiry date.');
+  const input = document.getElementById('validity-date');
+  input.min = today;
+  // Start from the current date if it is still ahead, else from today.
+  input.value = c.expires_at && c.expires_at >= today ? c.expires_at : today;
+  input.disabled = false;
+  document.getElementById('validity-no-expiry').checked = false;
+  const untilConf = document.getElementById('validity-until-conference');
+  if (untilConf) untilConf.classList.toggle('hidden', !(conferenceInfo.startDate && conferenceInfo.startDate >= today));
+  openModal('modal-discount-validity');
+}
+
+// "+1 week" / "+1 month" count from whichever is later: the code's current
+// last date, or today -- extending an expired code from the date it expired
+// would still leave it in the past.
+function extendDiscountValidityBy(days) {
+  const input = document.getElementById('validity-date');
+  const today = istDateString();
+  const from = input.value && input.value >= today ? input.value : today;
+  const d = new Date(`${from}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  input.value = d.toISOString().slice(0, 10);
+  document.getElementById('validity-no-expiry').checked = false;
+  input.disabled = false;
+}
+
+function extendDiscountValidityToConference() {
+  if (!conferenceInfo.startDate) return;
+  const input = document.getElementById('validity-date');
+  input.value = conferenceInfo.startDate;
+  document.getElementById('validity-no-expiry').checked = false;
+  input.disabled = false;
+}
+
+function onDiscountNoExpiryChange() {
+  document.getElementById('validity-date').disabled = document.getElementById('validity-no-expiry').checked;
+}
+
+async function saveDiscountValidity(e) {
+  e.preventDefault();
+  if (validityCodeId == null) return;
+  const noExpiry = document.getElementById('validity-no-expiry').checked;
+  const date = document.getElementById('validity-date').value;
+  if (!noExpiry && !date) return showToast('Pick the new last date, or tick "No expiry date".');
+  const btn = document.getElementById('validity-save-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const data = await (await fetch(`/api/admin/discount-codes/${encodeURIComponent(validityCodeId)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt: noExpiry ? '' : date }),
+    })).json();
+    if (!data.success) { showToast(data.error || 'Could not change the validity.'); return; }
+    const code = (cachedDiscountCodes.find((x) => String(x.id) === String(validityCodeId)) || {}).code || 'The code';
+    showToast(noExpiry ? `${code} no longer expires.` : `${code} is now valid through ${formatFullDate(date)}.`, 'success');
+    closeModal('modal-discount-validity');
+    renderDiscountCodes();
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function toggleDiscountCode(id, active) {

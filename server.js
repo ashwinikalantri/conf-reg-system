@@ -9374,11 +9374,23 @@ app.put('/api/admin/discount-codes/:id', requirePermission('discounts.manage'), 
     const maxUses = req.body.maxUses === undefined ? existing.max_uses
       : (req.body.maxUses === '' || req.body.maxUses == null ? null : Math.max(0, parseInt(req.body.maxUses, 10) || 0));
     const expiresAt = req.body.expiresAt === undefined ? existing.expires_at : (req.body.expiresAt ? String(req.body.expiresAt).trim() : null);
+    // Changing a code's validity -- usually extending it. A real date, and not
+    // one already gone: a code is valid THROUGH its expiry day (IST), so a
+    // past date would just expire it, which is what Deactivate is for. Blank
+    // means it no longer expires.
+    if (req.body.expiresAt !== undefined && expiresAt) {
+      if (!DATE_RE.test(expiresAt) || Number.isNaN(Date.parse(expiresAt))) {
+        return res.status(400).json({ success: false, error: 'Enter the new last date as a calendar date.' });
+      }
+      if (expiresAt < istDateString()) {
+        return res.status(400).json({ success: false, error: 'Choose today or a later date. To stop the code now, deactivate it instead.' });
+      }
+    }
     await dbRun('UPDATE discount_codes SET active = ?, max_uses = ?, expires_at = ? WHERE id = ?', [active, maxUses, expiresAt, req.params.id]);
     await recordAudit({
       req, entityType: 'discount_code', entityId: req.params.id, action: 'DISCOUNT_CODE_UPDATE',
-      oldValue: `${existing.active ? 'active' : 'inactive'}, max ${existing.max_uses || '∞'}`,
-      newValue: `${active ? 'active' : 'inactive'}, max ${maxUses || '∞'}`,
+      oldValue: `${existing.active ? 'active' : 'inactive'}, max ${existing.max_uses || '∞'}, valid through ${existing.expires_at || 'no expiry'}`,
+      newValue: `${active ? 'active' : 'inactive'}, max ${maxUses || '∞'}, valid through ${expiresAt || 'no expiry'}`,
     });
     res.json({ success: true });
   } catch (err) {
