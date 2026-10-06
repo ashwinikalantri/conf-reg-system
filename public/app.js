@@ -6527,18 +6527,32 @@ async function handleAddDiscountCode(e) {
   renderDiscountCodes();
 }
 
-// The expiry column: the last date in words, an Expired marker once it has
-// passed (a code works through its last day, IST), and -- for whoever may
-// manage codes -- a way to change it, usually to extend a code rather than
-// issue a new one.
+// A code that has been used: a personal code once its holder's registration
+// carries it, a shared one once it has reached its limit. applied_count is
+// the "Used" column's own count (a rejected registration does not hold a
+// code), so a rejection makes the code unused again. A shared code with no
+// limit is never used up. The server applies the same rule.
+function discountCodeUsedUp(c) {
+  const applied = Number(c.applied_count) || 0;
+  return c.scope_type === 'INDIVIDUAL' ? applied > 0 : (Number(c.max_uses) > 0 && applied >= Number(c.max_uses));
+}
+
+// The expiry column: the last date in words, and a tag -- Used once the code
+// has been used (whatever its date says: there is nothing left to extend),
+// otherwise Expired once its last day has passed (a code works through its
+// last day, IST). Only an unused, expired code offers Extend, and only to
+// whoever may manage codes.
 function discountExpiryCell(c) {
+  const used = discountCodeUsedUp(c);
   const expired = !!c.expires_at && c.expires_at < istDateString();
   const date = c.expires_at ? esc(formatFullDate(c.expires_at)) : '<span class="text-slate-400">No expiry</span>';
-  const pill = expired
-    ? ' <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-rose-100 text-rose-700 border-rose-300">Expired</span>' : '';
-  const change = can('discounts.manage')
-    ? `<button type="button" onclick="openDiscountValidityModal(${esc(c.id)})" class="block mt-1 text-[11px] font-semibold text-indigo-600 hover:underline">${expired ? 'Extend' : 'Change'}</button>` : '';
-  return `${date}${pill}${change}`;
+  const pill = used
+    ? ' <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-indigo-100 text-indigo-700 border-indigo-300">Used</span>'
+    : expired
+      ? ' <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-rose-100 text-rose-700 border-rose-300">Expired</span>' : '';
+  const extend = !used && expired && can('discounts.manage')
+    ? `<button type="button" onclick="openDiscountValidityModal(${esc(c.id)})" class="block mt-1 text-[11px] font-semibold text-indigo-600 hover:underline">Extend</button>` : '';
+  return `${date}${pill}${extend}`;
 }
 
 let validityCodeId = null;

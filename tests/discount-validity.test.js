@@ -91,13 +91,13 @@ const base = { salutation: 'Dr', age: '36', gender: 'Female', designation: 'Cons
     const page = String((await call('GET', '/admin', null, admin)).body);
     check('the Change Validity dialog is on the admin page', page.includes('id="modal-discount-validity"') && page.includes('id="validity-date"'));
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
+    var grab = (n) => { const i = js.indexOf(`function ${n}(`); return js.slice(i, js.indexOf('\n}', i) + 2); };
     check('the expiry column marks a code that has expired', />Expired<\/span>/.test(js) && /const expired = !!c\.expires_at && c\.expires_at < istDateString\(\);/.test(js));
-    check('...offers to extend it, only to whoever may manage codes', /const change = can\('discounts\.manage'\)/.test(js));
+    check('...offers to extend it, only to whoever may manage codes', /&& can\('discounts\.manage'\)/.test(js));
     check('saving sends the new date, or blank for no expiry', /JSON\.stringify\(\{ expiresAt: noExpiry \? '' : date \}\)/.test(js));
 
     // "+1 week" counts from whichever is later -- the code's current last
     // date or today -- or extending an expired code could leave it expired.
-    const grab = (n) => { const i = js.indexOf(`function ${n}(`); return js.slice(i, js.indexOf('\n}', i) + 2); };
     const input = { value: '', disabled: true };
     const box = { checked: true };
     const sandbox = { document: { getElementById: (id) => (id === 'validity-date' ? input : box) }, Date };
@@ -108,6 +108,70 @@ const base = { salutation: 'Dr', age: '36', gender: 'Female', designation: 'Cons
     input.value = ist(20); sandbox.plus(7);
     check('...and from the current last date when that is still ahead', input.value === ist(27), input.value);
     check('...and switches "No expiry" back off', box.checked === false && input.disabled === false);
+
+    console.log('\n== A used code cannot be extended ==');
+    // "Used": a personal code once its holder's registration carries it; a
+    // shared code once it reaches its limit. A shared code with no limit is
+    // never used up. A rejected registration does not hold a code.
+    const w = openDb();
+    const holds = async (code, status) => {
+      const phone = '7' + String(Math.floor(Math.random() * 1e9)).padStart(9, '0');
+      await w.run(`INSERT INTO registrations (phone_number, delegate_name, category_key, category_label, bank_status, discount_code)
+                   VALUES (?, 'Code Holder', ?, 'Fixture', ?, ?)`, [phone, cat.category_key, status, code]);
+      return phone;
+    };
+    await issue({ code: `USEDP${N}`, discountType: 'PERCENT', discountValue: 30, scopeType: 'INDIVIDUAL', scopeValue: email, expiresAt: ist(-2) });
+    const usedPersonal = await row(`USEDP${N}`);
+    const holder = await holds(`USEDP${N}`, 'PENDING');
+    const r1 = await setValidity(usedPersonal.id, ist(10));
+    check('a personal code its holder has used: refused', r1.status === 409 && /already been used/.test(r1.body.error), r1.body);
+    check('...and its date is untouched', (await row(`USEDP${N}`)).expires_at === ist(-2));
+    await w.run("UPDATE registrations SET bank_status = 'REJECTED' WHERE phone_number = ?", [holder]);
+    check('once that registration is rejected, it is unused again and can be extended',
+      (await setValidity(usedPersonal.id, ist(10))).body.success === true);
+
+    await issue({ code: `CAP${N}`, discountType: 'PERCENT', discountValue: 10, scopeType: 'GLOBAL', maxUses: 2, expiresAt: ist(-2) });
+    const capped = await row(`CAP${N}`);
+    await holds(`CAP${N}`, 'BANK_VERIFIED');
+    check('a shared code with uses left can still be extended', (await setValidity(capped.id, ist(5))).body.success === true);
+    await holds(`CAP${N}`, 'PENDING');
+    const r2 = await setValidity(capped.id, ist(15));
+    check('...but not once it has reached its limit', r2.status === 409, r2.body);
+
+    await issue({ code: `ANY${N}`, discountType: 'PERCENT', discountValue: 5, scopeType: 'GLOBAL', expiresAt: ist(-2) });
+    const unlimited = await row(`ANY${N}`);
+    await holds(`ANY${N}`, 'BANK_VERIFIED');
+    check('a shared code with no limit is never used up, so can be extended after use',
+      (await setValidity(unlimited.id, ist(5))).body.success === true);
+    check('switching a used code on or off is still allowed -- only its date is fixed',
+      (await call('PUT', `/api/admin/discount-codes/${usedPersonal.id}`, { active: false }, admin)).body.success === true);
+    await w.run("DELETE FROM registrations WHERE delegate_name = 'Code Holder'");
+    w.close();
+
+    console.log('\n== The list: Used instead of Expired, and Extend only where it applies ==');
+    const cellSandbox = (mayManage) => {
+      const sb = { can: () => mayManage, Date, Number, String };
+      vm.createContext(sb);
+      vm.runInContext(['esc', 'formatFullDate', 'istDateString', 'discountCodeUsedUp', 'discountExpiryCell']
+        .map(grab).join('\n') + '\nglobalThis.cell = discountExpiryCell;', sb);
+      return sb.cell;
+    };
+    const cell = cellSandbox(true);
+    const usedExpired = cell({ id: 1, scope_type: 'INDIVIDUAL', applied_count: 1, expires_at: ist(-3) });
+    check('a used personal code is tagged Used, not Expired', />Used</.test(usedExpired) && !/>Expired</.test(usedExpired));
+    check('...and offers no Extend', !/Extend/.test(usedExpired));
+    const usedValid = cell({ id: 2, scope_type: 'INDIVIDUAL', applied_count: 1, expires_at: ist(10) });
+    check('a used code still in date is tagged Used too', />Used</.test(usedValid) && !/Extend/.test(usedValid));
+    const cappedOut = cell({ id: 3, scope_type: 'GLOBAL', applied_count: 2, max_uses: 2, expires_at: ist(-1) });
+    check('a shared code at its limit is Used', />Used</.test(cappedOut) && !/Extend/.test(cappedOut));
+    const unusedExpired = cell({ id: 4, scope_type: 'INDIVIDUAL', applied_count: 0, expires_at: ist(-1) });
+    check('an unused, expired code is Expired, with Extend', />Expired</.test(unusedExpired) && /Extend</.test(unusedExpired));
+    const unusedValid = cell({ id: 5, scope_type: 'INDIVIDUAL', applied_count: 0, expires_at: ist(10) });
+    check('an unused code still in date offers nothing to change', !/Extend|Change/.test(unusedValid) && !/>Expired</.test(unusedValid));
+    const openShared = cell({ id: 6, scope_type: 'GLOBAL', applied_count: 9, max_uses: null, expires_at: ist(-1) });
+    check('a shared code with no limit, used and expired, can still be extended', />Expired</.test(openShared) && /Extend</.test(openShared));
+    const noRight = cellSandbox(false)({ id: 7, scope_type: 'INDIVIDUAL', applied_count: 0, expires_at: ist(-1) });
+    check('without permission to manage codes, no Extend at all', />Expired</.test(noRight) && !/Extend/.test(noRight));
   } finally {
     const w = openDb();
     for (const code of made) await w.run('DELETE FROM discount_codes WHERE code = ?', [code]);

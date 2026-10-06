@@ -9378,6 +9378,20 @@ app.put('/api/admin/discount-codes/:id', requirePermission('discounts.manage'), 
     // one already gone: a code is valid THROUGH its expiry day (IST), so a
     // past date would just expire it, which is what Deactivate is for. Blank
     // means it no longer expires.
+    // A code that has been used has nothing left to extend: a personal code
+    // once its holder's registration carries it, a shared one once it has
+    // reached its limit. Same count as the list's "Used" column -- a rejected
+    // registration does not hold a code -- so if that registration is
+    // rejected the code is unused again and can be extended. A shared code
+    // with no limit is never used up.
+    if (req.body.expiresAt !== undefined && (expiresAt || '') !== (existing.expires_at || '')) {
+      const applied = (await dbGet(
+        "SELECT COUNT(*) AS n FROM registrations WHERE UPPER(discount_code) = ? AND bank_status != 'REJECTED'", [existing.code])).n;
+      const usedUp = existing.scope_type === 'INDIVIDUAL' ? applied > 0 : (existing.max_uses > 0 && applied >= existing.max_uses);
+      if (usedUp) {
+        return res.status(409).json({ success: false, error: 'This code has already been used, so its validity cannot be changed.' });
+      }
+    }
     if (req.body.expiresAt !== undefined && expiresAt) {
       if (!DATE_RE.test(expiresAt) || Number.isNaN(Date.parse(expiresAt))) {
         return res.status(400).json({ success: false, error: 'Enter the new last date as a calendar date.' });
