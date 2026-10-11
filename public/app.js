@@ -113,17 +113,33 @@ const REJECTION_LABELS = {
   ID: 'ID discrepancy',
 };
 
+// Browser storage can throw outright, not just come back empty: a browser set
+// to block site data, and some private modes, throw on merely READING
+// window.localStorage. These helpers touch it only inside a try, and carry on
+// as if nothing were stored -- the identifier itself is evaluated inside the
+// try, since passing localStorage in as an argument would throw before it.
+function storageGet(kind, key) {
+  try { return (kind === 'session' ? sessionStorage : localStorage).getItem(key); } catch (e) { return null; }
+}
+function storageSet(kind, key, value) {
+  try { (kind === 'session' ? sessionStorage : localStorage).setItem(key, value); } catch (e) { /* not remembered */ }
+}
+function storageRemove(kind, key) {
+  try { (kind === 'session' ? sessionStorage : localStorage).removeItem(key); } catch (e) { /* nothing to remove */ }
+}
+
 // Defensively parsed: a bad/corrupted value here (e.g. the literal string
 // "undefined", which JSON.parse rejects) must never throw at module load --
 // that would abort every later top-level const/let in this file, leaving
-// them in the temporal-dead-zone and breaking the whole page.
+// them in the temporal-dead-zone and breaking the whole page. Storage that
+// refuses to be read at all used to do exactly that; see storageGet.
 function readStoredDelegate() {
-  const raw = localStorage.getItem('nqocn_current_user');
+  const raw = storageGet('local', 'nqocn_current_user');
   if (!raw || raw === 'undefined' || raw === 'null') return null;
   try {
     return JSON.parse(raw);
   } catch (e) {
-    localStorage.removeItem('nqocn_current_user');
+    storageRemove('local', 'nqocn_current_user');
     return null;
   }
 }
@@ -132,8 +148,8 @@ let currentDelegate = readStoredDelegate();
 // Never store undefined/null -- JSON.stringify(undefined) is the string
 // "undefined", not valid JSON, which is exactly what corrupts the next load.
 function persistDelegate(user) {
-  if (user) localStorage.setItem('nqocn_current_user', JSON.stringify(user));
-  else localStorage.removeItem('nqocn_current_user');
+  if (user) storageSet('local', 'nqocn_current_user', JSON.stringify(user));
+  else storageRemove('local', 'nqocn_current_user');
 }
 let activeAdminUser = null;
 // The delegate's own current registration (from /api/registrations/me), kept
@@ -2277,7 +2293,7 @@ function runPostLoginPrompts() {
 function promptVerifyEmailIfNeeded() {
   if (!currentDelegate || currentDelegate.role !== 'DELEGATE') return;
   if (currentDelegate.email_verified) return;
-  if (sessionStorage.getItem('verifyEmailPromptDismissed')) return;
+  if (storageGet('session', 'verifyEmailPromptDismissed')) return;
   openVerifyEmailModal();
 }
 
@@ -2374,7 +2390,7 @@ function openVerifyEmailModal() {
 // -- persistent enough not to nag, temporary enough to keep asking until
 // the address is actually proven.
 function dismissVerifyEmail() {
-  sessionStorage.setItem('verifyEmailPromptDismissed', '1');
+  storageSet('session', 'verifyEmailPromptDismissed', '1');
   closeModal('modal-verify-email');
 }
 
@@ -2465,7 +2481,7 @@ async function submitVerifyEmail(e) {
 async function logout() {
   try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
   currentDelegate = null;
-  localStorage.removeItem('nqocn_current_user');
+  storageRemove('local', 'nqocn_current_user');
   // Full navigation so this works from both the delegate portal and /admin.
   window.location.href = '/';
 }
@@ -6474,31 +6490,93 @@ async function renderDiscountCodes() {
   const codes = (await res.json()).codes || [];
   cachedDiscountCodes = codes; // reused by openShareDiscountModal() below
   const catLabel = (key) => (cats.find((c) => c.key === key) || {}).label || key;
-  tbody.innerHTML = codes.length ? codes.map((c) => {
-    const disc = esc(describeDiscountCode(c));
-    const indivName = c.scope_type === 'INDIVIDUAL'
-      ? ((cachedUsers || []).find((u) => u.phone_number === c.scope_value) || {}).full_name : null;
-    const scope = c.scope_type === 'GLOBAL' ? 'All delegates'
-      : c.scope_type === 'CATEGORY' ? `Category: ${esc(catLabel(c.scope_value))}`
-      : c.pending_email ? `${esc(c.pending_email)} <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-100 text-amber-800 border-amber-300">Waiting for signup</span>`
-      : `Delegate: ${esc(indivName ? indivName + ' (' + c.scope_value + ')' : c.scope_value || '')}`
-        + (c.issued_email ? ` <span class="text-[11px] text-slate-400">· issued to ${esc(c.issued_email)}, needs it verified</span>` : '');
-    const usedTxt = `${c.applied_count}${c.max_uses ? ' / ' + c.max_uses : ''}${c.verified_count ? ` (${c.verified_count} verified)` : ''}`;
-    return `<tr class="${c.active ? '' : 'opacity-50'}">
-      <td class="p-4"><span class="font-mono font-bold text-slate-800">${esc(c.code)}</span>${c.active ? '' : ' <span class="text-[10px] text-slate-400">· inactive</span>'}</td>
-      <td class="p-4 font-semibold">${disc}</td>
-      <td class="p-4 text-slate-600">${scope}</td>
-      <td class="p-4">${usedTxt}</td>
-      <td class="p-4 text-slate-600">${discountExpiryCell(c)}</td>
-      <td class="p-4 text-right whitespace-nowrap">
-        <button onclick="openShareDiscountModal(${esc(c.id)})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">${ICON('send')}Share</button>
-      </td>
-      <td class="p-4 text-right whitespace-nowrap">
-        <button onclick="toggleDiscountCode(${esc(c.id)}, ${c.active ? 0 : 1})" class="px-3 py-1.5 ${c.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg">${c.active ? 'Deactivate' : 'Activate'}</button>
-        <button onclick="deleteDiscountCode(${esc(c.id)})" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg">Delete</button>
+  tbody.innerHTML = discountCodeTableHtml(codes, catLabel);
+}
+
+// The list in three groups. Used wins over Expired: a used code has nothing
+// left to extend, whatever its date (see discountCodeUsedUp). Unused includes
+// a shared code that still has uses left -- its Used column says how many.
+const DISC_GROUPS = [
+  { key: 'unused', label: 'Unused', hint: 'Still available to use.', openByDefault: true },
+  { key: 'expired', label: 'Expired', hint: 'Unused, but past their last date — extend one to bring it back.', openByDefault: true },
+  { key: 'used', label: 'Used', hint: 'Used by their holder, or at their usage limit.', openByDefault: false },
+];
+
+function discountCodeGroup(c) {
+  if (discountCodeUsedUp(c)) return 'used';
+  if (c.expires_at && c.expires_at < istDateString()) return 'expired';
+  return 'unused';
+}
+
+// Open or collapsed, remembered per browser. Storage can be unavailable
+// (private mode, blocked site data) -- the defaults then apply.
+function discGroupOpen(key) {
+  const v = storageGet('local', `nqocn_disc_group_${key}`);
+  if (v === '1') return true;
+  if (v === '0') return false;
+  const g = DISC_GROUPS.find((x) => x.key === key);
+  return g ? g.openByDefault : true;
+}
+
+function toggleDiscGroup(key) {
+  const open = !discGroupOpen(key);
+  storageSet('local', `nqocn_disc_group_${key}`, open ? '1' : '0');
+  document.querySelectorAll(`[data-disc-group="${key}"]`).forEach((r) => r.classList.toggle('hidden', !open));
+  const head = document.getElementById(`disc-group-head-${key}`);
+  if (head) {
+    head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    const chevron = head.querySelector('.disc-chevron');
+    if (chevron) chevron.style.transform = open ? 'rotate(90deg)' : '';
+  }
+}
+
+function discountCodeTableHtml(codes, catLabel) {
+  if (!codes.length) return '<tr><td colspan="7" class="p-6 text-center text-slate-400">No discount codes yet.</td></tr>';
+  return DISC_GROUPS.map((g) => {
+    const members = codes.filter((c) => discountCodeGroup(c) === g.key);
+    const open = discGroupOpen(g.key);
+    const head = `<tr class="bg-slate-50 border-y border-slate-200">
+      <td colspan="7" class="p-0">
+        <button type="button" id="disc-group-head-${g.key}" onclick="toggleDiscGroup('${g.key}')" aria-expanded="${open ? 'true' : 'false'}"
+          class="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
+          <span class="disc-chevron inline-block text-slate-400 transition-transform" style="${open ? 'transform:rotate(90deg)' : ''}">▸</span>
+          <span class="text-xs font-bold text-slate-700 uppercase tracking-wide">${g.label}</span>
+          <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-white border border-slate-300 text-slate-600">${members.length}</span>
+          <span class="hidden sm:inline text-[11px] text-slate-400">${g.hint}</span>
+        </button>
       </td>
     </tr>`;
-  }).join('') : `<tr><td colspan="7" class="p-6 text-center text-slate-400">No discount codes yet.</td></tr>`;
+    const rows = members.length
+      ? members.map((c) => discountCodeRowHtml(c, catLabel, g.key, open)).join('')
+      : `<tr data-disc-group="${g.key}" class="${open ? '' : 'hidden'}"><td colspan="7" class="px-4 py-3 text-sm text-slate-400">No ${g.label.toLowerCase()} codes.</td></tr>`;
+    return head + rows;
+  }).join('');
+}
+
+function discountCodeRowHtml(c, catLabel, group, open) {
+  const disc = esc(describeDiscountCode(c));
+  const indivName = c.scope_type === 'INDIVIDUAL'
+    ? ((cachedUsers || []).find((u) => u.phone_number === c.scope_value) || {}).full_name : null;
+  const scope = c.scope_type === 'GLOBAL' ? 'All delegates'
+    : c.scope_type === 'CATEGORY' ? `Category: ${esc(catLabel(c.scope_value))}`
+    : c.pending_email ? `${esc(c.pending_email)} <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-100 text-amber-800 border-amber-300">Waiting for signup</span>`
+    : `Delegate: ${esc(indivName ? indivName + ' (' + c.scope_value + ')' : c.scope_value || '')}`
+      + (c.issued_email ? ` <span class="text-[11px] text-slate-400">· issued to ${esc(c.issued_email)}, needs it verified</span>` : '');
+  const usedTxt = `${c.applied_count}${c.max_uses ? ' / ' + c.max_uses : ''}${c.verified_count ? ` (${c.verified_count} verified)` : ''}`;
+  return `<tr data-disc-group="${group}" class="${open ? '' : 'hidden '}${c.active ? '' : 'opacity-50'}">
+    <td class="p-4"><span class="font-mono font-bold text-slate-800">${esc(c.code)}</span>${c.active ? '' : ' <span class="text-[10px] text-slate-400">· inactive</span>'}</td>
+    <td class="p-4 font-semibold">${disc}</td>
+    <td class="p-4 text-slate-600">${scope}</td>
+    <td class="p-4">${usedTxt}</td>
+    <td class="p-4 text-slate-600">${discountExpiryCell(c)}</td>
+    <td class="p-4 text-right whitespace-nowrap">
+      <button onclick="openShareDiscountModal(${esc(c.id)})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">${ICON('send')}Share</button>
+    </td>
+    <td class="p-4 text-right whitespace-nowrap">
+      <button onclick="toggleDiscountCode(${esc(c.id)}, ${c.active ? 0 : 1})" class="px-3 py-1.5 ${c.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg">${c.active ? 'Deactivate' : 'Activate'}</button>
+      <button onclick="deleteDiscountCode(${esc(c.id)})" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg">Delete</button>
+    </td>
+  </tr>`;
 }
 
 async function handleAddDiscountCode(e) {
