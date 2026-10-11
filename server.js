@@ -1451,6 +1451,42 @@ async function bestPersonalCode(accountKey, categoryKey) {
   return { feeInfo, best, needsVerification: !best && needsVerification };
 }
 
+// Once someone has registered, a personal code they did not use is spent: a
+// registration cannot take a code afterwards. So it is deactivated, rather
+// than left reading "Unused" in the list, in the reminder audience and in
+// every count. The code they DID use stays active -- a registration that is
+// rejected and resubmitted is validated again, and an inactive code would
+// then be refused. Codes waiting on their address count too. Credited to the
+// system in the activity log: the delegate registering did not choose it.
+async function retireHolderCodesOnRegistration(phone, usedCode) {
+  if (!phone) return 0;
+  const me = await dbGet('SELECT email FROM users WHERE phone_number = ?', [phone]);
+  const addr = me && me.email ? normalizeEmail(me.email) : null;
+  const codes = await dbAll(
+    `SELECT id, code FROM discount_codes
+      WHERE scope_type = 'INDIVIDUAL' AND active = 1
+        AND (scope_value = ? OR (? IS NOT NULL AND pending_email = ?))
+        AND UPPER(code) != UPPER(COALESCE(?, ''))`,
+    [phone, addr, addr, usedCode || null]);
+  for (const c of codes) {
+    await dbRun('UPDATE discount_codes SET active = 0 WHERE id = ?', [c.id]);
+    await writeAuditRow('discount_code', c.id, 'DISCOUNT_CODE_DEACTIVATED', 'active',
+      'inactive -- its holder registered without it', null, null, null);
+  }
+  return codes.length;
+}
+
+// The same rule over everyone already registered, at every start: it clears
+// what was registered before the rule existed, and any path that creates a
+// registration without calling the helper above. Idempotent -- only active
+// codes are touched.
+async function retireCodesOfRegisteredHoldersOnBoot() {
+  const regs = await dbAll("SELECT phone_number, discount_code FROM registrations WHERE bank_status != 'REJECTED'");
+  let n = 0;
+  for (const r of regs) n += await retireHolderCodesOnRegistration(r.phone_number, r.discount_code);
+  if (n) console.log(`Deactivated ${n} personal code(s) whose holder had already registered without them.`);
+}
+
 // A delegate's group and whether it currently qualifies for its category's
 // group discount (member count >= the rule's min_size). Returns null if the
 // delegate isn't in a group.
@@ -4146,6 +4182,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
       );
       const regRow = await dbGet('SELECT id FROM registrations WHERE phone_number = ?', [phone]);
       await saveRegistrationSelections(regRow.id, selections);
+      await retireHolderCodesOnRegistration(phone, discountCodeApplied);
 
       if (prev && prev.screenshot) await deleteScreenshotFile(prev.screenshot);
       if (prev && prev.id_card && prev.id_card !== idFilename) await deleteScreenshotFile(prev.id_card);
@@ -4250,6 +4287,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     const regRow = await dbGet('SELECT id FROM registrations WHERE phone_number = ?', [phone]);
     const registrationId = regRow ? regRow.id : result.lastID;
     await saveRegistrationSelections(registrationId, selections);
+    await retireHolderCodesOnRegistration(phone, discountCodeApplied);
 
     // Record this submission in the payment_transactions ledger as a new
     // PENDING transaction. A resubmission only happens after a rejection (the
@@ -6846,6 +6884,7 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
     );
     const registrationId = result.lastID;
     await saveRegistrationSelections(registrationId, selections);
+    await retireHolderCodesOnRegistration(phone, discountCodeApplied);
 
     const regNo = await assignUserRegNumber(phone);
     if (regNo) await dbRun('UPDATE registrations SET registration_number = ? WHERE phone_number = ?', [regNo, phone]);
@@ -9421,7 +9460,8 @@ app.get('/api/admin/discount-codes', requirePermission('discounts.view'), async 
     const codes = await dbAll(`
       SELECT d.*,
         (SELECT COUNT(*) FROM registrations r WHERE UPPER(r.discount_code) = d.code AND r.bank_status != 'REJECTED') AS applied_count,
-        (SELECT COUNT(*) FROM registrations r WHERE UPPER(r.discount_code) = d.code AND r.bank_status = 'BANK_VERIFIED') AS verified_count
+        (SELECT COUNT(*) FROM registrations r WHERE UPPER(r.discount_code) = d.code AND r.bank_status = 'BANK_VERIFIED') AS verified_count,
+        (d.scope_type = 'INDIVIDUAL' AND EXISTS (SELECT 1 FROM registrations r WHERE r.phone_number = d.scope_value AND r.bank_status != 'REJECTED')) AS holder_registered
       FROM discount_codes d ORDER BY d.created_at DESC`);
     res.json({ codes });
   } catch (err) {
@@ -9565,7 +9605,9 @@ app.put('/api/admin/discount-codes/:id', requirePermission('discounts.manage'), 
     if (req.body.expiresAt !== undefined && (expiresAt || '') !== (existing.expires_at || '')) {
       const applied = (await dbGet(
         "SELECT COUNT(*) AS n FROM registrations WHERE UPPER(discount_code) = ? AND bank_status != 'REJECTED'", [existing.code])).n;
-      const usedUp = existing.scope_type === 'INDIVIDUAL' ? applied > 0 : (existing.max_uses > 0 && applied >= existing.max_uses);
+      const holderRegistered = existing.scope_type === 'INDIVIDUAL' && !!(await dbGet(
+        "SELECT 1 FROM registrations WHERE phone_number = ? AND bank_status != 'REJECTED'", [existing.scope_value]));
+      const usedUp = existing.scope_type === 'INDIVIDUAL' ? (applied > 0 || holderRegistered) : (existing.max_uses > 0 && applied >= existing.max_uses);
       if (usedUp) {
         return res.status(409).json({ success: false, error: 'This code has already been used, so its validity cannot be changed.' });
       }
@@ -11639,6 +11681,7 @@ registrationsMigrationReady.then(retitleNamesOnBoot)
   .then(() => splitSalutationsOnBoot().catch((err) => console.error('Salutation split failed (continuing to start):', err.message)))
   .then(() => migrateProgramGroupsOnBoot().catch((err) => console.error('Program-groups migration failed (continuing to start):', err.message)))
   .then(() => backfillPaymentTransactionsOnBoot().catch((err) => console.error('Payment-transaction backfill failed (continuing to start):', err.message)))
+  .then(() => retireCodesOfRegisteredHoldersOnBoot().catch((err) => console.error('Code retirement sweep failed (continuing to start):', err.message)))
   .then(() => autoLinkTransactions().catch((err) => console.error('Bank-transaction auto-link failed (continuing to start):', err.message)))
   .then(() => loadNotificationToggles().catch((err) => console.error('Notification-toggle load failed (continuing to start):', err.message)))
   .then(() => loadMaintenanceMode().catch((err) => console.error('Maintenance-mode load failed (continuing to start):', err.message)))

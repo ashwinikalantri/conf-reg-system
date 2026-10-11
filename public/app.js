@@ -6499,7 +6499,7 @@ async function renderDiscountCodes() {
 const DISC_GROUPS = [
   { key: 'unused', label: 'Unused', hint: 'Still available to use.', openByDefault: true },
   { key: 'expired', label: 'Expired', hint: 'Unused, but past their last date — extend one to bring it back.', openByDefault: true },
-  { key: 'used', label: 'Used', hint: 'Used by their holder, or at their usage limit.', openByDefault: false },
+  { key: 'used', label: 'Used', hint: 'Used, at their usage limit, or their holder has registered without them.', openByDefault: false },
 ];
 
 function discountCodeGroup(c) {
@@ -6622,9 +6622,13 @@ async function handleAddDiscountCode(e) {
 // the "Used" column's own count (a rejected registration does not hold a
 // code), so a rejection makes the code unused again. A shared code with no
 // limit is never used up. The server applies the same rule.
+// A personal code whose holder has registered without it is spent too -- a
+// registration cannot take a code afterwards -- and the server deactivates it
+// (retireHolderCodesOnRegistration). holder_registered comes from the list.
 function discountCodeUsedUp(c) {
   const applied = Number(c.applied_count) || 0;
-  return c.scope_type === 'INDIVIDUAL' ? applied > 0 : (Number(c.max_uses) > 0 && applied >= Number(c.max_uses));
+  return c.scope_type === 'INDIVIDUAL' ? (applied > 0 || !!Number(c.holder_registered))
+    : (Number(c.max_uses) > 0 && applied >= Number(c.max_uses));
 }
 
 // The expiry column: the last date in words, and a tag -- Used once the code
@@ -6636,7 +6640,10 @@ function discountExpiryCell(c) {
   const used = discountCodeUsedUp(c);
   const expired = !!c.expires_at && c.expires_at < istDateString();
   const date = c.expires_at ? esc(formatFullDate(c.expires_at)) : '<span class="text-slate-400">No expiry</span>';
-  const pill = used
+  const registeredWithout = used && c.scope_type === 'INDIVIDUAL' && !(Number(c.applied_count) > 0);
+  const pill = registeredWithout
+    ? ' <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-600 border-slate-300">Holder registered</span>'
+    : used
     ? ' <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-indigo-100 text-indigo-700 border-indigo-300">Used</span>'
     : expired
       ? ' <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-rose-100 text-rose-700 border-rose-300">Expired</span>' : '';
