@@ -1299,6 +1299,10 @@ async function resolveFee(categoryKey) {
   return { amount: fee, label: cat.label, phase };
 }
 
+// The fee tiers a code can charge, named as on the fee master.
+const FEE_TIERS = { early: 'Early Bird', regular: 'Regular', late: 'Late', spot: 'Spot' };
+const FEE_TIER_COLUMN = { early: 'early_fee', regular: 'regular_fee', late: 'late_fee', spot: 'spot_fee' };
+
 // The rupee discount a code takes off a base fee (never more than the fee).
 // FIXED_FEE sets the fee rather than cutting it: it takes off whatever brings
 // the fee down to its value. A value at or above the fee takes off nothing --
@@ -1308,6 +1312,12 @@ function computeDiscountAmount(codeRow, baseFee) {
   if (!codeRow) return 0;
   let raw;
   if (codeRow.discount_type === 'PERCENT') raw = (baseFee * codeRow.discount_value) / 100;
+  // FEE_TIER charges the delegate's category at the chosen tier: tier_fee is
+  // attached by validateDiscountCode, which knows the category. Like a set
+  // fee it never raises one -- a tier at or above today's fee takes nothing.
+  else if (codeRow.discount_type === 'FEE_TIER') raw = codeRow.tier_fee == null ? 0 : baseFee - codeRow.tier_fee;
+  // Codes issued before tiers existed set a fixed rupee fee. No new ones can
+  // be made, but those already issued keep working exactly as before.
   else if (codeRow.discount_type === 'FIXED_FEE') raw = baseFee - codeRow.discount_value;
   else raw = codeRow.discount_value;
   return Math.max(0, Math.min(Math.round(raw), Math.round(baseFee)));
@@ -1315,9 +1325,10 @@ function computeDiscountAmount(codeRow, baseFee) {
 
 // "50% off" / "₹500 off" / "Fee set to ₹1,000" -- the one wording used by the
 // voucher, the emailed voucher and the audit trail.
-function describeDiscount(type, value) {
+function describeDiscount(type, value, tier) {
   const v = Number(value);
   if (type === 'PERCENT') return `${v}% off`;
+  if (type === 'FEE_TIER') return `Pay the ${FEE_TIERS[tier] || 'set'} fee`;
   if (type === 'FIXED_FEE') return `Fee set to ₹${inr(v)}`;
   return `₹${inr(v)} off`;
 }
@@ -1394,6 +1405,15 @@ async function validateDiscountCode(rawCode, phone, categoryKey) {
       return { ok: false, error: 'This promo code has reached its usage limit.' };
     }
   }
+  // A tier code's fee depends on the category it is being used for -- the
+  // same "Early Bird" code is ₹500 for one category and ₹3,000 for another --
+  // so it is looked up here, where the category is known, and every price
+  // computed from this row (validate, payment, desk, auto-apply) uses it.
+  if (row.discount_type === 'FEE_TIER') {
+    const column = FEE_TIER_COLUMN[row.fee_tier];
+    const cat = column ? await dbGet(`SELECT ${column} AS fee FROM fee_categories WHERE category_key = ?`, [categoryKey]) : null;
+    row.tier_fee = cat && cat.fee != null ? Number(cat.fee) : null;
+  }
   return { ok: true, code: row };
 }
 
@@ -1425,7 +1445,7 @@ async function bestPersonalCode(accountKey, categoryKey) {
     }
     const amount = computeDiscountAmount(v.code, feeInfo.amount);
     if (amount > 0 && (!best || amount > best.discountAmount)) {
-      best = { code: v.code.code, discountType: v.code.discount_type, discountValue: v.code.discount_value, discountAmount: amount };
+      best = { code: v.code.code, discountType: v.code.discount_type, discountValue: v.code.discount_value, feeTier: v.code.fee_tier || null, discountAmount: amount };
     }
   }
   return { feeInfo, best, needsVerification: !best && needsVerification };
@@ -1981,6 +2001,12 @@ db.serialize(() => {
     // every code created before this existed.
     if (!cols.map((c) => c.name).includes('issued_email')) {
       db.run('ALTER TABLE discount_codes ADD COLUMN issued_email TEXT');
+    }
+    // FEE_TIER codes: which fee tier the code charges (early/regular/late/
+    // spot). The fee itself is looked up for the delegate's own category when
+    // the code is used -- see validateDiscountCode.
+    if (!cols.map((c) => c.name).includes('fee_tier')) {
+      db.run('ALTER TABLE discount_codes ADD COLUMN fee_tier TEXT');
     }
   });
 
@@ -4612,6 +4638,7 @@ app.post('/api/discounts/validate', requireAuth, async (req, res, next) => {
       code: result.code.code,
       discountType: result.code.discount_type,
       discountValue: result.code.discount_value,
+      feeTier: result.code.fee_tier || null,
       baseFee: feeInfo.amount,
       discountAmount,
       finalFee: feeInfo.amount - discountAmount,
@@ -9258,7 +9285,13 @@ app.get('/api/admin/discount-codes', requirePermission('discounts.view'), async 
 
 function parseDiscountBody(body) {
   const code = String(body.code || '').trim().toUpperCase();
-  const discountType = ['PERCENT', 'FLAT', 'FIXED_FEE'].includes(body.discountType) ? body.discountType : 'PERCENT';
+  // A type nobody recognises is an error, not a percentage: it used to
+  // become PERCENT silently, so a mistyped type issued a % discount. A fixed
+  // rupee fee (FIXED_FEE) is no longer offered -- a fee TIER replaced it --
+  // though codes already issued that way keep working.
+  const discountType = body.discountType == null || body.discountType === '' ? 'PERCENT'
+    : (['PERCENT', 'FLAT', 'FEE_TIER'].includes(body.discountType) ? body.discountType : null);
+  const feeTier = discountType === 'FEE_TIER' ? String(body.feeTier || '').trim().toLowerCase() : null;
   const discountValue = Number(body.discountValue);
   const scopeType = ['GLOBAL', 'CATEGORY', 'INDIVIDUAL'].includes(body.scopeType) ? body.scopeType : 'GLOBAL';
   let scopeValue = scopeType === 'GLOBAL' ? null : String(body.scopeValue || '').trim();
@@ -9278,15 +9311,14 @@ function parseDiscountBody(body) {
   const maxUses = scopeType === 'INDIVIDUAL' ? null
     : (body.maxUses === '' || body.maxUses == null ? null : Math.max(0, parseInt(body.maxUses, 10) || 0));
   const expiresAt = body.expiresAt ? String(body.expiresAt).trim() : null; // YYYY-MM-DD
-  return { code, discountType, discountValue, scopeType, scopeValue, maxUses, expiresAt };
+  return { code, discountType, discountValue: discountType === 'FEE_TIER' ? 0 : discountValue, feeTier, scopeType, scopeValue, maxUses, expiresAt };
 }
 
 function validateDiscountFields(f) {
   if (!f.code || !/^[A-Z0-9_-]{2,40}$/.test(f.code)) return 'Code must be 2–40 letters, digits, hyphens or underscores.';
-  // A set fee may be ₹0 -- a complimentary registration -- but not negative;
-  // a discount must take something off.
-  if (f.discountType === 'FIXED_FEE') {
-    if (!Number.isFinite(f.discountValue) || f.discountValue < 0) return 'Enter the fee this code sets, in rupees (0 or more).';
+  if (!f.discountType) return 'Choose what the code does: a percentage off, an amount off, or a fee tier.';
+  if (f.discountType === 'FEE_TIER') {
+    if (!FEE_TIERS[f.feeTier]) return 'Choose which fee tier this code charges: Early Bird, Regular, Late or Spot.';
   } else if (!Number.isFinite(f.discountValue) || f.discountValue <= 0) return 'Discount value must be greater than zero.';
   if (f.discountType === 'PERCENT' && f.discountValue > 100) return 'A percentage discount cannot exceed 100.';
   if (f.scopeType === 'CATEGORY' && !f.scopeValue) return 'Choose a category for a category-scoped code.';
@@ -9349,13 +9381,13 @@ app.post('/api/admin/discount-codes', requirePermission('discounts.manage'), asy
     }
 
     const result = await dbRun(
-      `INSERT INTO discount_codes (code, discount_type, discount_value, scope_type, scope_value, pending_email, issued_email, max_uses, expires_at, active, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-      [f.code, f.discountType, f.discountValue, f.scopeType, f.scopeValue, pendingEmail, issuedEmail, f.maxUses, f.expiresAt, Date.now(), req.session.name || req.session.phone]);
+      `INSERT INTO discount_codes (code, discount_type, discount_value, fee_tier, scope_type, scope_value, pending_email, issued_email, max_uses, expires_at, active, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      [f.code, f.discountType, f.discountValue, f.feeTier, f.scopeType, f.scopeValue, pendingEmail, issuedEmail, f.maxUses, f.expiresAt, Date.now(), req.session.name || req.session.phone]);
     await recordAudit({
       req, entityType: 'discount_code', entityId: result.lastID, action: 'DISCOUNT_CODE_CREATE',
       oldValue: null,
-      newValue: `${f.code} — ${describeDiscount(f.discountType, f.discountValue)} (${f.scopeType}${pendingEmail ? ':waiting for ' + pendingEmail : f.scopeValue ? ':' + f.scopeValue : ''})`,
+      newValue: `${f.code} — ${describeDiscount(f.discountType, f.discountValue, f.feeTier)} (${f.scopeType}${pendingEmail ? ':waiting for ' + pendingEmail : f.scopeValue ? ':' + f.scopeValue : ''})`,
     });
     res.json({ success: true, ...(pendingEmail ? { pendingEmail } : {}), ...(needsVerification ? { needsVerification: true, issuedEmail } : {}) });
   } catch (err) {
@@ -9455,7 +9487,7 @@ async function discountCodeLines(code) {
     const contact = shownPhone || ((u && u.email) || '');
     scopeLine = `Reserved for ${escapeHtml(u ? u.full_name : 'this delegate')}${contact ? ` (${escapeHtml(contact)})` : ''} only.`;
   }
-  const discountLine = describeDiscount(code.discount_type, code.discount_value);
+  const discountLine = describeDiscount(code.discount_type, code.discount_value, code.fee_tier);
   const expiryLine = code.expires_at ? `Valid through ${escapeHtml(formatDMY(code.expires_at))}.` : 'No expiry date set.';
   return { scopeLine, discountLine, expiryLine };
 }

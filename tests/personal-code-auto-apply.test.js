@@ -49,11 +49,11 @@ const ymd = (days) => new Date(Date.now() + 5.5 * 3600e3 + days * 864e5).toISOSt
     check('the answer is "none"', none.body.success === true && none.body.code === null && !none.body.needsVerification, none.body);
 
     console.log('\n== A code issued to them is applied without their typing it ==');
-    await issue({ code: `ASET${N}`, discountType: 'FIXED_FEE', discountValue: 1000, scopeType: 'INDIVIDUAL', scopeValue: aEmail });
+    await issue({ code: `ASET${N}`, discountType: 'FLAT', discountValue: 2000, scopeType: 'INDIVIDUAL', scopeValue: aEmail });
     const one = (await mine(A.cookie)).body;
-    check('their set-fee code is found', one.code && one.code.code === `ASET${N}`, one);
+    check('their code is found', one.code && one.code.code === `ASET${N}`, one);
     check('...priced for the category chosen', one.code && one.code.finalFee === 1000 && one.code.discountAmount === one.code.baseFee - 1000, one.code);
-    check('...with what the form needs to show it', one.code && one.code.discountType === 'FIXED_FEE');
+    check('...with what the form needs to show it', one.code && one.code.discountType === 'FLAT');
 
     console.log('\n== Of several, the one that takes the most off ==');
     // Issued by ACCOUNT KEY, which is what the admin picker sends. For someone
@@ -76,8 +76,10 @@ const ymd = (days) => new Date(Date.now() + 5.5 * 3600e3 + days * 864e5).toISOSt
     const theirs = (await mine(B.cookie)).body;
     check('another delegate is offered none of A\'s codes', theirs.code === null, theirs.code);
     const fee = one.code.baseFee;
-    await issue({ code: `BHI${N}`, discountType: 'FIXED_FEE', discountValue: fee + 500, scopeType: 'INDIVIDUAL', scopeValue: B.key });
-    check('a set fee above their category\'s fee takes nothing off, so is not applied', (await mine(B.cookie)).body.code === null);
+    // The fixture is in its early-bird period, so an Early Bird tier is today's
+    // fee already: it takes nothing off, and is not "applied".
+    await issue({ code: `BHI${N}`, discountType: 'FEE_TIER', feeTier: 'early', scopeType: 'INDIVIDUAL', scopeValue: B.key });
+    check('a fee tier no lower than today\'s fee takes nothing off, so is not applied', (await mine(B.cookie)).body.code === null);
 
     console.log('\n== Held back until their email is verified, and they are told ==');
     const cPhone = '6' + N.padStart(9, '7');

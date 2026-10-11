@@ -1323,9 +1323,11 @@ async function autoApplyPersonalCode(catKey) {
     const inputRow = document.getElementById('promo-input-row');
     if (inputRow) inputRow.classList.add('hidden');
     if (msg) {
-      msg.textContent = data.code.discountType === 'FIXED_FEE'
-        ? `Your personal code ${data.code.code} has been applied — your fee is now ₹${inr(data.code.finalFee)}.`
-        : `Your personal code ${data.code.code} has been applied — you save ₹${inr(data.code.discountAmount)}.`;
+      msg.textContent = data.code.discountType === 'FEE_TIER'
+        ? `Your personal code ${data.code.code} has been applied — you pay the ${FEE_TIER_LABELS[data.code.feeTier] || ''} fee of ₹${inr(data.code.finalFee)}.`
+        : data.code.discountType === 'FIXED_FEE'
+          ? `Your personal code ${data.code.code} has been applied — your fee is now ₹${inr(data.code.finalFee)}.`
+          : `Your personal code ${data.code.code} has been applied — you save ₹${inr(data.code.discountAmount)}.`;
       msg.className = 'text-xs mt-1 text-emerald-700 font-semibold';
     }
     calculateFee();
@@ -1383,9 +1385,11 @@ async function applyPromoCode() {
     })).json();
     if (!data.success) { clearAppliedPromo(); showMsg(data.error || 'Invalid code.', false); calculateFee(); return; }
     appliedPromo = { code: data.code, discountAmount: data.discountAmount, finalFee: data.finalFee, categoryKey: catKey };
-    showMsg(data.discountType === 'FIXED_FEE'
-      ? `Code applied — your fee is now ₹${inr(data.finalFee)}${data.discountAmount ? ` (you save ₹${inr(data.discountAmount)})` : ''}.`
-      : `Code applied — you save ₹${inr(data.discountAmount)}. New fee: ₹${inr(data.finalFee)}.`, true);
+    showMsg(data.discountType === 'FEE_TIER'
+      ? `Code applied — you pay the ${FEE_TIER_LABELS[data.feeTier] || ''} fee of ₹${inr(data.finalFee)}${data.discountAmount ? ` (you save ₹${inr(data.discountAmount)})` : ''}.`
+      : data.discountType === 'FIXED_FEE'
+        ? `Code applied — your fee is now ₹${inr(data.finalFee)}${data.discountAmount ? ` (you save ₹${inr(data.discountAmount)})` : ''}.`
+        : `Code applied — you save ₹${inr(data.discountAmount)}. New fee: ₹${inr(data.finalFee)}.`, true);
     // The input+Apply row is no longer needed once a code is applied -- the
     // Discount line above (with its own ✕) is now the applied-state UI.
     const inputRow = document.getElementById('promo-input-row');
@@ -6339,19 +6343,26 @@ function generateDiscCode() {
 function describeDiscountCode(c) {
   const v = Number(c.discount_value);
   if (c.discount_type === 'PERCENT') return `${v}% off`;
-  if (c.discount_type === 'FIXED_FEE') return `Fee set to ₹${inr(v)}`;
+  if (c.discount_type === 'FEE_TIER') return `Pay the ${FEE_TIER_LABELS[c.fee_tier] || 'set'} fee`;
+  if (c.discount_type === 'FIXED_FEE') return `Fee set to ₹${inr(v)}`; // issued before tiers
   return `₹${inr(v)} off`;
 }
 
-// The value field means something different for a fee-setting code: the fee
-// itself, which may be ₹0 (complimentary), rather than an amount to take off.
+// Fee tiers, named as on the fee master (server: FEE_TIERS).
+const FEE_TIER_LABELS = { early: 'Early Bird', regular: 'Regular', late: 'Late', spot: 'Spot' };
+
+// A tier code has no amount -- the fee is the delegate's own category at that
+// tier -- so the value field gives way to a tier picker, and stops being
+// required (a hidden required field would block the form).
 function updateDiscTypeHints() {
   const type = document.getElementById('new-disc-type').value;
+  const tier = type === 'FEE_TIER';
   const input = document.getElementById('new-disc-value');
   const label = document.getElementById('new-disc-value-label');
-  const fixed = type === 'FIXED_FEE';
-  if (input) { input.min = fixed ? '0' : '1'; input.placeholder = fixed ? '1000' : '20'; }
-  if (label) label.textContent = fixed ? 'Fee (₹)' : type === 'PERCENT' ? 'Value (%)' : 'Value (₹)';
+  document.getElementById('new-disc-value-wrap').classList.toggle('hidden', tier);
+  document.getElementById('new-disc-tier-wrap').classList.toggle('hidden', !tier);
+  if (input) input.required = !tier;
+  if (label) label.textContent = type === 'PERCENT' ? 'Value (%)' : 'Value (₹)';
 }
 
 function updateDiscScopeHints() {
@@ -6500,6 +6511,7 @@ async function handleAddDiscountCode(e) {
     code: document.getElementById('new-disc-code').value,
     discountType: document.getElementById('new-disc-type').value,
     discountValue: document.getElementById('new-disc-value').value,
+    feeTier: document.getElementById('new-disc-type').value === 'FEE_TIER' ? document.getElementById('new-disc-tier').value : undefined,
     scopeType,
     scopeValue: scopeType === 'CATEGORY' ? document.getElementById('new-disc-scope-cat').value
       : scopeType === 'INDIVIDUAL' ? document.getElementById('new-disc-scope-phone').value : '',

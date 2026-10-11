@@ -162,33 +162,34 @@ const base = { salutation: 'Dr', name: 'Code Tester', age: '34', gender: 'Female
     const pickUse = await call('POST', '/api/discounts/validate', { code: `PICK${N}`, categoryKey: cat.category_key }, picked);
     check('...so it works with their email still unverified', pickUse.body.success === true, pickUse.body);
 
-    console.log('\n== A code can set the fee instead of discounting it ==');
-    const fix = await create({ code: `FIX${N}`, discountType: 'FIXED_FEE', discountValue: 1000, scopeType: 'GLOBAL' });
-    check('a fee-setting code is created', fix.body.success === true, fix.body.error);
-    const f1 = (await call('POST', '/api/discounts/validate', { code: `FIX${N}`, categoryKey: cat.category_key }, other.cookie)).body;
+    console.log('\n== Set-fee codes issued before tiers still work ==');
+    // "Set fee to ₹" is no longer offered -- a fee TIER replaced it (see
+    // discount-fee-tier.test.js) -- but codes already issued that way keep
+    // working exactly as before. They are made here directly, as the old form
+    // made them; the form can no longer.
+    const refusedFixed = await create({ code: `FIX${N}`, discountType: 'FIXED_FEE', discountValue: 1000, scopeType: 'GLOBAL' });
+    check('a new fixed-fee code is refused', refusedFixed.status === 400, refusedFixed.body);
+    const bogus = await create({ code: `BOGUS${N}`, discountType: 'BOGUS', discountValue: 10, scopeType: 'GLOBAL' });
+    check('...as is a type nobody recognises -- it used to become a percentage code',
+      bogus.status === 400 && !(await codeRow(`BOGUS${N}`)), bogus.body);
+    const legacy = async (code, value) => {
+      await db.run(`INSERT INTO discount_codes (code, discount_type, discount_value, scope_type, active, created_at, created_by)
+                    VALUES (?, 'FIXED_FEE', ?, 'GLOBAL', 1, ?, 'legacy')`, [code, value, Date.now()]);
+      made.push(code);
+    };
+    await legacy(`LEG${N}`, 1000);
+    const f1 = (await call('POST', '/api/discounts/validate', { code: `LEG${N}`, categoryKey: cat.category_key }, other.cookie)).body;
     check('fixture: the category costs more than ₹1,000', f1.baseFee > 1000, f1.baseFee);
-    check('the fee comes out at exactly ₹1,000', f1.success && f1.finalFee === 1000, f1);
-    check('...by taking off the difference', f1.discountAmount === f1.baseFee - 1000, f1.discountAmount);
-    check('...and the portal is told what kind of code it is', f1.discountType === 'FIXED_FEE');
-
-    const high = await create({ code: `FIXHI${N}`, discountType: 'FIXED_FEE', discountValue: f1.baseFee + 500, scopeType: 'GLOBAL' });
-    const f2 = (await call('POST', '/api/discounts/validate', { code: `FIXHI${N}`, categoryKey: cat.category_key }, other.cookie)).body;
-    check('a code set above the fee takes nothing off', high.body.success && f2.discountAmount === 0 && f2.finalFee === f2.baseFee, f2);
-    check('...and never raises it', f2.finalFee <= f2.baseFee);
-
-    const free = await create({ code: `FIX0${N}`, discountType: 'FIXED_FEE', discountValue: 0, scopeType: 'GLOBAL' });
-    const f3 = (await call('POST', '/api/discounts/validate', { code: `FIX0${N}`, categoryKey: cat.category_key }, other.cookie)).body;
-    check('₹0 is allowed, and makes the registration free', free.body.success && f3.finalFee === 0, [free.body.error, f3.finalFee]);
-    const neg = await create({ code: `FIXNEG${N}`, discountType: 'FIXED_FEE', discountValue: -5, scopeType: 'GLOBAL' });
-    check('a negative fee is refused', neg.status === 400 && /0 or more/.test(neg.body.error), neg.body.error);
-    const zeroPct = await create({ code: `PCT0${N}`, discountType: 'PERCENT', discountValue: 0, scopeType: 'GLOBAL' });
-    check('...while a discount of nothing is still refused', zeroPct.status === 400, zeroPct.body.error);
-
-    const fixRow = await codeRow(`FIX${N}`);
-    const fixVoucher = String((await call('GET', `/api/admin/discount-codes/${fixRow.id}/share`, null, admin)).body);
-    check('the voucher says what it does', fixVoucher.includes('Fee set to ₹1,000'), (fixVoucher.match(/class="discount">[^<]*/) || [])[0]);
-    const created = await db.get("SELECT new_value FROM audit_log WHERE entity_type = 'discount_code' AND entity_id = ? AND action = 'DISCOUNT_CODE_CREATE'", [String(fixRow.id)]);
-    check('...and so does the activity log', !!created && created.new_value.includes('Fee set to ₹1,000'), created && created.new_value);
+    check('an issued set-fee code still brings the fee to exactly ₹1,000', f1.success && f1.finalFee === 1000, f1);
+    await legacy(`LEGHI${N}`, f1.baseFee + 500);
+    const f2 = (await call('POST', '/api/discounts/validate', { code: `LEGHI${N}`, categoryKey: cat.category_key }, other.cookie)).body;
+    check('...still never raises a fee', f2.discountAmount === 0 && f2.finalFee === f2.baseFee, f2);
+    await legacy(`LEG0${N}`, 0);
+    const f3 = (await call('POST', '/api/discounts/validate', { code: `LEG0${N}`, categoryKey: cat.category_key }, other.cookie)).body;
+    check('...and a ₹0 one still makes the registration free', f3.finalFee === 0, f3.finalFee);
+    const legRow = await codeRow(`LEG${N}`);
+    const legVoucher = String((await call('GET', `/api/admin/discount-codes/${legRow.id}/share`, null, admin)).body);
+    check('its voucher still says what it does', legVoucher.includes('Fee set to ₹1,000'), (legVoucher.match(/class="discount">[^<]*/) || [])[0]);
   } finally {
     for (const code of made) await db.run('DELETE FROM discount_codes WHERE code = ?', [code]);
   }

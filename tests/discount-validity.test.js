@@ -79,7 +79,7 @@ const base = { salutation: 'Dr', age: '36', gender: 'Female', designation: 'Cons
     check('...and still cannot be used', (await tryCode(`OFF${N}`)).body.success === false);
 
     console.log('\n== A personal code applied for its owner comes back once extended ==');
-    await issue({ code: `MINE${N}`, discountType: 'FIXED_FEE', discountValue: 1000, scopeType: 'INDIVIDUAL', scopeValue: email, expiresAt: ist(-2) });
+    await issue({ code: `MINE${N}`, discountType: 'PERCENT', discountValue: 40, scopeType: 'INDIVIDUAL', scopeValue: email, expiresAt: ist(-2) });
     const mineRow = await row(`MINE${N}`);
     const gone = await call('GET', `/api/discounts/mine?categoryKey=${cat.category_key}`, null, delegate);
     check('expired, it is not applied for them', gone.body.code === null, gone.body);
