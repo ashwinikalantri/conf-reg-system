@@ -7927,6 +7927,152 @@ app.post('/api/admin/reminders/registered/send', requirePermission('comms.remind
   }
 });
 
+// --- UNUSED PERSONAL CODES ----------------------------------------------
+// Everyone holding a personal code they could still use: active, not used,
+// in date, and not already registered (a registration made without the code
+// cannot take it afterwards, so reminding them would only confuse). A code
+// still waiting on an address nobody has signed up with is included, written
+// to at that address. Grouped by address, so a person with two codes gets one
+// email naming both. Worked out afresh when sending, so a code used or
+// expired since the list was loaded is not mentioned.
+async function unusedPersonalCodeHolders() {
+  const rows = await dbAll(
+    `SELECT d.code, d.discount_type, d.discount_value, d.fee_tier, d.expires_at, d.pending_email,
+            u.email AS account_email, u.salutation, u.full_name
+       FROM discount_codes d
+       LEFT JOIN users u ON u.phone_number = d.scope_value
+      WHERE d.scope_type = 'INDIVIDUAL' AND d.active = 1
+        AND (d.expires_at IS NULL OR d.expires_at >= ?)
+        AND NOT EXISTS (SELECT 1 FROM registrations r WHERE UPPER(r.discount_code) = d.code AND r.bank_status != 'REJECTED')
+        AND NOT EXISTS (SELECT 1 FROM registrations r WHERE r.phone_number = d.scope_value AND r.bank_status != 'REJECTED')
+      ORDER BY d.created_at`, [istDateString()]);
+  const byAddress = new Map();
+  for (const r of rows) {
+    const address = r.pending_email || r.account_email;
+    if (!address) continue;
+    const key = normalizeEmail(address);
+    if (!byAddress.has(key)) {
+      byAddress.set(key, {
+        email: key,
+        name: r.pending_email ? null : ([r.salutation, r.full_name].filter(Boolean).join(' ') || null),
+        waiting: !!r.pending_email,
+        codes: [],
+      });
+    }
+    byAddress.get(key).codes.push({
+      code: r.code, discount: describeDiscount(r.discount_type, r.discount_value, r.fee_tier),
+      validUntil: r.expires_at, waiting: !!r.pending_email,
+    });
+  }
+  const recipients = [...byAddress.values()];
+  for (const p of recipients) {
+    const last = await dbGet(
+      "SELECT MAX(created_at) AS t FROM audit_log WHERE entity_type = 'reminder_email' AND action = 'CODE_HOLDER_REMINDER_SENT' AND entity_id = ?",
+      [p.email]);
+    p.last_reminder_sent_at = last && last.t ? last.t : null;
+  }
+  return recipients;
+}
+
+// "Thursday, 15 October 2026" -- the weekday, on a deadline, tells the
+// reader how long they actually have.
+const LONG_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+function formatFullDayDate(isoDate) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate || '');
+  if (!m) return '';
+  const day = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()];
+  return `${day}, ${Number(m[3])} ${LONG_MONTHS[Number(m[2]) - 1]} ${m[1]}`;
+}
+
+// {{codes}}: one block per code -- the code, what it gives, its last date --
+// inline-styled, as email requires, in the app's steel palette (STEEL in
+// email-template.js), so the email matches the page it links to.
+function codeHolderCodesHtml(codes) {
+  return codes.map((c) => `<div style="background:#eef3f6;border:1px solid #b9cedb;border-radius:10px;padding:1rem 1.25rem;margin:1rem 0">
+  <div style="font-family:ui-monospace,Menlo,monospace;font-size:1.35rem;font-weight:800;letter-spacing:.06em;color:#1c3549">${escapeHtml(c.code)}</div>
+  <div style="font-weight:700;color:#047857;margin-top:.3rem">${escapeHtml(c.discount)}</div>
+  <div style="font-size:.8rem;color:#46708c;margin-top:.3rem">${c.validUntil ? `Valid through ${escapeHtml(formatFullDayDate(c.validUntil))} (end of day, IST)` : 'No expiry date'}</div>
+  ${c.waiting ? '<div style="font-size:.8rem;color:#92400e;margin-top:.4rem"><b>Sign up with this email address to use it</b> &mdash; it was issued to this address, and becomes yours once you sign up and verify it.</div>' : ''}
+</div>`).join('');
+}
+
+function renderCodeHolderEmail(bodyHtml, recipient) {
+  return String(bodyHtml)
+    .split('{{name}}').join(escapeHtml(recipient.name || 'Colleague'))
+    .split('{{codes}}').join(codeHolderCodesHtml(recipient.codes));
+}
+
+// The same guards, in the same order, as the other bulk sends -- plus one of
+// its own: without {{codes}} everyone would be sent an email that does not
+// say which code is theirs.
+function checkCodeHolderEmail(req, res) {
+  const { subject, bodyHtml } = req.body || {};
+  if (!subject || !String(subject).trim()) { res.status(400).json({ success: false, error: 'Subject is required.' }); return false; }
+  if (!bodyHtml || !String(bodyHtml).trim()) { res.status(400).json({ success: false, error: 'Email body is required.' }); return false; }
+  if (!String(bodyHtml).includes('{{codes}}')) {
+    res.status(400).json({ success: false, error: 'Keep {{codes}} in the email -- it is where each person’s own code goes.' });
+    return false;
+  }
+  if (!emailEnabled()) { res.status(400).json({ success: false, error: 'Email is not configured on this server.' }); return false; }
+  return true;
+}
+
+app.get('/api/admin/reminders/code-holders', requirePermission('comms.reminders_view'), async (req, res, next) => {
+  try {
+    res.json({ recipients: await unusedPersonalCodeHolders() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// To the admin alone, filled in with a real person's codes (or an example if
+// there is nobody to write to), so the code block can be seen as it will be.
+app.post('/api/admin/reminders/code-holders/test-send', requirePermission('comms.reminders_test'), async (req, res, next) => {
+  try {
+    if (!checkCodeHolderEmail(req, res)) return;
+    const me = await dbGet('SELECT salutation, full_name, email FROM users WHERE phone_number = ?', [req.session.phone]);
+    if (!me || !me.email) return res.status(400).json({ success: false, error: 'No email on file for your own account.' });
+    const first = (await unusedPersonalCodeHolders())[0];
+    const sample = {
+      name: [me.salutation, me.full_name].filter(Boolean).join(' ') || 'Colleague',
+      codes: first ? first.codes : [{ code: 'EXAMPLE2026', discount: 'Pay the Early Bird fee', validUntil: null, waiting: false }],
+    };
+    await sendEmail(me.email, `[TEST] ${req.body.subject}`, emailWrap(req.body.subject, renderCodeHolderEmail(req.body.bodyHtml, sample)));
+    res.json({ success: true, sentTo: me.email });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/admin/reminders/code-holders/send', requirePermission('comms.reminders_send'), async (req, res, next) => {
+  try {
+    if (!checkCodeHolderEmail(req, res)) return;
+    const { subject, bodyHtml, emails } = req.body;
+    if (!Array.isArray(emails) || !emails.length) {
+      return res.status(400).json({ success: false, error: 'Select at least one person to send to.' });
+    }
+    const chosen = new Set(emails.map((e) => normalizeEmail(String(e || ''))));
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    const recipients = (await unusedPersonalCodeHolders()).filter((p) => chosen.has(p.email));
+    let sent = 0;
+    let skippedSentRecently = 0;
+    for (const p of recipients) {
+      if (p.last_reminder_sent_at && p.last_reminder_sent_at >= since) { skippedSentRecently++; continue; }
+      await sendEmail(p.email, subject, emailWrap(subject, renderCodeHolderEmail(bodyHtml, p)));
+      await recordAudit({
+        req, entityType: 'reminder_email', entityId: p.email,
+        action: 'CODE_HOLDER_REMINDER_SENT', oldValue: p.codes.map((c) => c.code).join(', '), newValue: subject,
+      });
+      sent++;
+    }
+    // Chosen, but no longer holding an unused code by the time this ran.
+    const noLongerDue = chosen.size - recipients.length;
+    res.json({ success: true, sent, skippedSentRecently, noLongerDue, total: chosen.size });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Same shape as the pending-signup reminders above, for the other worklist
 // that benefits from a nudge: PARTIAL_PAYMENT registrations, where the admin
 // has revised the payment after a fee change and the delegate owes a

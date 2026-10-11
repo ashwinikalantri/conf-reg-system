@@ -70,9 +70,13 @@ check('both Faculty tags are bordered and no longer forced uppercase',
 // -- while a fourth card with unbordered tags would slip past a fixed number.
 const reminderCards = new Set([...js.matchAll(/class="([a-z]+-recipient-checkbox)/g)].map((m) => m[1])).size;
 check('each reminder card renders its own recipient list', reminderCards >= 3, reminderCards);
-check('every card\'s "No email" tag is bordered',
-  (js.match(/bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0\.5 rounded-full font-bold shrink-0">No email<\/span>/g) || []).length === reminderCards,
-  (js.match(/bg-rose-100[^"]*">No email<\/span>/g) || []).length);
+// Not every card can have a "No email" tag -- the Unused Personal Codes card
+// lists addresses, so nobody on it lacks one. What must hold is that every
+// such tag, wherever it appears, is bordered.
+const noEmailTags = (js.match(/">No email<\/span>/g) || []).length;
+check('every "No email" tag is bordered, on every card that has one',
+  noEmailTags >= 3 && (js.match(/bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0\.5 rounded-full font-bold shrink-0">No email<\/span>/g) || []).length === noEmailTags,
+  noEmailTags);
 check('every card\'s "Sent within 24h" tag is bordered',
   (js.match(/bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0\.5 rounded-full font-bold shrink-0">Sent within 24h<\/span>/g) || []).length === reminderCards,
   (js.match(/bg-amber-100[^"]*">Sent within 24h<\/span>/g) || []).length);

@@ -7388,6 +7388,133 @@ async function renderBackendReminders() {
   }
   updateReminderSelectedCount();
   renderRegisteredDelegateEmails();
+  renderCodeHolderEmails();
+}
+
+// --- Unused personal codes ------------------------------------------------
+// People holding a personal code they could still use. Each email is filled
+// in server-side: {{name}}, and {{codes}} -- their own codes, what each gives
+// and its last date. One entry per address, so someone with two codes is
+// written to once.
+let cachedCodeHolders = [];
+
+function codeHolderDefaultSubject() {
+  const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
+  return `Your personal registration code${who} is waiting to be used`;
+}
+
+function codeHolderDefaultBody() {
+  const c = conferenceInfo;
+  return `<p>Dear {{name}},</p>
+<p>A personal code was issued to you for <b>${esc(c.name || 'the conference')}</b>, and it has not been used yet.</p>
+{{codes}}
+<p>Register on the portal and, when you choose your category, your code is applied for you automatically. You can also enter it under <b>Apply promo code</b>. It is yours alone, and works through the end of its last date.</p>
+<p style="text-align:center;margin:1.5rem 0">
+  <a href="${window.location.origin}" style="background:#2f5673;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Register Now</a>
+</p>
+<p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
+}
+
+async function renderCodeHolderEmails() {
+  const list = document.getElementById('codeholders-list');
+  if (!list) return;
+  const res = await fetch('/api/admin/reminders/code-holders');
+  if (!res.ok) return;
+  cachedCodeHolders = (await res.json()).recipients || [];
+  setText('codeholders-count', String(cachedCodeHolders.length));
+  const subject = document.getElementById('codeholder-subject');
+  const body = document.getElementById('codeholder-body');
+  if (subject && !subject.value.trim()) subject.value = codeHolderDefaultSubject();
+  if (body && !body.value.trim()) body.value = codeHolderDefaultBody();
+
+  list.innerHTML = cachedCodeHolders.length
+    ? cachedCodeHolders.map((p) => {
+      const onCooldown = reminderOnCooldown(p);
+      const codes = p.codes.map((c) => `${c.code} · ${c.discount}${c.validUntil ? ` · until ${formatFullDate(c.validUntil)}` : ''}`).join('; ');
+      return `
+      <div class="px-3 py-2 flex items-center gap-2">
+        <input type="checkbox" class="codeholder-recipient-checkbox shrink-0" value="${esc(p.email)}" ${onCooldown ? 'disabled' : ''} onchange="updateCodeHolderSelectedCount()">
+        <div class="min-w-0 flex-1">
+          <p class="font-semibold text-slate-700 truncate">${esc(p.name || p.email)}</p>
+          <p class="text-xs text-slate-400 truncate">${p.name ? esc(p.email) + ' · ' : ''}${esc(codes)}${p.last_reminder_sent_at ? ` · last sent ${esc(fmtAuditTime(p.last_reminder_sent_at))}` : ''}</p>
+        </div>
+        ${p.waiting ? '<span class="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">Waiting for signup</span>' : ''}
+        ${onCooldown ? '<span class="text-[10px] bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">Sent within 24h</span>' : ''}
+      </div>`;
+    }).join('')
+    : '<div class="px-3 py-6 text-center text-slate-400 text-sm">Nobody is holding an unused personal code.</div>';
+
+  const testBtn = document.getElementById('codeholder-test-btn');
+  if (testBtn) {
+    testBtn.disabled = !can('comms.reminders_test');
+    testBtn.title = can('comms.reminders_test') ? '' : 'You do not have permission to send reminder emails.';
+  }
+  updateCodeHolderSelectedCount();
+}
+
+function updateCodeHolderSelectedCount() {
+  const boxes = Array.from(document.querySelectorAll('.codeholder-recipient-checkbox'));
+  const selectable = boxes.filter((b) => !b.disabled);
+  const selected = boxes.filter((b) => b.checked);
+  setText('codeholder-selected-count', String(selected.length));
+  setText('codeholder-send-count', String(selected.length));
+  const selectAll = document.getElementById('codeholders-select-all');
+  if (selectAll) {
+    selectAll.checked = selectable.length > 0 && selected.length === selectable.length;
+    selectAll.disabled = selectable.length === 0;
+  }
+  const sendBtn = document.getElementById('codeholder-send-btn');
+  if (sendBtn) {
+    sendBtn.disabled = selected.length === 0 || !can('comms.reminders_send');
+    sendBtn.title = can('comms.reminders_send') ? '' : 'You do not have permission to send bulk reminder emails.';
+  }
+}
+
+function toggleAllCodeHolders(checked) {
+  document.querySelectorAll('.codeholder-recipient-checkbox').forEach((b) => { if (!b.disabled) b.checked = checked; });
+  updateCodeHolderSelectedCount();
+}
+
+async function sendCodeHolderTest() {
+  const subject = document.getElementById('codeholder-subject').value.trim();
+  const bodyHtml = document.getElementById('codeholder-body').value.trim();
+  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
+  const data = await (await fetch('/api/admin/reminders/code-holders/test-send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subject, bodyHtml }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not send the test.');
+  showToast(`Test sent to ${data.sentTo}, filled in with a real example.`, 'success');
+}
+
+async function sendCodeHolderEmails() {
+  const subject = document.getElementById('codeholder-subject').value.trim();
+  const bodyHtml = document.getElementById('codeholder-body').value.trim();
+  const emails = Array.from(document.querySelectorAll('.codeholder-recipient-checkbox:checked')).map((b) => b.value);
+  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
+  if (!emails.length) return showToast('Select at least one person.');
+  if (!bodyHtml.includes('{{codes}}')) return showToast('Keep {{codes}} in the email — it is where each person\'s own code goes.');
+  if (!(await showConfirm(`Send this reminder to ${emails.length} ${emails.length === 1 ? 'person' : 'people'}, each with their own code? This can't be undone.`))) return;
+
+  const btn = document.getElementById('codeholder-send-btn');
+  const resultEl = document.getElementById('codeholder-send-result');
+  if (btn) btn.disabled = true;
+  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending…'; }
+  const data = await (await fetch('/api/admin/reminders/code-holders/send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subject, bodyHtml, emails }),
+  })).json();
+  if (!data.success) {
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Send failed.'; }
+    showToast(data.error || 'Could not send.');
+  } else {
+    const notes = [
+      data.skippedSentRecently ? `${data.skippedSentRecently} already sent in the last 24h` : null,
+      data.noLongerDue ? `${data.noLongerDue} no longer holding an unused code` : null,
+    ].filter(Boolean).join(', ');
+    const msg = `Sent to ${data.sent} of ${data.total}${notes ? ` (${notes})` : ''}.`;
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
+    showToast(msg, 'success');
+  }
+  renderCodeHolderEmails();
 }
 
 // --- All Registered Delegates --------------------------------------------

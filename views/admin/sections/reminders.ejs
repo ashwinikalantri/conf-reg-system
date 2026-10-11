@@ -137,6 +137,48 @@
         </div>
       </div>
 
+      <!-- Everyone holding a personal code they could still use: active, not
+           used, in date, not already registered. Each email names that
+           person's own codes, filled in at {{codes}}. See
+           GET /api/admin/reminders/code-holders. -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm mt-6">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
+          <h3 class="font-bold text-slate-800">Unused Personal Codes</h3>
+          <span class="text-xs text-slate-500"><span id="codeholders-count" class="font-bold text-slate-700">0</span> people hold a personal code they have not used</span>
+        </div>
+        <p class="text-xs text-slate-500 mb-3"><code class="bg-slate-100 px-1 py-0.5 rounded">{{name}}</code> becomes each person's name, and <code class="bg-slate-100 px-1 py-0.5 rounded">{{codes}}</code> their own code(s) &mdash; what each gives and its last date. Keep <code class="bg-slate-100 px-1 py-0.5 rounded">{{codes}}</code> in the email.</p>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="space-y-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Subject</label>
+              <input id="codeholder-subject" class="w-full p-2.5 border rounded-lg text-sm outline-none">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Body (HTML)</label>
+              <textarea id="codeholder-body" rows="10" class="w-full p-2.5 border rounded-lg text-xs font-mono outline-none"></textarea>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button id="codeholder-test-btn" onclick="sendCodeHolderTest()" class="px-4 py-2.5 bg-slate-700 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm rounded-xl shadow-md">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M9 3h6"/><path d="M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3"/><line x1="8" y1="14" x2="16" y2="14"/></svg>Send Test to Myself
+              </button>
+              <button id="codeholder-send-btn" onclick="sendCodeHolderEmails()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm rounded-xl shadow-md">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M3 6.5 L12 13 L21 6.5"/></svg>Send to <span id="codeholder-send-count">0</span> People
+              </button>
+            </div>
+            <span id="codeholder-send-result" class="text-xs font-semibold block"></span>
+          </div>
+          <div class="border border-slate-200 rounded-xl overflow-hidden">
+            <div class="bg-slate-50 border-b border-slate-200 px-3 py-2 text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
+              <input type="checkbox" id="codeholders-select-all" onchange="toggleAllCodeHolders(this.checked)">
+              <label for="codeholders-select-all" class="cursor-pointer">Recipients</label>
+              <span class="ml-auto font-normal normal-case text-slate-400"><span id="codeholder-selected-count">0</span> selected</span>
+            </div>
+            <div id="codeholders-list" class="divide-y divide-slate-100 max-h-96 overflow-y-auto text-sm"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- Custom recipients: for reaching people who haven't signed up at
            all -- e.g. an external mailing list for an "early bird ends
            today" push -- since the two cards above only ever address
