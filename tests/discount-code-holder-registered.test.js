@@ -68,9 +68,10 @@ const base = { salutation: 'Dr', age: '35', gender: 'Female', designation: 'Cons
     const grab = (n) => { const i = js.indexOf(`function ${n}(`); return js.slice(i, js.indexOf('\n}', i) + 2); };
     const sb = { can: () => true, Date, Number };
     vm.createContext(sb);
-    vm.runInContext(['esc', 'formatFullDate', 'istDateString', 'discountCodeUsedUp', 'discountExpiryCell'].map(grab).join('\n')
-      + '\nglobalThis.cell = discountExpiryCell; globalThis.usedUp = discountCodeUsedUp;', sb);
-    check('it counts as done, so it sits with the Used codes', sb.usedUp(spareRow) === true);
+    vm.runInContext(['esc', 'formatFullDate', 'istDateString', 'discountCodeUsedUp', 'discountCodeDeactivated', 'discountExpiryCell', 'discountCodeGroup'].map(grab).join('\n')
+      + '\nglobalThis.cell = discountExpiryCell; globalThis.usedUp = discountCodeUsedUp; globalThis.group = discountCodeGroup;', sb);
+    check('it counts as done', sb.usedUp(spareRow) === true);
+    check('...and, switched off, is listed under Deactivated', sb.group(spareRow) === 'deactivated', sb.group(spareRow));
     const cellHtml = sb.cell(spareRow);
     check('...tagged "Holder registered", not "Used"', />Holder registered</.test(cellHtml) && !/>Used</.test(cellHtml), cellHtml);
     check('...with nothing to extend', !/Extend/.test(cellHtml));

@@ -152,7 +152,7 @@ const base = { salutation: 'Dr', age: '36', gender: 'Female', designation: 'Cons
     const cellSandbox = (mayManage) => {
       const sb = { can: () => mayManage, Date, Number, String };
       vm.createContext(sb);
-      vm.runInContext(['esc', 'formatFullDate', 'istDateString', 'discountCodeUsedUp', 'discountExpiryCell']
+      vm.runInContext(['esc', 'formatFullDate', 'istDateString', 'discountCodeUsedUp', 'discountCodeDeactivated', 'discountExpiryCell']
         .map(grab).join('\n') + '\nglobalThis.cell = discountExpiryCell;', sb);
       return sb.cell;
     };

@@ -46,6 +46,12 @@ const CODES = [
   { id: 3, code: 'LAPSED', discount_type: 'FLAT', discount_value: 500, scope_type: 'INDIVIDUAL', scope_value: '9000000102', applied_count: 0, expires_at: ist(-2), active: 1 },
   { id: 4, code: 'TAKEN', discount_type: 'FEE_TIER', fee_tier: 'early', discount_value: 0, scope_type: 'INDIVIDUAL', scope_value: '9000000103', applied_count: 1, expires_at: ist(-5), active: 1 },
   { id: 5, code: 'CAPPED', discount_type: 'PERCENT', discount_value: 15, scope_type: 'GLOBAL', applied_count: 2, max_uses: 2, expires_at: ist(30), active: 1 },
+  // Switched off: by an admin while unused and in date; after use; and
+  // automatically when its holder registered without it.
+  { id: 6, code: 'PAUSED', discount_type: 'PERCENT', discount_value: 25, scope_type: 'INDIVIDUAL', scope_value: '9000000104', applied_count: 0, expires_at: ist(15), active: 0 },
+  { id: 7, code: 'USEDOFF', discount_type: 'PERCENT', discount_value: 25, scope_type: 'INDIVIDUAL', scope_value: '9000000105', applied_count: 1, expires_at: ist(15), active: 0 },
+  { id: 8, code: 'RETIRED', discount_type: 'PERCENT', discount_value: 10, scope_type: 'INDIVIDUAL', scope_value: '9000000106', applied_count: 0, holder_registered: 1, expires_at: ist(15), active: 0 },
+  { id: 9, code: 'OFFLAPSED', discount_type: 'PERCENT', discount_value: 10, scope_type: 'INDIVIDUAL', scope_value: '9000000107', applied_count: 0, expires_at: ist(-3), active: 0 },
 ];
 const rowsOf = (html, group) => (html.match(new RegExp(`<tr data-disc-group="${group}" class="([^"]*)">[\\s\\S]*?<\\/tr>`, 'g')) || []);
 const codesIn = (html, group) => rowsOf(html, group).map((r) => (r.match(/font-mono font-bold text-slate-800">([^<]+)</) || [])[1]).filter(Boolean);
@@ -58,18 +64,30 @@ check('Unused: a fresh personal code, and a shared code with uses left', JSON.st
 check('Expired: an unused code past its date', JSON.stringify(codesIn(html, 'expired')) === '["LAPSED"]', codesIn(html, 'expired'));
 check('Used: a used personal code -- even past its date -- and a shared code at its limit',
   JSON.stringify(codesIn(html, 'used')) === '["TAKEN","CAPPED"]', codesIn(html, 'used'));
-check('every code appears exactly once', ['FRESH', 'SHARED', 'LAPSED', 'TAKEN', 'CAPPED'].every((c) => (html.match(new RegExp(`>${c}<`, 'g')) || []).length === 1));
+check('Deactivated: every switched-off code, whatever else is true of it',
+  JSON.stringify(codesIn(html, 'deactivated')) === '["PAUSED","USEDOFF","RETIRED","OFFLAPSED"]', codesIn(html, 'deactivated'));
+check('...so none of them appears under Unused, Expired or Used',
+  ['PAUSED', 'USEDOFF', 'RETIRED', 'OFFLAPSED'].every((c) => !codesIn(html, 'unused').includes(c) && !codesIn(html, 'expired').includes(c) && !codesIn(html, 'used').includes(c)));
+check('every code appears exactly once', ['FRESH', 'SHARED', 'LAPSED', 'TAKEN', 'CAPPED', 'PAUSED', 'USEDOFF', 'RETIRED', 'OFFLAPSED']
+  .every((c) => (html.match(new RegExp(`>${c}<`, 'g')) || []).length === 1));
+const tagOf = (code) => { const r = (html.match(new RegExp(`<tr data-disc-group="[^"]+" class="[^"]*">(?:(?!</tr>)[\\s\\S])*>${code}<[\\s\\S]*?</tr>`)) || [])[0] || ''; return r; };
+check('a code switched off when its holder registered says so', />Holder registered</.test(tagOf('RETIRED')));
+check('one an admin switched off is tagged Deactivated', />Deactivated</.test(tagOf('PAUSED')));
+check('a used code that was later switched off still reads Used', />Used</.test(tagOf('USEDOFF')));
+check('a switched-off code that has expired offers no Extend -- it would do nothing until activated',
+  !/Extend</.test(tagOf('OFFLAPSED')));
 
 console.log('\n== Each group has a header with its count, in a sensible order ==');
 const heads = [...html.matchAll(/id="disc-group-head-(\w+)"[\s\S]*?uppercase tracking-wide">(\w+)<\/span>\s*<span[^>]*>(\d+)<\/span>/g)].map((m) => [m[1], m[2], Number(m[3])]);
-check('Unused, then Expired, then Used', JSON.stringify(heads.map((h) => h[0])) === '["unused","expired","used"]', heads);
-check('...each with its count', JSON.stringify(heads.map((h) => h[2])) === '[2,1,2]', heads);
-check('the headers are buttons, so the keyboard can open them', (html.match(/<button type="button" id="disc-group-head-/g) || []).length === 3);
+check('Unused, then Expired, then Used, then Deactivated', JSON.stringify(heads.map((h) => h[0])) === '["unused","expired","used","deactivated"]', heads);
+check('...each with its count', JSON.stringify(heads.map((h) => h[2])) === '[2,1,2,4]', heads);
+check('the headers are buttons, so the keyboard can open them', (html.match(/<button type="button" id="disc-group-head-/g) || []).length === 4);
 
 console.log('\n== Unused and Expired start open; Used starts collapsed ==');
 check('Unused rows are showing', rowsOf(html, 'unused').every((r) => !/class="hidden/.test(r)));
 check('Expired rows are showing -- they may need extending', rowsOf(html, 'expired').every((r) => !/class="hidden/.test(r)));
 check('Used rows are collapsed', rowsOf(html, 'used').every((r) => /class="hidden/.test(r)));
+check('Deactivated rows are collapsed too -- history, like Used', rowsOf(html, 'deactivated').every((r) => /class="hidden/.test(r)));
 check('...and each header says whether it is open',
   /id="disc-group-head-unused"[^>]*aria-expanded="true"/.test(html) && /id="disc-group-head-used"[^>]*aria-expanded="false"/.test(html));
 

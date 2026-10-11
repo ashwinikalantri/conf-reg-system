@@ -6499,10 +6499,19 @@ async function renderDiscountCodes() {
 const DISC_GROUPS = [
   { key: 'unused', label: 'Unused', hint: 'Still available to use.', openByDefault: true },
   { key: 'expired', label: 'Expired', hint: 'Unused, but past their last date — extend one to bring it back.', openByDefault: true },
-  { key: 'used', label: 'Used', hint: 'Used, at their usage limit, or their holder has registered without them.', openByDefault: false },
+  { key: 'used', label: 'Used', hint: 'Used by their holder, or at their usage limit.', openByDefault: false },
+  { key: 'deactivated', label: 'Deactivated', hint: 'Switched off — by an admin, or when their holder registered without them. Activate one to bring it back.', openByDefault: false },
 ];
 
+// Switched off only when the row says so -- a row without the field is not
+// guessed to be off.
+function discountCodeDeactivated(c) {
+  return c.active != null && !Number(c.active);
+}
+// Deactivated comes first: a code that is switched off cannot be used,
+// whatever else is true of it, so that is where it is looked for.
 function discountCodeGroup(c) {
+  if (discountCodeDeactivated(c)) return 'deactivated';
   if (discountCodeUsedUp(c)) return 'used';
   if (c.expires_at && c.expires_at < istDateString()) return 'expired';
   return 'unused';
@@ -6641,13 +6650,17 @@ function discountExpiryCell(c) {
   const expired = !!c.expires_at && c.expires_at < istDateString();
   const date = c.expires_at ? esc(formatFullDate(c.expires_at)) : '<span class="text-slate-400">No expiry</span>';
   const registeredWithout = used && c.scope_type === 'INDIVIDUAL' && !(Number(c.applied_count) > 0);
+  const off = discountCodeDeactivated(c);
   const pill = registeredWithout
     ? ' <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-600 border-slate-300">Holder registered</span>'
     : used
     ? ' <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-indigo-100 text-indigo-700 border-indigo-300">Used</span>'
+    : off
+      ? ' <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-600 border-slate-300">Deactivated</span>'
     : expired
       ? ' <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-rose-100 text-rose-700 border-rose-300">Expired</span>' : '';
-  const extend = !used && expired && can('discounts.manage')
+  // Extending a switched-off code would do nothing until it is activated.
+  const extend = !used && !off && expired && can('discounts.manage')
     ? `<button type="button" onclick="openDiscountValidityModal(${esc(c.id)})" class="block mt-1 text-[11px] font-semibold text-indigo-600 hover:underline">Extend</button>` : '';
   return `${date}${pill}${extend}`;
 }
