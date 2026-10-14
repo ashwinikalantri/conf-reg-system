@@ -1203,12 +1203,17 @@ async function loadAbstractStatus() {
   try {
     const mine = await (await fetch('/api/abstracts/me')).json();
     const abs = mine.abstract;
+    // Missing (an older server) is read as registered, so nobody is wrongly
+    // told they have not.
+    const registered = mine.registered !== false;
     cachedOwnAbstract = abs;
     cachedAbstractSubmission = mine.submission || { open: true, deadline: '' };
     if (abs) {
       let [label, cls] = STYLES[abs.status] || ['Submitted', 'bg-slate-100 text-slate-600'];
       if (abs.status === 'ACCEPTED' && abs.allocation) {
-        label = `Accepted · ${abs.allocation === 'ORAL' ? 'Oral' : 'Poster'}`;
+        label = `${registered ? 'Accepted' : 'Provisionally Accepted'} · ${abs.allocation === 'ORAL' ? 'Oral' : 'Poster'}`;
+      } else if (abs.status === 'ACCEPTED' && !registered) {
+        label = 'Provisionally Accepted';
       }
       tag.className = `text-xs font-bold px-2.5 py-1 rounded-full border ${cls}`;
       tag.innerText = label;
@@ -1226,9 +1231,13 @@ async function loadAbstractStatus() {
       if (desc) {
         if (abs.status === 'ACCEPTED' && abs.allocation) {
           const kind = abs.allocation === 'ORAL' ? 'oral' : 'poster';
-          desc.innerHTML = `Your abstract has been <b>accepted for ${kind} presentation</b>. Details will be communicated.`;
+          desc.innerHTML = registered
+            ? `Your abstract has been <b>accepted for ${kind} presentation</b>. Details will be communicated.`
+            : `Your abstract has been <b>provisionally accepted for ${kind} presentation</b>, pending your registration.`;
         } else if (abs.status === 'ACCEPTED') {
-          desc.innerHTML = 'Your abstract has been <b>accepted</b>. The presentation format will be communicated.';
+          desc.innerHTML = registered
+            ? 'Your abstract has been <b>accepted</b>. The presentation format will be communicated.'
+            : 'Your abstract has been <b>provisionally accepted</b>, pending your registration. The presentation format will be communicated.';
         } else if (abs.status === 'REJECTED') {
           desc.innerText = 'Your abstract was not accepted.';
         } else if (needsRevision) {
@@ -1236,6 +1245,10 @@ async function loadAbstractStatus() {
         } else {
           desc.innerText = 'Your abstract has been submitted and is under review. It cannot be changed.';
         }
+      }
+      // An abstract can only be presented by a registered delegate.
+      if (desc && !registered && abs.status !== 'REJECTED') {
+        desc.innerHTML += ' <span class="block mt-1.5 text-amber-800 font-semibold">Registration is mandatory for presentation &mdash; you have not registered yet.</span>';
       }
       if (previewToggle) previewToggle.classList.remove('hidden');
       if (previewBox) previewBox.classList.add('hidden'); // collapsed by default each load
@@ -7408,6 +7421,7 @@ async function renderBackendReminders() {
   }
   updateReminderSelectedCount();
   renderRegisteredDelegateEmails();
+  renderAbstractUnregisteredEmails();
   renderCodeHolderEmails();
 }
 
@@ -7646,6 +7660,134 @@ async function sendRegisteredDelegateEmails() {
     showToast(msg, 'success');
   }
   renderRegisteredDelegateEmails();
+}
+
+// --- Abstract Submitted, Not Registered -----------------------------------
+// Authors of an abstract still in play who have not registered: told that
+// registration is mandatory for presentation. Same card shape as above, plus
+// {{title}}, each person's own abstract title, filled in by the server.
+let cachedAbstractUnregistered = [];
+let abstractUnregisteredSeeded = false;
+
+const ABSTRACT_REVIEW_LABELS = { UNDER_REVIEW: 'Under review', ACCEPTED: 'Approved', REVISION_REQUESTED: 'Corrections asked' };
+
+async function renderAbstractUnregisteredEmails() {
+  const list = document.getElementById('absunreg-list');
+  if (!list) return;
+  const res = await fetch('/api/admin/reminders/abstract-unregistered');
+  if (!res.ok) return;
+  cachedAbstractUnregistered = (await res.json()).users || [];
+  setText('absunreg-count', String(cachedAbstractUnregistered.length));
+
+  list.innerHTML = cachedAbstractUnregistered.length
+    ? cachedAbstractUnregistered.map((u) => {
+      const onCooldown = reminderOnCooldown(u);
+      const disabled = !u.email || onCooldown;
+      const stage = u.allocation ? `Approved · ${u.allocation === 'ORAL' ? 'Oral' : 'Poster'}` : (ABSTRACT_REVIEW_LABELS[u.status] || u.status);
+      return `
+      <div class="px-3 py-2 flex items-center gap-2">
+        <input type="checkbox" class="absunreg-recipient-checkbox shrink-0" value="${esc(u.phone_number)}" ${disabled ? 'disabled' : ''} onchange="updateAbstractUnregisteredSelectedCount()">
+        <div class="min-w-0 flex-1">
+          <p class="font-semibold text-slate-700 truncate">${esc(u.name || '')}</p>
+          <p class="text-xs text-slate-500 truncate" title="${esc(u.title)}">${esc(stage)} · ${esc(u.title)}</p>
+          <p class="text-xs text-slate-400 truncate">${esc(u.email || 'No email on file')}${u.last_reminder_sent_at ? ` · last sent ${esc(fmtAuditTime(u.last_reminder_sent_at))}` : ''}</p>
+        </div>
+        ${!u.email ? '<span class="text-[10px] bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-full font-bold shrink-0">No email</span>' : ''}
+        ${onCooldown ? '<span class="text-[10px] bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">Sent within 24h</span>' : ''}
+      </div>`;
+    }).join('')
+    : '<div class="px-3 py-6 text-center text-slate-400 text-sm">Everyone who submitted an abstract has registered.</div>';
+
+  // Ready to send on first look: the card exists for one announcement.
+  if (!abstractUnregisteredSeeded) {
+    abstractUnregisteredSeeded = true;
+    const tpl = CUSTOM_REMINDER_TEMPLATES['abstract-registration-mandatory'];
+    const subjectInput = document.getElementById('absunreg-subject');
+    const bodyBox = document.getElementById('absunreg-body');
+    if (subjectInput && !subjectInput.value.trim()) subjectInput.value = await tpl.subject();
+    if (bodyBox && !bodyBox.value.trim()) bodyBox.value = await tpl.body();
+  }
+
+  const testBtn = document.getElementById('absunreg-test-btn');
+  if (testBtn) {
+    testBtn.disabled = !can('comms.reminders_test');
+    testBtn.title = can('comms.reminders_test') ? '' : 'You do not have permission to send reminder emails.';
+  }
+  updateAbstractUnregisteredSelectedCount();
+}
+
+function updateAbstractUnregisteredSelectedCount() {
+  const boxes = Array.from(document.querySelectorAll('.absunreg-recipient-checkbox'));
+  const selectable = boxes.filter((b) => !b.disabled);
+  const selected = boxes.filter((b) => b.checked);
+
+  setText('absunreg-selected-count', String(selected.length));
+  setText('absunreg-send-count', String(selected.length));
+
+  const selectAll = document.getElementById('absunreg-select-all');
+  if (selectAll) {
+    selectAll.checked = selectable.length > 0 && selected.length === selectable.length;
+    selectAll.disabled = selectable.length === 0;
+  }
+  const sendBtn = document.getElementById('absunreg-send-btn');
+  if (sendBtn) {
+    sendBtn.disabled = selected.length === 0 || !can('comms.reminders_send');
+    sendBtn.title = can('comms.reminders_send') ? '' : 'You do not have permission to send bulk reminder emails.';
+  }
+}
+
+function toggleAllAbstractUnregistered(checked) {
+  document.querySelectorAll('.absunreg-recipient-checkbox').forEach((b) => {
+    if (!b.disabled) b.checked = checked;
+  });
+  updateAbstractUnregisteredSelectedCount();
+}
+
+// Its own test route, so {{title}} arrives filled in as a recipient sees it.
+async function sendAbstractUnregisteredTest() {
+  const subject = document.getElementById('absunreg-subject').value.trim();
+  const bodyHtml = document.getElementById('absunreg-body').value.trim();
+  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
+  const data = await (await fetch('/api/admin/reminders/abstract-unregistered/test-send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject, bodyHtml }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not send the test.');
+  showToast(`Test sent to ${data.sentTo}.`, 'success');
+}
+
+async function sendAbstractUnregisteredEmails() {
+  const subject = document.getElementById('absunreg-subject').value.trim();
+  const bodyHtml = document.getElementById('absunreg-body').value.trim();
+  const phones = Array.from(document.querySelectorAll('.absunreg-recipient-checkbox:checked')).map((b) => b.value);
+  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
+  if (!phones.length) return showToast('Select at least one author.');
+  if (!(await showConfirm(`Send this reminder to ${phones.length} ${phones.length === 1 ? 'author' : 'authors'} who ${phones.length === 1 ? 'has' : 'have'} not registered? This can't be undone.`))) return;
+
+  const btn = document.getElementById('absunreg-send-btn');
+  const resultEl = document.getElementById('absunreg-send-result');
+  if (btn) btn.disabled = true;
+  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending…'; }
+
+  const data = await (await fetch('/api/admin/reminders/abstract-unregistered/send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject, bodyHtml, phones }),
+  })).json();
+
+  if (!data.success) {
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Send failed.'; }
+    showToast(data.error || 'Could not send.');
+  } else {
+    const notes = [
+      data.skippedNoEmail ? `${data.skippedNoEmail} no email on file` : null,
+      data.skippedSentRecently ? `${data.skippedSentRecently} already sent in the last 24h` : null,
+      data.noLongerDue ? `${data.noLongerDue} registered in the meantime` : null,
+    ].filter(Boolean).join(', ');
+    const msg = `Sent to ${data.sent} of ${data.total}${notes ? ` (${notes})` : ''}.`;
+    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
+    showToast(msg, 'success');
+  }
+  renderAbstractUnregisteredEmails();
 }
 
 // Keeps the "Select all" checkbox, the selected-count label, and the Send
@@ -7994,6 +8136,33 @@ ${programLine ? `<p>Alongside the main conference, there are ${programLine}</p>`
 // from the app itself (Settings -> General -> Conference, surfaced on
 // /api/conference), so this email cannot announce a date the portal would
 // refuse a submission on.
+// For authors who submitted an abstract but have not registered. {{title}}
+// is filled in per recipient by the server, so it only makes sense on the
+// Abstract Submitted, Not Registered card.
+async function buildAbstractRegistrationMandatoryBody() {
+  const c = conferenceInfo;
+  const start = formatFullDate(c.startDate);
+  const end = formatFullDate(c.endDate);
+  const dateRange = (start && end && c.startDate !== c.endDate) ? `${start} &ndash; ${end}` : (start || end);
+
+  return `<p>Dear {{name}},</p>
+<p>Thank you for submitting your abstract, <b>&ldquo;{{title}}&rdquo;</b>, to <b>${esc(c.name || 'the conference')}</b>.</p>
+<div style="background:#eef3f6;border:1px solid #b9cedb;border-radius:10px;padding:1rem 1.25rem;margin:1.25rem 0">
+  <div style="font-size:.7rem;letter-spacing:.09em;text-transform:uppercase;color:#2f5673;font-weight:700">Registration is mandatory for presentation</div>
+  <div style="font-size:.9rem;color:#1c3549;margin-top:.4rem">Our records show you have <b>not yet registered</b> for the conference. An abstract can only be presented by a registered delegate, so any approval of your abstract will stay <b>provisional &mdash; pending registration</b> until you register.</div>
+</div>
+<p>Please log in to the portal with the same account you used to submit your abstract, and complete your registration and payment. Nothing else is needed: once you are registered, your abstract goes forward as usual.</p>
+${dateRange || c.location ? `<table style="width:100%;margin:1rem 0;font-size:.85rem">
+  ${dateRange ? `<tr><td style="padding:.2rem 0;color:#64748b;width:90px">📅 Dates</td><td style="padding:.2rem 0;font-weight:600">${dateRange}</td></tr>` : ''}
+  ${c.location ? `<tr><td style="padding:.2rem 0;color:#64748b">📍 Venue</td><td style="padding:.2rem 0;font-weight:600">${esc(c.location)}</td></tr>` : ''}
+</table>` : ''}
+<p style="text-align:center;margin:1.5rem 0">
+  <a href="${window.location.origin}" style="background:#2f5673;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Register Now</a>
+</p>
+<p>If you have registered in the last day or so, please ignore this message.</p>
+<p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
+}
+
 async function buildAbstractExtensionBody() {
   const c = conferenceInfo;
   const deadline = c.abstractDeadline ? formatFullDateWithDay(c.abstractDeadline) : '';
@@ -8100,6 +8269,14 @@ const CUSTOM_REMINDER_TEMPLATES = {
     },
     body: buildAbstractExtensionBody,
   },
+  'abstract-registration-mandatory': {
+    label: 'Abstracts — registration is mandatory to present',
+    async subject() {
+      const who = conferenceInfo.acronym ? ` at ${conferenceInfo.acronym}` : '';
+      return `Registration Is Mandatory to Present Your Abstract${who}`;
+    },
+    body: buildAbstractRegistrationMandatoryBody,
+  },
   'group-discount': {
     label: 'Group discount — register with colleagues',
     async subject() {
@@ -8115,6 +8292,7 @@ const CUSTOM_REMINDER_TEMPLATES = {
 const REMINDER_TEMPLATE_FIELDS = {
   signups: { picker: 'reminder-template', subject: 'reminder-subject', body: 'reminder-body' },
   registered: { picker: 'regdelegate-template', subject: 'regdelegate-subject', body: 'regdelegate-body' },
+  abstractUnregistered: { picker: 'absunreg-template', subject: 'absunreg-subject', body: 'absunreg-body' },
 };
 
 // Same behaviour as the Custom Recipients picker: anything already typed is
@@ -8482,13 +8660,29 @@ const ABSTRACT_STATUS_STYLES = {
   ACCEPTED: 'bg-emerald-100 text-emerald-800 border-emerald-300',
   REJECTED: 'bg-rose-100 text-rose-800 border-rose-300',
   REVISION_REQUESTED: 'bg-orange-100 text-orange-800 border-orange-300',
+  PROVISIONAL: 'bg-sky-100 text-sky-800 border-sky-300',
 };
+
+// Approved, but the author has not registered: an abstract can only be
+// presented by a registered delegate, so the approval is provisional until
+// they do. The server works out author_registered each time, so this clears
+// by itself once they register.
+function abstractProvisional(a) {
+  return a.status === 'ACCEPTED' && !Number(a.author_registered);
+}
 
 // Shared header markup (title, author, status badge, last-action note, file
 // link) for both the Approval and Assignment cards.
 function abstractCardHeader(a) {
   const status = a.status || 'UNDER_REVIEW';
-  const badge = ABSTRACT_STATUS_STYLES[status] || 'bg-slate-100 text-slate-700 border-slate-200';
+  const provisional = abstractProvisional(a);
+  const badge = ABSTRACT_STATUS_STYLES[provisional ? 'PROVISIONAL' : status] || 'bg-slate-100 text-slate-700 border-slate-200';
+  const label = provisional ? 'ACCEPTED · PROVISIONAL' : status.replace('_', ' ');
+  // Before a decision, the reviewer is told approval would be provisional.
+  const registrationNote = provisional
+    ? '<p class="text-[10px] text-sky-700 font-semibold mt-1">Pending registration — the author has not registered</p>'
+    : (!Number(a.author_registered) && status !== 'REJECTED')
+      ? '<p class="text-[10px] text-slate-500 mt-1">Author not registered — approval will be provisional</p>' : '';
   return `
       <div class="flex justify-between items-start gap-4">
         <div>
@@ -8496,8 +8690,9 @@ function abstractCardHeader(a) {
           <p class="text-xs text-slate-500 mt-0.5">${esc(a.author_name)} · ${esc(a.format)}</p>
         </div>
         <div class="text-right shrink-0">
-          <span class="${badge} text-xs px-2.5 py-1 rounded-full font-bold border whitespace-nowrap">${esc(status.replace('_', ' '))}</span>
+          <span class="${badge} text-xs px-2.5 py-1 rounded-full font-bold border whitespace-nowrap">${esc(label)}</span>
           ${status === 'REVISION_REQUESTED' ? '<p class="text-[10px] text-orange-600 mt-1">Awaiting delegate resubmission</p>' : ''}
+          ${registrationNote}
           ${a.last_action_by
             ? `<p class="text-[10px] text-slate-400 mt-1">by ${esc(a.last_action_by)} · ${esc(fmtAuditTime(a.last_action_at))}</p>`
             : ''
@@ -8631,16 +8826,20 @@ async function renderBackendAbstracts() {
         <button class="abstract-alloc-btn px-3 py-1.5 ${a.allocation === 'POSTER' ? 'bg-indigo-600' : 'bg-white border border-indigo-300 text-indigo-700'} ${a.allocation === 'POSTER' ? 'text-white' : ''} font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-alloc="POSTER">Poster</button>
         ${a.allocation ? `<span class="text-[11px] text-emerald-600 font-semibold">Assigned &amp; delegate notified: ${esc(a.allocation === 'ORAL' ? 'Oral' : 'Poster')}</span>` : `<span class="text-[11px] text-amber-600 font-semibold">Not yet assigned — delegate has not been notified</span>`}
       </div>
+      ${abstractProvisional(a) ? `<p class="text-[11px] text-sky-700 mt-2">${a.allocation ? 'The delegate was told the acceptance is provisional, and that registration is mandatory to present.' : 'The email will say the acceptance is provisional, and that registration is mandatory to present.'}</p>` : ''}
     </div>
   `).join('') : `<p class="text-sm text-slate-500 p-4">No approved abstracts yet.</p>`;
 }
 
 async function updateAbstractStatus(id, status) {
-  await fetch(`/api/abstracts/${encodeURIComponent(id)}/status`, {
+  const res = await fetch(`/api/abstracts/${encodeURIComponent(id)}/status`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status })
   });
+  const data = await res.json().catch(() => ({}));
+  if (!data.success) showToast(data.error || 'Could not update the abstract.');
+  else if (data.provisional) showToast('Approved provisionally — pending the author\'s registration. No email is sent at this step.', 'success');
   renderBackendAbstracts();
 }
 

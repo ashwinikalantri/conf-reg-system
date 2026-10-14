@@ -5522,6 +5522,7 @@ app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
     );
     res.json({
       abstract: row || null,
+      registered: await authorHasRegistered(req.session.phone),
       submission: { open: abstractSubmissionOpen(), deadline: CONFERENCE.abstractDeadline },
     });
   } catch (err) {
@@ -7961,6 +7962,123 @@ app.post('/api/admin/reminders/registered/send', requirePermission('comms.remind
     }
 
     res.json({ success: true, sent, skippedNoEmail, skippedSentRecently, total: recipients.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- ABSTRACT SUBMITTED, NOT REGISTERED -----------------------------------
+// Everyone whose abstract is still in play (anything but not accepted) and
+// who has not registered (see authorRegisteredSql) -- the people to tell that
+// registration is mandatory for presentation. One row per person; {{name}}
+// and {{title}} (their abstract's title) are filled in per recipient. Worked
+// out afresh when sending, so anyone who registers in between is not written to.
+async function abstractAuthorsNotRegistered() {
+  const rows = await dbAll(
+    `SELECT a.phone_number, a.title, COALESCE(a.status, 'UNDER_REVIEW') AS status, a.allocation, a.author_name,
+       u.salutation, u.full_name, u.email,
+       (SELECT MAX(created_at) FROM audit_log l
+          WHERE l.entity_type = 'reminder_email' AND l.action = 'ABSTRACT_UNREGISTERED_REMINDER_SENT' AND l.entity_id = a.phone_number
+       ) AS last_reminder_sent_at
+       FROM abstracts a
+       LEFT JOIN users u ON u.phone_number = a.phone_number
+      WHERE COALESCE(a.status, 'UNDER_REVIEW') != 'REJECTED'
+        AND NOT ${authorRegisteredSql('a.phone_number')}
+      ORDER BY COALESCE(u.full_name, a.author_name), a.id`);
+  const seen = new Set();
+  return rows.filter((r) => !seen.has(r.phone_number) && seen.add(r.phone_number)).map((r) => ({
+    phone_number: r.phone_number,
+    name: [r.salutation, r.full_name || r.author_name].filter(Boolean).join(' ') || 'Delegate',
+    email: r.email || null,
+    title: r.title || '',
+    status: r.status,
+    allocation: r.allocation || null,
+    last_reminder_sent_at: r.last_reminder_sent_at || null,
+  }));
+}
+
+function renderAbstractAuthorEmail(bodyHtml, recipient) {
+  return String(bodyHtml)
+    .split('{{name}}').join(escapeHtml(recipient.name || 'Delegate'))
+    .split('{{title}}').join(escapeHtml(recipient.title || 'your abstract'));
+}
+
+app.get('/api/admin/reminders/abstract-unregistered', requirePermission('comms.reminders_view'), async (req, res, next) => {
+  try {
+    res.json({ users: await abstractAuthorsNotRegistered() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// To the admin alone, with {{title}} filled from a real abstract on the list
+// (or an example), so the wording can be read as a recipient will see it.
+app.post('/api/admin/reminders/abstract-unregistered/test-send', requirePermission('comms.reminders_test'), async (req, res, next) => {
+  try {
+    const { subject, bodyHtml } = req.body;
+    if (!subject || !String(subject).trim()) {
+      return res.status(400).json({ success: false, error: 'Subject is required.' });
+    }
+    if (!bodyHtml || !String(bodyHtml).trim()) {
+      return res.status(400).json({ success: false, error: 'Email body is required.' });
+    }
+    if (!emailEnabled()) {
+      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
+    }
+    const me = await dbGet('SELECT salutation, full_name, email FROM users WHERE phone_number = ?', [req.session.phone]);
+    if (!me || !me.email) {
+      return res.status(400).json({ success: false, error: 'No email on file for your own account.' });
+    }
+    const first = (await abstractAuthorsNotRegistered())[0];
+    const sample = {
+      name: [me.salutation, me.full_name].filter(Boolean).join(' ') || 'Delegate',
+      title: first ? first.title : 'An example abstract title',
+    };
+    await sendEmail(me.email, `[TEST] ${subject}`, emailWrap(subject, renderAbstractAuthorEmail(bodyHtml, sample)));
+    res.json({ success: true, sentTo: me.email });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The bulk send: the same guards, in the same order, the same 24-hour
+// cooldown under its own action, and one audit row per recipient, as the
+// other bulk sends.
+app.post('/api/admin/reminders/abstract-unregistered/send', requirePermission('comms.reminders_send'), async (req, res, next) => {
+  try {
+    const { subject, bodyHtml, phones } = req.body;
+    if (!subject || !String(subject).trim()) {
+      return res.status(400).json({ success: false, error: 'Subject is required.' });
+    }
+    if (!bodyHtml || !String(bodyHtml).trim()) {
+      return res.status(400).json({ success: false, error: 'Email body is required.' });
+    }
+    if (!emailEnabled()) {
+      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
+    }
+    if (!Array.isArray(phones) || !phones.length) {
+      return res.status(400).json({ success: false, error: 'Select at least one delegate to send to.' });
+    }
+    const phoneSet = new Set(phones.map(String));
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    const recipients = (await abstractAuthorsNotRegistered()).filter((u) => phoneSet.has(u.phone_number));
+
+    let sent = 0;
+    let skippedNoEmail = 0;
+    let skippedSentRecently = 0;
+    for (const u of recipients) {
+      if (u.last_reminder_sent_at && u.last_reminder_sent_at >= since) { skippedSentRecently++; continue; }
+      if (!u.email) { skippedNoEmail++; continue; }
+      await sendEmail(u.email, subject, emailWrap(subject, renderAbstractAuthorEmail(bodyHtml, u)));
+      await recordAudit({
+        req, entityType: 'reminder_email', entityId: u.phone_number,
+        action: 'ABSTRACT_UNREGISTERED_REMINDER_SENT', oldValue: u.title, newValue: subject,
+      });
+      sent++;
+    }
+    // Chosen, but registered (or no longer on the list) by the time this ran.
+    const noLongerDue = phoneSet.size - recipients.length;
+    res.json({ success: true, sent, skippedNoEmail, skippedSentRecently, noLongerDue, total: phoneSet.size });
   } catch (err) {
     next(err);
   }
@@ -11530,12 +11648,25 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
   }
 });
 
+// Whether an abstract's author has registered for the conference: a
+// registration that has not been rejected, whatever its payment status. An
+// abstract can only be presented by a registered delegate, so approving one
+// whose author has not registered is provisional -- pending registration --
+// and becomes a full approval by itself once they do. Worked out each time,
+// never stored, so it cannot go stale.
+const authorRegisteredSql = (phoneCol) =>
+  `EXISTS (SELECT 1 FROM registrations r WHERE r.phone_number = ${phoneCol} AND COALESCE(r.bank_status, '') != 'REJECTED')`;
+const authorHasRegistered = async (phone) =>
+  !!(await dbGet(`SELECT ${authorRegisteredSql('?')} AS yes`, [phone])).yes;
+
 // Abstract review desk (super admin or academic reviewer). Each abstract is
-// annotated with who last changed its status, and when.
+// annotated with who last changed its status, and when, and whether its
+// author has registered (see authorRegisteredSql).
 app.get('/api/abstracts', requirePermission('abstracts.view'), async (req, res, next) => {
   try {
     const rows = await dbAll(`
       SELECT abstracts.*,
+        ${authorRegisteredSql('abstracts.phone_number')} AS author_registered,
         (SELECT actor_name FROM audit_log a
            WHERE a.entity_type = 'abstract' AND a.entity_id = CAST(abstracts.id AS TEXT)
            ORDER BY a.id DESC LIMIT 1) AS last_action_by,
@@ -11551,7 +11682,9 @@ app.get('/api/abstracts', requirePermission('abstracts.view'), async (req, res, 
 
 // Step 1 of abstract review: Approval. Accept/reject/reset/send-back-for-
 // corrections. Deliberately silent for UNDER_REVIEW/ACCEPTED -- no delegate
-// email fires there. Approval only unlocks the abstract for the separate
+// email fires there. Approving the abstract of an author who has not
+// registered is provisional, pending registration; the response says so, so
+// the reviewer is told, but nothing is sent. Approval only unlocks the abstract for the separate
 // Assignment step (below); the delegate hears from us once, when that step
 // gives the final decision (accepted + oral/poster, or not accepted). This
 // lets approval and assignment happen as two independent actions, in
@@ -11577,6 +11710,7 @@ app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), asyn
     if (!existing) {
       return res.status(404).json({ success: false, error: 'Abstract not found.' });
     }
+    const provisional = status === 'ACCEPTED' && !(await authorHasRegistered(existing.phone_number));
 
     // Resetting away from ACCEPTED clears any assignment; moving to any
     // status other than REVISION_REQUESTED clears its note, the same way
@@ -11611,7 +11745,7 @@ app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), asyn
            <blockquote style="margin:0.75rem 0;padding:0.5rem 1rem;border-left:3px solid #b9cedb;color:#334155">${escapeHtml(note)}</blockquote>
            <p>Please log in to the portal, update your abstract, and resubmit it for review.</p>`));
     }
-    res.json({ success: true });
+    res.json({ success: true, provisional });
   } catch (err) {
     next(err);
   }
@@ -11619,7 +11753,9 @@ app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), asyn
 
 // Step 2 of abstract review: Assignment (oral/poster), for approved
 // abstracts only. This is the delegate's one and only decision email --
-// it states both that the abstract was accepted and the final format.
+// it states both that the abstract was accepted and the final format. For an
+// author who has not registered, it says the acceptance is provisional and
+// that registration is mandatory for presentation.
 app.put('/api/abstracts/:id/allocation', requirePermission('abstracts.assign'), async (req, res, next) => {
   try {
     const { allocation } = req.body;
@@ -11639,14 +11775,26 @@ app.put('/api/abstracts/:id/allocation', requirePermission('abstracts.assign'), 
     });
     // Only email on the first assignment (or a change of format); re-saving
     // the same value shouldn't re-notify the delegate.
+    const provisional = !(await authorHasRegistered(a.phone_number));
     if (isFirstAssignment || a.allocation !== allocation) {
       const kind = allocation === 'ORAL' ? 'oral' : 'poster';
-      notifyDelegate(a.phone_number, 'Your abstract has been accepted',
-        emailWrap('Abstract accepted', `<p>Dear ${escapeHtml(a.author_name)},</p>
-           <p>We are pleased to inform you that your abstract <b>"${escapeHtml(a.title)}"</b> has been <b>accepted</b> for the ${escapeHtml(CONFERENCE.name)}, for <b>${kind} presentation</b>.</p>
-           <p>Further details (time and venue) will be communicated separately.</p>`));
+      if (provisional) {
+        notifyDelegate(a.phone_number, 'Your abstract has been provisionally accepted — please register',
+          emailWrap('Abstract provisionally accepted', `<p>Dear ${escapeHtml(a.author_name)},</p>
+             <p>We are pleased to inform you that your abstract <b>"${escapeHtml(a.title)}"</b> has been <b>provisionally accepted</b> for the ${escapeHtml(CONFERENCE.name)}, for <b>${kind} presentation</b>.</p>
+             <div style="background:#eef3f6;border:1px solid #b9cedb;border-radius:10px;padding:.9rem 1.1rem;margin:1rem 0">
+               <p style="margin:0;font-weight:700;color:#1c3549">Registration is mandatory for presentation</p>
+               <p style="margin:.35rem 0 0;color:#244560">Our records show you have not yet registered for the conference. The acceptance is provisional until you do: an abstract can only be presented by a registered delegate.</p>
+             </div>
+             <p>Please log in at <b>${escapeHtml(PORTAL_URL)}</b> and complete your registration. Further details (time and venue) will be communicated separately.</p>`));
+      } else {
+        notifyDelegate(a.phone_number, 'Your abstract has been accepted',
+          emailWrap('Abstract accepted', `<p>Dear ${escapeHtml(a.author_name)},</p>
+             <p>We are pleased to inform you that your abstract <b>"${escapeHtml(a.title)}"</b> has been <b>accepted</b> for the ${escapeHtml(CONFERENCE.name)}, for <b>${kind} presentation</b>.</p>
+             <p>Further details (time and venue) will be communicated separately.</p>`));
+      }
     }
-    res.json({ success: true });
+    res.json({ success: true, provisional });
   } catch (err) {
     next(err);
   }

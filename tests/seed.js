@@ -49,7 +49,7 @@ const ADMIN_PW = 'harness-admin-pw';
 // test-file count rather than exactly matching it, since this redesign
 // keeps adding one new test file per phase and hitting this exact ceiling
 // each time is just friction, not a real safeguard.
-const ADMIN_POOL_SIZE = 100;
+const ADMIN_POOL_SIZE = 150;
 const DELEGATE_PW = 'harness-delegate-pw';
 
 // --- 1. schema, straight from the application ------------------------------

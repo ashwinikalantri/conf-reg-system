@@ -26,7 +26,7 @@ function build(earlyUntil, conf) {
   const src=`
     ${grab('esc')} ${grab('inr')} ${grab('formatFullDate')} ${grab('formatFullDateWithDay')} ${grab('istDateString')}
     ${grab('earlyBirdDeadline')} ${grab('buildEarlyBirdReminderBody')} ${grab('buildEarlyBirdExtensionBody')}
-    ${grab('buildAbstractExtensionBody')} ${grab('buildGroupDiscountBody')}
+    ${grab('buildAbstractExtensionBody')} ${grab('buildGroupDiscountBody')} ${grab('buildAbstractRegistrationMandatoryBody')}
     ${js.slice(js.indexOf('const CUSTOM_REMINDER_TEMPLATES = {'), js.indexOf('\n};', js.indexOf('const CUSTOM_REMINDER_TEMPLATES = {'))+3)}
     CUSTOM_REMINDER_TEMPLATES;`;
   return vm.runInContext(src, sandbox);
