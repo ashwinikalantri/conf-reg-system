@@ -8848,11 +8848,15 @@ app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async 
 
     const user = found.user;
     const reg = await dbGet('SELECT * FROM registrations WHERE phone_number = ?', [user.phone_number]);
-    const [payment, selections, abstracts] = await Promise.all([
+    const [payment, selections, abstracts, abstractWindow, abstractExtension] = await Promise.all([
       reg ? getPaymentSummary(reg.id, reg.expected_amount) : null,
       reg ? fetchRegistrationSelections(reg.id) : [],
       dbAll(`SELECT id, title, format, status, allocation, revision_note
                FROM abstracts WHERE phone_number = ? ORDER BY id`, [user.phone_number]),
+      // Whether they may still submit, and any later date given to them
+      // alone -- the desk is where that date is set.
+      abstractSubmissionWindowFor(user.phone_number),
+      dbGet('SELECT until, granted_by, granted_at FROM abstract_extensions WHERE phone_number = ?', [user.phone_number]),
     ]);
 
     res.json({
@@ -8862,6 +8866,8 @@ app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async 
       payment,
       selections,
       abstracts,
+      abstractWindow,
+      abstractExtension: abstractExtension || null,
       // Arrival is a property of the registration, but the desk reads it as a
       // property of the person, so it is lifted out rather than left for the
       // client to dig for.
@@ -11668,47 +11674,10 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
 
 // --- LATE SUBMISSION, ONE PERSON AT A TIME --------------------------------
 // The last date closes abstract submission for everyone; these let a named
-// delegate submit after it, through a date chosen for them. Its own
-// permission (abstracts.extend_deadline), held by Super Admin only.
-
-app.get('/api/abstracts/extensions', requirePermission('abstracts.extend_deadline'), async (req, res, next) => {
-  try {
-    const rows = await dbAll(
-      `SELECT e.phone_number, e.until, e.granted_at, e.granted_by,
-              u.salutation, u.full_name, u.email, u.phone,
-              (SELECT status FROM abstracts a WHERE a.phone_number = e.phone_number ORDER BY a.id DESC LIMIT 1) AS abstract_status
-         FROM abstract_extensions e
-         LEFT JOIN users u ON u.phone_number = e.phone_number
-        ORDER BY COALESCE(u.full_name, e.phone_number)`);
-    res.json({ extensions: rows, deadline: CONFERENCE.abstractDeadline, today: istDateString() });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Type-ahead for choosing who to extend: delegates only, at most 8, two
-// characters minimum -- the same limits as the desk search.
-app.get('/api/abstracts/extensions/search', requirePermission('abstracts.extend_deadline'), async (req, res, next) => {
-  try {
-    const q = String(req.query.q || '').trim();
-    if (q.length < 2) return res.json({ results: [] });
-    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    const rows = await dbAll(
-      `SELECT u.phone_number, u.salutation, u.full_name, u.email, u.phone,
-              (SELECT COUNT(*) FROM abstracts a WHERE a.phone_number = u.phone_number) AS has_abstract,
-              (SELECT until FROM abstract_extensions e WHERE e.phone_number = u.phone_number) AS extended_until
-         FROM users u
-        WHERE u.role = 'DELEGATE'
-          AND (u.full_name LIKE ? ESCAPE '\\' OR u.phone_number LIKE ? ESCAPE '\\'
-               OR u.phone LIKE ? ESCAPE '\\' OR LOWER(u.email) LIKE LOWER(?) ESCAPE '\\')
-        ORDER BY u.full_name
-        LIMIT 8`,
-      [like, like, like, like]);
-    res.json({ results: rows });
-  } catch (err) {
-    next(err);
-  }
-});
+// delegate submit after it, through a date chosen for them. Set from that
+// delegate's page on the Front Desk (GET /api/desk/delegate/:identifier
+// carries their window). Its own permission (abstracts.extend_deadline),
+// held by Super Admin only.
 
 // Allow one person to submit until a date, or change their date. Refused for
 // someone who has already submitted -- one abstract per delegate, and a

@@ -233,8 +233,6 @@ const ROUTE_PERMISSIONS = {
   'GET /api/abstracts': 'abstracts.view',
   'PUT /api/abstracts/:id/status': 'abstracts.review',
   'PUT /api/abstracts/:id/allocation': 'abstracts.assign',
-  'GET /api/abstracts/extensions': 'abstracts.extend_deadline',
-  'GET /api/abstracts/extensions/search': 'abstracts.extend_deadline',
   'PUT /api/abstracts/extensions/:phone': 'abstracts.extend_deadline',
   'DELETE /api/abstracts/extensions/:phone': 'abstracts.extend_deadline',
 

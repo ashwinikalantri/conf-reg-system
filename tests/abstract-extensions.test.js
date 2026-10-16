@@ -1,7 +1,8 @@
 // Late abstract submission for named delegates.
 //
 // The last date closes submission for everyone. A Super Admin can let one
-// named delegate submit after it, through a date chosen for them:
+// named delegate submit after it, through a date chosen for them, from that
+// delegate's page on the Front Desk:
 //
 //   * the server is what lets them in -- POST /api/abstracts honours their
 //     date, and nobody else's -- and an extension that has run out closes
@@ -109,29 +110,29 @@ const ABSTRACT = {
     const desk = await loginPassword('9000000006', ADMIN_PW);       // FRONT_DESK
     for (const [who, c] of [['an academic reviewer', reviewer], ['finance', finance], ['the front desk', desk], ['the delegate themselves', cookies.other]]) {
       check(`${who} cannot allow one`, (await allow(phones.other, istDay(5), {}, c)).status === 403);
-      check(`...nor list them`, (await call('GET', '/api/abstracts/extensions', null, c)).status === 403);
-      check(`...nor search`, (await call('GET', '/api/abstracts/extensions/search?q=Late', null, c)).status === 403);
+      check(`...nor withdraw one`, (await call('DELETE', `/api/abstracts/extensions/${phones.late}`, null, c)).status === 403);
     }
-    check('nor anyone signed out', (await call('GET', '/api/abstracts/extensions')).status === 401);
+    check('nor anyone signed out', (await allow(phones.other, istDay(5), {}, null)).status === 401);
     const perms = require('../permissions');
     check('no built-in role but Super Admin holds the key',
       ['FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC', 'FRONT_DESK', 'OPERATIONS'].every((r) => !perms.roleCan(r, 'abstracts.extend_deadline')));
     check('...which holds it', perms.roleCan('SUPER_ADMIN', 'abstracts.extend_deadline'));
 
-    console.log('\n== The list and the search ==');
-    const list = (await call('GET', '/api/abstracts/extensions', null, admin)).body;
-    const entry = (p) => (list.extensions || []).find((e) => e.phone_number === p);
-    check('the list has everyone allowed', !!entry(phones.late) && !!entry(phones.other) && !!entry(phones.lapsed));
-    check('...shows who has since submitted', entry(phones.late).abstract_status === 'UNDER_REVIEW' && entry(phones.other).abstract_status === null);
-    check('...and the general last date, for the heading', list.deadline === istDay(-1) && list.today === istDay(0), [list.deadline, list.today]);
-    const found = (await call('GET', `/api/abstracts/extensions/search?q=Late`, null, admin)).body.results || [];
-    const f = (p) => found.find((r) => r.phone_number === p);
-    check('search finds delegates by name', !!f(phones.other));
-    check('...says who has already submitted', Number(f(phones.done).has_abstract) === 1);
-    check('...and who already has a date', f(phones.other).extended_until === istDay(0));
-    check('...never staff', !found.some((r) => /^90000000/.test(r.phone_number)));
-    check('a single character finds nothing', ((await call('GET', '/api/abstracts/extensions/search?q=L', null, admin)).body.results || []).length === 0);
-    check('% is not a wildcard', ((await call('GET', '/api/abstracts/extensions/search?q=%25%25', null, admin)).body.results || []).length === 0);
+    console.log('\n== The desk page shows it ==');
+    const lookup = async (p, c = admin) => (await call('GET', `/api/desk/delegate/${p}`, null, c)).body;
+    const lateView = await lookup(phones.late);
+    check('the delegate\'s desk page carries their later date', lateView.abstractExtension && lateView.abstractExtension.until === istDay(3), lateView.abstractExtension);
+    check('...and who allowed it', !!lateView.abstractExtension.granted_by);
+    const otherView = await lookup(phones.other);
+    check('...and their window: open, through their own date', otherView.abstractWindow.open === true
+      && otherView.abstractWindow.deadline === istDay(0) && otherView.abstractWindow.extended === true, otherView.abstractWindow);
+    const doneView = await lookup(phones.done);
+    check('someone without one shows none, and the general date', doneView.abstractExtension === null
+      && doneView.abstractWindow.deadline === istDay(-1) && doneView.abstractWindow.open === false, doneView.abstractWindow);
+    check('the front desk sees the date too -- reading it is desk work', (await lookup(phones.late, desk)).abstractExtension.until === istDay(3));
+    const src0 = fs.readFileSync(appFile('server.js'), 'utf8');
+    check('the Abstracts-tab list and search are gone',
+      !src0.includes("app.get('/api/abstracts/extensions'") && !src0.includes("app.get('/api/abstracts/extensions/search'"));
 
     console.log('\n== Changing and withdrawing ==');
     check('allowing again changes the date', (await allow(phones.other, istDay(7))).body.success === true
@@ -171,12 +172,36 @@ const ABSTRACT = {
     check('everyone else sees the plain last date', /Last date for submission/.test(els['abstract-deadline-note'].innerHTML)
       && !/extended for you/.test(els['abstract-deadline-note'].innerHTML));
 
-    console.log('\n== The admin panel ==');
-    const ejs = fs.readFileSync(appFile('views', 'admin', 'sections', 'abstracts.ejs'), 'utf8');
-    check('it is on the Abstracts tab', ejs.includes('id="abstracts-extension-block"') && ejs.includes('id="absext-table-body"'));
-    check('...hidden for a role without the key', /extensionBlock\.classList\.toggle\('hidden', !can\('abstracts\.extend_deadline'\)\)/.test(js));
-    check('...and asks before emailing, ticked by default', /<input type="checkbox" id="absext-notify" checked>/.test(ejs));
-    check('Withdraw asks first', /async function withdrawAbstractExtension[\s\S]*?showConfirm\(/.test(js));
+    console.log('\n== The desk card ==');
+    const deskSb = (canExtend) => {
+      const s2 = { can: (k) => k === 'abstracts.extend_deadline' && canExtend, conferenceInfo: { abstractDeadline: istDay(-1), abstractSubmissionOpen: false }, String, Number, Date };
+      vm.createContext(s2);
+      vm.runInContext(`${grab('esc')}\n${grab('formatFullDate')}\n${grab('formatFullDateWithDay')}\n${grab('istDateString')}\n`
+        + `function deskCard(t, b, a) { return '<h3>' + t + '</h3>' + b + '<div class="actions">' + (a || '') + '</div>'; }\n`
+        + `const deskBtn = (label, onclick) => '<button onclick="' + onclick + '">' + label + '</button>';\n`
+        + `const DESK_ABSTRACT_STATUS = {};\n${grab('deskAbstractCard')}\nglobalThis.card = deskAbstractCard;`, s2);
+      return s2.card;
+    };
+    const card = deskSb(true);
+    const closedWin = { open: false, deadline: istDay(-1), extended: false };
+    const none = card([], closedWin, null);
+    check('no abstract, closed: it says so', /Submission closed on/.test(none));
+    check('...and offers Allow late submission', />Allow late submission</.test(none) && /id="desk-absext-form" class="hidden/.test(none));
+    check('...with the email ticked, and no past dates', /id="desk-absext-notify" checked/.test(none) && new RegExp(`min="${istDay(0)}"`).test(none));
+    const given = card([], { open: true, deadline: istDay(3), extended: true }, { until: istDay(3) });
+    check('with a later date: it says they may submit until then', /They may submit until/.test(given));
+    check('...and offers Change date and Withdraw instead', />Change date</.test(given) && />Withdraw</.test(given) && !/>Allow late submission</.test(given));
+    check('...with their date ready to change', new RegExp(`value="${istDay(3)}"`).test(given));
+    const ran = card([], { open: false, deadline: istDay(-1), extended: true }, { until: istDay(-1) });
+    check('a later date that has passed says so', /has passed/.test(ran));
+    const submitted = card([{ title: 'T', status: 'UNDER_REVIEW' }], closedWin, { until: istDay(3) });
+    check('once they have submitted there is nothing to allow', !/Allow late submission|Change date|Withdraw|desk-absext-form/.test(submitted));
+    check('...though the card notes the later date they had', /later last date of/.test(submitted));
+    const plain = deskSb(false)([], closedWin, { until: istDay(3) });
+    check('without the permission, the date is shown but nothing can be changed',
+      !/Allow late submission|Change date|Withdraw|desk-absext-form/.test(plain));
+    check('Withdraw asks first', /async function deskWithdrawAbstractExtension[\s\S]*?showConfirm\(/.test(js));
+    check('the Abstracts tab no longer has the panel', !fs.readFileSync(appFile('views', 'admin', 'sections', 'abstracts.ejs'), 'utf8').includes('abstracts-extension-block'));
   } finally {
     await setDeadline(original);
     for (const p of Object.values(phones)) {
