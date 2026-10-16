@@ -9803,8 +9803,9 @@ function deskAbstractCard(abstracts, win, ext) {
   // Read-only, deliberately: presentation format is abstracts.assign, which is
   // Super Admin's, and accepting is abstracts.review. The desk answers "what
   // happened to mine", it does not decide it. The one thing it can do is let
-  // this person submit after the last date (abstracts.extend_deadline, Super
-  // Admin only) -- and only while they have not submitted.
+  // this person submit after the last date (abstracts.extend_deadline, held
+  // by Super Admin and the Front Desk) -- and only while they have not
+  // submitted.
   if (!abstracts || !abstracts.length) {
     const deadline = (win && win.deadline) || conferenceInfo.abstractDeadline;
     const open = win ? win.open : conferenceInfo.abstractSubmissionOpen !== false;

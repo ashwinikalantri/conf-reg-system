@@ -11677,7 +11677,7 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
 // delegate submit after it, through a date chosen for them. Set from that
 // delegate's page on the Front Desk (GET /api/desk/delegate/:identifier
 // carries their window). Its own permission (abstracts.extend_deadline),
-// held by Super Admin only.
+// held by Super Admin and the Front Desk.
 
 // Allow one person to submit until a date, or change their date. Refused for
 // someone who has already submitted -- one abstract per delegate, and a

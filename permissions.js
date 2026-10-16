@@ -100,7 +100,8 @@ const PERMISSIONS = [
   // assigned (see PUT /api/abstracts/:id/allocation).
   ['abstracts.assign', 'abstracts', 'Assign presentation format', 'Set an accepted abstract to oral or poster, which is what sends the author their decision.'],
   // Letting one named delegate submit after the last date. An exception to a
-  // rule everyone else is held to, so Super Admin only: no other role has it.
+  // rule everyone else is held to; set from that delegate's Front Desk page,
+  // so held by Super Admin and the Front Desk.
   ['abstracts.extend_deadline', 'abstracts', 'Allow late submission', 'Let a named delegate submit an abstract after the last date, until a date chosen for them.'],
 
   // --- Reports ---
@@ -455,6 +456,9 @@ const SYSTEM_ROLES = [
       // the category picker and the "does this category need a student ID"
       // question both read that list, and render empty without it.
       'masters.fees_view',
+      // Letting the delegate at the counter submit an abstract after the
+      // last date, from the Abstract card on their desk page.
+      'abstracts.extend_deadline',
     ],
   },
   {

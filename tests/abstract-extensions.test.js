@@ -8,7 +8,8 @@
 //     date, and nobody else's -- and an extension that has run out closes
 //     them again like everybody else;
 //   * the portal shows their own date, and says it is theirs;
-//   * it is a Super Admin power only (abstracts.extend_deadline), refused to
+//   * it is held by Super Admin and the Front Desk (abstracts.extend_deadline),
+//     whose delegate page it is on, and refused to
 //     every other role and to the delegate themselves;
 //   * someone who has already submitted cannot be "extended" -- one abstract
 //     per delegate -- and a date in the past is refused;
@@ -104,19 +105,25 @@ const ABSTRACT = {
     check('a staff account, which is not a delegate', staff.status === 404, staff.status);
     check('today itself is allowed', (await allow(phones.other, istDay(0))).body.success === true);
 
-    console.log('\n== Super Admin only ==');
+    console.log('\n== Super Admin and the Front Desk only ==');
     const reviewer = await loginPassword('9000000003', ADMIN_PW);   // ACADEMIC_REVIEWER
     const finance = await loginPassword('9000000002', ADMIN_PW);    // FINANCE_ADMIN
     const desk = await loginPassword('9000000006', ADMIN_PW);       // FRONT_DESK
-    for (const [who, c] of [['an academic reviewer', reviewer], ['finance', finance], ['the front desk', desk], ['the delegate themselves', cookies.other]]) {
+    for (const [who, c] of [['an academic reviewer', reviewer], ['finance', finance], ['the delegate themselves', cookies.other]]) {
       check(`${who} cannot allow one`, (await allow(phones.other, istDay(5), {}, c)).status === 403);
       check(`...nor withdraw one`, (await call('DELETE', `/api/abstracts/extensions/${phones.late}`, null, c)).status === 403);
     }
     check('nor anyone signed out', (await allow(phones.other, istDay(5), {}, null)).status === 401);
     const perms = require('../permissions');
-    check('no built-in role but Super Admin holds the key',
-      ['FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC', 'FRONT_DESK', 'OPERATIONS'].every((r) => !perms.roleCan(r, 'abstracts.extend_deadline')));
-    check('...which holds it', perms.roleCan('SUPER_ADMIN', 'abstracts.extend_deadline'));
+    const deskAllow = await allow(phones.lapsed, istDay(4), {}, desk);
+    check('the front desk can allow one', deskAllow.body.success === true, deskAllow.body);
+    check('...and it is credited to them in the activity log', !!(await db.get(
+      "SELECT 1 FROM audit_log WHERE entity_type = 'abstract_extension' AND entity_id = ? AND actor_role = 'FRONT_DESK' AND new_value = ?",
+      [phones.lapsed, istDay(4)])));
+    check('...and can withdraw it', (await call('DELETE', `/api/abstracts/extensions/${phones.lapsed}`, null, desk)).body.success === true);
+    check('no other built-in role holds the key',
+      ['FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC', 'OPERATIONS'].every((r) => !perms.roleCan(r, 'abstracts.extend_deadline')));
+    check('Super Admin and the Front Desk do', perms.roleCan('SUPER_ADMIN', 'abstracts.extend_deadline') && perms.roleCan('FRONT_DESK', 'abstracts.extend_deadline'));
 
     console.log('\n== The desk page shows it ==');
     const lookup = async (p, c = admin) => (await call('GET', `/api/desk/delegate/${p}`, null, c)).body;
