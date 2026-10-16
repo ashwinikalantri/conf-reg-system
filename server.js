@@ -311,6 +311,23 @@ function abstractSubmissionOpen(when = Date.now()) {
   return !d || istDateString(when) <= d;
 }
 
+// The window for one person: the conference-wide last date, or a later one
+// granted to them alone (abstract_extensions, set from the Abstracts tab).
+// { open, deadline, extended } -- deadline is the date that applies to them,
+// extended whether it is a date of their own, later than everyone else's.
+// An extension that has run out leaves them closed, like everybody else.
+async function abstractSubmissionWindowFor(phone, when = Date.now()) {
+  const d = CONFERENCE.abstractDeadline;
+  const ext = phone ? await dbGet('SELECT until FROM abstract_extensions WHERE phone_number = ?', [phone]) : null;
+  const today = istDateString(when);
+  const extended = !!ext && !!d && ext.until > d;
+  return {
+    open: !d || today <= d || (!!ext && today <= ext.until),
+    deadline: extended ? ext.until : d,
+    extended,
+  };
+}
+
 // --- .ENV FILE HELPERS ---------------------------------------------------
 // Lets Settings → General persist a credential change to the actual .env
 // file (not the database) so it survives a restart and stays wherever every
@@ -1738,6 +1755,18 @@ db.serialize(() => {
       text TEXT,
       word_count INTEGER,
       status TEXT DEFAULT 'UNDER_REVIEW'
+    )
+  `);
+
+  // A later last date for one named person: they may submit an abstract
+  // through `until` (IST), after the conference-wide date has closed for
+  // everyone else. One row per account; see abstractSubmissionWindowFor.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS abstract_extensions (
+      phone_number TEXT PRIMARY KEY,
+      until TEXT NOT NULL,
+      granted_at INTEGER NOT NULL,
+      granted_by TEXT
     )
   `);
 
@@ -5423,12 +5452,15 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
     // committee asked for (REVISION_REQUESTED): that was reopened by a
     // reviewer, not started by the delegate, and locking it would strand an
     // abstract the committee is still waiting on.
-    if (!abstractSubmissionOpen()) {
+    // A person given a later date of their own (abstract_extensions) is held
+    // to that date instead.
+    const window = await abstractSubmissionWindowFor(req.session.phone);
+    if (!window.open) {
       const own = await dbGet('SELECT status FROM abstracts WHERE phone_number = ?', [req.session.phone]);
       if (!own || own.status !== 'REVISION_REQUESTED') {
         return res.status(403).json({
           success: false, code: 'ABSTRACT_SUBMISSION_CLOSED',
-          error: `Abstract submission closed on ${formatDMY(CONFERENCE.abstractDeadline)}.`,
+          error: `Abstract submission closed on ${formatDMY(window.deadline)}.`,
         });
       }
     }
@@ -5523,7 +5555,7 @@ app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
     res.json({
       abstract: row || null,
       registered: await authorHasRegistered(req.session.phone),
-      submission: { open: abstractSubmissionOpen(), deadline: CONFERENCE.abstractDeadline },
+      submission: await abstractSubmissionWindowFor(req.session.phone),
     });
   } catch (err) {
     next(err);
@@ -11629,6 +11661,110 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
       return res.send(pdf);
     }
     res.type('html').send(reportHtml(rep, { pdfHref }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- LATE SUBMISSION, ONE PERSON AT A TIME --------------------------------
+// The last date closes abstract submission for everyone; these let a named
+// delegate submit after it, through a date chosen for them. Its own
+// permission (abstracts.extend_deadline), held by Super Admin only.
+
+app.get('/api/abstracts/extensions', requirePermission('abstracts.extend_deadline'), async (req, res, next) => {
+  try {
+    const rows = await dbAll(
+      `SELECT e.phone_number, e.until, e.granted_at, e.granted_by,
+              u.salutation, u.full_name, u.email, u.phone,
+              (SELECT status FROM abstracts a WHERE a.phone_number = e.phone_number ORDER BY a.id DESC LIMIT 1) AS abstract_status
+         FROM abstract_extensions e
+         LEFT JOIN users u ON u.phone_number = e.phone_number
+        ORDER BY COALESCE(u.full_name, e.phone_number)`);
+    res.json({ extensions: rows, deadline: CONFERENCE.abstractDeadline, today: istDateString() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Type-ahead for choosing who to extend: delegates only, at most 8, two
+// characters minimum -- the same limits as the desk search.
+app.get('/api/abstracts/extensions/search', requirePermission('abstracts.extend_deadline'), async (req, res, next) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ results: [] });
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const rows = await dbAll(
+      `SELECT u.phone_number, u.salutation, u.full_name, u.email, u.phone,
+              (SELECT COUNT(*) FROM abstracts a WHERE a.phone_number = u.phone_number) AS has_abstract,
+              (SELECT until FROM abstract_extensions e WHERE e.phone_number = u.phone_number) AS extended_until
+         FROM users u
+        WHERE u.role = 'DELEGATE'
+          AND (u.full_name LIKE ? ESCAPE '\\' OR u.phone_number LIKE ? ESCAPE '\\'
+               OR u.phone LIKE ? ESCAPE '\\' OR LOWER(u.email) LIKE LOWER(?) ESCAPE '\\')
+        ORDER BY u.full_name
+        LIMIT 8`,
+      [like, like, like, like]);
+    res.json({ results: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Allow one person to submit until a date, or change their date. Refused for
+// someone who has already submitted -- one abstract per delegate, and a
+// resubmission the committee asks for is already open to them.
+app.put('/api/abstracts/extensions/:phone', requirePermission('abstracts.extend_deadline'), async (req, res, next) => {
+  try {
+    const phone = String(req.params.phone);
+    const until = String((req.body && req.body.until) || '').trim();
+    const u = await dbGet('SELECT phone_number, salutation, full_name, email, role FROM users WHERE phone_number = ?', [phone]);
+    if (!u || u.role !== 'DELEGATE') return res.status(404).json({ success: false, error: 'Delegate not found.' });
+    if (!DATE_RE.test(until)) return res.status(400).json({ success: false, error: 'Choose the last date they may submit on.' });
+    if (until < istDateString()) return res.status(400).json({ success: false, error: 'That date has already gone. Choose today or later.' });
+    const own = await dbGet('SELECT status FROM abstracts WHERE phone_number = ?', [phone]);
+    if (own) return res.status(409).json({ success: false, error: 'They have already submitted an abstract.' });
+
+    const before = await dbGet('SELECT until FROM abstract_extensions WHERE phone_number = ?', [phone]);
+    await dbRun(
+      `INSERT INTO abstract_extensions (phone_number, until, granted_at, granted_by) VALUES (?, ?, ?, ?)
+       ON CONFLICT(phone_number) DO UPDATE SET until = excluded.until, granted_at = excluded.granted_at, granted_by = excluded.granted_by`,
+      [phone, until, Date.now(), req.session.name || req.session.phone]);
+    await recordAudit({
+      req, entityType: 'abstract_extension', entityId: phone,
+      action: 'ABSTRACT_EXTENSION_GRANT', oldValue: before ? before.until : null, newValue: until,
+    });
+
+    // Only when asked, and only if there is somewhere to send it.
+    const emailed = !!req.body.notify && emailEnabled() && !!u.email;
+    if (emailed) {
+      const name = [u.salutation, u.full_name].filter(Boolean).join(' ') || 'Delegate';
+      notifyDelegate(phone, 'You may still submit your abstract',
+        emailWrap('Abstract submission — extended for you', `<p>Dear ${escapeHtml(name)},</p>
+           <p>The organising committee has allowed you to submit your abstract for the ${escapeHtml(CONFERENCE.name)} after the general last date.</p>
+           <div style="background:#eef3f6;border:1px solid #b9cedb;border-radius:10px;padding:.9rem 1.1rem;margin:1rem 0">
+             <p style="margin:0;font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;font-weight:700;color:#2f5673">Your last date for submission</p>
+             <p style="margin:.3rem 0 0;font-size:1.15rem;font-weight:800;color:#1c3549">${escapeHtml(formatDMY(until))}</p>
+             <p style="margin:.3rem 0 0;font-size:.8rem;color:#244560">Submission closes at the end of this day (IST).</p>
+           </div>
+           <p>Log in at <b>${escapeHtml(PORTAL_URL)}</b> and use <b>Submit Abstract</b> on your dashboard.</p>`));
+    }
+    res.json({ success: true, emailed });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/abstracts/extensions/:phone', requirePermission('abstracts.extend_deadline'), async (req, res, next) => {
+  try {
+    const phone = String(req.params.phone);
+    const before = await dbGet('SELECT until FROM abstract_extensions WHERE phone_number = ?', [phone]);
+    if (!before) return res.status(404).json({ success: false, error: 'No extension for this delegate.' });
+    await dbRun('DELETE FROM abstract_extensions WHERE phone_number = ?', [phone]);
+    await recordAudit({
+      req, entityType: 'abstract_extension', entityId: phone,
+      action: 'ABSTRACT_EXTENSION_REVOKE', oldValue: before.until, newValue: null,
+    });
+    res.json({ success: true });
   } catch (err) {
     next(err);
   }

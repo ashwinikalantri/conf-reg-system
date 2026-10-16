@@ -14,4 +14,38 @@
         <p class="text-xs text-slate-500 mb-3">Assign oral or poster presentation. The delegate's decision email is sent from here.</p>
         <div id="abstracts-assignment-container" class="space-y-4"></div>
       </div>
+      <!-- Late submission for named delegates. Hidden for a role without
+           abstracts.extend_deadline (see applyRoleVisibility); the server
+           refuses every call behind it in any case. -->
+      <div id="abstracts-extension-block" class="pt-4 border-t border-slate-200">
+        <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Late Submission · Individual Extensions</h3>
+        <p class="text-xs text-slate-500 mb-3">Let a named delegate submit an abstract after the last date (<span id="absext-global-deadline" class="font-semibold text-slate-700">not set</span>). Everyone else stays closed. Their date replaces the last date for them alone.</p>
+        <form id="absext-form" onsubmit="grantAbstractExtension(event)" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+          <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 items-end">
+            <div class="relative min-w-0">
+              <label for="absext-search" class="block text-xs font-semibold text-slate-600 mb-1">Delegate</label>
+              <input id="absext-search" autocomplete="off" oninput="searchAbstractExtensionDelegate(this.value)" placeholder="Name, mobile or email" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+              <input type="hidden" id="absext-phone">
+              <div id="absext-results" class="hidden absolute z-10 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-64 overflow-y-auto divide-y divide-slate-100"></div>
+            </div>
+            <div>
+              <label for="absext-until" class="block text-xs font-semibold text-slate-600 mb-1">May submit until</label>
+              <input type="date" id="absext-until" required class="h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+            </div>
+            <button type="submit" id="absext-submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm rounded-lg">Allow</button>
+          </div>
+          <p id="absext-selected" class="hidden mt-2 text-xs text-slate-600"></p>
+          <label class="mt-3 inline-flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+            <input type="checkbox" id="absext-notify" checked> Email the delegate to tell them their last date
+          </label>
+        </form>
+        <div class="mt-4 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-xs text-slate-500 uppercase">
+              <tr><th class="p-3 text-left">Delegate</th><th class="p-3 text-left">May submit until</th><th class="p-3 text-left">Abstract</th><th class="p-3 text-left">Allowed by</th><th class="p-3"></th></tr>
+            </thead>
+            <tbody id="absext-table-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
     </section>

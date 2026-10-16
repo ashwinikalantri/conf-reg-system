@@ -1282,8 +1282,12 @@ async function loadAbstractStatus() {
 // it (see POST /api/abstracts), so showing it there would mislead. Once
 // closed, the card's own text already says when.
 function renderAbstractDeadlineNote(abs, sub) {
+  // A date given to this delegate alone says so, so it is not mistaken for
+  // a general extension.
   const text = (!abs && sub && sub.open && sub.deadline)
-    ? `Last date for submission: ${formatFullDateWithDay(sub.deadline)}` : '';
+    ? (sub.extended
+      ? `Your last date for submission (extended for you): ${formatFullDateWithDay(sub.deadline)}`
+      : `Last date for submission: ${formatFullDateWithDay(sub.deadline)}`) : '';
   const icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 shrink-0"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/></svg>';
   for (const id of ['abstract-deadline-note', 'abstract-modal-deadline']) {
     const el = document.getElementById(id);
@@ -2975,6 +2979,9 @@ function applyRoleVisibility() {
   // read its response.
   const assignBlock = document.getElementById('abstracts-assignment-block');
   if (assignBlock) assignBlock.classList.toggle('hidden', !can('abstracts.assign'));
+  // Late submission for named delegates: its own key, Super Admin only.
+  const extensionBlock = document.getElementById('abstracts-extension-block');
+  if (extensionBlock) extensionBlock.classList.toggle('hidden', !can('abstracts.extend_deadline'));
 
   // Masters/Users/Reminders/Logs live in the header's Settings menu, not
   // the main tab bar. The menu button itself only shows if at least one
@@ -3062,7 +3069,7 @@ async function initBackendPortal() {
   // fact applyRoleVisibility() just drew the menu from.
   if (canSee('payments')) await renderBackendPayments();
   if (canSee('payments')) renderDelegateMap();
-  if (canSee('abstracts')) await renderBackendAbstracts();
+  if (canSee('abstracts')) { await renderBackendAbstracts(); renderAbstractExtensions(); }
   if (canSee('users')) await loadBackendUsers();
   // The role picker used in Users & Roles and the Create Staff User modal --
   // needed by anyone who can assign a role, not only someone who can also
@@ -5950,6 +5957,7 @@ const ACTIVITY_ACTION_LABELS = {
   BANK_STATUS_CHANGE: 'Status', STUDENT_ID_VERIFICATION: 'ID Verified', UTR_CORRECTION: 'UTR Fix',
   PAYMENT_MODE_CORRECTION: 'Mode Fix', ADMIN_ENROLL: 'Roster +', ADMIN_UNENROLL: 'Roster −',
   BANK_TXN_LINK: 'Linked', BANK_TXN_UNLINK: 'Unlinked', PAYMENT_ADMIN_ADDED: 'Payment Added', ABSTRACT_STATUS_CHANGE: 'Status', ABSTRACT_ALLOCATION: 'Allotted',
+  ABSTRACT_EXTENSION_GRANT: 'Late Submission Allowed', ABSTRACT_EXTENSION_REVOKE: 'Late Submission Withdrawn',
   PROGRAM_OPTION_CREATE: 'Created', PROGRAM_OPTION_UPDATE: 'Updated', PROGRAM_OPTION_DELETE: 'Deleted',
   FEE_CONFIG_UPDATE: 'Dates Updated', FEE_CATEGORY_CREATE: 'Created', FEE_CATEGORY_UPDATE: 'Updated', FEE_CATEGORY_DELETE: 'Deleted',
   FEE_CATEGORY_REALIGN: 'Labels Realigned',
@@ -8821,6 +8829,127 @@ async function renderBackendAbstracts() {
       ${abstractProvisional(a) ? `<p class="text-[11px] text-sky-700 mt-2">${a.allocation ? 'The delegate was told the acceptance is provisional, and that registration is mandatory to present.' : 'The email will say the acceptance is provisional, and that registration is mandatory to present.'}</p>` : ''}
     </div>
   `).join('') : `<p class="text-sm text-slate-500 p-4">No approved abstracts yet.</p>`;
+}
+
+// --- Late submission for named delegates ---------------------------------
+// Who may submit after the last date, and until when. The server refuses
+// every call without abstracts.extend_deadline; the block is hidden too.
+let absextSearchResults = [];
+let absextSearchSeq = 0;
+
+async function renderAbstractExtensions() {
+  const body = document.getElementById('absext-table-body');
+  if (!body || !can('abstracts.extend_deadline')) return;
+  const res = await fetch('/api/abstracts/extensions');
+  if (!res.ok) return;
+  const data = await res.json();
+  setText('absext-global-deadline', data.deadline ? formatFullDateWithDay(data.deadline) : 'not set');
+  const untilInput = document.getElementById('absext-until');
+  if (untilInput) untilInput.min = data.today;
+  const rows = data.extensions || [];
+  body.innerHTML = rows.length ? rows.map((e, i) => {
+    const name = [e.salutation, e.full_name].filter(Boolean).join(' ') || '—';
+    const contact = [e.phone || (String(e.phone_number).startsWith('u_') ? '' : e.phone_number), e.email].filter(Boolean).join(' · ');
+    const lapsed = e.until < data.today;
+    const pill = e.abstract_status
+      ? '<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-emerald-100 text-emerald-800 border-emerald-300">Submitted</span>'
+      : lapsed
+        ? '<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-600 border-slate-300">Lapsed, not submitted</span>'
+        : '<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-sky-100 text-sky-800 border-sky-300">Open to them</span>';
+    const actions = e.abstract_status ? '' : `
+        <button type="button" onclick="editAbstractExtension(${i})" class="px-3 py-1.5 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold rounded-lg">Change date</button>
+        <button type="button" onclick="withdrawAbstractExtension(${i})" class="px-3 py-1.5 bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 text-xs font-semibold rounded-lg">Withdraw</button>`;
+    return `<tr>
+      <td class="p-3"><p class="font-semibold text-slate-800">${esc(name)}</p><p class="text-xs text-slate-400">${esc(contact)}</p></td>
+      <td class="p-3 whitespace-nowrap">${esc(formatFullDateWithDay(e.until))}</td>
+      <td class="p-3">${pill}</td>
+      <td class="p-3 text-xs text-slate-500">${esc(e.granted_by || '')}${e.granted_at ? `<br>${esc(fmtAuditTime(e.granted_at))}` : ''}</td>
+      <td class="p-3 text-right whitespace-nowrap">${actions}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="5" class="p-6 text-center text-slate-400 text-sm">Nobody has been given a later date.</td></tr>';
+  renderAbstractExtensions.rows = rows;
+}
+
+async function searchAbstractExtensionDelegate(query) {
+  const box = document.getElementById('absext-results');
+  if (!box) return;
+  document.getElementById('absext-phone').value = '';
+  document.getElementById('absext-selected').classList.add('hidden');
+  const q = String(query || '').trim();
+  if (q.length < 2) { box.classList.add('hidden'); return; }
+  const seq = ++absextSearchSeq;
+  const res = await fetch(`/api/abstracts/extensions/search?q=${encodeURIComponent(q)}`);
+  if (seq !== absextSearchSeq || !res.ok) return;   // a later keystroke has its own answer coming
+  absextSearchResults = (await res.json()).results || [];
+  box.innerHTML = absextSearchResults.length ? absextSearchResults.map((u, i) => {
+    const name = [u.salutation, u.full_name].filter(Boolean).join(' ') || '—';
+    const contact = [u.phone || (String(u.phone_number).startsWith('u_') ? '' : u.phone_number), u.email].filter(Boolean).join(' · ');
+    const note = Number(u.has_abstract) ? 'Already submitted an abstract'
+      : u.extended_until ? `Already allowed until ${formatFullDate(u.extended_until)}` : '';
+    return `<button type="button" ${Number(u.has_abstract) ? 'disabled' : ''} onclick="pickAbstractExtensionDelegate(${i})" class="w-full text-left px-3 py-2 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white">
+        <p class="font-semibold text-slate-800 text-sm">${esc(name)}</p>
+        <p class="text-[11px] text-slate-500">${esc(contact)}${note ? ` · <span class="font-semibold">${esc(note)}</span>` : ''}</p>
+      </button>`;
+  }).join('') : '<p class="text-xs text-slate-400 p-3">No delegate matches.</p>';
+  box.classList.remove('hidden');
+}
+
+function pickAbstractExtensionDelegate(i, untilOverride) {
+  const u = absextSearchResults[i];
+  if (!u) return;
+  const name = [u.salutation, u.full_name].filter(Boolean).join(' ') || u.phone_number;
+  document.getElementById('absext-phone').value = u.phone_number;
+  document.getElementById('absext-search').value = name;
+  document.getElementById('absext-results').classList.add('hidden');
+  const sel = document.getElementById('absext-selected');
+  sel.textContent = u.extended_until
+    ? `${name} may already submit until ${formatFullDate(u.extended_until)}. Allowing again changes their date.`
+    : `${name} will be able to submit until the date you choose.`;
+  sel.classList.remove('hidden');
+  const until = document.getElementById('absext-until');
+  if (until && (untilOverride || u.extended_until)) until.value = untilOverride || u.extended_until;
+}
+
+// Fill the form with an existing extension, so Allow changes its date.
+function editAbstractExtension(i) {
+  const e = (renderAbstractExtensions.rows || [])[i];
+  if (!e) return;
+  absextSearchResults = [{ ...e, extended_until: e.until, has_abstract: 0 }];
+  pickAbstractExtensionDelegate(0, e.until);
+  const until = document.getElementById('absext-until');
+  if (until) until.focus();
+}
+
+async function grantAbstractExtension(ev) {
+  ev.preventDefault();
+  const phone = document.getElementById('absext-phone').value;
+  const until = document.getElementById('absext-until').value;
+  const notify = document.getElementById('absext-notify').checked;
+  if (!phone) return showToast('Choose a delegate from the list.');
+  if (!until) return showToast('Choose the last date they may submit on.');
+  const btn = document.getElementById('absext-submit');
+  if (btn) btn.disabled = true;
+  const data = await (await fetch(`/api/abstracts/extensions/${encodeURIComponent(phone)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ until, notify }),
+  })).json().catch(() => ({}));
+  if (btn) btn.disabled = false;
+  if (!data.success) return showToast(data.error || 'Could not allow late submission.');
+  showToast(`Allowed until ${formatFullDate(until)}.${notify ? (data.emailed ? ' They have been emailed.' : ' No email was sent — none on file, or email is off.') : ''}`, 'success');
+  document.getElementById('absext-form').reset();
+  document.getElementById('absext-phone').value = '';
+  document.getElementById('absext-selected').classList.add('hidden');
+  renderAbstractExtensions();
+}
+
+async function withdrawAbstractExtension(i) {
+  const e = (renderAbstractExtensions.rows || [])[i];
+  if (!e) return;
+  const name = [e.salutation, e.full_name].filter(Boolean).join(' ') || 'this delegate';
+  if (!(await showConfirm(`Withdraw ${name}'s later date? They will be held to the general last date again. No email is sent.`))) return;
+  const data = await (await fetch(`/api/abstracts/extensions/${encodeURIComponent(e.phone_number)}`, { method: 'DELETE' })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not withdraw it.');
+  showToast('Withdrawn.', 'success');
+  renderAbstractExtensions();
 }
 
 async function updateAbstractStatus(id, status) {

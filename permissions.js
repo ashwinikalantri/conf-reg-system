@@ -99,6 +99,9 @@ const PERMISSIONS = [
   // author -- accepting an abstract tells them nothing until a format is
   // assigned (see PUT /api/abstracts/:id/allocation).
   ['abstracts.assign', 'abstracts', 'Assign presentation format', 'Set an accepted abstract to oral or poster, which is what sends the author their decision.'],
+  // Letting one named delegate submit after the last date. An exception to a
+  // rule everyone else is held to, so Super Admin only: no other role has it.
+  ['abstracts.extend_deadline', 'abstracts', 'Allow late submission', 'Let a named delegate submit an abstract after the last date, until a date chosen for them.'],
 
   // --- Reports ---
   ['reports.delegates', 'reports', 'Delegates report', 'The full delegate list, on screen or as CSV.'],
@@ -230,6 +233,10 @@ const ROUTE_PERMISSIONS = {
   'GET /api/abstracts': 'abstracts.view',
   'PUT /api/abstracts/:id/status': 'abstracts.review',
   'PUT /api/abstracts/:id/allocation': 'abstracts.assign',
+  'GET /api/abstracts/extensions': 'abstracts.extend_deadline',
+  'GET /api/abstracts/extensions/search': 'abstracts.extend_deadline',
+  'PUT /api/abstracts/extensions/:phone': 'abstracts.extend_deadline',
+  'DELETE /api/abstracts/extensions/:phone': 'abstracts.extend_deadline',
 
   // Users & roles
   'GET /api/users': 'users.view',
