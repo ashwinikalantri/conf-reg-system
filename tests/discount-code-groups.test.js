@@ -131,4 +131,10 @@ check('...and still shows its header, with 0', /id="disc-group-head-expired"[\s\
 check('no codes at all: one plain message, no empty groups', sb.__g.discountCodeTableHtml([], label).includes('No discount codes yet.')
   && !sb.__g.discountCodeTableHtml([], label).includes('disc-group-head'));
 
+console.log('\n== Deactivate, never Delete ==');
+const allRows = ['unused', 'expired', 'used', 'deactivated'].flatMap((g) => rowsOf(html, g));
+check('no row offers Delete', allRows.length === 9 && allRows.every((r) => !/>Delete</.test(r) && !/deleteDiscountCode/.test(r)));
+check('every row offers Deactivate or Activate', allRows.every((r) => /toggleDiscountCode\(/.test(r) && />(Deactivate|Activate)</.test(r)));
+check('the delete handler is gone from the page', !/function deleteDiscountCode\(/.test(js));
+
 report();

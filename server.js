@@ -9750,24 +9750,10 @@ app.put('/api/admin/discount-codes/:id', requirePermission('discounts.manage'), 
   }
 });
 
-app.delete('/api/admin/discount-codes/:id', requirePermission('discounts.manage'), async (req, res, next) => {
-  try {
-    const existing = await dbGet('SELECT * FROM discount_codes WHERE id = ?', [req.params.id]);
-    if (!existing) return res.status(404).json({ success: false, error: 'Code not found.' });
-    const used = await dbGet("SELECT COUNT(*) AS n FROM registrations WHERE UPPER(discount_code) = ? AND bank_status != 'REJECTED'", [existing.code]);
-    if (used && used.n > 0) {
-      return res.status(409).json({ success: false, error: `This code is in use by ${used.n} registration(s). Deactivate it instead of deleting.` });
-    }
-    await dbRun('DELETE FROM discount_codes WHERE id = ?', [req.params.id]);
-    await recordAudit({
-      req, entityType: 'discount_code', entityId: req.params.id, action: 'DISCOUNT_CODE_DELETE',
-      oldValue: existing.code, newValue: null,
-    });
-    res.json({ success: true });
-  } catch (err) {
-    next(err);
-  }
-});
+// There is deliberately no way to delete a discount code: a code is stopped
+// by deactivating it (PUT above), which keeps it -- and every email,
+// voucher and activity-log line that names it -- traceable, and lets it be
+// switched back on. DISCOUNT_CODE_DELETE survives only in older audit rows.
 
 // Printable one-page voucher for a discount code -- same "open in a new tab,
 // window.print() to save as PDF" pattern as reportHtml(), so no PDF library

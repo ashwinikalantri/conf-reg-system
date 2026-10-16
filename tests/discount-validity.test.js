@@ -78,6 +78,11 @@ const base = { salutation: 'Dr', age: '36', gender: 'Female', designation: 'Cons
     check('a deactivated code stays deactivated', offAfter.active === 0 && offAfter.expires_at === ist(30), offAfter);
     check('...and still cannot be used', (await tryCode(`OFF${N}`)).body.success === false);
 
+    console.log('\n== A code cannot be deleted, only deactivated ==');
+    const del = await call('DELETE', `/api/admin/discount-codes/${off.id}`, null, admin);
+    check('a delete request is not honoured', del.status === 404, del.status);
+    check('...and the code is still there', !!(await row(`OFF${N}`)));
+
     console.log('\n== A personal code applied for its owner comes back once extended ==');
     await issue({ code: `MINE${N}`, discountType: 'PERCENT', discountValue: 40, scopeType: 'INDIVIDUAL', scopeValue: email, expiresAt: ist(-2) });
     const mineRow = await row(`MINE${N}`);

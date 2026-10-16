@@ -154,8 +154,22 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   const added = ROUTES.map((r) => r.route).filter((r) => !BASELINE.roles.SUPER_ADMIN.routes.includes(r));
   check('every route added since the baseline is accounted for',
     added.every((r) => ADDED_SINCE_BASELINE[r]), added.filter((r) => !ADDED_SINCE_BASELINE[r]));
+
+  // Routes that existed at the baseline and have since been taken out of the
+  // app altogether -- for every role, so not a narrowing of one. Each must
+  // really be gone, must really have existed, and is named with its reason.
+  const REMOVED_SINCE_BASELINE = {
+    'DELETE /api/admin/discount-codes/:id': 'Deleting a discount code. Removed: a code is stopped by '
+      + 'deactivating it, which keeps it traceable (the emails, vouchers and activity-log lines that '
+      + 'name it) and reversible. Every role that could delete one can still deactivate it.',
+  };
+  const removed = Object.keys(REMOVED_SINCE_BASELINE);
+  const present = setOf(ROUTES.map((r) => r.route));
+  check('every route recorded as removed is really gone', removed.every((r) => !present.has(r)), removed.filter((r) => present.has(r)));
+  check('...and was at the baseline to begin with',
+    removed.every((r) => BASELINE.roles.SUPER_ADMIN.routes.includes(r)), removed.filter((r) => !BASELINE.roles.SUPER_ADMIN.routes.includes(r)));
   check('the baseline still covers the rest',
-    BASELINE.routeCount === ROUTES.length - added.length, [BASELINE.routeCount, ROUTES.length, added.length]);
+    BASELINE.routeCount === ROUTES.length - added.length + removed.length, [BASELINE.routeCount, ROUTES.length, added.length, removed.length]);
 
   // Existing routes whose ACCESS widened for one particular role -- a
   // different thing from a new route existing at all (ADDED_SINCE_BASELINE
@@ -206,7 +220,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     const before = setOf(BASELINE.roles[role].routes);
     const nowReach = setOf(ROUTES.filter((r) => held.has(r.permission)).map((r) => r.route));
     const gained = diff(nowReach, before).filter((r) => !ADDED_SINCE_BASELINE[r] && !WIDENED_SINCE_BASELINE[`${role} ${r}`]);
-    const lost = diff(before, nowReach).filter((r) => !NARROWED_SINCE_BASELINE[`${role} ${r}`]);
+    const lost = diff(before, nowReach).filter((r) => !NARROWED_SINCE_BASELINE[`${role} ${r}`] && !REMOVED_SINCE_BASELINE[r]);
     const ok = gained.length === 0 && lost.length === 0;
     if (!ok) mismatched++;
     console.log(`   ${role.padEnd(18)} ${String(before.size).padStart(2)} routes at the baseline`

@@ -6596,7 +6596,6 @@ function discountCodeRowHtml(c, catLabel, group, open) {
     </td>
     <td class="p-4 text-right whitespace-nowrap">
       <button onclick="toggleDiscountCode(${esc(c.id)}, ${c.active ? 0 : 1})" class="px-3 py-1.5 ${c.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg">${c.active ? 'Deactivate' : 'Activate'}</button>
-      <button onclick="deleteDiscountCode(${esc(c.id)})" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg">Delete</button>
     </td>
   </tr>`;
 }
@@ -6752,13 +6751,6 @@ async function toggleDiscountCode(id, active) {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }),
   })).json();
   if (!data.success) showToast(data.error || 'Update failed.');
-  renderDiscountCodes();
-}
-
-async function deleteDiscountCode(id) {
-  if (!(await showConfirm('Delete this discount code?'))) return;
-  const data = await (await fetch(`/api/admin/discount-codes/${encodeURIComponent(id)}`, { method: 'DELETE' })).json();
-  if (!data.success) showToast(data.error || 'Delete failed.');
   renderDiscountCodes();
 }
 

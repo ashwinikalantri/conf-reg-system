@@ -275,7 +275,6 @@ const ROUTE_PERMISSIONS = {
   'GET /api/admin/discount-codes/:id/share': 'discounts.view',
   'POST /api/admin/discount-codes': 'discounts.manage',
   'PUT /api/admin/discount-codes/:id': 'discounts.manage',
-  'DELETE /api/admin/discount-codes/:id': 'discounts.manage',
   'POST /api/admin/discount-codes/:id/email': 'discounts.manage',
   'GET /api/admin/group-rules': 'discounts.group_view',
   'GET /api/admin/groups': 'discounts.group_view',
