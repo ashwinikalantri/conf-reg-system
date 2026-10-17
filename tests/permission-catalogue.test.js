@@ -169,6 +169,19 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/desk/checkin': 'Records physical arrival. New capability -- nothing in the app did this before.',
     'GET /api/desk/staff': 'Who may be named as having collected cash.',
     'GET /api/desk/cash-in-hand': "The signed-in collector's own unbanked cash, for hand-over. The conference-wide equivalent is statement.cash_deposit, which the desk does not hold.",
+    // --- Attendance, for the e-certificates ---------------------------------
+    // Three new keys: attendance.mark (Front Desk and Volunteer --
+    // Registration, besides Super Admin), attendance.view (Front Desk) and
+    // attendance.manage (Super Admin only). New capability: nothing recorded
+    // attendance before, beyond the one desk check-in.
+    'GET /api/attendance/events': 'What can be signed into, and whether each is open now, for the scanner. attendance.mark.',
+    'POST /api/attendance/scan': 'Signs a delegate in or out by their desk pass, inside the event\'s window; a workshop takes its enrolled, others only with a recorded reason. attendance.mark.',
+    'GET /api/attendance/screen-qr.png': 'The self sign-in QR for a screen at the venue: a portal link with a signed code good for five minutes. attendance.mark -- whoever runs the door runs the screen.',
+    'GET /api/attendance/summary': 'Counts per day and workshop, and how many have completed. attendance.view.',
+    'GET /api/attendance/roster': 'Who is expected at one event and who is in. Names and registration numbers only. attendance.view.',
+    'POST /api/attendance/manual': 'Records a sign-in at any time, with a reason kept in the activity log. attendance.manage, Super Admin only.',
+    'DELETE /api/attendance/:id': 'Removes one (the row is kept, marked, with the reason). attendance.manage, Super Admin only.',
+
     // --- The Reminders composer ----------------------------------------------
     // One set of routes for every audience replaces one set per card. Each is
     // guarded by the key its predecessors held (comms.reminders_view / _test /
@@ -335,11 +348,11 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // Super Admin; the two coordinator roles that open it are new, so they are
   // not in the baseline this table is held against.
   const CLIENT_TODAY = {
-    SUPER_ADMIN: ['overview', 'desk', 'payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'faculty', 'general', 'activity'],
+    SUPER_ADMIN: ['overview', 'desk', 'payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'faculty', 'attendance', 'general', 'activity'],
     FINANCE_ADMIN: ['overview', 'payments', 'statement', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
     ACADEMIC_REVIEWER: ['overview', 'abstracts', 'reports'],
     FINANCE_ACADEMIC: ['overview', 'payments', 'statement', 'abstracts', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
-    FRONT_DESK: ['desk', 'fees'],
+    FRONT_DESK: ['desk', 'fees', 'attendance'],
     OPERATIONS: ['reports', 'users'],
   };
   const allSections = Object.keys(perms.SECTION_PERMISSIONS);

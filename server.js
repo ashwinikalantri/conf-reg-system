@@ -31,6 +31,7 @@ const multer = require('multer');
 const XLSX = require('xlsx');
 const guestLib = require('./guests');
 const reminderLib = require('./reminders');
+const attendanceLib = require('./attendance');
 const https = require('https');
 const QRCode = require('qrcode');
 // Shared with scripts/daily-digest.js -- see the note there about why the
@@ -1187,7 +1188,7 @@ async function recordLogin(phone, name, role) {
 // capacity slot.
 function fetchProgramOptions({ activeOnly } = {}) {
   return dbAll(`
-    SELECT o.id, o.group_id, o.name, o.capacity, o.active, o.fee,
+    SELECT o.id, o.group_id, o.name, o.capacity, o.active, o.fee, o.session_date, o.start_time, o.end_time,
       (SELECT COUNT(*) FROM registration_options ro
          JOIN registrations r ON r.id = ro.registration_id
          WHERE ro.option_id = o.id AND ro.is_faculty = 0 AND r.bank_status != 'REJECTED') AS enrolled,
@@ -1199,6 +1200,12 @@ function fetchProgramOptions({ activeOnly } = {}) {
     ORDER BY o.group_id, o.id`);
 }
 
+// Whether a group takes attendance (see program_groups.takes_attendance):
+// as set, or by default if its name says it is workshops.
+const groupTakesAttendanceSql = (g) =>
+  `COALESCE(${g}.takes_attendance, CASE WHEN LOWER(${g}.name) LIKE '%workshop%' THEN 1 ELSE 0 END)`;
+const groupTakesAttendance = (g) => (g.takes_attendance == null ? (/workshop/i.test(g.name || '') ? 1 : 0) : Number(g.takes_attendance));
+
 // Groups with their options nested, in sort order -- the shape the delegate
 // form, admin Program Groups section, and setup wizard all build their UI
 // from.
@@ -1207,7 +1214,7 @@ async function fetchProgramGroups({ activeOnly } = {}) {
     dbAll(`SELECT * FROM program_groups ${activeOnly ? 'WHERE active = 1' : ''} ORDER BY sort_order, id`),
     fetchProgramOptions({ activeOnly }),
   ]);
-  return groups.map((g) => ({ ...g, options: options.filter((o) => o.group_id === g.id) }));
+  return groups.map((g) => ({ ...g, takes_attendance: groupTakesAttendance(g), options: options.filter((o) => o.group_id === g.id) }));
 }
 
 // Validate one chosen option and confirm it still has room. `ownRegId` is
@@ -1721,6 +1728,12 @@ db.serialize(() => {
    // POST /api/users/:phone/reset-password and runPostLoginPrompts. Cleared
    // by POST /api/auth/set-password, which is the only way to satisfy it.
    'ALTER TABLE users ADD COLUMN password_reset_required INTEGER DEFAULT 0',
+   // For the e-certificate: the name as it should be printed (NULL: their
+   // salutation and name), and a doctor's Medical Council and registration
+   // number, without which no certificate carries MMC points.
+   'ALTER TABLE users ADD COLUMN certificate_name TEXT',
+   'ALTER TABLE users ADD COLUMN council_name TEXT',
+   'ALTER TABLE users ADD COLUMN council_reg_no TEXT',
   ].forEach((sql) => db.run(sql, () => {}));
 
   db.run("UPDATE users SET country = 'India' WHERE country IS NULL OR country = ''", () => {});
@@ -1803,6 +1816,25 @@ db.serialize(() => {
       body TEXT
     )
   `);
+
+  // Attendance: one row per person per thing signed into (see attendance.js
+  // and the ATTENDANCE routes). A removed row is kept, marked.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS attendance (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phone_number TEXT NOT NULL,
+      event_key TEXT NOT NULL,
+      at INTEGER NOT NULL,
+      method TEXT NOT NULL,
+      by_phone TEXT,
+      by_name TEXT,
+      note TEXT,
+      removed_at INTEGER,
+      removed_by TEXT,
+      removed_reason TEXT
+    )
+  `);
+  db.run('CREATE INDEX IF NOT EXISTS attendance_person ON attendance (phone_number, event_key)');
 
   // The Sent history on the Reminders tab: one row per send from the
   // composer, and one per person chosen in it with what happened for them
@@ -2042,6 +2074,15 @@ db.serialize(() => {
   // Defaults to 0 so every existing option (and a fresh install's) costs
   // nothing until an admin sets otherwise.
   db.run('ALTER TABLE program_options ADD COLUMN fee REAL NOT NULL DEFAULT 0', () => {});
+  // When a workshop runs (IST): its date and start and end times, which set
+  // its attendance window. See attendance.js.
+  db.run('ALTER TABLE program_options ADD COLUMN session_date TEXT', () => {});
+  db.run('ALTER TABLE program_options ADD COLUMN start_time TEXT', () => {});
+  db.run('ALTER TABLE program_options ADD COLUMN end_time TEXT', () => {});
+  // Whether a group's options take attendance and earn a certificate: 1 or
+  // 0 once set in Programs; until then (NULL) a group named like "Workshops"
+  // does and any other does not. See groupTakesAttendanceSql.
+  db.run('ALTER TABLE program_groups ADD COLUMN takes_attendance INTEGER', () => {});
 
   // A delegate's chosen options across every group -- the generalized
   // replacement for the old fixed workshop_option_id/qi_option_id columns on
@@ -8568,6 +8609,322 @@ app.get('/api/admin/reminders/history/:id', requirePermission('comms.reminders_v
   }
 });
 
+// --- ATTENDANCE ---------------------------------------------------------------
+// Who was there, for the certificates: each conference day's sign-in, the
+// last day's sign-out, and each workshop's sign-in (see attendance.js for the
+// events, their windows and what completing means). Recorded three ways:
+//   SCAN   -- a volunteer scans the delegate's desk pass at the door;
+//   SELF   -- the delegate scans the code on the screen at the venue with
+//             their own phone, signed in to the portal;
+//   DESK   -- checking in at the registration desk on a conference day is
+//             that day's sign-in;
+//   MANUAL -- an attendance manager records one, any time, with a reason.
+// One row per person per event; removing one keeps the row (removed_at), so
+// the record of who changed what stays whole.
+
+// Certificate and attendance settings, one JSON value in schema_meta, over
+// these defaults. The MMC details are placeholders until the accreditation
+// comes through.
+const CERT_SETTINGS_DEFAULTS = {
+  hours: attendanceLib.DEFAULT_HOURS,
+  mmc: { accreditationNo: 'MMC/MAC/2026/XXXXX', points: 'X', councilLabel: 'Maharashtra Medical Council' },
+  // Doctors and Medical PGs, and of them only those who give a Medical
+  // Council registration number, receive the certificate with MMC points.
+  eligibleCategories: ['faculty_mo', 'pg_doctor'],
+};
+async function certificateSettings() {
+  const row = await dbGet("SELECT value FROM schema_meta WHERE key = 'certificate_settings'").catch(() => null);
+  let saved = {};
+  try { saved = row && row.value ? JSON.parse(row.value) : {}; } catch { saved = {}; }
+  return {
+    ...CERT_SETTINGS_DEFAULTS, ...saved,
+    hours: { ...CERT_SETTINGS_DEFAULTS.hours, ...(saved.hours || {}) },
+    mmc: { ...CERT_SETTINGS_DEFAULTS.mmc, ...(saved.mmc || {}) },
+  };
+}
+
+// The key self sign-in codes are signed with: made once, kept.
+let attendanceSecretCache = null;
+async function attendanceSecret() {
+  if (attendanceSecretCache) return attendanceSecretCache;
+  await dbRun("INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('attendance_secret', ?)", [crypto.randomBytes(32).toString('hex')]);
+  attendanceSecretCache = (await dbGet("SELECT value FROM schema_meta WHERE key = 'attendance_secret'")).value;
+  return attendanceSecretCache;
+}
+
+// The workshops that take attendance: options of a group that does.
+const attendanceWorkshops = () => dbAll(
+  `SELECT o.id, o.name, o.session_date, o.start_time, o.end_time
+     FROM program_options o JOIN program_groups g ON g.id = o.group_id
+    WHERE ${groupTakesAttendanceSql('g')} = 1 AND o.active = 1
+    ORDER BY COALESCE(o.session_date, '9999'), COALESCE(o.start_time, ''), o.id`);
+
+async function attendanceEvents() {
+  const settings = await certificateSettings();
+  return attendanceLib.buildEvents({
+    startDate: CONFERENCE.startDate, endDate: CONFERENCE.endDate,
+    workshops: await attendanceWorkshops(), hours: settings.hours,
+  });
+}
+
+// The registration someone attends under: any not rejected.
+const attendingRegistration = (phone) => dbGet(
+  "SELECT id, phone_number, delegate_name, category_key, category_label, bank_status FROM registrations WHERE phone_number = ? AND COALESCE(bank_status, '') != 'REJECTED'",
+  [phone]);
+const enrolledIn = async (regId, optionId) => !!(await dbGet(
+  'SELECT 1 AS yes FROM registration_options WHERE registration_id = ? AND option_id = ?', [regId, optionId]));
+
+// Records one sign-in or sign-out. Already there: says so, changes nothing.
+async function recordAttendance(req, { phone, event, method, note = null, actor = null }) {
+  const existing = await dbGet(
+    'SELECT id, at, method, by_name FROM attendance WHERE phone_number = ? AND event_key = ? AND removed_at IS NULL', [phone, event.e]);
+  if (existing) return { already: true, at: existing.at, method: existing.method, by: existing.by_name };
+  const at = Date.now();
+  const byPhone = actor ? actor.phone : (req.session && req.session.phone) || phone;
+  const byName = actor ? actor.name : (req.session && req.session.name) || null;
+  const r = await dbRun(
+    'INSERT INTO attendance (phone_number, event_key, at, method, by_phone, by_name, note) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [phone, event.e, at, method, byPhone, byName, note]);
+  await recordAudit({ req, entityType: 'attendance', entityId: r.lastID, action: 'ATTENDANCE_RECORDED', oldValue: null,
+    newValue: `${phone} · ${event.longLabel} · ${method}${note ? ` · ${note}` : ''}` });
+  return { already: false, at, method };
+}
+
+const attendanceName = (row) => withDelegateSalutation({ delegate_name: row.delegate_name, delegate_salutation: row.salutation }).delegate_name;
+
+// Every event, for the scanner's picker and the dashboard.
+app.get('/api/attendance/events', requirePermission('attendance.mark'), async (req, res, next) => {
+  try {
+    const now = Date.now();
+    const events = (await attendanceEvents()).map((ev) => ({ ...ev, window: attendanceLib.windowStatus(ev, now) }));
+    res.json({ events, today: attendanceLib.istParts(now).date });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A volunteer scans a desk pass (or types an ID, mobile or email). Inside the
+// event's window only. A workshop takes those enrolled in it; anyone else is
+// refused unless the volunteer lets them in, with a reason.
+app.post('/api/attendance/scan', requirePermission('attendance.mark'), async (req, res, next) => {
+  try {
+    const event = (await attendanceEvents()).find((ev) => ev.e === String(req.body.e || ''));
+    if (!event) return res.status(400).json({ success: false, error: 'Choose what they are signing into.' });
+    const win = attendanceLib.windowStatus(event, Date.now());
+    if (!win.open) return res.status(409).json({ success: false, error: win.reason, closed: true });
+    const found = await deskFindDelegate(req.body.identifier);
+    if (found.error) return res.status(404).json({ success: false, error: found.error });
+    if (found.candidates) return res.status(409).json({ success: false, error: 'That matches more than one person -- scan their desk pass or use their ID.' });
+    const phone = found.user.phone_number;
+    const reg = await attendingRegistration(phone);
+    const name = reminderName(found.user.salutation, found.user.full_name) || phone;
+    if (!reg) return res.status(409).json({ success: false, error: `${name} has not registered.`, name });
+    let note = null;
+    if (event.scope === 'workshop' && !(await enrolledIn(reg.id, event.optionId))) {
+      const reason = String(req.body.notEnrolledReason || '').trim();
+      if (!reason) return res.status(409).json({ success: false, notEnrolled: true, name, error: `${name} is not enrolled in ${event.name}.` });
+      note = `Not enrolled: ${reason.slice(0, 200)}`;
+    }
+    const done = await recordAttendance(req, { phone, event, method: 'SCAN', note });
+    res.json({ success: true, name, registrationNumber: found.user.registration_number || null, event: event.longLabel, ...done });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The self sign-in code for the screen at the venue: a QR of the portal
+// address carrying a token that is good for a few minutes. The screen asks
+// for a fresh one every 30 seconds.
+app.get('/api/attendance/screen-qr.png', requirePermission('attendance.mark'), async (req, res, next) => {
+  try {
+    const event = (await attendanceEvents()).find((ev) => ev.e === String(req.query.e || ''));
+    if (!event) return res.status(400).json({ success: false, error: 'No such event.' });
+    const token = attendanceLib.makeToken(await attendanceSecret(), event.e, Date.now());
+    const url = `${String(PORTAL_URL).replace(/\/+$/, '')}/?attend=${encodeURIComponent(token)}`;
+    const png = await QRCode.toBuffer(url, { type: 'png', width: 640, margin: 2, errorCorrectionLevel: 'M' });
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'no-store');
+    res.send(png);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A delegate, signed in to the portal, scanned the screen.
+app.post('/api/attendance/self', requireAuth, async (req, res, next) => {
+  try {
+    const now = Date.now();
+    const read = attendanceLib.readToken(await attendanceSecret(), req.body.token, now);
+    if (read.error) return res.status(400).json({ success: false, error: read.error });
+    const event = (await attendanceEvents()).find((ev) => ev.e === read.e);
+    if (!event) return res.status(400).json({ success: false, error: 'That sign-in is no longer open.' });
+    const win = attendanceLib.windowStatus(event, now);
+    if (!win.open) return res.status(409).json({ success: false, error: win.reason });
+    const reg = await attendingRegistration(req.session.phone);
+    if (!reg) return res.status(409).json({ success: false, error: 'Only registered delegates can sign in. Please see the registration desk.' });
+    if (event.scope === 'workshop' && !(await enrolledIn(reg.id, event.optionId))) {
+      return res.status(409).json({ success: false, error: `You are not enrolled in ${event.name}. Please see the volunteer at the door.` });
+    }
+    const done = await recordAttendance(req, { phone: req.session.phone, event, method: 'SELF' });
+    res.json({ success: true, event: event.longLabel, ...done });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The delegate's own record: what they have signed into, what is left for
+// the certificate, and the details the certificate will carry.
+app.get('/api/attendance/me', requireAuth, async (req, res, next) => {
+  try {
+    const reg = await attendingRegistration(req.session.phone);
+    const me = await dbGet('SELECT salutation, full_name, certificate_name, council_name, council_reg_no FROM users WHERE phone_number = ?', [req.session.phone]);
+    const settings = await certificateSettings();
+    const events = await attendanceEvents();
+    const rows = await dbAll('SELECT event_key, at, method FROM attendance WHERE phone_number = ? AND removed_at IS NULL', [req.session.phone]);
+    const mine = new Map(rows.map((r) => [r.event_key, r]));
+    const enrolled = reg ? new Set((await dbAll('SELECT option_id FROM registration_options WHERE registration_id = ?', [reg.id])).map((r) => Number(r.option_id))) : new Set();
+    const relevant = events.filter((ev) => ev.scope === 'day' || enrolled.has(ev.optionId) || mine.has(ev.e));
+    res.json({
+      registered: !!reg,
+      events: relevant.map((ev) => ({ e: ev.e, label: ev.longLabel, scope: ev.scope, date: ev.date, from: ev.from, until: ev.until, at: mine.has(ev.e) ? mine.get(ev.e).at : null })),
+      completion: attendanceLib.completion(rows, events),
+      certificate: {
+        defaultName: reminderName(me && me.salutation, me && me.full_name),
+        name: me && me.certificate_name ? me.certificate_name : null,
+        councilName: me && me.council_name ? me.council_name : '',
+        councilRegNo: me && me.council_reg_no ? me.council_reg_no : '',
+        // Asked for only where it can earn MMC points.
+        asksCouncilNumber: !!reg && settings.eligibleCategories.includes(reg.category_key),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The name the certificate will carry, and -- for a doctor or medical PG --
+// their Medical Council and registration number.
+app.put('/api/attendance/me/certificate', requireAuth, async (req, res, next) => {
+  try {
+    const name = String(req.body.certificateName || '').replace(/\s+/g, ' ').trim();
+    const councilName = String(req.body.councilName || '').replace(/\s+/g, ' ').trim();
+    const councilRegNo = String(req.body.councilRegNo || '').replace(/\s+/g, '').trim().toUpperCase();
+    if (name && (name.length < 3 || name.length > 120)) return res.status(400).json({ success: false, error: 'Enter your name as it should appear, 3 to 120 characters.' });
+    if (/[<>{}]/.test(name)) return res.status(400).json({ success: false, error: 'The name contains characters that cannot be printed.' });
+    if (councilRegNo && !/^[A-Z0-9/.-]{3,30}$/.test(councilRegNo)) {
+      return res.status(400).json({ success: false, error: 'Enter the registration number as it appears on your certificate: letters, digits, / . or -.' });
+    }
+    if (councilRegNo && !councilName) return res.status(400).json({ success: false, error: 'Choose which Medical Council you are registered with.' });
+    if (councilName.length > 80) return res.status(400).json({ success: false, error: 'The council name is too long.' });
+    const before = await dbGet('SELECT certificate_name, council_name, council_reg_no FROM users WHERE phone_number = ?', [req.session.phone]);
+    await dbRun('UPDATE users SET certificate_name = ?, council_name = ?, council_reg_no = ? WHERE phone_number = ?',
+      [name || null, councilName || null, councilRegNo || null, req.session.phone]);
+    await recordAudit({ req, entityType: 'user', entityId: req.session.phone, action: 'CERTIFICATE_DETAILS_UPDATED',
+      oldValue: before ? `${before.certificate_name || '(default name)'} · ${before.council_name || ''} ${before.council_reg_no || ''}`.trim() : null,
+      newValue: `${name || '(default name)'} · ${councilName} ${councilRegNo}`.trim() });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Counts for the dashboard: per event, how many were expected and how many
+// are in; and how many have completed the conference.
+app.get('/api/attendance/summary', requirePermission('attendance.view'), async (req, res, next) => {
+  try {
+    const now = Date.now();
+    const events = await attendanceEvents();
+    const counts = new Map((await dbAll('SELECT event_key, COUNT(*) AS n FROM attendance WHERE removed_at IS NULL GROUP BY event_key')).map((r) => [r.event_key, r.n]));
+    const registered = (await dbGet("SELECT COUNT(*) AS n FROM registrations WHERE COALESCE(bank_status, '') != 'REJECTED'")).n;
+    const enrolled = new Map((await dbAll(
+      `SELECT ro.option_id, COUNT(*) AS n FROM registration_options ro JOIN registrations r ON r.id = ro.registration_id
+        WHERE COALESCE(r.bank_status, '') != 'REJECTED' GROUP BY ro.option_id`)).map((r) => [Number(r.option_id), r.n]));
+    const dayKeys = events.filter((ev) => ev.scope === 'day').map((ev) => ev.e);
+    const completed = dayKeys.length ? (await dbGet(
+      `SELECT COUNT(*) AS n FROM (SELECT phone_number FROM attendance WHERE removed_at IS NULL AND event_key IN (${dayKeys.map(() => '?').join(',')})
+        GROUP BY phone_number HAVING COUNT(DISTINCT event_key) = ?)`, [...dayKeys, dayKeys.length])).n : 0;
+    res.json({
+      registered, completed, hours: (await certificateSettings()).hours,
+      events: events.map((ev) => ({ ...ev, window: attendanceLib.windowStatus(ev, now), count: counts.get(ev.e) || 0,
+        expected: ev.scope === 'workshop' ? (enrolled.get(ev.optionId) || 0) : registered })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Everyone expected at an event, with whether (and how, and when) they are
+// in -- plus anyone in who was not expected (let into a workshop).
+app.get('/api/attendance/roster', requirePermission('attendance.view'), async (req, res, next) => {
+  try {
+    const event = (await attendanceEvents()).find((ev) => ev.e === String(req.query.e || ''));
+    if (!event) return res.status(400).json({ success: false, error: 'No such event.' });
+    const expected = event.scope === 'workshop'
+      ? await dbAll(
+        `SELECT r.phone_number, r.registration_number, r.delegate_name, u.salutation FROM registration_options ro
+           JOIN registrations r ON r.id = ro.registration_id LEFT JOIN users u ON u.phone_number = r.phone_number
+          WHERE ro.option_id = ? AND COALESCE(r.bank_status, '') != 'REJECTED'`, [event.optionId])
+      : await dbAll(
+        `SELECT r.phone_number, r.registration_number, r.delegate_name, u.salutation FROM registrations r
+           LEFT JOIN users u ON u.phone_number = r.phone_number WHERE COALESCE(r.bank_status, '') != 'REJECTED'`);
+    const rows = await dbAll(
+      `SELECT a.id, a.phone_number, a.at, a.method, a.by_name, a.note, r.registration_number, r.delegate_name, u.salutation
+         FROM attendance a LEFT JOIN registrations r ON r.phone_number = a.phone_number LEFT JOIN users u ON u.phone_number = a.phone_number
+        WHERE a.event_key = ? AND a.removed_at IS NULL`, [event.e]);
+    const byPhone = new Map(rows.map((r) => [r.phone_number, r]));
+    const people = expected.map((p) => {
+      const a = byPhone.get(p.phone_number);
+      return { phone: p.phone_number, registrationNumber: p.registration_number, name: attendanceName(p), expected: true,
+        attendance: a ? { id: a.id, at: a.at, method: a.method, by: a.by_name, note: a.note } : null };
+    });
+    const known = new Set(expected.map((p) => p.phone_number));
+    for (const a of rows) {
+      if (!known.has(a.phone_number)) {
+        people.push({ phone: a.phone_number, registrationNumber: a.registration_number, name: attendanceName(a), expected: false,
+          attendance: { id: a.id, at: a.at, method: a.method, by: a.by_name, note: a.note } });
+      }
+    }
+    people.sort((x, y) => String(x.name || '').localeCompare(String(y.name || '')));
+    res.json({ success: true, event, people });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// An attendance manager records a sign-in or sign-out at any time -- a
+// scanner that failed, a delegate who came in by another door -- with a
+// reason, which the activity log keeps.
+app.post('/api/attendance/manual', requirePermission('attendance.manage'), async (req, res, next) => {
+  try {
+    const event = (await attendanceEvents()).find((ev) => ev.e === String(req.body.e || ''));
+    if (!event) return res.status(400).json({ success: false, error: 'Choose the event.' });
+    const reason = String(req.body.reason || '').trim();
+    if (!reason) return res.status(400).json({ success: false, error: 'Give a reason -- it is kept with the record.' });
+    const reg = await attendingRegistration(String(req.body.phone || ''));
+    if (!reg) return res.status(404).json({ success: false, error: 'No registration for that person.' });
+    const done = await recordAttendance(req, { phone: reg.phone_number, event, method: 'MANUAL', note: reason.slice(0, 200) });
+    res.json({ success: true, ...done });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/attendance/:id', requirePermission('attendance.manage'), async (req, res, next) => {
+  try {
+    const reason = String((req.body && req.body.reason) || '').trim();
+    if (!reason) return res.status(400).json({ success: false, error: 'Give a reason -- it is kept with the record.' });
+    const row = await dbGet('SELECT * FROM attendance WHERE id = ? AND removed_at IS NULL', [req.params.id]);
+    if (!row) return res.status(404).json({ success: false, error: 'Not found.' });
+    await dbRun('UPDATE attendance SET removed_at = ?, removed_by = ?, removed_reason = ? WHERE id = ?',
+      [Date.now(), req.session.name || req.session.phone, reason.slice(0, 200), row.id]);
+    await recordAudit({ req, entityType: 'attendance', entityId: row.id, action: 'ATTENDANCE_REMOVED',
+      oldValue: `${row.phone_number} · ${row.event_key} · ${row.method}`, newValue: reason.slice(0, 200) });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- BACKUPS (admin-triggered) --------------------------------------------
 //
 // The app does NOT take the backup itself, and deliberately cannot: the
@@ -9233,6 +9590,9 @@ app.post('/api/desk/checkin', requirePermission('desk.checkin'), async (req, res
       req, entityType: 'registration', entityId: reg.id,
       action: 'DESK_CHECKIN', oldValue: null, newValue: new Date(now).toISOString(),
     });
+    // Checking in on a conference day is that day's sign-in.
+    const today = (await attendanceEvents()).find((ev) => ev.scope === 'day' && ev.kind === 'IN' && ev.date === attendanceLib.istParts(now).date);
+    if (today) await recordAttendance(req, { phone: found.user.phone_number, event: today, method: 'DESK' });
     res.json({ success: true, at: now, by });
   } catch (err) {
     next(err);
@@ -9411,7 +9771,7 @@ app.post('/api/admin/program-groups', requirePermission('masters.programs_manage
 
 app.put('/api/admin/program-groups/:id', requirePermission('masters.programs_manage'), async (req, res, next) => {
   try {
-    const { name, description, required, maxSelect, sortOrder, active } = req.body;
+    const { name, description, required, maxSelect, sortOrder, active, takesAttendance } = req.body;
     const bad = validGroupInput({ name, maxSelect: maxSelect !== undefined ? Number(maxSelect) : undefined }, { partial: true });
     if (bad) return res.status(400).json({ success: false, error: bad });
 
@@ -9425,10 +9785,11 @@ app.put('/api/admin/program-groups/:id', requirePermission('masters.programs_man
       max_select: maxSelect !== undefined ? Number(maxSelect) : existing.max_select,
       sort_order: sortOrder !== undefined ? Number(sortOrder) : existing.sort_order,
       active: active !== undefined ? (active ? 1 : 0) : existing.active,
+      takes_attendance: takesAttendance !== undefined ? (takesAttendance ? 1 : 0) : existing.takes_attendance,
     };
     await dbRun(
-      'UPDATE program_groups SET name = ?, description = ?, required = ?, max_select = ?, sort_order = ?, active = ? WHERE id = ?',
-      [updated.name, updated.description, updated.required, updated.max_select, updated.sort_order, updated.active, req.params.id]
+      'UPDATE program_groups SET name = ?, description = ?, required = ?, max_select = ?, sort_order = ?, active = ?, takes_attendance = ? WHERE id = ?',
+      [updated.name, updated.description, updated.required, updated.max_select, updated.sort_order, updated.active, updated.takes_attendance, req.params.id]
     );
     await recordAudit({
       req, entityType: 'program_group', entityId: req.params.id,
@@ -9523,21 +9884,36 @@ app.put('/api/admin/program-options/:id', requirePermission('masters.programs_ma
     const existing = await dbGet('SELECT * FROM program_options WHERE id = ?', [req.params.id]);
     if (!existing) return res.status(404).json({ success: false, error: 'Option not found.' });
 
+    // When it runs: a date and start/end times, each optional ('' clears it).
+    const when = {};
+    for (const [field, key, re, label] of [['session_date', 'sessionDate', /^\d{4}-\d{2}-\d{2}$/, 'date'],
+      ['start_time', 'startTime', /^([01]\d|2[0-3]):[0-5]\d$/, 'start time'], ['end_time', 'endTime', /^([01]\d|2[0-3]):[0-5]\d$/, 'end time']]) {
+      if (req.body[key] === undefined) { when[field] = existing[field] || null; continue; }
+      const v = String(req.body[key] || '').trim();
+      if (v && !re.test(v)) return res.status(400).json({ success: false, error: `Enter a valid ${label}.` });
+      when[field] = v || null;
+    }
+    if (when.start_time && when.end_time && when.end_time <= when.start_time) {
+      return res.status(400).json({ success: false, error: 'The end time must be after the start time.' });
+    }
+
     const updated = {
       name: name !== undefined ? String(name).trim() : existing.name,
       capacity: capacity !== undefined ? capacity : existing.capacity,
       fee: fee !== undefined ? fee : existing.fee,
       active: active !== undefined ? (active ? 1 : 0) : existing.active,
+      ...when,
     };
     await dbRun(
-      'UPDATE program_options SET name = ?, capacity = ?, fee = ?, active = ? WHERE id = ?',
-      [updated.name, updated.capacity, updated.fee, updated.active, req.params.id]
+      'UPDATE program_options SET name = ?, capacity = ?, fee = ?, active = ?, session_date = ?, start_time = ?, end_time = ? WHERE id = ?',
+      [updated.name, updated.capacity, updated.fee, updated.active, updated.session_date, updated.start_time, updated.end_time, req.params.id]
     );
+    const whenText = (o) => (o.session_date ? `, ${o.session_date} ${o.start_time || ''}–${o.end_time || ''}` : '');
     await recordAudit({
       req, entityType: 'program_option', entityId: req.params.id,
       action: 'PROGRAM_OPTION_UPDATE',
-      oldValue: `${existing.name} (capacity ${existing.capacity}, fee ₹${existing.fee}, ${existing.active ? 'active' : 'inactive'})`,
-      newValue: `${updated.name} (capacity ${updated.capacity}, fee ₹${updated.fee}, ${updated.active ? 'active' : 'inactive'})`,
+      oldValue: `${existing.name} (capacity ${existing.capacity}, fee ₹${existing.fee}, ${existing.active ? 'active' : 'inactive'}${whenText(existing)})`,
+      newValue: `${updated.name} (capacity ${updated.capacity}, fee ₹${updated.fee}, ${updated.active ? 'active' : 'inactive'}${whenText(updated)})`,
     });
     res.json({ success: true });
   } catch (err) {

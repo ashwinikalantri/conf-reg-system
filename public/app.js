@@ -145,6 +145,18 @@ function readStoredDelegate() {
 }
 let currentDelegate = readStoredDelegate();
 
+// A self sign-in code from the screen at the venue (/?attend=...): kept until
+// the delegate is logged in (see signInFromVenueCode), and taken out of the
+// address so a refresh or a shared link does not carry it.
+(function captureVenueCode() {
+  try {
+    const code = new URLSearchParams(window.location.search).get('attend');
+    if (!code) return;
+    storageSet('session', 'nqocn_attend', code);
+    window.history.replaceState(null, '', window.location.pathname + window.location.hash);
+  } catch (e) { /* no address to read */ }
+}());
+
 // Never store undefined/null -- JSON.stringify(undefined) is the string
 // "undefined", not valid JSON, which is exactly what corrupts the next load.
 function persistDelegate(user) {
@@ -910,10 +922,77 @@ async function loadDashboard() {
     })(),
     loadAbstractStatus(),
     renderGroupSection(),
+    signInFromVenueCode().then(loadAttendanceCard),
   ]);
   // Every section has had its turn, including the ones that failed -- see
   // settleSkeletons on why a shimmer must not outlive the attempt.
   settleSkeletons();
+}
+
+// --- Attendance & certificate (portal) ---
+// Signing in from the venue's screen: the code came in the address before
+// login; now that they are logged in, use it once.
+async function signInFromVenueCode() {
+  const code = storageGet('session', 'nqocn_attend');
+  if (!code) return;
+  storageSet('session', 'nqocn_attend', '');
+  try {
+    const data = await (await fetch('/api/attendance/self', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: code }),
+    })).json();
+    if (data.success) {
+      showToast(data.already ? `Already signed in: ${data.event}.` : `Signed in: ${data.event}. Thank you!`, 'success');
+    } else {
+      showToast(data.error || 'Could not sign you in. Please see a volunteer.');
+    }
+  } catch (e) {
+    showToast('Could not sign you in. Please see a volunteer.');
+  }
+}
+
+// Their profile name, which the certificate follows until they type another.
+let certificateDefaultName = '';
+
+async function loadAttendanceCard() {
+  const card = document.getElementById('attendance-card');
+  if (!card) return;
+  let data;
+  try { data = await (await fetch('/api/attendance/me')).json(); } catch (e) { return; }
+  card.classList.toggle('hidden', !data.registered);
+  if (!data.registered) return;
+  const time = (ms) => new Date(ms).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+  document.getElementById('attendance-list').innerHTML = data.events.map((ev) => `
+    <li class="flex items-start gap-2">
+      <span class="w-5 text-center font-bold ${ev.at ? 'text-emerald-600' : 'text-slate-300'}">${ev.at ? '✓' : '○'}</span>
+      <span class="flex-1"><span class="${ev.at ? 'text-slate-800 font-semibold' : 'text-slate-600'}">${esc(ev.label)}</span>
+        <span class="block text-xs text-slate-500">${ev.at ? `Signed at ${esc(time(ev.at))}` : (ev.date && ev.from && ev.until ? `${esc(formatFullDate(ev.date))}, ${esc(guestTime12(ev.from))} – ${esc(guestTime12(ev.until))}` : '')}</span></span>
+    </li>`).join('') || '<li class="text-slate-500">The conference dates are not set yet.</li>';
+  const status = document.getElementById('attendance-status');
+  status.className = `text-xs font-bold px-2.5 py-1 rounded-full border ${data.completion.complete ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-600 border-slate-200'}`;
+  status.textContent = data.completion.complete ? 'Conference completed' : 'Attendance in progress';
+  const c = data.certificate;
+  certificateDefaultName = c.defaultName || '';
+  document.getElementById('cert-name').value = c.name || c.defaultName || '';
+  document.getElementById('cert-council-wrap').classList.toggle('hidden', !c.asksCouncilNumber);
+  document.getElementById('cert-council').value = c.councilName || '';
+  document.getElementById('cert-council-no').value = c.councilRegNo || '';
+}
+
+async function saveCertificateDetails(e) {
+  e.preventDefault();
+  const typed = document.getElementById('cert-name').value.trim();
+  const body = {
+    // Unchanged: keep following the profile name rather than a copy of it.
+    certificateName: typed === certificateDefaultName ? '' : typed,
+    councilName: document.getElementById('cert-council').value.trim(),
+    councilRegNo: document.getElementById('cert-council-no').value.trim(),
+  };
+  const data = await (await fetch('/api/attendance/me/certificate', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not save.');
+  showToast('Certificate details saved.', 'success');
+  loadAttendanceCard();
 }
 
 // Paint every part of the dashboard that depends on the registration: the
@@ -2228,6 +2307,8 @@ function showConfirm(message, okText = 'Confirm', cancelText = 'Cancel') {
     const modal = document.getElementById('modal-confirm');
     if (!modal) return resolve(window.confirm(message)); // fallback
     document.getElementById('confirm-message').textContent = message;
+    const input = document.getElementById('confirm-input');
+    if (input) input.classList.add('hidden');
     const ok = document.getElementById('confirm-ok');
     const cancel = document.getElementById('confirm-cancel');
     ok.textContent = okText;
@@ -2241,6 +2322,35 @@ function showConfirm(message, okText = 'Confirm', cancelText = 'Cancel') {
     ok.onclick = () => done(true);
     cancel.onclick = () => done(false);
     modal.classList.remove('hidden');
+  });
+}
+
+// Ask for a short answer (a reason) in the same modal. Resolves to the
+// trimmed text, or null if cancelled or left empty.
+function showPrompt(message, placeholder = '') {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('modal-confirm');
+    const input = document.getElementById('confirm-input');
+    if (!modal || !input) { const v = window.prompt(message); return resolve(v && v.trim() ? v.trim() : null); }
+    document.getElementById('confirm-message').textContent = message;
+    input.value = '';
+    input.placeholder = placeholder;
+    input.classList.remove('hidden');
+    const ok = document.getElementById('confirm-ok');
+    const cancel = document.getElementById('confirm-cancel');
+    ok.textContent = 'Save';
+    cancel.textContent = 'Cancel';
+    const done = (val) => {
+      modal.classList.add('hidden');
+      input.classList.add('hidden');
+      ok.onclick = null;
+      cancel.onclick = null;
+      resolve(val);
+    };
+    ok.onclick = () => done(input.value.trim() || null);
+    cancel.onclick = () => done(null);
+    modal.classList.remove('hidden');
+    input.focus();
   });
 }
 
@@ -2777,12 +2887,27 @@ function setupAdminDelegation() {
   // dynamically-rendered container -- see renderBackendPrograms().
   const programsBox = document.getElementById('program-groups-admin-container');
   if (programsBox) {
+    programsBox.addEventListener('change', async (e) => {
+      const box = e.target.closest('.group-attendance');
+      if (!box) return;
+      const data = await (await fetch(`/api/admin/program-groups/${encodeURIComponent(box.dataset.id)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ takesAttendance: box.checked }),
+      })).json();
+      if (!data.success) showToast(data.error || 'Could not change it.');
+      renderBackendPrograms();
+    });
     programsBox.addEventListener('click', (e) => {
       const save = e.target.closest('.prog-save');
       if (save) {
         const capInput = programsBox.querySelector(`.prog-capacity[data-id="${save.dataset.id}"]`);
         const feeInput = programsBox.querySelector(`.prog-fee[data-id="${save.dataset.id}"]`);
-        return saveProgramOption(save.dataset.id, parseInt(capInput.value, 10), parseFloat(feeInput.value) || 0);
+        const dateInput = programsBox.querySelector(`.prog-date[data-id="${save.dataset.id}"]`);
+        const when = dateInput ? {
+          sessionDate: dateInput.value,
+          startTime: programsBox.querySelector(`.prog-start[data-id="${save.dataset.id}"]`).value,
+          endTime: programsBox.querySelector(`.prog-end[data-id="${save.dataset.id}"]`).value,
+        } : null;
+        return saveProgramOption(save.dataset.id, parseInt(capInput.value, 10), parseFloat(feeInput.value) || 0, when);
       }
       const toggle = e.target.closest('.prog-toggle');
       if (toggle) return toggleProgram(toggle.dataset.id, toggle.dataset.active === '1' ? 0 : 1);
@@ -2986,6 +3111,8 @@ function applyRoleVisibility() {
   if (tabReports) tabReports.classList.toggle('hidden', !canSee('reports'));
   const tabFaculty = document.getElementById('nav-tab-faculty');
   if (tabFaculty) tabFaculty.classList.toggle('hidden', !canSee('faculty'));
+  const tabAttendance = document.getElementById('nav-tab-attendance');
+  if (tabAttendance) tabAttendance.classList.toggle('hidden', !canSee('attendance'));
 
   // The walk-in registration button now lives on the Front Desk tab
   // (#desk-register-btn, toggled in initFrontDesk) rather than in the
@@ -3076,6 +3203,7 @@ async function initBackendPortal() {
     : canSee('reports') ? 'reports'
     // The coordinators' whole job is the Guests tab.
     : canSee('faculty') ? 'faculty'
+    : canSee('attendance') ? 'attendance'
     : 'workshops'; // unreachable for the five built-in roles; a defensive fallback for an unrecognised one
   const allowed = allowedBackendTabs();
   const hashTab = tabFromHash();
@@ -5733,15 +5861,26 @@ async function renderBackendPrograms() {
   const groups = (await res.json()).groups || [];
   setText('badge-program-count', groups.reduce((n, g) => n + g.options.length, 0));
 
-  const optionRow = (o) => {
+  // In a group that takes attendance, each option also has when it runs:
+  // its date and times set its sign-in window (and the certificate's date).
+  const optionRow = (o, g) => {
     const remaining = Math.max(0, o.capacity - o.enrolled);
     const facultyCount = Number(o.faculty_count) || 0;
+    const when = o.session_date
+      ? `${shortDateRange(o.session_date, o.session_date)}${o.start_time ? `, ${guestTime12(o.start_time)}${o.end_time ? ` – ${guestTime12(o.end_time)}` : ''}` : ''}`
+      : 'No date set';
     return `
     <div class="flex flex-wrap items-center gap-3 py-3 border-b border-slate-100 ${o.active ? '' : 'opacity-60'}">
       <div class="flex-1 min-w-[180px]">
         <p class="font-semibold text-sm text-slate-800">${esc(o.name)}${Number(o.fee) > 0 ? ` <span class="text-[11px] font-normal text-indigo-600">+₹${inr(o.fee)}</span>` : ''}</p>
-        <p class="text-[11px] text-slate-500">Enrolled ${Number(o.enrolled)} / ${Number(o.capacity)} · ${remaining} left${facultyCount ? ` · ${facultyCount} faculty` : ''}${o.active ? '' : ' · inactive'}</p>
+        <p class="text-[11px] text-slate-500">Enrolled ${Number(o.enrolled)} / ${Number(o.capacity)} · ${remaining} left${facultyCount ? ` · ${facultyCount} faculty` : ''}${o.active ? '' : ' · inactive'}${Number(g.takes_attendance) ? ` · <span class="${o.session_date ? 'text-slate-600' : 'text-amber-700 font-semibold'}">${esc(when)}</span>` : ''}</p>
       </div>
+      ${Number(g.takes_attendance) ? `<div class="flex flex-wrap items-center gap-1.5">
+        <input type="date" value="${esc(o.session_date || '')}" title="Date" aria-label="Date" class="prog-date p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
+        <input type="time" value="${esc(o.start_time || '')}" title="Starts" aria-label="Starts" class="prog-start p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
+        <span class="text-xs text-slate-400">to</span>
+        <input type="time" value="${esc(o.end_time || '')}" title="Ends" aria-label="Ends" class="prog-end p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
+      </div>` : ''}
       <input type="number" min="0" value="${esc(o.capacity)}" title="Capacity" class="prog-capacity w-20 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
       <input type="number" min="0" step="0.01" value="${esc(o.fee)}" title="Fee (₹)" class="prog-fee w-24 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
       <button class="prog-save px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Save</button>
@@ -5758,7 +5897,10 @@ async function renderBackendPrograms() {
           <h4 class="font-bold text-slate-800">${esc(g.name)}${g.active ? '' : ' <span class="text-[10px] font-normal text-slate-400">(inactive)</span>'}</h4>
           <p class="text-[11px] text-slate-500">${g.required ? 'Required' : 'Optional'} · choose up to ${Number(g.max_select)}</p>
         </div>
-        <div class="flex gap-2">
+        <div class="flex flex-wrap items-center gap-2">
+          <label class="flex items-center gap-1.5 text-xs font-semibold text-slate-600 mr-1 select-none" title="Its options take attendance, and a delegate who signs in gets a certificate">
+            <input type="checkbox" class="group-attendance" data-id="${esc(g.id)}" ${Number(g.takes_attendance) ? 'checked' : ''}> Attendance &amp; certificates
+          </label>
           <button class="group-toggle px-2.5 py-1.5 ${g.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(g.id)}" data-active="${g.active ? 1 : 0}">${g.active ? 'Deactivate' : 'Activate'}</button>
           <button class="group-delete px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(g.id)}">Delete Group</button>
         </div>
@@ -5778,7 +5920,7 @@ async function renderBackendPrograms() {
         </div>
         <button type="submit" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">+ Add</button>
       </form>
-      ${g.options.map(optionRow).join('') || '<p class="text-sm text-slate-400 py-2">No options yet.</p>'}
+      ${g.options.map((o) => optionRow(o, g)).join('') || '<p class="text-sm text-slate-400 py-2">No options yet.</p>'}
     </div>
   `).join('') || '<p class="text-sm text-slate-400 p-4">No program groups yet. Add one above.</p>';
 }
@@ -5833,9 +5975,9 @@ async function handleAddProgramOption(e, form) {
   renderBackendPrograms();
 }
 
-async function saveProgramOption(id, capacity, fee) {
+async function saveProgramOption(id, capacity, fee, when) {
   const data = await (await fetch(`/api/admin/program-options/${encodeURIComponent(id)}`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ capacity, fee }),
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ capacity, fee, ...(when || {}) }),
   })).json();
   if (!data.success) showToast(data.error || 'Update failed.');
   renderBackendPrograms();
@@ -11315,7 +11457,7 @@ async function deleteGuestListValue(id) {
 }
 
 const SETTINGS_TABS = ['programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
-const MAIN_TABS = ['overview', 'desk', 'payments', 'statement', 'abstracts', 'faculty', 'reports'];
+const MAIN_TABS = ['overview', 'desk', 'payments', 'statement', 'abstracts', 'faculty', 'attendance', 'reports'];
 
 // Which tabs each role may open -- the single source of truth used both to
 // pick the landing tab and to validate a tab restored from the URL, so a
@@ -11349,6 +11491,7 @@ function switchBackendTab(tab) {
   if (tab === 'abstracts') renderBackendAbstracts();
   if (tab === 'reports') loadReportWorkshopOptions();
   if (tab === 'faculty') renderGuests();
+  if (tab === 'attendance') renderAttendance();
   if (tab === 'programs') renderBackendPrograms();
   if (tab === 'fees') renderBackendFees();
   if (tab === 'discount') renderDiscountCodes();
@@ -11402,6 +11545,261 @@ window.addEventListener('hashchange', () => {
   if (!tab || tab === currentBackendTab || !activeAdminUser) return;
   if (allowedBackendTabs().includes(tab)) switchBackendTab(tab);
 });
+
+// --- ATTENDANCE (admin) ---
+// Signing people in at the doors, the screen delegates sign themselves in
+// from, and the counts and rosters. See views/admin/sections/attendance.ejs.
+const attState = { events: [], summary: null, roster: null, scanner: null, lastScan: { text: '', at: 0 }, screenTimer: null, pending: null };
+const ATT_METHODS = { SCAN: 'Scanned', SELF: 'Self sign-in', DESK: 'At the desk', MANUAL: 'Recorded by hand' };
+
+async function renderAttendance() {
+  const mayMark = can('attendance.mark');
+  const mayView = can('attendance.view');
+  document.getElementById('att-take').classList.toggle('hidden', !mayMark);
+  document.getElementById('att-screen-btn').classList.toggle('hidden', !mayMark);
+  document.getElementById('att-summary-card').classList.toggle('hidden', !mayView);
+  document.getElementById('att-roster-card').classList.toggle('hidden', !mayView);
+  if (mayMark) {
+    const res = await fetch('/api/attendance/events');
+    if (res.ok) attState.events = (await res.json()).events || [];
+  }
+  if (mayView) {
+    const res = await fetch('/api/attendance/summary');
+    if (res.ok) {
+      attState.summary = await res.json();
+      if (!attState.events.length) attState.events = attState.summary.events;
+    }
+  }
+  const options = attState.events.map((ev) => `<option value="${esc(ev.e)}">${esc(ev.longLabel)}${ev.window && ev.window.open ? ' — open now' : ''}</option>`).join('');
+  const picker = document.getElementById('att-event');
+  const keep = picker.value || storageGet('local', 'nqocn_att_event');
+  picker.innerHTML = options || '<option value="">Nothing to sign into yet</option>';
+  // Start on what is open now, else what was chosen last.
+  const open = attState.events.find((ev) => ev.window && ev.window.open);
+  picker.value = attState.events.some((ev) => ev.e === keep) && !(open && keep !== open.e && !attState.events.find((ev) => ev.e === keep).window.open)
+    ? keep : (open ? open.e : (attState.events[0] ? attState.events[0].e : ''));
+  onAttendanceEventChange();
+  const rosterPicker = document.getElementById('att-roster-event');
+  const keepRoster = rosterPicker.value;
+  rosterPicker.innerHTML = options;
+  if (attState.events.some((ev) => ev.e === keepRoster)) rosterPicker.value = keepRoster;
+  else if (picker.value) rosterPicker.value = picker.value;
+  if (attState.summary) {
+    const h = attState.summary.hours || {};
+    setText('att-hours', `Conference hours ${guestTime12(h.dayStart)} – ${guestTime12(h.dayEnd)}. Sign in each day from ${guestTime12(attState.events.find((ev) => ev.kind === 'IN' && ev.scope === 'day')?.from || h.dayStart)}; sign out on the last day ${guestTime12(h.signOutFrom)} – ${guestTime12(h.signOutUntil)}.`);
+    renderAttendanceSummary();
+    if (rosterPicker.value) await loadAttendanceRoster();
+  }
+}
+
+function attEvent(e) {
+  return attState.events.find((ev) => ev.e === e) || null;
+}
+
+function onAttendanceEventChange() {
+  const ev = attEvent(document.getElementById('att-event').value);
+  storageSet('local', 'nqocn_att_event', ev ? ev.e : '');
+  const note = document.getElementById('att-window');
+  if (!ev) { note.textContent = ''; return; }
+  const span = ev.from && ev.until ? `${guestTime12(ev.from)} – ${guestTime12(ev.until)}` : '';
+  note.className = `text-xs mt-1.5 font-semibold ${ev.window && ev.window.open ? 'text-emerald-700' : 'text-amber-700'}`;
+  note.textContent = ev.window && ev.window.open ? `Open now${span ? ` (${span})` : ''}.` : (ev.window ? ev.window.reason : '');
+  hideAttendanceLetIn();
+}
+
+function showAttendanceResult(kind, title, detail) {
+  const box = document.getElementById('att-result');
+  const tone = { ok: 'bg-emerald-50 border-emerald-300 text-emerald-900', again: 'bg-sky-50 border-sky-300 text-sky-900', bad: 'bg-rose-50 border-rose-300 text-rose-900', warn: 'bg-amber-50 border-amber-300 text-amber-900' }[kind];
+  const mark = { ok: '✓', again: '✓', bad: '✕', warn: '!' }[kind];
+  box.className = `mt-3 rounded-xl px-4 py-3 border ${tone}`;
+  box.innerHTML = `<p class="text-lg sm:text-xl font-extrabold">${mark} ${esc(title)}</p>${detail ? `<p class="text-sm mt-0.5">${esc(detail)}</p>` : ''}`;
+  const scanLine = document.getElementById('att-scan-result');
+  if (scanLine) { scanLine.className = `p-4 text-center text-base font-bold ${tone}`; scanLine.textContent = `${mark} ${title}${detail ? ` — ${detail}` : ''}`; }
+}
+
+function hideAttendanceLetIn() {
+  document.getElementById('att-notenrolled').classList.add('hidden');
+  attState.pending = null;
+}
+
+async function attendanceSignIn(identifier, notEnrolledReason) {
+  const id = String(identifier || '').trim();
+  const e = document.getElementById('att-event').value;
+  if (!id) return showToast('Scan a desk pass, or type an ID, mobile or email.');
+  if (!e) return showToast('Choose what they are signing into.');
+  const res = await fetch('/api/attendance/scan', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier: id, e, notEnrolledReason: notEnrolledReason || undefined }),
+  });
+  const data = await res.json();
+  if (data.success) {
+    hideAttendanceLetIn();
+    document.getElementById('att-id').value = '';
+    if (data.already) showAttendanceResult('again', `${data.name}: already signed in`, `at ${fmtAuditTime(data.at)}${data.method ? ` · ${ATT_METHODS[data.method] || data.method}` : ''}`);
+    else showAttendanceResult('ok', data.name, `${data.event}${data.registrationNumber ? ` · ${data.registrationNumber}` : ''}`);
+    return data;
+  }
+  if (data.notEnrolled) {
+    attState.pending = id;
+    showAttendanceResult('warn', data.name || 'Not enrolled', data.error);
+    document.getElementById('att-notenrolled').classList.remove('hidden');
+    document.getElementById('att-notenrolled-reason').value = '';
+    return data;
+  }
+  showAttendanceResult('bad', data.name || 'Not signed in', data.error || 'Could not sign in.');
+  return data;
+}
+
+function attendanceLetIn() {
+  const reason = document.getElementById('att-notenrolled-reason').value.trim();
+  if (!reason) return showToast('Give a reason -- it is kept with the record.');
+  if (attState.pending) attendanceSignIn(attState.pending, reason);
+}
+
+// The camera stays open: scan one desk pass after another. The same code
+// read twice within a few seconds (the camera seeing it again) counts once.
+async function openAttendanceScanner() {
+  const ev = attEvent(document.getElementById('att-event').value);
+  if (!ev) return showToast('Choose what they are signing into.');
+  setText('att-scan-event', ev.longLabel);
+  const line = document.getElementById('att-scan-result');
+  line.className = 'p-4 text-center text-sm font-semibold text-slate-600';
+  line.textContent = 'Starting the camera…';
+  openModal('modal-att-scan');
+  try {
+    if (!window.Html5Qrcode) await loadScriptOnce(DESK_SCANNER_SRC);
+    attState.scanner = new window.Html5Qrcode('att-scan-reader');
+    await attState.scanner.start({ facingMode: 'environment' },
+      { fps: 10, qrbox: (w, h) => { const side = Math.floor(Math.min(w, h) * 0.75); return { width: side, height: side }; } },
+      (text) => onAttendanceScan(text), () => {});
+    line.textContent = 'Point the camera at a desk pass.';
+  } catch (e) {
+    line.textContent = 'The camera could not start. Allow camera access for this site, or type the ID instead.';
+  }
+}
+
+async function onAttendanceScan(text) {
+  const now = Date.now();
+  if (text === attState.lastScan.text && now - attState.lastScan.at < 4000) return;
+  attState.lastScan = { text, at: now };
+  const id = deskIdentifierFromScan(text);
+  if (!id) return showAttendanceResult('bad', 'Not a desk pass', 'That code holds no ID, mobile or email.');
+  await attendanceSignIn(id);
+}
+
+async function closeAttendanceScanner() {
+  const scanner = attState.scanner;
+  attState.scanner = null;
+  if (scanner) {
+    try { await scanner.stop(); } catch (e) { /* already stopped */ }
+    try { scanner.clear(); } catch (e) { /* nothing to clear */ }
+  }
+  closeModal('modal-att-scan');
+  if (can('attendance.view')) renderAttendance();
+}
+
+// The screen at the venue. A fresh code every 20 seconds (each is good for a
+// few minutes), the event in large type, and the time.
+function openAttendanceScreen() {
+  const ev = attEvent(document.getElementById('att-event').value);
+  if (!ev) return showToast('Choose what the screen signs people into.');
+  setText('att-screen-conf', [conferenceInfo.acronym || conferenceInfo.name, ev.date ? formatFullDate(ev.date) : ''].filter(Boolean).join(' · '));
+  setText('att-screen-event', ev.longLabel);
+  const refresh = () => {
+    document.getElementById('att-screen-qr').src = `/api/attendance/screen-qr.png?e=${encodeURIComponent(ev.e)}&t=${Date.now()}`;
+    setText('att-screen-clock', new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' }));
+  };
+  refresh();
+  clearInterval(attState.screenTimer);
+  attState.screenTimer = setInterval(refresh, 20000);
+  const screen = document.getElementById('att-screen');
+  screen.classList.remove('hidden');
+  if (screen.requestFullscreen) screen.requestFullscreen().catch(() => {});
+}
+
+function closeAttendanceScreen() {
+  clearInterval(attState.screenTimer);
+  attState.screenTimer = null;
+  document.getElementById('att-screen').classList.add('hidden');
+  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+}
+
+function renderAttendanceSummary() {
+  const s = attState.summary;
+  if (!s) return;
+  setText('att-completed', `${s.completed} of ${s.registered} have completed the conference`);
+  document.getElementById('att-summary').innerHTML = s.events.map((ev) => {
+    const pct = ev.expected ? Math.min(100, Math.round((ev.count / ev.expected) * 100)) : 0;
+    return `<div class="py-2.5 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4">
+      <div class="min-w-0 flex-1">
+        <p class="font-semibold text-slate-800 text-sm">${esc(ev.longLabel)}${ev.window && ev.window.open ? ' <span class="text-[10px] bg-emerald-100 text-emerald-700 border border-emerald-300 px-2 py-0.5 rounded-full font-bold">Open</span>' : ''}</p>
+        <p class="text-xs text-slate-500">${ev.date ? `${esc(formatFullDate(ev.date))}${ev.from && ev.until ? ` · ${esc(guestTime12(ev.from))} – ${esc(guestTime12(ev.until))}` : ''}` : 'No date set -- set it in Programs'}</p>
+      </div>
+      <div class="sm:w-56 shrink-0">
+        <div class="flex justify-between text-xs font-semibold text-slate-600 tabular-nums"><span>${ev.count} in</span><span>of ${ev.expected}</span></div>
+        <div class="h-2 bg-slate-100 rounded-full overflow-hidden mt-1"><div class="h-full bg-emerald-500" style="width:${pct}%"></div></div>
+      </div>
+    </div>`;
+  }).join('') || '<p class="py-6 text-center text-sm text-slate-400">Set the conference dates in Settings → General to take attendance.</p>';
+}
+
+async function loadAttendanceRoster() {
+  const e = document.getElementById('att-roster-event').value;
+  if (!e) return;
+  const res = await fetch(`/api/attendance/roster?e=${encodeURIComponent(e)}`);
+  attState.roster = res.ok ? await res.json() : null;
+  renderAttendanceRoster();
+}
+
+function renderAttendanceRoster() {
+  const box = document.getElementById('att-roster');
+  const r = attState.roster;
+  if (!r || !r.people) { box.innerHTML = ''; return; }
+  const filter = document.getElementById('att-roster-filter').value;
+  const term = document.getElementById('att-roster-search').value.trim().toLowerCase();
+  const mayManage = can('attendance.manage');
+  const shown = r.people
+    .filter((p) => !filter || (filter === 'in' ? p.attendance : !p.attendance))
+    .filter((p) => !term || [p.name, p.registrationNumber].some((v) => String(v || '').toLowerCase().includes(term)));
+  const inCount = r.people.filter((p) => p.attendance).length;
+  setText('att-roster-count', `${inCount} of ${r.people.filter((p) => p.expected).length} expected are in${r.people.some((p) => !p.expected) ? ` · ${r.people.filter((p) => !p.expected).length} let in without enrolment` : ''} · showing ${shown.length}`);
+  box.innerHTML = shown.map((p) => {
+    const a = p.attendance;
+    return `<div class="px-3 py-2 flex items-center gap-2">
+      <span class="w-5 text-center font-bold ${a ? 'text-emerald-600' : 'text-slate-300'}">${a ? '✓' : '○'}</span>
+      <span class="min-w-0 flex-1">
+        <span class="block font-semibold text-slate-700 truncate">${esc(p.name || p.phone)}${p.expected ? '' : ' <span class="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full font-bold">Not enrolled</span>'}</span>
+        <span class="block text-xs text-slate-400 truncate">${esc([p.registrationNumber, a ? `${fmtAuditTime(a.at)} · ${ATT_METHODS[a.method] || a.method}${a.by ? ` by ${a.by}` : ''}` : '', a && a.note ? a.note : ''].filter(Boolean).join(' · '))}</span>
+      </span>
+      ${mayManage ? (a
+        ? `<button type="button" onclick="removeAttendance(${Number(a.id)})" class="shrink-0 px-2.5 py-1 border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-lg text-xs font-semibold">Remove</button>`
+        : `<button type="button" onclick="markAttendanceByHand('${esc(p.phone)}')" class="shrink-0 px-2.5 py-1 border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-xs font-semibold">Mark in</button>`) : ''}
+    </div>`;
+  }).join('') || '<p class="px-3 py-6 text-center text-sm text-slate-400">Nobody to show.</p>';
+}
+
+async function markAttendanceByHand(phone) {
+  const e = document.getElementById('att-roster-event').value;
+  const reason = await showPrompt('Why is this being recorded by hand? The reason is kept with the record.');
+  if (!reason) return;
+  const data = await (await fetch('/api/attendance/manual', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone, e, reason }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not record it.');
+  showToast(data.already ? 'Already recorded.' : 'Recorded.', 'success');
+  renderAttendance();
+}
+
+async function removeAttendance(id) {
+  const reason = await showPrompt('Why is this being removed? The reason is kept with the record.');
+  if (!reason) return;
+  const data = await (await fetch(`/api/attendance/${encodeURIComponent(id)}`, {
+    method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not remove it.');
+  showToast('Removed.', 'success');
+  renderAttendance();
+}
 
 // --- BANK STATEMENT RECONCILIATION (admin) ---
 async function handleStatementUpload(e) {

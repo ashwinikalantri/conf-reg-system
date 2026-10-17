@@ -1,0 +1,85 @@
+    <!-- TAB: ATTENDANCE. Who was there, for the certificates: each day's
+         sign-in, the last day's sign-out, each workshop's sign-in. A
+         volunteer signs people in by scanning their desk pass (or typing an
+         ID); "Show sign-in QR" puts a code on a screen at the venue for
+         delegates to scan themselves. The events and their windows are in
+         attendance.js; the routes under /api/attendance in server.js. -->
+    <section id="section-attendance" class="hidden space-y-5">
+      <div class="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-bold text-slate-800">Attendance</h2>
+          <p id="att-hours" class="text-xs text-slate-500">Sign in each day; sign out at the close of the last day. Workshops: sign in at the door.</p>
+        </div>
+        <button type="button" id="att-screen-btn" onclick="openAttendanceScreen()" class="hidden w-full sm:w-auto px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-sm rounded-xl shadow-md">Show sign-in QR on this screen</button>
+      </div>
+
+      <!-- Take attendance: choose what they are signing into, then scan or type. -->
+      <div id="att-take" class="hidden bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
+        <label for="att-event" class="block text-xs font-semibold text-slate-600 mb-1">Signing into</label>
+        <select id="att-event" onchange="onAttendanceEventChange()" class="w-full h-11 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
+        <p id="att-window" class="text-xs mt-1.5"></p>
+        <form onsubmit="event.preventDefault(); attendanceSignIn(document.getElementById('att-id').value)" class="mt-3 flex flex-col sm:flex-row gap-2">
+          <input id="att-id" autocomplete="off" placeholder="ID, mobile or email" class="flex-1 min-w-0 h-11 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+          <div class="flex gap-2">
+            <button type="submit" class="flex-1 sm:flex-none h-11 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Sign in</button>
+            <button type="button" onclick="openAttendanceScanner()" class="flex-1 sm:flex-none h-11 px-4 bg-slate-700 hover:bg-slate-800 text-white font-semibold text-sm rounded-lg">Scan</button>
+          </div>
+        </form>
+        <!-- The last result, large enough to read at arm's length. -->
+        <div id="att-result" class="hidden mt-3 rounded-xl px-4 py-3 border"></div>
+        <!-- A workshop: someone not enrolled is let in only with a reason. -->
+        <form id="att-notenrolled" onsubmit="event.preventDefault(); attendanceLetIn()" class="hidden mt-2 flex flex-col sm:flex-row gap-2">
+          <input id="att-notenrolled-reason" maxlength="200" placeholder="Reason to let them in (e.g. swapped with a colleague)" class="flex-1 min-w-0 h-10 px-3 border border-amber-300 rounded-lg text-sm bg-white outline-none">
+          <button type="submit" class="h-10 px-4 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-sm rounded-lg">Let in</button>
+        </form>
+      </div>
+
+      <!-- Counts -->
+      <div id="att-summary-card" class="hidden bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <h3 class="text-sm font-bold text-slate-800">Counts</h3>
+          <span id="att-completed" class="text-xs font-semibold text-emerald-700"></span>
+        </div>
+        <div id="att-summary" class="divide-y divide-slate-100"></div>
+      </div>
+
+      <!-- Roster: who is expected at one event, and who is in. -->
+      <div id="att-roster-card" class="hidden bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
+        <h3 class="text-sm font-bold text-slate-800 mb-3">Roster</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
+          <select id="att-roster-event" onchange="loadAttendanceRoster()" aria-label="Event" class="h-10 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
+          <select id="att-roster-filter" onchange="renderAttendanceRoster()" aria-label="Show" class="h-10 px-2 border border-slate-300 rounded-lg text-sm bg-white">
+            <option value="">Everyone</option>
+            <option value="in">Signed in</option>
+            <option value="out">Not signed in</option>
+          </select>
+          <input id="att-roster-search" type="search" oninput="renderAttendanceRoster()" placeholder="Search name or ID" class="h-10 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+        </div>
+        <p id="att-roster-count" class="text-xs text-slate-500 mb-2"></p>
+        <div id="att-roster" class="border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-[32rem] overflow-y-auto text-sm"></div>
+      </div>
+    </section>
+
+    <!-- The camera, for signing people in one after another. -->
+    <div id="modal-att-scan" class="hidden fixed inset-0 bg-slate-900/80 flex justify-center items-stretch sm:items-center p-0 sm:p-4 z-50">
+      <div class="bg-white max-w-md w-full sm:rounded-2xl shadow-card flex flex-col h-full sm:h-auto">
+        <div class="p-4 border-b border-slate-100 flex items-center gap-2">
+          <p id="att-scan-event" class="font-bold text-slate-800 text-sm flex-1"></p>
+          <button type="button" onclick="closeAttendanceScanner()" class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-semibold text-slate-700">Done</button>
+        </div>
+        <div id="att-scan-reader" class="w-full bg-black flex-1 sm:flex-none sm:min-h-[18rem]"></div>
+        <div id="att-scan-result" class="p-4 text-center text-sm font-semibold text-slate-600">Point the camera at a desk pass.</div>
+      </div>
+    </div>
+
+    <!-- The screen at the venue: a QR delegates scan with their own phone.
+         It changes every 30 seconds, so a photo of it soon stops working. -->
+    <div id="att-screen" class="hidden fixed inset-0 bg-white z-[60] flex flex-col items-center justify-center p-6 text-center">
+      <button type="button" onclick="closeAttendanceScreen()" class="absolute top-4 right-4 px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-semibold text-slate-600">Close</button>
+      <p id="att-screen-conf" class="text-sm sm:text-base font-semibold text-slate-500 uppercase tracking-wide"></p>
+      <h2 id="att-screen-event" class="text-3xl sm:text-5xl font-extrabold text-slate-900 mt-2 text-balance"></h2>
+      <img id="att-screen-qr" alt="Sign-in QR code" class="mt-6 w-[min(70vh,80vw)] h-[min(70vh,80vw)] border-8 border-white shadow-xl rounded-2xl">
+      <p class="mt-6 text-lg sm:text-2xl font-semibold text-slate-700">Scan with your phone camera to sign in</p>
+      <p class="text-sm sm:text-base text-slate-500 mt-1">You will be asked to log in to the registration portal if you have not.</p>
+      <p id="att-screen-clock" class="mt-4 text-sm text-slate-400 tabular-nums"></p>
+    </div>

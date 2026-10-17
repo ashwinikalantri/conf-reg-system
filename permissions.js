@@ -27,6 +27,7 @@ const SECTIONS = [
   { key: 'statement', label: 'Bank statement' },
   { key: 'abstracts', label: 'Abstracts' },
   { key: 'guests', label: 'Faculty coordination' },
+  { key: 'attendance', label: 'Attendance & certificates' },
   { key: 'reports', label: 'Reports' },
   { key: 'users', label: 'Users & roles' },
   { key: 'masters', label: 'Masters' },
@@ -110,6 +111,10 @@ const PERMISSIONS = [
   // Transport Coordinator, stay to the Accommodation Coordinator, and the
   // shared details -- and marking someone as faculty -- to both. Removing a
   // guest and changing the lists the dropdowns draw from is Super Admin's.
+  // --- Attendance (for the certificates) ---
+  ['attendance.mark', 'attendance', 'Take attendance', 'Scan desk passes at a hall or workshop door, and show the self sign-in code on a screen at the venue.'],
+  ['attendance.view', 'attendance', 'View attendance', 'See who has signed in and out of each conference day and workshop.'],
+  ['attendance.manage', 'attendance', 'Correct attendance', 'Record or remove a sign-in or sign-out at any time, outside its window, with a reason that is kept.'],
   ['guests.view', 'guests', 'View faculty', 'Open the Faculty tab: every faculty member\'s travel and stay, the dashboard, the pickup and drop schedules, vehicles and rooms.'],
   ['guests.edit', 'guests', 'Mark faculty, edit shared details', 'Mark a delegate as faculty (adding them to the faculty list), and edit Special Needs, Overall Status and Remarks.'],
   ['guests.travel', 'guests', 'Edit travel', 'Edit arrival, departure, pickup and drop details, whether local transport is needed and the transport coordinator, and add or edit vehicles.'],
@@ -203,6 +208,13 @@ const ROUTE_PERMISSIONS = {
   'GET /api/desk/cash-in-hand': 'desk.view',
   'POST /api/desk/enroll': 'desk.enroll',
   'POST /api/desk/checkin': 'desk.checkin',
+  'GET /api/attendance/events': 'attendance.mark',
+  'POST /api/attendance/scan': 'attendance.mark',
+  'GET /api/attendance/screen-qr.png': 'attendance.mark',
+  'GET /api/attendance/summary': 'attendance.view',
+  'GET /api/attendance/roster': 'attendance.view',
+  'POST /api/attendance/manual': 'attendance.manage',
+  'DELETE /api/attendance/:id': 'attendance.manage',
   // Guarded by the existing "add a payment on the delegate's behalf" key
   // rather than a new one -- taking cash at the counter is that idea, not a
   // different one. The desk-specific part is the route, not the permission.
@@ -389,6 +401,8 @@ const SECTION_PERMISSIONS = {
   // The Faculty tab (#faculty in the address); its permissions keep their
   // original guests.* names.
   faculty: { permission: 'guests.view' },
+  // Taking attendance at a door, or watching the counts.
+  attendance: { anyOf: ['attendance.mark', 'attendance.view'] },
   general: { permission: 'system.settings_view' },
   activity: { permission: 'system.activity_log' },
 };
@@ -491,6 +505,8 @@ const SYSTEM_ROLES = [
       // Letting the delegate at the counter submit an abstract after the
       // last date, from the Abstract card on their desk page.
       'abstracts.extend_deadline',
+      // Signing delegates in at the doors, and seeing the counts.
+      'attendance.mark', 'attendance.view',
     ],
   },
   {
@@ -511,8 +527,8 @@ const SYSTEM_ROLES = [
   {
     key: 'VOLUNTEER_REGISTRATION',
     label: 'Volunteer – Registration',
-    description: 'Registration desk volunteer: looks delegates up on the Front Desk and checks them in.',
-    permissions: ['desk.view', 'desk.checkin'],
+    description: 'Registration desk volunteer: looks delegates up on the Front Desk, checks them in, and signs them in at the hall and workshop doors.',
+    permissions: ['desk.view', 'desk.checkin', 'attendance.mark'],
   },
   {
     key: 'VOLUNTEER_TRANSPORT',
