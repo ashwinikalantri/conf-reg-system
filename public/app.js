@@ -9714,6 +9714,7 @@ function renderDeskRecord() {
 
   box.innerHTML = [
     deskWhoCard(user, reg, checkedIn, guest),
+    deskFacultyCard(guest),
     reg ? deskMoneyCard(reg, payment) : deskNoRegistrationCard(),
     reg ? deskProgrammeCard(selections) : '',
     deskAbstractCard(abstracts, abstractWindow, abstractExtension),
@@ -9967,6 +9968,30 @@ async function deskWithdrawAbstractExtension() {
 }
 
 // --- desk actions ---------------------------------------------------------
+
+// A faculty member's travel and stay, read-only, when any is set -- so the
+// desk can answer "when is my pickup, where am I staying".
+function deskFacultyCard(g) {
+  if (!g) return '';
+  const leg = (date, time, mode, number, point) => (date
+    ? `${guestWhen(date, time)}${[mode, number, point].filter(Boolean).length ? ` · ${[mode, number, point].filter(Boolean).map(esc).join(' · ')}` : ''}` : '');
+  const arrival = leg(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point);
+  const departure = leg(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point);
+  const transfer = (vehicle, status) => [vehicle, status].filter(Boolean).map(esc).join(' · ');
+  const nights = guestNights(g.checkin_date, g.checkout_date);
+  const stay = Number(g.stay_not_needed) ? 'Not needed — arranging their own'
+    : g.accommodation ? [`${esc(g.accommodation)}${g.room_no ? ` · Room ${esc(g.room_no)}` : ''}`, esc(g.room_type),
+      g.checkin_date && g.checkout_date ? `${esc(formatFullDate(g.checkin_date))} → ${esc(formatFullDate(g.checkout_date))}` : '', esc(nightsLabel(nights))].filter(Boolean).join(' · ') : '';
+  const rows = [
+    ['Arrival', arrival], ['Pickup', transfer(g.pickup_vehicle, g.pickup_status)],
+    ['Departure', departure], ['Drop', transfer(g.drop_vehicle, g.drop_status)],
+    ['Stay', stay], ['Transport volunteer', esc(g.transport_volunteer || '')], ['Accommodation volunteer', esc(g.accommodation_volunteer || '')],
+    ['Special needs', esc(g.special_needs || '')],
+  ].filter(([, v]) => v);
+  if (!rows.length) return '';
+  return deskCard('Faculty — travel & stay', `<dl class="grid grid-cols-1 sm:grid-cols-2 gap-3">${rows.map(([k, v]) =>
+    `<div><dt class="text-[11px] text-slate-400 uppercase tracking-wide">${esc(k)}</dt><dd class="text-sm text-slate-800">${v}</dd></div>`).join('')}</dl>`, '');
+}
 
 async function deskMarkFaculty() {
   const key = deskDelegate && deskDelegate.user ? deskDelegate.user.phone_number : null;
@@ -10454,7 +10479,10 @@ function filteredGuests() {
     if (acc === '__none' && g.accommodation) return false;
     if (acc && acc !== '__none' && g.accommodation !== acc) return false;
     if (flag === 'attention' && !(g.flags.pickupAlert || g.flags.noAccommodation)) return false;
-    if (flag && flag !== 'attention') {
+    // A volunteer's own: the faculty they are assigned to, either side.
+    const me = activeAdminUser && activeAdminUser.phone_number;
+    if (flag === 'mine' && !(me && (g.transport_coordinator === me || g.accommodation_coordinator === me))) return false;
+    if (flag && flag !== 'attention' && flag !== 'mine') {
       const v = g.flags[flag];
       if (Array.isArray(v) ? !v.length : !v) return false;
     }
@@ -10476,7 +10504,7 @@ function renderGuestList() {
     <th class="p-3 text-left">${th('arrival_at', 'Arrival · Pickup')}</th>
     <th class="p-3 text-left">${th('departure_at', 'Departure · Drop')}</th>
     <th class="p-3 text-left">${th('accommodation', 'Stay')}</th>
-    <th class="p-3 text-left">Coordinators</th>
+    <th class="p-3 text-left">Volunteers</th>
     <th class="p-3 text-left">${th('overall_status', 'Status')}</th>
     <th class="p-3 text-left">Needs · Remarks</th>
     <th class="p-3"></th>
@@ -10747,8 +10775,12 @@ function openGuestEditor(id) {
       + '</div>'),
     group('Other', shared, '',
       field('overall_status', 'Overall Status', select('overall_status', 'overall_status', shared))
-      + field('transport_coordinator', 'Transport Coordinator', people('transport_coordinator', guestData.coordinators.transport, travel))
-      + field('accommodation_coordinator', 'Accommodation Coordinator', people('accommodation_coordinator', guestData.coordinators.accommodation, stay))
+      // Only volunteers allotted to that area (the Volunteer – Transport /
+      // Volunteer – Accommodation roles) are offered.
+      + field('transport_coordinator', 'Transport Volunteer', people('transport_coordinator', guestData.coordinators.transport, travel)
+        + (guestData.coordinators.transport.length ? '' : '<span class="block text-[11px] text-slate-400 mt-1">No transport volunteers yet: give someone the Volunteer – Transport role.</span>'))
+      + field('accommodation_coordinator', 'Accommodation Volunteer', people('accommodation_coordinator', guestData.coordinators.accommodation, stay)
+        + (guestData.coordinators.accommodation.length ? '' : '<span class="block text-[11px] text-slate-400 mt-1">No accommodation volunteers yet: give someone the Volunteer – Accommodation role.</span>'))
       + `<div class="col-span-2 sm:col-span-4 grid sm:grid-cols-2 gap-3">`
       + field('special_needs', 'Special Needs', `<textarea name="special_needs" rows="2" ${shared ? '' : 'disabled'} class="${cls} h-auto py-2">${esc(g.special_needs || '')}</textarea>`)
       + field('remarks', 'Remarks', `<textarea name="remarks" rows="2" ${shared ? '' : 'disabled'} class="${cls} h-auto py-2">${esc(g.remarks || '')}</textarea>`)
@@ -10863,7 +10895,7 @@ async function saveGuest(ev) {
   })).json().catch(() => ({}));
   if (btn) btn.disabled = false;
   if (!data.success) return showToast(data.error || 'Could not save.');
-  const told = (data.notified || []).map((s) => `the ${s === 'travel' ? 'transport' : 'accommodation'} coordinator`).join(' and ');
+  const told = (data.notified || []).map((s) => `the ${s === 'travel' ? 'transport' : 'accommodation'} volunteer`).join(' and ');
   showToast(data.changed ? `Saved.${told ? ` Emailed ${told}.` : ''}` : 'Nothing changed.', 'success');
   closeModal('modal-guest-edit');
   renderGuests();

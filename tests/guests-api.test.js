@@ -81,9 +81,17 @@ const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `
       g(ids.reg).name === 'Rekha Registered' && g(ids.reg).designation === 'Professor' && /\d{10}/.test(g(ids.reg).phone || ''), g(ids.reg));
     check('the unregistered one is flagged', g(ids.unreg).flags.notRegistered === true && g(ids.reg).flags.notRegistered === false);
     check('...and has nowhere to stay yet (red)', g(ids.reg).flags.noAccommodation === true);
-    check('both coordinators are offered for their side',
-      board.coordinators.transport.some((p) => p.phone === P.tc) && board.coordinators.accommodation.some((p) => p.phone === P.ac)
-      && !board.coordinators.transport.some((p) => p.phone === P.ac));
+    // The Transport and Accommodation dropdowns offer volunteers of that
+    // area only -- not the coordinators who run it.
+    check('a coordinator without a volunteer role is not offered', !board.coordinators.transport.some((p) => p.phone === P.tc)
+      && !board.coordinators.accommodation.some((p) => p.phone === P.ac));
+    check('...nor can be named', (await put(ids.reg, { transport_coordinator: P.tc }, tc)).status === 400);
+    await call('PUT', `/api/users/${P.tc}/roles`, { roles: ['VOLUNTEER_TRANSPORT'] }, admin);
+    await call('PUT', `/api/users/${P.ac}/roles`, { roles: ['VOLUNTEER_ACCOMMODATION'] }, admin);
+    const vboard = (await call('GET', '/api/guests', null, tc)).body;
+    check('volunteers are offered for their own area only', vboard.coordinators.transport.some((p) => p.phone === P.tc)
+      && vboard.coordinators.accommodation.some((p) => p.phone === P.ac)
+      && !vboard.coordinators.transport.some((p) => p.phone === P.ac) && !vboard.coordinators.accommodation.some((p) => p.phone === P.tc));
 
     console.log('\n== The split ==');
     const t1 = await put(ids.reg, { arrival_date: '2026-11-20', arrival_time: '09:30', arrival_mode: 'Flight', arrival_number: '6E 123', arrival_point: 'Nagpur Airport', pickup_status: 'Pending' }, tc);
@@ -208,11 +216,22 @@ const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `
     check('...which the board then uses', after.settings.alertDays === 3 && after.slotLabels[0] === 'Night 12 AM–5 AM', after.slotLabels);
     await call('PUT', '/api/guests/settings', before, admin);
 
+    console.log('\n== Volunteers ==');
+    const perms = require('../permissions');
+    check('three volunteer roles: Registration sees the Front Desk and checks in', perms.roleSeesSection('VOLUNTEER_REGISTRATION', 'desk')
+      && perms.roleCan('VOLUNTEER_REGISTRATION', 'desk.checkin') && !perms.roleSeesSection('VOLUNTEER_REGISTRATION', 'faculty'));
+    check('...Transport and Accommodation see the Faculty tab and change nothing', ['VOLUNTEER_TRANSPORT', 'VOLUNTEER_ACCOMMODATION'].every((r) =>
+      perms.roleSeesSection(r, 'faculty') && !['guests.edit', 'guests.travel', 'guests.stay', 'guests.manage'].some((k) => perms.roleCan(r, k))));
+    const volMe = (await call('GET', '/api/auth/me', null, tc)).body;
+    check('a volunteer role added to a coordinator adds nothing they could not already do', volMe.permissions.includes('guests.travel'));
+
     console.log('\n== CSV, the Front Desk, the activity log ==');
     const csv = await call('GET', '/api/guests/export.csv', null, ac);
     check('a coordinator downloads the CSV', csv.status === 200 && /text\/csv/.test(csv.headers['content-type']) && csv.raw.includes('Rekha Registered'), csv.status);
     const deskView = (await call('GET', `/api/desk/delegate/${P.reg}`, null, admin)).body;
     check('the Front Desk lookup knows they are faculty', deskView.guest && deskView.guest.id === ids.reg, deskView.guest);
+    check('...with their travel and stay, and who is looking after them', deskView.guest.arrival_date === '2026-11-20' && deskView.guest.arrival_time === '10:30'
+      && deskView.guest.room_no === `R${N}` && deskView.guest.transport_volunteer === 'Tara Transport' && deskView.guest.accommodation_volunteer === 'Anil Accommodation', deskView.guest);
     check('...and someone who is not', (await call('GET', `/api/desk/delegate/${P.other}`, null, admin)).body.guest === null);
     const log = (await call('GET', '/api/admin/activity-log', null, admin)).body.master || [];
     check('marking, editing and masters are in the activity log',
@@ -229,6 +248,7 @@ const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `
     for (const r of made.rooms) await db.run('DELETE FROM guest_rooms WHERE id = ?', [r]);
     for (const l of made.lists) await db.run('DELETE FROM guest_lists WHERE id = ?', [l]);
     await db.run(`DELETE FROM registrations WHERE phone_number IN (${Object.values(P).map(() => '?').join(',')})`, Object.values(P));
+    await db.run(`DELETE FROM user_roles WHERE phone_number IN (${Object.values(P).map(() => '?').join(',')})`, Object.values(P));
     await db.run(`DELETE FROM users WHERE phone_number IN (${Object.values(P).map(() => '?').join(',')})`, Object.values(P));
   }
   db.close();

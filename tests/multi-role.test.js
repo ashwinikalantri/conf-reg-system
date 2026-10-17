@@ -57,9 +57,13 @@ const CUSTOM = `TEMPROLE${N.slice(-4)}`;
     check('...but nothing neither role grants', (await call('GET', '/api/registrations', null, staff)).status === 403
       && !after.permissions.includes('guests.stay'));
     const board = (await call('GET', '/api/guests', null, admin)).body;
-    check('they are offered as a transport coordinator', board.coordinators.transport.some((p) => p.phone === P.staff));
+    check('holding a coordinator role alone does not put them in the volunteer dropdown', !board.coordinators.transport.some((p) => p.phone === P.staff));
     check('the change is in the activity log', (await db.get(
       "SELECT 1 FROM audit_log WHERE action = 'USER_ROLES_CHANGED' AND entity_id = ? AND new_value = 'TRANSPORT_COORDINATOR' AND old_value = 'none'", [P.staff])) !== undefined);
+
+    await setExtra(P.staff, ['TRANSPORT_COORDINATOR', 'VOLUNTEER_TRANSPORT']);
+    check('...a Volunteer – Transport role, added, does', (await call('GET', '/api/guests', null, admin)).body.coordinators.transport.some((p) => p.phone === P.staff));
+    await setExtra(P.staff, ['TRANSPORT_COORDINATOR']);
 
     console.log('\n== Where it shows ==');
     const list = (await call('GET', '/api/users', null, admin)).body;

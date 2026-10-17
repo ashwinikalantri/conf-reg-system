@@ -9076,7 +9076,17 @@ app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async 
       dbGet('SELECT until, granted_by, granted_at FROM abstract_extensions WHERE phone_number = ?', [user.phone_number]),
     ]);
     // Faculty: on the guest list (see GUEST COORDINATION).
-    const guest = await dbGet('SELECT id, overall_status FROM guests WHERE phone_number = ?', [user.phone_number]);
+    // ...with their travel and stay, which the desk shows read-only.
+    const guest = await dbGet(
+      `SELECT g.id, g.overall_status, g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point,
+              g.pickup_vehicle, g.pickup_status, g.departure_date, g.departure_time, g.departure_mode, g.departure_number,
+              g.departure_point, g.drop_vehicle, g.drop_status, g.stay_not_needed, g.accommodation, g.room_no,
+              g.checkin_date, g.checkout_date, g.room_type, g.special_needs,
+              tv.full_name AS transport_volunteer, av.full_name AS accommodation_volunteer
+         FROM guests g
+         LEFT JOIN users tv ON tv.phone_number = g.transport_coordinator
+         LEFT JOIN users av ON av.phone_number = g.accommodation_coordinator
+        WHERE g.phone_number = ?`, [user.phone_number]);
 
     res.json({
       success: true,
@@ -12164,12 +12174,16 @@ const activeGuestLists = (rows) => {
   return out;
 };
 
-// Staff who can be named coordinator: anyone whose role may edit that side.
+// Who a faculty member's Transport and Accommodation dropdowns offer: the
+// volunteers allotted to that area -- holding that volunteer role, as their
+// main role or an additional one. (The columns keep their first names,
+// transport_coordinator / accommodation_coordinator.)
+const VOLUNTEER_ROLE = { transport: 'VOLUNTEER_TRANSPORT', accommodation: 'VOLUNTEER_ACCOMMODATION' };
 async function guestCoordinatorPool() {
   const staff = await staffWithRoles();
-  const pick = (perm) => staff.filter((u) => rolesCan(u.roles, perm))
+  const pick = (role) => staff.filter((u) => u.roles.includes(role))
     .map((u) => ({ phone: u.phone_number, name: [u.salutation, u.full_name].filter(Boolean).join(' ') || u.phone_number }));
-  return { transport: pick('guests.travel'), accommodation: pick('guests.stay') };
+  return { transport: pick(VOLUNTEER_ROLE.transport), accommodation: pick(VOLUNTEER_ROLE.accommodation) };
 }
 
 async function guestRowsJoined(where = '', params = []) {
@@ -12783,7 +12797,7 @@ app.put('/api/guests/:id', requirePermission('guests.edit'), async (req, res, ne
           <td style="padding:.35rem .6rem;border-bottom:1px solid #eef3f6;color:#64748b;text-decoration:line-through">${escapeHtml(shown(c, c.from))}</td>
           <td style="padding:.35rem .6rem;border-bottom:1px solid #eef3f6;color:#1c3549;font-weight:700">${escapeHtml(shown(c, c.to))}</td></tr>`).join('');
       notifyDelegate(coord, `${side} details changed: ${g.name}`,
-        emailWrap(`${side} details changed`, `<p><b>${escapeHtml(req.session.name || 'A colleague')}</b> changed ${side.toLowerCase()} details for <b>${escapeHtml(g.name)}</b>, a faculty member you coordinate.</p>
+        emailWrap(`${side} details changed`, `<p><b>${escapeHtml(req.session.name || 'A colleague')}</b> changed ${side.toLowerCase()} details for <b>${escapeHtml(g.name)}</b>, a faculty member you are looking after.</p>
           <table style="width:100%;border-collapse:collapse;font-size:.85rem;margin:.75rem 0">${rowsHtml}</table>
           <p>See the Faculty tab at <b>${escapeHtml(PORTAL_URL)}</b>.</p>`));
       notified.push(side.toLowerCase());

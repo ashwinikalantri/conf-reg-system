@@ -45,9 +45,9 @@ const FIELD_LABELS = {
   departure_date: 'Departure Date', departure_time: 'Departure Time', departure_mode: 'Departure Mode',
   departure_number: 'Departure Flight/Train No', departure_point: 'Departure Point',
   drop_vehicle: 'Drop Vehicle/Driver', drop_status: 'Drop Status',
-  transport_coordinator: 'Transport Coordinator',
+  transport_coordinator: 'Transport Volunteer',
   accommodation: 'Accommodation', room_no: 'Room No', checkin_date: 'Check-in Date',
-  checkout_date: 'Check-out Date', room_type: 'Room Type', accommodation_coordinator: 'Accommodation Coordinator',
+  checkout_date: 'Check-out Date', room_type: 'Room Type', accommodation_coordinator: 'Accommodation Volunteer',
   special_needs: 'Special Needs', overall_status: 'Overall Status', remarks: 'Remarks',
 };
 
@@ -179,7 +179,7 @@ function validateGuestFields(input, current = {}, lists = {}, coordinators = {})
     }
     if (v != null && COORDINATOR_FIELDS.has(field)) {
       const pool = field === 'transport_coordinator' ? coordinators.transport : coordinators.accommodation;
-      if (!pool || !pool.has(v)) { errors.push(`${label} must be a staff member who holds that role.`); continue; }
+      if (!pool || !pool.has(v)) { errors.push(`${label} must be a volunteer allotted to that area.`); continue; }
     }
     values[field] = v;
   }
@@ -524,7 +524,7 @@ const CSV_COLUMNS = [
     .map((f) => [FIELD_LABELS[f], (g) => (TIME_FIELDS.has(f) ? to12h(g[f]) : g[f])]),
   ['Nights', (g) => (g.nights == null ? '' : g.nights)],
   ...['room_type', 'special_needs'].map((f) => [FIELD_LABELS[f], (g) => g[f]]),
-  ['Transport Coordinator', (g) => g.transport_coordinator_name], ['Accommodation Coordinator', (g) => g.accommodation_coordinator_name],
+  ['Transport Volunteer', (g) => g.transport_coordinator_name], ['Accommodation Volunteer', (g) => g.accommodation_coordinator_name],
   ['Accommodation needed', (g) => (Number(g.stay_not_needed) ? 'No' : 'Yes')],
   ['Overall Status', (g) => g.overall_status], ['Remarks', (g) => g.remarks],
   ['Arrival Date & Time', (g) => dateTime12(g.arrival_date, g.arrival_time)], ['Departure Date & Time', (g) => dateTime12(g.departure_date, g.departure_time)],

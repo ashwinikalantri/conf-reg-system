@@ -506,6 +506,28 @@ const SYSTEM_ROLES = [
       'reports.programs', 'reports.abstracts', 'reports.users', 'reports.summary',
     ],
   },
+  // Volunteers, one role per area; a volunteer in several areas holds several
+  // (a main role plus additional ones). Transport and Accommodation
+  // volunteers are who a faculty member's Transport and Accommodation
+  // dropdowns list; they see the Faculty tab but change nothing.
+  {
+    key: 'VOLUNTEER_REGISTRATION',
+    label: 'Volunteer – Registration',
+    description: 'Registration desk volunteer: looks delegates up on the Front Desk and checks them in.',
+    permissions: ['desk.view', 'desk.checkin'],
+  },
+  {
+    key: 'VOLUNTEER_TRANSPORT',
+    label: 'Volunteer – Transport',
+    description: 'Transport volunteer: can be assigned to faculty for pickups and drops; sees the Faculty tab, changes nothing.',
+    permissions: ['guests.view'],
+  },
+  {
+    key: 'VOLUNTEER_ACCOMMODATION',
+    label: 'Volunteer – Accommodation',
+    description: 'Accommodation volunteer: can be assigned to faculty for their stay; sees the Faculty tab, changes nothing.',
+    permissions: ['guests.view'],
+  },
   {
     key: 'TRANSPORT_COORDINATOR',
     label: 'Transport Coordinator',

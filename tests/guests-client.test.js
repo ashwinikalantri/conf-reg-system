@@ -224,6 +224,27 @@ check('the editor offers Check flight for arrival and departure, without a key',
   && /openFlightCheck\('departure', 'fr24'\)/.test(el('guest-edit-body').innerHTML) && !/fetchGuestFlight/.test(el('guest-edit-body').innerHTML));
 check('...even to someone who may only look', /openFlightCheck\('arrival', 'google'\)/.test((() => { stay.sb.__g.openGuestEditor(rows[0].id); return stay.el('guest-edit-body').innerHTML; })()));
 
+console.log('\n== Volunteers and the Front Desk ==');
+check('the dropdowns are Transport Volunteer and Accommodation Volunteer', />Transport Volunteer</.test(adminView.el('guest-edit-body').innerHTML)
+  && />Accommodation Volunteer</.test(adminView.el('guest-edit-body').innerHTML));
+const mineBefore = el('guests-filter-flag').value;
+el('guests-filter-flag').value = 'mine';
+vm.runInContext("activeAdminUser = { phone_number: 'A1' };", sb);
+data.guests.forEach((x) => { x.accommodation_coordinator = x.name === 'Bravo Homeless' ? 'A1' : null; });
+sb.__g.renderGuestList();
+check('"Assigned to me" shows a volunteer their own faculty', el('guests-tbody').innerHTML.includes('>Bravo Homeless<') && !el('guests-tbody').innerHTML.includes('>Alpha Arriving<'));
+el('guests-filter-flag').value = mineBefore;
+const dsb = { String, Number, Date, Math };
+vm.createContext(dsb);
+vm.runInContext([grabT('esc'), grabT('formatFullDate'), grabT('guestTime12'), grabT('guestWhen'), grabT('guestNights'), grabT('deskCard'), grabT('deskFacultyCard')].join('\n')
+  + `\nconst nightsLabel = ${js.match(/const nightsLabel = ([^;]+);/)[1]};\nglobalThis.card = deskFacultyCard;`, dsb);
+const dcard = dsb.card({ arrival_date: '2026-11-20', arrival_time: '21:30', arrival_mode: 'Flight', arrival_number: '6E 123', pickup_vehicle: 'Car A',
+  accommodation: 'Yatri Nivas', room_no: '7', checkin_date: '2026-11-20', checkout_date: '2026-11-22', transport_volunteer: 'Tara' });
+check('the Front Desk shows a faculty member\'s travel and stay', /Faculty — travel &amp; stay|Faculty — travel & stay/.test(dcard)
+  && /20 November 2026, 9:30 PM · Flight · 6E 123/.test(dcard) && /Yatri Nivas · Room 7/.test(dcard) && /2 nights/.test(dcard) && /Tara/.test(dcard));
+check('...and nothing when there is nothing to show', dsb.card({ id: 1 }) === '' && dsb.card(null) === '');
+check('...placed after the delegate card', /deskWhoCard\(user, reg, checkedIn, guest\),\n\s*deskFacultyCard\(guest\),/.test(js));
+
 console.log('\n== Wiring ==');
 check('Lists & Settings is hidden until shown to an admin', /id="guests-settings-tab" class="guest-subtab hidden/.test(ejs));
 check('the tab is a main tab, #faculty in the address, opened by guests.view', /const MAIN_TABS = \[[^\]]*'faculty'/.test(js)
