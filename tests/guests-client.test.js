@@ -106,7 +106,7 @@ sb.__g.sortGuests('name');
 sb.__g.sortGuests('name');
 const order = [...el('guests-tbody').innerHTML.matchAll(/font-semibold[^>]*>([A-Z][a-z]+ [A-Za-z]+)</g)].map((m) => m[1]);
 check('sorting by name, then reversed', order[0] === 'Echo Typed' && order[order.length - 1] === 'Alpha Arriving', order);
-check('the header shows the sort', /Guest ▼/.test(el('guests-thead').innerHTML));
+check('the header shows the sort', /Faculty ▼/.test(el('guests-thead').innerHTML));
 
 console.log('\n== The editor follows the role ==');
 sb.__g.openGuestEditor(rows[0].id);
@@ -119,6 +119,9 @@ check('...and the shared fields', !disabled('overall_status') && !disabled('rema
 check('times are 24-hour text, not a 12-hour picker', /name="arrival_time" type="text"[^>]*pattern="\(\[01\]\[0-9\]\|2\[0-3\]\):\[0-5\]\[0-9\]"/.test(form));
 check('the vehicle field suggests vehicles but takes free text', /name="pickup_vehicle" type="text"[^>]*list="guest-vehicle-options"/.test(form) && /<option value="Car A">/.test(form));
 check('no Remove for a coordinator', el('guest-remove-btn').classList.contains('hidden'));
+check('"local transport not needed" is a tick-box the transport coordinator can use', /type="checkbox" name="transport_not_needed"(?![^>]*\sdisabled(?=[\s>]))/.test(form));
+check('..."accommodation not needed" is not theirs', /type="checkbox" name="stay_not_needed"[^>]*\sdisabled/.test(form));
+check('a tick-box is saved as ticked or not, not as its label', /fields\[el\.name\] = el\.type === 'checkbox' \? el\.checked : el\.value/.test(js));
 const stay = load(['guests.view', 'guests.edit', 'guests.stay']);
 stay.sb.__set(data);
 stay.sb.__g.openGuestEditor(rows[0].id);

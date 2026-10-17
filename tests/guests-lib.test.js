@@ -159,6 +159,30 @@ check('a leading zero is kept as text', G.guestsCsv([{ ...b.guests[0], phone: '0
 check('a value that would run as a formula is neutralised', G.guestsCsv([{ ...b.guests[0], remarks: '=HYPERLINK("x")' }]).includes(`"'=HYPERLINK(""x"")"`));
 check('warnings are spelled out', /No accommodation/.test(csv[4]));
 
+console.log('\n== Own transport, own stay ==');
+check('the options are yes/no, whatever the client sends', v({ transport_not_needed: true }).values.transport_not_needed === 1
+  && v({ transport_not_needed: 'on' }).values.transport_not_needed === 1 && v({ stay_not_needed: false }).values.stay_not_needed === 0);
+check('transport is travel\'s to set, stay is the stay\'s', G.FIELD_PERMISSION.transport_not_needed === 'guests.travel' && G.FIELD_PERMISSION.stay_not_needed === 'guests.stay');
+check('unticking what was never ticked is not a change', G.changedFields({ stay_not_needed: 0 }, { stay_not_needed: 0 }).length === 0
+  && G.changedFields({ stay_not_needed: null }, { stay_not_needed: 0 }).length === 0);
+check('...and reads as Yes/No in the log', G.displayValue('stay_not_needed', 1) === 'Yes' && G.displayValue('stay_not_needed', 0) === 'No');
+const own = G.buildBoard({ guests: [
+  guest('Self Driver', { arrival_date: '2026-11-20', arrival_time: '09:00', transport_not_needed: 1, accommodation: 'Yatri Nivas' }),
+  guest('Day Visitor', { stay_not_needed: 1, arrival_date: '2026-11-20', pickup_vehicle: 'Car' }),
+  guest('Needs Both', { arrival_date: '2026-11-20' }),
+], lists, settings, today });
+const ob = (n) => own.guests.find((g) => g.name === n);
+check('making their own way: no orange warning', ob('Self Driver').flags.pickupAlert === false && ob('Needs Both').flags.pickupAlert === true);
+check('...and a chip saying so', ob('Self Driver').flags.ownTransport === true);
+check('...left off the pickup and drop schedules', !own.pickups.some((p) => p.name === 'Self Driver') && !own.drops.some((p) => p.name === 'Self Driver'));
+check('...and the pickup and drop counts, which say how many', own.dashboard.ownTransport === 1
+  && own.dashboard.byPickupStatus.reduce((n, r) => n + r.count, 0) === 2);
+check('...though still counted as arriving', own.dashboard.arrivals.total === 3 && own.dashboard.alert.arriving === 3 && own.dashboard.alert.noVehicle === 1);
+check('their own stay: no red warning', ob('Day Visitor').flags.noAccommodation === false && ob('Needs Both').flags.noAccommodation === true);
+check('...counted apart', own.dashboard.noAccommodation === 1 && own.dashboard.ownStay === 1);
+check('the CSV says what each needs', /Local transport needed,Accommodation needed/.test(G.guestsCsv(own.guests).split('\r\n')[0])
+  && G.guestsCsv(own.guests).split('\r\n')[1].includes(',No,Yes,'));
+
 console.log('\n== Guests without an account ==');
 check('a typed phone keeps its + and leading zero, and loses its spaces', v({ guest_phone: '+91 0712 230 0000' }).values.guest_phone === '+9107122300000');
 check('...a phone too long once its spaces are gone is still refused', v({ guest_phone: '1'.repeat(21) }).errors.length === 1);
@@ -203,6 +227,15 @@ const all = (q, p = []) => new Promise((ok, no) => tdb.all(q, p, (e, r) => (e ? 
   try { await run("INSERT INTO guests (phone_number, created_at) VALUES ('9800000001', 5)"); } catch (e) { dupe = /UNIQUE/.test(e.message); }
   check('...and an account still cannot be on the list twice', dupe);
   check('running it again leaves the table alone', (await G.migrateGuestsTable(run, all)) === 'current');
+  // A table already allowing guests without an account, but from before the
+  // own-transport/own-stay options existed.
+  await run('DROP TABLE guests');
+  await run("CREATE TABLE guests (id INTEGER PRIMARY KEY AUTOINCREMENT, phone_number TEXT UNIQUE, guest_name TEXT, created_at INTEGER NOT NULL)");
+  await run("INSERT INTO guests (guest_name, created_at) VALUES ('Earlier Guest', 1)");
+  check('a table missing a later column gets it added', (await G.migrateGuestsTable(run, all)) === 'extended'
+    && (await all('PRAGMA table_info(guests)')).filter((c) => ['stay_not_needed', 'transport_not_needed'].includes(c.name)).length === 2);
+  check('...defaulting to needed, rows kept', JSON.stringify(await all('SELECT guest_name, stay_not_needed, transport_not_needed FROM guests'))
+    === JSON.stringify([{ guest_name: 'Earlier Guest', stay_not_needed: 0, transport_not_needed: 0 }]));
   check('no rebuild table is left behind', (await all("SELECT name FROM sqlite_master WHERE name = 'guests_rebuild'")).length === 0);
   tdb.close();
   report();

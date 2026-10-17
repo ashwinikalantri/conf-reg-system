@@ -3071,7 +3071,7 @@ async function initBackendPortal() {
   if (canSee('payments')) await renderBackendPayments();
   if (canSee('payments')) renderDelegateMap();
   if (canSee('abstracts')) await renderBackendAbstracts();
-  // Fills the Guests tab badge (arrivals without a vehicle, guests without a room).
+  // Fills the Faculty tab badge (arrivals without a vehicle, faculty without a room).
   if (canSee('guests')) renderGuests();
   if (canSee('users')) await loadBackendUsers();
   // The role picker used in Users & Roles and the Create Staff User modal --
@@ -6015,11 +6015,11 @@ const ACTIVITY_ACTION_LABELS = {
   PAYMENT_MODE_CORRECTION: 'Mode Fix', ADMIN_ENROLL: 'Roster +', ADMIN_UNENROLL: 'Roster −',
   BANK_TXN_LINK: 'Linked', BANK_TXN_UNLINK: 'Unlinked', PAYMENT_ADMIN_ADDED: 'Payment Added', ABSTRACT_STATUS_CHANGE: 'Status', ABSTRACT_ALLOCATION: 'Allotted',
   ABSTRACT_EXTENSION_GRANT: 'Late Submission Allowed', ABSTRACT_EXTENSION_REVOKE: 'Late Submission Withdrawn',
-  GUEST_ADDED: 'Marked Faculty', GUEST_UPDATED: 'Guest Updated', GUEST_REMOVED: 'Guest Removed', GUEST_LINKED: 'Guest Linked',
+  GUEST_ADDED: 'Marked Faculty', GUEST_UPDATED: 'Faculty Updated', GUEST_REMOVED: 'Faculty Removed', GUEST_LINKED: 'Faculty Linked',
   GUEST_VEHICLE_ADDED: 'Vehicle Added', GUEST_VEHICLE_UPDATED: 'Vehicle Updated', GUEST_VEHICLE_DELETED: 'Vehicle Deleted',
   GUEST_ROOM_ADDED: 'Room Added', GUEST_ROOM_UPDATED: 'Room Updated', GUEST_ROOM_DELETED: 'Room Deleted',
   GUEST_LIST_VALUE_ADDED: 'List Value Added', GUEST_LIST_VALUE_ON: 'List Value On', GUEST_LIST_VALUE_OFF: 'List Value Off',
-  GUEST_LIST_VALUE_DELETED: 'List Value Removed', GUEST_SETTINGS_UPDATED: 'Guest Settings',
+  GUEST_LIST_VALUE_DELETED: 'List Value Removed', GUEST_SETTINGS_UPDATED: 'Faculty Settings',
   PROGRAM_OPTION_CREATE: 'Created', PROGRAM_OPTION_UPDATE: 'Updated', PROGRAM_OPTION_DELETE: 'Deleted',
   FEE_CONFIG_UPDATE: 'Dates Updated', FEE_CATEGORY_CREATE: 'Created', FEE_CATEGORY_UPDATE: 'Updated', FEE_CATEGORY_DELETE: 'Deleted',
   FEE_CATEGORY_REALIGN: 'Labels Realigned',
@@ -9757,7 +9757,7 @@ function deskWhoCard(user, reg, checkedIn, guest) {
     can('guests.edit') && !guest && user.role === 'DELEGATE' ? deskBtn('Mark as faculty', 'deskMarkFaculty()') : '',
   ].filter(Boolean).join('');
   const faculty = guest
-    ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-indigo-100 text-indigo-800 border-indigo-300" title="On the guest list${guest.overall_status ? ` · ${esc(guest.overall_status)}` : ''}">Faculty</span>` : '';
+    ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-indigo-100 text-indigo-800 border-indigo-300" title="On the faculty list${guest.overall_status ? ` · ${esc(guest.overall_status)}` : ''}">Faculty</span>` : '';
 
   return deskCard('Delegate', `
     <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
@@ -9965,7 +9965,7 @@ async function deskWithdrawAbstractExtension() {
 async function deskMarkFaculty() {
   const key = deskDelegate && deskDelegate.user ? deskDelegate.user.phone_number : null;
   if (!key) return;
-  if (!(await showConfirm('Mark this delegate as faculty? They join the guest list, where their travel and stay are coordinated.'))) return;
+  if (!(await showConfirm('Mark this delegate as faculty? They join the faculty list, where their travel and stay are coordinated.'))) return;
   const done = await markFaculty(null, key);
   if (done && done.success) deskReload();
 }
@@ -10320,6 +10320,7 @@ const GUEST_FLAG_STYLES = {
   sharedRoom: 'bg-violet-100 text-violet-800 border-violet-300',
   vehicleClash: 'bg-amber-100 text-amber-800 border-amber-300',
   notRegistered: 'bg-sky-100 text-sky-800 border-sky-300',
+  own: 'bg-white text-slate-600 border-slate-300',
 };
 const guestPill = (cls, text, title) =>
   `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${cls}"${title ? ` title="${esc(title)}"` : ''}>${esc(text)}</span>`;
@@ -10335,6 +10336,8 @@ function guestFlagChips(g) {
   if (f.noAccommodation) out.push(guestPill(GUEST_FLAG_STYLES.noAccommodation, 'No accommodation'));
   if (f.sharedRoom && f.sharedRoom.length) out.push(guestPill(GUEST_FLAG_STYLES.sharedRoom, `Shares room · ${f.sharedRoom.length + 1}`, `With ${f.sharedRoom.join(', ')}`));
   if (f.vehicleClash && f.vehicleClash.length) out.push(guestPill(GUEST_FLAG_STYLES.vehicleClash, 'Vehicle clash', f.vehicleClash.join('\n')));
+  if (f.ownTransport) out.push(guestPill(GUEST_FLAG_STYLES.own, 'Own transport'));
+  if (f.ownStay) out.push(guestPill(GUEST_FLAG_STYLES.own, 'Own stay'));
   if (f.notSignedUp) out.push(guestPill(GUEST_FLAG_STYLES.notRegistered, 'Not signed up'));
   else if (f.notRegistered) out.push(guestPill(GUEST_FLAG_STYLES.notRegistered, 'Not registered'));
   return out.join(' ');
@@ -10463,7 +10466,7 @@ function renderGuestList() {
   };
   thead.innerHTML = `<tr>
     <th class="p-3 text-left w-10">${th('sr_no', 'Sr')}</th>
-    <th class="p-3 text-left">${th('name', 'Guest')}</th>
+    <th class="p-3 text-left">${th('name', 'Faculty')}</th>
     <th class="p-3 text-left">${th('arrival_at', 'Arrival · Pickup')}</th>
     <th class="p-3 text-left">${th('departure_at', 'Departure · Drop')}</th>
     <th class="p-3 text-left">${th('accommodation', 'Stay')}</th>
@@ -10507,9 +10510,9 @@ function renderGuestList() {
       <td class="p-3 text-xs text-slate-600 max-w-[14rem]">${g.special_needs ? `<p><b>Needs:</b> ${esc(g.special_needs)}</p>` : ''}${g.remarks ? `<p class="text-slate-500">${esc(g.remarks)}</p>` : ''}</td>
       <td class="p-3 text-right"><button type="button" onclick="openGuestEditor(${esc(g.id)})" class="px-3 py-1.5 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold rounded-lg">${can('guests.edit') ? 'Edit' : 'View'}</button></td>
     </tr>`).join('')
-    : `<tr><td colspan="9" class="p-8 text-center text-slate-400 text-sm">${guestData.guests.length ? 'No guest matches these filters.' : 'No faculty yet. Mark a delegate as faculty to start.'}</td></tr>`;
+    : `<tr><td colspan="9" class="p-8 text-center text-slate-400 text-sm">${guestData.guests.length ? 'No one matches these filters.' : 'No faculty yet. Mark a delegate as faculty to start.'}</td></tr>`;
   const live = guestData.guests.filter((g) => !g.cancelled).length;
-  setText('guests-count', `Showing ${rows.length} of ${guestData.guests.length} guests (${live} not cancelled).`);
+  setText('guests-count', `Showing ${rows.length} of ${guestData.guests.length} faculty (${live} not cancelled).`);
 }
 
 // --- the editor ---
@@ -10536,6 +10539,9 @@ function openGuestEditor(id) {
   };
   const vehicles = `<datalist id="guest-vehicle-options">${guestData.vehicles.map((v) => `<option value="${esc(v.label)}">${esc([v.driver_phone, v.seats ? `${v.seats} seats` : ''].filter(Boolean).join(' · '))}</option>`).join('')}</datalist>`;
   const time = (name, enabled) => input(name, 'text', enabled, 'inputmode="numeric" placeholder="HH:MM" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" title="24-hour time, e.g. 14:30"');
+  // A yes/no that spans the row: they make their own way, or their own stay.
+  const tick = (name, label, enabled) => `<label class="col-span-2 sm:col-span-4 flex items-center gap-2 text-sm text-slate-700 ${enabled ? 'cursor-pointer' : 'opacity-60'}">
+      <input type="checkbox" name="${name}" ${Number(g[name]) ? 'checked' : ''} ${enabled ? '' : 'disabled'}> ${esc(label)}</label>`;
   const group = (title, enabled, note, body) => `<fieldset class="border border-slate-200 rounded-xl p-4">
       <legend class="px-1.5 text-xs font-bold text-slate-700 uppercase tracking-wide">${esc(title)}</legend>
       ${enabled ? '' : `<p class="text-[11px] text-slate-400 -mt-1 mb-2">${esc(note)}</p>`}
@@ -10546,7 +10552,7 @@ function openGuestEditor(id) {
     : 'Not signed up yet — details as typed in, until linked to their account.';
   // Added by name: who they are is edited here, and they are linked to their
   // account once they have one.
-  const identity = g.linked ? '' : group('Guest', shared, '',
+  const identity = g.linked ? '' : group('Details', shared, '',
     field('guest_name', 'Name *', input('guest_name', 'text', shared, 'required maxlength="120"'))
     + field('guest_designation', 'Designation', input('guest_designation', 'text', shared, 'maxlength="300"'))
     + field('guest_phone', 'Phone', input('guest_phone', 'text', shared, 'inputmode="tel" maxlength="20"'))
@@ -10563,7 +10569,8 @@ function openGuestEditor(id) {
   document.getElementById('guest-edit-flags').innerHTML = `${guestStatusBadge(g.overall_status)} ${guestFlagChips(g)}`;
   document.getElementById('guest-edit-body').innerHTML = vehicles + identity + (identity ? '<div class="h-4"></div>' : '') + [
     group('Arrival', travel, 'Only a transport coordinator can change travel.',
-      field('arrival_date', 'Date', input('arrival_date', 'date', travel))
+      tick('transport_not_needed', 'Local transport not needed — they make their own way (no pickup or drop)', travel)
+      + field('arrival_date', 'Date', input('arrival_date', 'date', travel))
       + field('arrival_time', 'Time (24-hour)', time('arrival_time', travel))
       + field('arrival_mode', 'Mode', select('arrival_mode', 'mode', travel))
       + field('arrival_number', 'Flight/Train No', input('arrival_number', 'text', travel))
@@ -10579,7 +10586,8 @@ function openGuestEditor(id) {
       + field('drop_vehicle', 'Drop Vehicle/Driver', input('drop_vehicle', 'text', travel, 'list="guest-vehicle-options" autocomplete="off"'))
       + field('drop_status', 'Drop Status', select('drop_status', 'transfer_status', travel))),
     group('Stay', stay, 'Only an accommodation coordinator can change the stay.',
-      field('accommodation', 'Accommodation', select('accommodation', 'accommodation', stay))
+      tick('stay_not_needed', 'Accommodation not needed — they arrange their own stay', stay)
+      + field('accommodation', 'Accommodation', select('accommodation', 'accommodation', stay))
       + field('room_no', 'Room No', input('room_no', 'text', stay))
       + field('checkin_date', 'Check-in Date', input('checkin_date', 'date', stay))
       + field('checkout_date', 'Check-out Date', input('checkout_date', 'date', stay))
@@ -10608,7 +10616,9 @@ async function saveGuest(ev) {
   const id = form.dataset.id;
   const fields = {};
   // Only what this role may edit: disabled controls are not sent.
-  form.querySelectorAll('input[name], select[name], textarea[name]').forEach((el) => { if (!el.disabled) fields[el.name] = el.value; });
+  form.querySelectorAll('input[name], select[name], textarea[name]').forEach((el) => {
+    if (!el.disabled) fields[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+  });
   const btn = document.getElementById('guest-save-btn');
   if (btn) btn.disabled = true;
   const data = await (await fetch(`/api/guests/${encodeURIComponent(id)}`, {
@@ -10625,10 +10635,10 @@ async function saveGuest(ev) {
 async function removeGuest() {
   const id = document.getElementById('guest-edit-form').dataset.id;
   const g = guestData.guests.find((x) => String(x.id) === String(id));
-  if (!g || !(await showConfirm(`Remove ${g.name} from the guest list? They will no longer be marked as faculty, and their travel and stay details are deleted. This can't be undone. (To keep the record, set the Overall Status to Cancelled instead.)`))) return;
+  if (!g || !(await showConfirm(`Remove ${g.name} from the faculty list? They will no longer be marked as faculty, and their travel and stay details are deleted. This can't be undone. (To keep the record, set the Overall Status to Cancelled instead.)`))) return;
   const data = await (await fetch(`/api/guests/${encodeURIComponent(id)}`, { method: 'DELETE' })).json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not remove.');
-  showToast('Removed from the guest list.', 'success');
+  showToast('Removed from the faculty list.', 'success');
   closeModal('modal-guest-edit');
   renderGuests();
 }
@@ -10669,8 +10679,8 @@ async function markFaculty(i, phoneOverride) {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }),
   })).json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not mark them as faculty.');
-  showToast(data.registered ? 'Marked as faculty. They are on the guest list.'
-    : 'Marked as faculty. They have not registered yet; the guest list flags it until they do.', 'success');
+  showToast(data.registered ? 'Marked as faculty. They are on the faculty list.'
+    : 'Marked as faculty. They have not registered yet; the faculty list flags it until they do.', 'success');
   if (!phoneOverride) closeModal('modal-guest-add');
   if (guestData || currentBackendTab === 'guests') renderGuests();
   return data;
@@ -10693,7 +10703,7 @@ async function addUnlinkedGuest(ev) {
     note.classList.remove('hidden');
     return;
   }
-  if (!data.success) { note.textContent = data.error || 'Could not add the guest.'; note.classList.remove('hidden'); return; }
+  if (!data.success) { note.textContent = data.error || 'Could not add them.'; note.classList.remove('hidden'); return; }
   showToast('Added. Link them to their account once they sign up.', 'success');
   f.reset();
   closeModal('modal-guest-add');
@@ -10712,13 +10722,13 @@ async function searchGuestLink(q) {
   const results = (await res.json()).results || [];
   box.innerHTML = results.length ? results.map((u) => `<div class="flex items-center justify-between gap-2 bg-white border border-sky-100 rounded-lg px-2.5 py-1.5">
       <span class="min-w-0 text-xs"><b class="text-slate-800">${esc(u.name)}</b> <span class="text-slate-500">${esc([u.phone, u.email].filter(Boolean).join(' · '))}</span></span>
-      ${u.guestId ? '<span class="text-[11px] text-slate-400 shrink-0">Already a guest</span>'
+      ${u.guestId ? '<span class="text-[11px] text-slate-400 shrink-0">Already faculty</span>'
         : `<button type="button" onclick="linkGuest(${esc(id)}, '${esc(u.phone_number)}')" class="shrink-0 px-2.5 py-1 bg-sky-700 hover:bg-sky-800 text-white text-[11px] font-semibold rounded-md">Link</button>`}
     </div>`).join('') : '<p class="text-xs text-sky-900/70">No delegate account matches.</p>';
 }
 
 async function linkGuest(id, phone) {
-  if (!(await showConfirm('Link this guest to that account? From now on their name, designation, phone and email come from the account.'))) return;
+  if (!(await showConfirm('Link them to that account? From now on their name, designation, phone and email come from the account.'))) return;
   const data = await (await fetch(`/api/guests/${encodeURIComponent(id)}/link`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }),
   })).json().catch(() => ({}));
@@ -10742,22 +10752,22 @@ function renderGuestDashboard() {
       <tbody>${rows.map((r) => `<tr>${r.map((c, i) => `<td class="py-0.5 ${i ? 'text-right tabular-nums font-semibold' : 'text-slate-600'}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`
     : '<p class="text-xs text-slate-400">None yet.</p>';
   const movement = (m) => `<div class="grid sm:grid-cols-3 gap-4">
-      <div><p class="text-[11px] text-slate-400 font-semibold mb-1">By date</p>${table(['Date', 'Guests'], m.byDate.map((r) => [esc(formatFullDate(r.value)), esc(r.count)]))}</div>
-      <div><p class="text-[11px] text-slate-400 font-semibold mb-1">By point</p>${table(['Point', 'Guests'], m.byPoint.map((r) => [esc(r.value == null ? 'Not set' : r.value), esc(r.count)]))}</div>
-      <div><p class="text-[11px] text-slate-400 font-semibold mb-1">By time</p>${table(['Slot', 'Guests'], m.bySlot.map((r) => [esc(r.value == null ? 'Time not set' : r.value), esc(r.count)]))}</div>
+      <div><p class="text-[11px] text-slate-400 font-semibold mb-1">By date</p>${table(['Date', 'Faculty'], m.byDate.map((r) => [esc(formatFullDate(r.value)), esc(r.count)]))}</div>
+      <div><p class="text-[11px] text-slate-400 font-semibold mb-1">By point</p>${table(['Point', 'Faculty'], m.byPoint.map((r) => [esc(r.value == null ? 'Not set' : r.value), esc(r.count)]))}</div>
+      <div><p class="text-[11px] text-slate-400 font-semibold mb-1">By time</p>${table(['Slot', 'Faculty'], m.bySlot.map((r) => [esc(r.value == null ? 'Time not set' : r.value), esc(r.count)]))}</div>
     </div>`;
   const a = d.alert;
   box.innerHTML = `<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-      ${card('Guests', big(d.listed, `listed${d.cancelled ? ` · ${d.cancelled} cancelled not counted` : ''}`))}
+      ${card('Faculty', big(d.listed, `listed${d.cancelled ? ` · ${d.cancelled} cancelled not counted` : ''}`))}
       ${card(`Arriving in ${a.days} day(s)`, `${big(a.arriving, `${formatFullDate(a.from)} – ${formatFullDate(a.to)}`)}
         <p class="mt-1 text-xs font-semibold ${a.noVehicle ? 'text-orange-700' : 'text-emerald-700'}">${a.noVehicle ? `${a.noVehicle} with no pickup vehicle` : 'All have a pickup vehicle'}</p>`, a.noVehicle ? 'border-orange-300' : '')}
-      ${card('No accommodation', big(d.noAccommodation, 'guests with nowhere to stay', d.noAccommodation ? 'text-rose-700' : 'text-slate-800'), d.noAccommodation ? 'border-rose-300' : '')}
+      ${card('No accommodation', big(d.noAccommodation, `faculty with nowhere to stay${d.ownStay ? ` · ${d.ownStay} arranging their own` : ''}`, d.noAccommodation ? 'text-rose-700' : 'text-slate-800'), d.noAccommodation ? 'border-rose-300' : '')}
       ${card('Not registered', big(d.notRegistered, `faculty who still have to register${d.notSignedUp ? ` · ${d.notSignedUp} not signed up` : ''}`, d.notRegistered ? 'text-sky-700' : 'text-slate-800'))}
     </div>
     <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-      ${card('Overall status (all guests)', counts(d.byOverallStatus))}
-      ${card('Pickup status', counts(d.byPickupStatus))}
-      ${card('Drop status', counts(d.byDropStatus))}
+      ${card('Overall status (everyone)', counts(d.byOverallStatus))}
+      ${card('Pickup status', counts(d.byPickupStatus) + (d.ownTransport ? `<p class="text-[11px] text-slate-500 mt-2">${esc(d.ownTransport)} making their own way, not counted</p>` : ''))}
+      ${card('Drop status', counts(d.byDropStatus) + (d.ownTransport ? `<p class="text-[11px] text-slate-500 mt-2">${esc(d.ownTransport)} making their own way, not counted</p>` : ''))}
       ${card('Warnings', `<dl class="space-y-1 text-sm">
           <div class="flex justify-between"><dt class="text-slate-600">Rooms shared</dt><dd class="font-bold tabular-nums ${d.sharedRooms ? 'text-violet-700' : ''}">${esc(d.sharedRooms)}</dd></div>
           <div class="flex justify-between"><dt class="text-slate-600">Vehicle clashes</dt><dd class="font-bold tabular-nums ${d.vehicleClashes ? 'text-amber-700' : ''}">${esc(d.vehicleClashes)}</dd></div></dl>`)}
@@ -10765,7 +10775,7 @@ function renderGuestDashboard() {
     <div class="grid gap-3">
       ${card(`Arrivals · ${d.arrivals.total} with a date`, movement(d.arrivals))}
       ${card(`Departures · ${d.departures.total} with a date`, movement(d.departures))}
-      ${card('Accommodation', table(['Accommodation', 'Guests', 'Beds listed', 'Beds free'],
+      ${card('Accommodation', table(['Accommodation', 'Faculty', 'Beds listed', 'Beds free'],
         d.perAccommodation.map((r) => [esc(r.accommodation), esc(r.assigned), esc(r.beds), `<span class="${r.free < 0 ? 'text-rose-700' : ''}">${esc(r.free < 0 ? `${-r.free} over` : r.free)}</span>`])))}
     </div>`;
 }
@@ -10793,11 +10803,11 @@ function renderGuestSchedule(kind) {
             <td class="p-3">${r.vehicle ? `<p>${esc(r.vehicle)}</p>${r.driverPhone ? `<p class="text-xs text-slate-500 font-mono">${esc(r.driverPhone)}</p>` : ''}` : `<span class="${r.alert ? 'text-orange-700 font-semibold' : 'text-slate-400'}">None</span>`}
               ${r.clash.map((c) => `<p class="text-[11px] text-amber-800 mt-1">${esc(c)}</p>`).join('')}</td>
             <td class="p-3">${r.status ? guestPill('bg-white text-slate-600 border-slate-300', r.status) : '<span class="text-xs text-slate-400">Not set</span>'}</td>
-          </tr>`).join('') : '<tr><td colspan="8" class="p-8 text-center text-slate-400">No guests yet.</td></tr>'}
+          </tr>`).join('') : '<tr><td colspan="8" class="p-8 text-center text-slate-400">No one to schedule yet.</td></tr>'}
         </tbody>
       </table>
     </div>
-    <p class="text-xs text-slate-500 mt-2">Cancelled guests are left out. Guests with no ${isPickup ? 'arrival' : 'departure'} date are at the end.</p>`;
+    <p class="text-xs text-slate-500 mt-2">Cancelled faculty and those making their own way are left out. Anyone with no ${isPickup ? 'arrival' : 'departure'} date is at the end.</p>`;
 }
 
 // --- vehicles ---
@@ -10824,7 +10834,7 @@ function renderGuestVehicles() {
           ${can('guests.manage') ? `<button type="button" onclick="deleteGuestVehicle(${esc(v.id)})" class="px-3 py-1.5 border border-rose-300 text-rose-700 hover:bg-rose-50 text-xs font-semibold rounded-lg">Delete</button>` : ''}</td>
       </tr>`).join('') : '<tr><td colspan="6" class="p-6 text-center text-slate-400">No vehicles yet.</td></tr>'}</tbody></table>
     </div>
-    <p class="text-xs text-slate-500 mt-2">Pickups and drops count non-cancelled guests whose Vehicle/Driver matches the label. A guest's vehicle can also be typed freely; free text is not counted here.</p>`;
+    <p class="text-xs text-slate-500 mt-2">Pickups and drops count non-cancelled faculty whose Vehicle/Driver matches the label. A vehicle can also be typed freely; free text is not counted here.</p>`;
 }
 function editGuestVehicle(id) {
   const v = guestData.vehicles.find((x) => x.id === id);
@@ -10847,7 +10857,7 @@ async function saveGuestVehicle(ev) {
 }
 async function deleteGuestVehicle(id) {
   const v = guestData.vehicles.find((x) => x.id === id);
-  if (!v || !(await showConfirm(`Delete ${v.label}? Guests it was assigned to keep the text, but it is no longer counted or offered.`))) return;
+  if (!v || !(await showConfirm(`Delete ${v.label}? Faculty it was assigned to keep the text, but it is no longer counted or offered.`))) return;
   const data = await (await fetch(`/api/guests/vehicles/${encodeURIComponent(id)}`, { method: 'DELETE' })).json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not delete.');
   showToast('Vehicle deleted.', 'success');
@@ -10875,7 +10885,7 @@ function renderGuestRooms() {
     <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
       <table class="w-full text-sm min-w-[44rem]"><thead class="bg-slate-50 text-[11px] text-slate-500 uppercase tracking-wide"><tr>
         <th class="p-3 text-left">Accommodation</th><th class="p-3 text-left">Room No</th><th class="p-3 text-left">Type</th>
-        <th class="p-3 text-right">Beds</th><th class="p-3 text-right">Occupied</th><th class="p-3 text-left">Status</th><th class="p-3 text-left">Guests</th><th class="p-3"></th></tr></thead>
+        <th class="p-3 text-right">Beds</th><th class="p-3 text-right">Occupied</th><th class="p-3 text-left">Status</th><th class="p-3 text-left">Faculty</th><th class="p-3"></th></tr></thead>
       <tbody class="divide-y divide-slate-100">${guestData.rooms.length ? guestData.rooms.map((r) => `<tr class="align-top">
         <td class="p-3 font-semibold text-slate-800">${esc(r.accommodation)}</td><td class="p-3">${esc(r.room_no)}</td><td class="p-3">${esc(r.room_type || '—')}</td>
         <td class="p-3 text-right tabular-nums">${esc(r.beds)}</td><td class="p-3 text-right tabular-nums font-semibold">${esc(r.occupied)}</td>
@@ -10885,8 +10895,8 @@ function renderGuestRooms() {
           ${can('guests.manage') ? `<button type="button" onclick="deleteGuestRoom(${esc(r.id)})" class="px-3 py-1.5 border border-rose-300 text-rose-700 hover:bg-rose-50 text-xs font-semibold rounded-lg">Delete</button>` : ''}</td>
       </tr>`).join('') : '<tr><td colspan="8" class="p-6 text-center text-slate-400">No rooms yet.</td></tr>'}</tbody></table>
     </div>
-    ${guestData.unlistedRooms.length ? `<p class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3">Guests are placed in rooms not on this list: ${guestData.unlistedRooms.map((r) => `${esc(r.accommodation)} ${esc(r.room_no)} (${esc(r.guests.join(', '))})`).join('; ')}. Add them so their beds are counted.</p>` : ''}
-    <p class="text-xs text-slate-500 mt-2">Occupied counts non-cancelled guests with the same Accommodation and Room No.</p>`;
+    ${guestData.unlistedRooms.length ? `<p class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3">Faculty are placed in rooms not on this list: ${guestData.unlistedRooms.map((r) => `${esc(r.accommodation)} ${esc(r.room_no)} (${esc(r.guests.join(', '))})`).join('; ')}. Add them so their beds are counted.</p>` : ''}
+    <p class="text-xs text-slate-500 mt-2">Occupied counts non-cancelled faculty with the same Accommodation and Room No.</p>`;
 }
 function editGuestRoom(id) {
   const r = guestData.rooms.find((x) => x.id === id);
@@ -10913,7 +10923,7 @@ async function saveGuestRoom(ev) {
 }
 async function deleteGuestRoom(id) {
   const r = guestData.rooms.find((x) => x.id === id);
-  if (!r || !(await showConfirm(`Delete ${r.accommodation} room ${r.room_no}? Guests placed there keep it on their record, but its beds are no longer counted.`))) return;
+  if (!r || !(await showConfirm(`Delete ${r.accommodation} room ${r.room_no}? Faculty placed there keep it on their record, but its beds are no longer counted.`))) return;
   const data = await (await fetch(`/api/guests/rooms/${encodeURIComponent(id)}`, { method: 'DELETE' })).json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not delete.');
   showToast('Room deleted.', 'success');
@@ -10953,7 +10963,7 @@ function renderGuestSettings() {
           <button type="submit" class="h-8 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Add</button>
         </form>
       </div>`).join('')}</div>
-    <p class="text-xs text-slate-500 mt-2">Switching a value off stops it being offered; guests who already have it keep it. A value in use cannot be removed.</p>`;
+    <p class="text-xs text-slate-500 mt-2">Switching a value off stops it being offered; anyone who already has it keeps it. A value in use cannot be removed.</p>`;
 }
 async function saveGuestSettings(ev) {
   ev.preventDefault();

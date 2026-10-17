@@ -12256,7 +12256,7 @@ app.get('/api/guests/export.csv', requirePermission('guests.view'), async (req, 
     const { board } = await guestBoard();
     res.set('Cache-Control', 'private, no-store');
     res.set('Content-Type', 'text/csv; charset=utf-8');
-    res.set('Content-Disposition', `attachment; filename="${reportFilePrefix()}-guests-${istDateString()}.csv"`);
+    res.set('Content-Disposition', `attachment; filename="${reportFilePrefix()}-faculty-${istDateString()}.csv"`);
     // The byte-order mark makes Excel read the file as UTF-8 (names, the ₹).
     res.send('﻿' + guestLib.guestsCsv(board.guests));
   } catch (err) {
@@ -12317,20 +12317,20 @@ app.post('/api/guests', requirePermission('guests.edit'), async (req, res, next)
       const { values, errors } = guestLib.validateGuestFields({
         guest_name: input.name, guest_designation: input.designation, guest_phone: input.phone, guest_email: input.email,
       });
-      if (!values.guest_name) errors.unshift('Enter the guest\'s name.');
+      if (!values.guest_name) errors.unshift('Enter their name.');
       if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
       const account = await accountMatchingGuest(values.guest_phone, values.guest_email);
       if (account) {
         const name = [account.salutation, account.full_name].filter(Boolean).join(' ');
         return res.status(409).json({
           success: false, code: 'ACCOUNT_EXISTS',
-          error: account.guest_id ? `${name} has an account and is already on the guest list.`
+          error: account.guest_id ? `${name} has an account and is already on the faculty list.`
             : `${name} already has an account with that phone or email. Mark them as faculty instead.`,
           account: { phone_number: account.phone_number, name, guestId: account.guest_id || null },
         });
       }
       const twin = await unlinkedGuestMatching(values.guest_phone, values.guest_email);
-      if (twin) return res.status(409).json({ success: false, code: 'GUEST_EXISTS', error: `${twin.guest_name} is already on the guest list with that phone or email.`, guestId: twin.id });
+      if (twin) return res.status(409).json({ success: false, code: 'GUEST_EXISTS', error: `${twin.guest_name} is already on the faculty list with that phone or email.`, guestId: twin.id });
       const r = await dbRun(
         `INSERT INTO guests (guest_name, guest_designation, guest_phone, guest_email, overall_status, created_at, created_by, updated_at, updated_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -12343,12 +12343,12 @@ app.post('/api/guests', requirePermission('guests.edit'), async (req, res, next)
     const u = await dbGet('SELECT phone_number, salutation, full_name, role, phone, email FROM users WHERE phone_number = ?', [phone]);
     if (!u || u.role !== 'DELEGATE') return res.status(404).json({ success: false, error: 'Delegate not found.' });
     if (await dbGet('SELECT id FROM guests WHERE phone_number = ?', [phone])) {
-      return res.status(409).json({ success: false, error: 'They are already on the guest list.' });
+      return res.status(409).json({ success: false, error: 'They are already on the faculty list.' });
     }
     const twin = await unlinkedGuestMatching(u.phone || (isPhoneValue(u.phone_number) ? u.phone_number : null), u.email);
     if (twin) {
       return res.status(409).json({ success: false, code: 'GUEST_EXISTS', guestId: twin.id,
-        error: `${twin.guest_name} is already on the guest list with this phone or email, not yet linked. Link them to this account instead.` });
+        error: `${twin.guest_name} is already on the faculty list with this phone or email, not yet linked. Link them to this account instead.` });
     }
     const r = await dbRun(
       'INSERT INTO guests (phone_number, overall_status, created_at, created_by, updated_at, updated_by, linked_at, linked_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
@@ -12368,13 +12368,13 @@ app.post('/api/guests', requirePermission('guests.edit'), async (req, res, next)
 app.put('/api/guests/:id/link', requirePermission('guests.edit'), async (req, res, next) => {
   try {
     const g = await dbGet('SELECT * FROM guests WHERE id = ?', [req.params.id]);
-    if (!g) return res.status(404).json({ success: false, error: 'Guest not found.' });
-    if (g.phone_number) return res.status(409).json({ success: false, error: 'This guest is already linked to an account.' });
+    if (!g) return res.status(404).json({ success: false, error: 'Faculty member not found.' });
+    if (g.phone_number) return res.status(409).json({ success: false, error: 'They are already linked to an account.' });
     const phone = String((req.body && req.body.phone) || '');
     const u = await dbGet('SELECT phone_number, salutation, full_name, role FROM users WHERE phone_number = ?', [phone]);
     if (!u || u.role !== 'DELEGATE') return res.status(404).json({ success: false, error: 'Delegate not found.' });
     if (await dbGet('SELECT id FROM guests WHERE phone_number = ?', [phone])) {
-      return res.status(409).json({ success: false, error: 'That account is already on the guest list as someone else.' });
+      return res.status(409).json({ success: false, error: 'That account is already on the faculty list as someone else.' });
     }
     await dbRun('UPDATE guests SET phone_number = ?, linked_at = ?, linked_by = ?, updated_at = ?, updated_by = ? WHERE id = ?',
       [phone, Date.now(), req.session.name || req.session.phone, Date.now(), req.session.name || req.session.phone, g.id]);
@@ -12601,7 +12601,7 @@ app.delete('/api/guests/lists/:id', requirePermission('guests.manage'), async (r
 app.put('/api/guests/:id', requirePermission('guests.edit'), async (req, res, next) => {
   try {
     const current = await dbGet('SELECT * FROM guests WHERE id = ?', [req.params.id]);
-    if (!current) return res.status(404).json({ success: false, error: 'Guest not found.' });
+    if (!current) return res.status(404).json({ success: false, error: 'Faculty member not found.' });
     const pool = await guestCoordinatorPool();
     const coordinators = { transport: new Set(pool.transport.map((p) => p.phone)), accommodation: new Set(pool.accommodation.map((p) => p.phone)) };
     // The coordinator already named stays acceptable if their role changes.
@@ -12615,10 +12615,10 @@ app.put('/api/guests/:id', requirePermission('guests.edit'), async (req, res, ne
     }
     const identity = guestLib.IDENTITY_FIELDS.filter((f) => f in values);
     if (current.phone_number && identity.some((f) => (values[f] || null) !== (current[f] || null))) {
-      return res.status(400).json({ success: false, error: 'This guest is linked to an account; their name, designation, phone and email come from it.' });
+      return res.status(400).json({ success: false, error: 'They are linked to an account; their name, designation, phone and email come from it.' });
     }
     if (current.phone_number) identity.forEach((f) => { delete values[f]; });
-    if (!current.phone_number && 'guest_name' in values && !values.guest_name) errors.unshift('Enter the guest\'s name.');
+    if (!current.phone_number && 'guest_name' in values && !values.guest_name) errors.unshift('Enter their name.');
     if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
     const changes = guestLib.changedFields(current, values);
     if (!changes.length) return res.json({ success: true, changed: 0, notified: [] });
@@ -12628,7 +12628,8 @@ app.put('/api/guests/:id', requirePermission('guests.edit'), async (req, res, ne
       [...changes.map((c) => c.to), Date.now(), req.session.name || req.session.phone, current.id]);
 
     const [g] = await guestRowsJoined('WHERE g.id = ?', [current.id]);
-    const summary = changes.map((c) => `${c.label}: ${c.from || '—'} → ${c.to || '—'}`).join('; ');
+    const shown = (c, v) => guestLib.displayValue(c.field, v);
+    const summary = changes.map((c) => `${c.label}: ${shown(c, c.from)} → ${shown(c, c.to)}`).join('; ');
     await recordAudit({ req, entityType: 'guest', entityId: String(current.id), action: 'GUEST_UPDATED', oldValue: g.name, newValue: summary });
 
     // Tell the coordinator for each side what changed -- unless they made the
@@ -12644,12 +12645,12 @@ app.put('/api/guests/:id', requirePermission('guests.edit'), async (req, res, ne
       if (!sideChanges.length || !coord || coord === req.session.phone) continue;
       const rowsHtml = sideChanges.map((c) => `<tr>
           <td style="padding:.35rem .6rem;border-bottom:1px solid #eef3f6;color:#46708c">${escapeHtml(c.label)}</td>
-          <td style="padding:.35rem .6rem;border-bottom:1px solid #eef3f6;color:#64748b;text-decoration:line-through">${escapeHtml(c.from || '—')}</td>
-          <td style="padding:.35rem .6rem;border-bottom:1px solid #eef3f6;color:#1c3549;font-weight:700">${escapeHtml(c.to || '—')}</td></tr>`).join('');
+          <td style="padding:.35rem .6rem;border-bottom:1px solid #eef3f6;color:#64748b;text-decoration:line-through">${escapeHtml(shown(c, c.from))}</td>
+          <td style="padding:.35rem .6rem;border-bottom:1px solid #eef3f6;color:#1c3549;font-weight:700">${escapeHtml(shown(c, c.to))}</td></tr>`).join('');
       notifyDelegate(coord, `${side} details changed: ${g.name}`,
-        emailWrap(`${side} details changed`, `<p><b>${escapeHtml(req.session.name || 'A colleague')}</b> changed ${side.toLowerCase()} details for <b>${escapeHtml(g.name)}</b>, a guest you coordinate.</p>
+        emailWrap(`${side} details changed`, `<p><b>${escapeHtml(req.session.name || 'A colleague')}</b> changed ${side.toLowerCase()} details for <b>${escapeHtml(g.name)}</b>, a faculty member you coordinate.</p>
           <table style="width:100%;border-collapse:collapse;font-size:.85rem;margin:.75rem 0">${rowsHtml}</table>
-          <p>See the Guests tab at <b>${escapeHtml(PORTAL_URL)}</b>.</p>`));
+          <p>See the Faculty tab at <b>${escapeHtml(PORTAL_URL)}</b>.</p>`));
       notified.push(side.toLowerCase());
     }
     res.json({ success: true, changed: changes.length, notified });
@@ -12664,7 +12665,7 @@ app.put('/api/guests/:id', requirePermission('guests.edit'), async (req, res, ne
 app.delete('/api/guests/:id', requirePermission('guests.manage'), async (req, res, next) => {
   try {
     const [g] = await guestRowsJoined('WHERE g.id = ?', [req.params.id]);
-    if (!g) return res.status(404).json({ success: false, error: 'Guest not found.' });
+    if (!g) return res.status(404).json({ success: false, error: 'Faculty member not found.' });
     await dbRun('DELETE FROM guests WHERE id = ?', [g.id]);
     const kept = guestLib.ALL_FIELDS.filter((f) => g[f]).map((f) => `${guestLib.FIELD_LABELS[f]}: ${g[f]}`).join('; ');
     await recordAudit({ req, entityType: 'guest', entityId: String(g.id), action: 'GUEST_REMOVED', oldValue: `${g.name}${kept ? ` — ${kept}` : ''}`, newValue: null });
@@ -12705,7 +12706,10 @@ registrationsMigrationReady.then(retitleNamesOnBoot)
   .then(() => backfillPaymentTransactionsOnBoot().catch((err) => console.error('Payment-transaction backfill failed (continuing to start):', err.message)))
   .then(() => retireCodesOfRegisteredHoldersOnBoot().catch((err) => console.error('Code retirement sweep failed (continuing to start):', err.message)))
   .then(() => guestLib.migrateGuestsTable(dbRun, dbAll)
-    .then((r) => { if (r === 'rebuilt') console.log('Guests table rebuilt: guests no longer need an account.'); })
+    .then((r) => {
+      if (r === 'rebuilt') console.log('Guests table rebuilt: faculty no longer need an account.');
+      if (r === 'extended') console.log('Guests table: added the transport/accommodation not-needed columns.');
+    })
     .catch((err) => console.error('Guests table migration failed (continuing to start):', err.message)))
   .then(() => seedGuestListsOnBoot().catch((err) => console.error('Guest list seed failed (continuing to start):', err.message)))
   .then(() => autoLinkTransactions().catch((err) => console.error('Bank-transaction auto-link failed (continuing to start):', err.message)))

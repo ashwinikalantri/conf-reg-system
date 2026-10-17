@@ -14,11 +14,12 @@
 // Who may edit what. Travel belongs to the Transport Coordinator, stay to the
 // Accommodation Coordinator; the rest is shared by both.
 const TRAVEL_FIELDS = [
+  'transport_not_needed',
   'arrival_date', 'arrival_time', 'arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle', 'pickup_status',
   'departure_date', 'departure_time', 'departure_mode', 'departure_number', 'departure_point', 'drop_vehicle', 'drop_status',
   'transport_coordinator',
 ];
-const STAY_FIELDS = ['accommodation', 'room_no', 'checkin_date', 'checkout_date', 'room_type', 'accommodation_coordinator'];
+const STAY_FIELDS = ['stay_not_needed', 'accommodation', 'room_no', 'checkin_date', 'checkout_date', 'room_type', 'accommodation_coordinator'];
 const GENERAL_FIELDS = ['special_needs', 'overall_status', 'remarks'];
 // Who a guest without an account is. Ignored once linked: the account says.
 const IDENTITY_FIELDS = ['guest_name', 'guest_designation', 'guest_phone', 'guest_email'];
@@ -38,6 +39,7 @@ const STAY_NOTIFY_FIELDS = STAY_FIELDS.filter((f) => f !== 'accommodation_coordi
 
 const FIELD_LABELS = {
   guest_name: 'Name', guest_designation: 'Designation', guest_phone: 'Phone', guest_email: 'Email',
+  transport_not_needed: 'Local transport not needed', stay_not_needed: 'Accommodation not needed',
   arrival_date: 'Arrival Date', arrival_time: 'Arrival Time', arrival_mode: 'Arrival Mode',
   arrival_number: 'Arrival Flight/Train No', arrival_point: 'Arrival Point',
   pickup_vehicle: 'Pickup Vehicle/Driver', pickup_status: 'Pickup Status',
@@ -81,6 +83,11 @@ const SLOT_NAMES = ['Night', 'Morning', 'Afternoon', 'Evening'];
 // Longest a field may be. A typed-in designation is often the whole
 // affiliation ("Professor & Head, Dept of ..., College, City").
 const MAX_LENGTH = { special_needs: 1000, remarks: 1000, guest_designation: 300 };
+// Yes/no: they make their own way, or their own stay.
+const BOOL_FIELDS = new Set(['transport_not_needed', 'stay_not_needed']);
+const truthy = (v) => v === true || v === 1 || ['1', 'true', 'on', 'yes'].includes(String(v).trim().toLowerCase());
+// How a value reads in the activity log and an email.
+const displayValue = (field, v) => (BOOL_FIELDS.has(field) ? (Number(v) ? 'Yes' : 'No') : (v == null || v === '' ? '—' : String(v)));
 const DATE_FIELDS = new Set(['arrival_date', 'departure_date', 'checkin_date', 'checkout_date']);
 const TIME_FIELDS = new Set(['arrival_time', 'departure_time']);
 const COORDINATOR_FIELDS = new Set(['transport_coordinator', 'accommodation_coordinator']);
@@ -130,6 +137,7 @@ function validateGuestFields(input, current = {}, lists = {}, coordinators = {})
   for (const field of ALL_FIELDS) {
     if (!Object.prototype.hasOwnProperty.call(input || {}, field)) continue;
     const raw = input[field];
+    if (BOOL_FIELDS.has(field)) { values[field] = truthy(raw) ? 1 : 0; continue; }
     const v = blank(raw) ? null : String(raw).trim();
     const label = FIELD_LABELS[field];
     if (v != null && v.length > (MAX_LENGTH[field] || 120)) {
@@ -179,12 +187,13 @@ function validateGuestFields(input, current = {}, lists = {}, coordinators = {})
 
 // The fields a role may not change, among those a request would change.
 function forbiddenChanges(values, current, mayEdit) {
-  return Object.keys(values).filter((f) => !mayEdit(FIELD_PERMISSION[f]) && (values[f] || null) !== (current[f] || null));
+  return changedFields(current, values, Object.keys(values)).map((c) => c.field).filter((f) => !mayEdit(FIELD_PERMISSION[f]));
 }
 
 // Field-by-field differences, for the activity log and the coordinator email.
 function changedFields(before, values, fields = ALL_FIELDS) {
-  return fields.filter((f) => f in values && (before[f] || null) !== (values[f] || null))
+  const same = (f) => (BOOL_FIELDS.has(f) ? Number(before[f] || 0) === Number(values[f] || 0) : (before[f] || null) === (values[f] || null));
+  return fields.filter((f) => f in values && !same(f))
     .map((f) => ({ field: f, label: FIELD_LABELS[f], from: before[f] || null, to: values[f] || null }));
 }
 
@@ -277,8 +286,11 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
   // Every timed trip a named vehicle makes, pickups and drops together -- a
   // car cannot be at the airport and the station at once.
   const vehicleByKey = new Map(vehicles.map((v) => [norm(v.label), v]));
+  // Someone making their own way is not met, dropped, or driven.
+  const needsTransport = (g) => !Number(g.transport_not_needed);
+  const needsStay = (g) => !Number(g.stay_not_needed);
   const trips = [];
-  for (const g of live) {
+  for (const g of live.filter(needsTransport)) {
     if (!blank(g.pickup_vehicle)) {
       trips.push({ key: norm(g.pickup_vehicle), vehicle: g.pickup_vehicle, kind: 'Pickup', guestId: g.id, name: g.name,
         date: g.arrival_date, time: g.arrival_time, point: g.arrival_point, at: minutesAt(g.arrival_date, g.arrival_time) });
@@ -314,7 +326,7 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
     const cancelled = isCancelled(g);
     const k = roomKey(g.accommodation, g.room_no);
     const roommates = !cancelled && k ? byRoom.get(k).filter((o) => o.id !== g.id).map((o) => o.name) : [];
-    const arrivingSoon = !cancelled && !blank(g.arrival_date) && g.arrival_date >= today && g.arrival_date <= windowEnd;
+    const arrivingSoon = !cancelled && needsTransport(g) && !blank(g.arrival_date) && g.arrival_date >= today && g.arrival_date <= windowEnd;
     return {
       ...g,
       sr_no: i + 1,
@@ -325,7 +337,9 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
         // Orange: arriving within the alert window, and nobody to meet them.
         pickupAlert: arrivingSoon && blank(g.pickup_vehicle),
         // Red: nowhere to stay.
-        noAccommodation: !cancelled && !blank(g.name) && blank(g.accommodation),
+        noAccommodation: !cancelled && needsStay(g) && !blank(g.name) && blank(g.accommodation),
+        ownTransport: !needsTransport(g),
+        ownStay: !needsStay(g),
         // Purple, a warning only: sharing can be intended.
         sharedRoom: roommates,
         vehicleClash: clashGuests.get(g.id) || [],
@@ -398,7 +412,7 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
 
   // Schedules: who to meet and who to see off, in order. Undated last; on a
   // date, untimed after the timed ones.
-  const schedule = (dateF, timeF) => [...rows.filter((g) => !g.cancelled)].sort((a, b) => {
+  const schedule = (dateF, timeF) => [...rows.filter((g) => !g.cancelled && needsTransport(g))].sort((a, b) => {
     if (blank(a[dateF]) !== blank(b[dateF])) return blank(a[dateF]) ? 1 : -1;
     if (a[dateF] !== b[dateF]) return String(a[dateF]).localeCompare(String(b[dateF]));
     if (blank(a[timeF]) !== blank(b[timeF])) return blank(a[timeF]) ? 1 : -1;
@@ -417,15 +431,20 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
   }));
 
   const soon = live.filter((g) => !blank(g.arrival_date) && g.arrival_date >= today && g.arrival_date <= windowEnd);
+  const transported = live.filter(needsTransport);
   const dashboard = {
     listed: live.length,
     cancelled: ordered.length - live.length,
     total: ordered.length,
     // Every guest here, Cancelled included: it is one of the statuses.
     byOverallStatus: countBy(ordered, 'overall_status', lists.overall_status || []),
-    byPickupStatus: countBy(live, 'pickup_status', lists.transfer_status || []),
-    byDropStatus: countBy(live, 'drop_status', lists.transfer_status || []),
-    alert: { days: settings.alertDays, from: today, to: windowEnd, arriving: soon.length, noVehicle: soon.filter((g) => blank(g.pickup_vehicle)).length },
+    // Pickups and drops only for those who need local transport.
+    byPickupStatus: countBy(transported, 'pickup_status', lists.transfer_status || []),
+    byDropStatus: countBy(transported, 'drop_status', lists.transfer_status || []),
+    ownTransport: live.length - transported.length,
+    ownStay: live.filter((g) => !needsStay(g)).length,
+    alert: { days: settings.alertDays, from: today, to: windowEnd, arriving: soon.length,
+      noVehicle: soon.filter((g) => needsTransport(g) && blank(g.pickup_vehicle)).length },
     noAccommodation: rows.filter((g) => g.flags.noAccommodation).length,
     notRegistered: live.filter((g) => !Number(g.registered)).length,
     notSignedUp: live.filter((g) => !g.linked).length,
@@ -453,6 +472,8 @@ const CSV_COLUMNS = [
     'accommodation', 'room_no', 'checkin_date', 'checkout_date', 'room_type', 'special_needs']
     .map((f) => [FIELD_LABELS[f], (g) => g[f]]),
   ['Transport Coordinator', (g) => g.transport_coordinator_name], ['Accommodation Coordinator', (g) => g.accommodation_coordinator_name],
+  ['Local transport needed', (g) => (Number(g.transport_not_needed) ? 'No' : 'Yes')],
+  ['Accommodation needed', (g) => (Number(g.stay_not_needed) ? 'No' : 'Yes')],
   ['Overall Status', (g) => g.overall_status], ['Remarks', (g) => g.remarks],
   ['Arrival Date & Time', (g) => g.arrival_at], ['Departure Date & Time', (g) => g.departure_at],
   ['Warnings', (g) => [
@@ -487,8 +508,15 @@ const GUEST_TABLE_SQL = (name) => `
     accommodation TEXT, room_no TEXT, checkin_date TEXT, checkout_date TEXT, room_type TEXT,
     special_needs TEXT, transport_coordinator TEXT, accommodation_coordinator TEXT, overall_status TEXT, remarks TEXT,
     created_at INTEGER NOT NULL, created_by TEXT, updated_at INTEGER, updated_by TEXT,
-    linked_at INTEGER, linked_by TEXT
+    linked_at INTEGER, linked_by TEXT,
+    transport_not_needed INTEGER NOT NULL DEFAULT 0, stay_not_needed INTEGER NOT NULL DEFAULT 0
   )`;
+// Columns added after the table first shipped, for a table already in the
+// newer (nullable phone_number) shape.
+const LATER_COLUMNS = [
+  ['transport_not_needed', 'INTEGER NOT NULL DEFAULT 0'],
+  ['stay_not_needed', 'INTEGER NOT NULL DEFAULT 0'],
+];
 
 // The first version of the table made phone_number NOT NULL -- every guest
 // had to have an account. SQLite cannot drop a NOT NULL, so the table is
@@ -499,7 +527,11 @@ async function migrateGuestsTable(run, all) {
   const cols = await all('PRAGMA table_info(guests)');
   if (!cols.length) return 'absent';
   const phone = cols.find((c) => c.name === 'phone_number');
-  if (phone && !phone.notnull) return 'current';
+  if (phone && !phone.notnull) {
+    const missing = LATER_COLUMNS.filter(([name]) => !cols.some((c) => c.name === name));
+    for (const [name, type] of missing) await run(`ALTER TABLE guests ADD COLUMN ${name} ${type}`);
+    return missing.length ? 'extended' : 'current';
+  }
   const keep = cols.map((c) => c.name).join(', ');
   await run('BEGIN');
   try {
@@ -517,7 +549,7 @@ async function migrateGuestsTable(run, all) {
 }
 
 module.exports = {
-  GUEST_TABLE_SQL, migrateGuestsTable, IDENTITY_FIELDS,
+  GUEST_TABLE_SQL, migrateGuestsTable, IDENTITY_FIELDS, BOOL_FIELDS, displayValue,
   TRAVEL_FIELDS, STAY_FIELDS, GENERAL_FIELDS, ALL_FIELDS, FIELD_PERMISSION, FIELD_LABELS, FIELD_LISTS,
   TRAVEL_NOTIFY_FIELDS, STAY_NOTIFY_FIELDS,
   LIST_LABELS, DEFAULT_LISTS, PROTECTED_VALUES, CANCELLED, DEFAULT_SETTINGS, SLOT_NAMES,

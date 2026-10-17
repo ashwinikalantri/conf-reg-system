@@ -5,8 +5,8 @@
     <section id="section-guests" class="hidden space-y-5">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 class="text-lg font-bold text-slate-800">Guest Coordination</h2>
-          <p class="text-xs text-slate-500">Faculty guests' travel, pickups, drops and stay. Figures leave out Cancelled guests unless they say otherwise.</p>
+          <h2 class="text-lg font-bold text-slate-800">Faculty Coordination</h2>
+          <p class="text-xs text-slate-500">Faculty travel, pickups, drops and stay. Figures leave out Cancelled faculty unless they say otherwise.</p>
         </div>
         <div class="flex flex-wrap gap-2">
           <button type="button" id="guests-add-btn" onclick="openAddFaculty()" class="hidden px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-xl shadow-md">Add Faculty</button>
@@ -15,7 +15,7 @@
       </div>
 
       <div id="guests-subnav" role="tablist" class="flex flex-wrap gap-1.5 border-b border-slate-200 pb-2">
-        <button type="button" data-guest-view="list" onclick="switchGuestView('list')" class="guest-subtab px-3 py-1.5 text-sm font-semibold rounded-lg">Guests</button>
+        <button type="button" data-guest-view="list" onclick="switchGuestView('list')" class="guest-subtab px-3 py-1.5 text-sm font-semibold rounded-lg">Faculty</button>
         <button type="button" data-guest-view="dashboard" onclick="switchGuestView('dashboard')" class="guest-subtab px-3 py-1.5 text-sm font-semibold rounded-lg">Dashboard</button>
         <button type="button" data-guest-view="pickups" onclick="switchGuestView('pickups')" class="guest-subtab px-3 py-1.5 text-sm font-semibold rounded-lg">Pickups</button>
         <button type="button" data-guest-view="drops" onclick="switchGuestView('drops')" class="guest-subtab px-3 py-1.5 text-sm font-semibold rounded-lg">Drops</button>
@@ -37,6 +37,8 @@
             <option value="vehicleClash">Vehicle clash</option>
             <option value="notRegistered">Not registered</option>
             <option value="notSignedUp">Not signed up (no account linked)</option>
+            <option value="ownTransport">Making their own way (no transport needed)</option>
+            <option value="ownStay">Arranging their own stay</option>
           </select>
           <select id="guests-filter-acc" onchange="renderGuestList()" class="h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
         </div>

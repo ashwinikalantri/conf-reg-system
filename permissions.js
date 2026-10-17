@@ -26,7 +26,7 @@ const SECTIONS = [
   { key: 'payments', label: 'Payments' },
   { key: 'statement', label: 'Bank statement' },
   { key: 'abstracts', label: 'Abstracts' },
-  { key: 'guests', label: 'Guest coordination' },
+  { key: 'guests', label: 'Faculty coordination' },
   { key: 'reports', label: 'Reports' },
   { key: 'users', label: 'Users & roles' },
   { key: 'masters', label: 'Masters' },
@@ -110,11 +110,11 @@ const PERMISSIONS = [
   // Transport Coordinator, stay to the Accommodation Coordinator, and the
   // shared details -- and marking someone as faculty -- to both. Removing a
   // guest and changing the lists the dropdowns draw from is Super Admin's.
-  ['guests.view', 'guests', 'View guests', 'Open the Guests tab: every faculty guest\'s travel and stay, the dashboard, the pickup and drop schedules, vehicles and rooms.'],
-  ['guests.edit', 'guests', 'Mark faculty, edit shared details', 'Mark a delegate as faculty (adding them to the guest list), and edit Special Needs, Overall Status and Remarks.'],
-  ['guests.travel', 'guests', 'Edit travel', 'Edit arrival, departure, pickup and drop details and the transport coordinator, and add or edit vehicles.'],
-  ['guests.stay', 'guests', 'Edit stay', 'Edit accommodation, room and check-in/out details and the accommodation coordinator, and add or edit rooms.'],
-  ['guests.manage', 'guests', 'Manage guest coordination', 'Remove a guest, delete vehicles and rooms, and change the dropdown lists and the alert, time-slot and clash settings.'],
+  ['guests.view', 'guests', 'View faculty', 'Open the Faculty tab: every faculty member\'s travel and stay, the dashboard, the pickup and drop schedules, vehicles and rooms.'],
+  ['guests.edit', 'guests', 'Mark faculty, edit shared details', 'Mark a delegate as faculty (adding them to the faculty list), and edit Special Needs, Overall Status and Remarks.'],
+  ['guests.travel', 'guests', 'Edit travel', 'Edit arrival, departure, pickup and drop details, whether local transport is needed and the transport coordinator, and add or edit vehicles.'],
+  ['guests.stay', 'guests', 'Edit stay', 'Edit accommodation, room and check-in/out details, whether accommodation is needed and the accommodation coordinator, and add or edit rooms.'],
+  ['guests.manage', 'guests', 'Manage faculty coordination', 'Remove someone from the faculty list, delete vehicles and rooms, and change the dropdown lists and the alert, time-slot and clash settings.'],
 
   // --- Reports ---
   ['reports.delegates', 'reports', 'Delegates report', 'The full delegate list, on screen or as CSV.'],
@@ -506,13 +506,13 @@ const SYSTEM_ROLES = [
   {
     key: 'TRANSPORT_COORDINATOR',
     label: 'Transport Coordinator',
-    description: 'Faculty guests\' travel: arrivals, departures, pickups, drops and the vehicles. Sees the whole guest list; can mark a delegate as faculty.',
+    description: 'Faculty travel: arrivals, departures, pickups, drops and the vehicles. Sees the whole faculty list; can mark a delegate as faculty.',
     permissions: ['guests.view', 'guests.edit', 'guests.travel'],
   },
   {
     key: 'ACCOMMODATION_COORDINATOR',
     label: 'Accommodation Coordinator',
-    description: 'Faculty guests\' stay: accommodation, rooms, check-in and check-out. Sees the whole guest list; can mark a delegate as faculty.',
+    description: 'Faculty stay: accommodation, rooms, check-in and check-out. Sees the whole faculty list; can mark a delegate as faculty.',
     permissions: ['guests.view', 'guests.edit', 'guests.stay'],
   },
 ];
