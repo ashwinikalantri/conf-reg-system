@@ -9144,6 +9144,7 @@ async function issueCertificate(req, person, kind, workshop = null) {
 
 // The PDF of one certificate row (or a specimen, from made-up values).
 async function certificatePdf(cert, { specimen = false } = {}) {
+  await seedSignatories();
   const settings = await certificateSettings();
   const signatories = await dbAll('SELECT * FROM certificate_signatories ORDER BY sort_order, id');
   const tpl = certTemplates(settings, signatories)[cert.kind];
