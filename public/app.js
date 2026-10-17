@@ -9973,19 +9973,12 @@ async function deskWithdrawAbstractExtension() {
 // desk can answer "when is my pickup, where am I staying".
 function deskFacultyCard(g) {
   if (!g) return '';
-  const leg = (date, time, mode, number, point) => (date
-    ? `${guestWhen(date, time)}${[mode, number, point].filter(Boolean).length ? ` · ${[mode, number, point].filter(Boolean).map(esc).join(' · ')}` : ''}` : '');
-  const arrival = leg(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point);
-  const departure = leg(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point);
-  const transfer = (vehicle, status) => [vehicle, status].filter(Boolean).map(esc).join(' · ');
-  const nights = guestNights(g.checkin_date, g.checkout_date);
-  const stay = Number(g.stay_not_needed) ? 'Not needed — arranging their own'
-    : g.accommodation ? [`${esc(g.accommodation)}${g.room_no ? ` · Room ${esc(g.room_no)}` : ''}`, esc(g.room_type),
-      g.checkin_date && g.checkout_date ? `${esc(formatFullDate(g.checkin_date))} → ${esc(formatFullDate(g.checkout_date))}` : '', esc(nightsLabel(nights))].filter(Boolean).join(' · ') : '';
+  // Whatever has been entered, piece by piece (see guestLegHtml/guestStayHtml).
+  const arrival = guestLegHtml(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status);
+  const departure = guestLegHtml(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status);
   const rows = [
-    ['Arrival', arrival], ['Pickup', transfer(g.pickup_vehicle, g.pickup_status)],
-    ['Departure', departure], ['Drop', transfer(g.drop_vehicle, g.drop_status)],
-    ['Stay', stay], ['Transport volunteer', esc(g.transport_volunteer || '')], ['Accommodation volunteer', esc(g.accommodation_volunteer || '')],
+    ['Arrival · pickup', arrival], ['Departure · drop', departure],
+    ['Stay', guestStayHtml(g)], ['Transport volunteer', esc(g.transport_volunteer || '')], ['Accommodation volunteer', esc(g.accommodation_volunteer || '')],
     ['Special needs', esc(g.special_needs || '')],
   ].filter(([, v]) => v);
   if (!rows.length) return '';
@@ -10532,11 +10525,8 @@ function renderGuestList() {
   // affiliation) wraps to two lines, the rest on hover, instead of widening
   // the column at the expense of travel and stay.
   const line = (parts) => parts.filter(Boolean).map(esc).join(' · ');
-  const travel = (date, time, mode, number, point, vehicle, status) => date
-    ? `<p class="font-semibold text-slate-800 whitespace-nowrap">${esc(guestWhen(date, time))}</p>
-       <p class="text-xs text-slate-500">${line([mode, number, point]) || '—'}</p>
-       <p class="text-xs mt-0.5">${vehicle ? esc(vehicle) : '<span class="text-slate-400">No vehicle</span>'} ${status ? guestPill('bg-white text-slate-600 border-slate-300', status) : ''}</p>`
-    : '<span class="text-xs text-slate-400">Not set</span>';
+  const notSet = '<span class="text-xs text-slate-400">Not set</span>';
+  const travel = (...leg) => guestLegHtml(...leg) || notSet;
   tbody.innerHTML = rows.length ? rows.map((g) => `
     <tr class="${guestRowTint(g)} align-top">
       <td class="p-3 text-xs text-slate-400 font-mono">${esc(g.sr_no)}</td>
@@ -10550,10 +10540,7 @@ function renderGuestList() {
       </td>
       <td class="p-3">${travel(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status)}</td>
       <td class="p-3">${travel(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status)}</td>
-      <td class="p-3">${g.accommodation
-        ? `<p class="font-semibold text-slate-800">${esc(g.accommodation)}${g.room_no ? ` · ${esc(g.room_no)}` : ''}</p>
-           <p class="text-xs text-slate-500">${line([g.room_type, g.checkin_date && g.checkout_date ? `${formatFullDate(g.checkin_date)} → ${formatFullDate(g.checkout_date)}` : (g.checkin_date || g.checkout_date), nightsLabel(g.nights)]) || '—'}</p>`
-        : '<span class="text-xs text-slate-400">Not set</span>'}</td>
+      <td class="p-3">${guestStayHtml(g) || notSet}</td>
       <td class="p-3 text-xs text-slate-600">
         <p><span class="text-slate-400">Transport:</span> ${esc(g.transport_coordinator_name || '—')}</p>
         <p><span class="text-slate-400">Stay:</span> ${esc(g.accommodation_coordinator_name || '—')}</p>
@@ -10571,9 +10558,7 @@ function renderGuestList() {
     const edge = (g) => (g.cancelled ? 'border-l-slate-300' : g.flags.noAccommodation ? 'border-l-rose-400' : g.flags.pickupAlert ? 'border-l-orange-400' : 'border-l-slate-200');
     const legLine = (label, date, time, mode, number, point, vehicle, status) => `<div class="flex gap-2 text-sm">
         <span class="w-16 shrink-0 text-[11px] font-semibold text-slate-400 uppercase pt-0.5">${label}</span>
-        <div class="min-w-0">${date ? `<p class="font-semibold text-slate-800">${esc(guestWhen(date, time))}</p>
-          <p class="text-xs text-slate-500">${line([mode, number, point]) || ''}</p>
-          <p class="text-xs">${vehicle ? esc(vehicle) : '<span class="text-slate-400">No vehicle</span>'}${status ? ` · ${esc(status)}` : ''}</p>` : '<p class="text-xs text-slate-400 pt-0.5">Not set</p>'}</div>
+        <div class="min-w-0">${guestLegHtml(date, time, mode, number, point, vehicle, status) || '<p class="text-xs text-slate-400 pt-0.5">Not set</p>'}</div>
       </div>`;
     cards.innerHTML = rows.length ? rows.map((g) => `
       <article class="bg-white rounded-2xl border border-slate-200 border-l-4 ${edge(g)} shadow-sm p-4 ${g.cancelled ? 'opacity-70' : ''}">
@@ -10591,10 +10576,7 @@ function renderGuestList() {
           ${legLine('Departure', g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status)}
           <div class="flex gap-2 text-sm">
             <span class="w-16 shrink-0 text-[11px] font-semibold text-slate-400 uppercase pt-0.5">Stay</span>
-            <div class="min-w-0">${g.flags.ownStay ? '<p class="text-xs text-slate-500 pt-0.5">Arranging their own</p>'
-              : g.accommodation ? `<p class="font-semibold text-slate-800">${esc(g.accommodation)}${g.room_no ? ` · ${esc(g.room_no)}` : ''}</p>
-                <p class="text-xs text-slate-500">${line([g.room_type, g.checkin_date && g.checkout_date ? `${formatFullDate(g.checkin_date)} → ${formatFullDate(g.checkout_date)}` : '', nightsLabel(g.nights)])}</p>`
-              : '<p class="text-xs text-slate-400 pt-0.5">Not set</p>'}</div>
+            <div class="min-w-0">${guestStayHtml(g) || '<p class="text-xs text-slate-400 pt-0.5">Not set</p>'}</div>
           </div>
           ${g.transport_coordinator_name || g.accommodation_coordinator_name ? `<p class="text-xs text-slate-500">Volunteers: ${esc([g.transport_coordinator_name && `Transport ${g.transport_coordinator_name}`, g.accommodation_coordinator_name && `Stay ${g.accommodation_coordinator_name}`].filter(Boolean).join(' · '))}</p>` : ''}
           ${g.special_needs ? `<p class="text-xs text-slate-600"><b>Needs:</b> ${esc(g.special_needs)}</p>` : ''}
@@ -10621,6 +10603,30 @@ function guestWhen(date, time) {
   if (!date) return '';
   return `${formatFullDate(date) || date}${time ? `, ${guestTime12(time)}` : ''}`;
 }
+// Whatever has been entered for one leg of the journey, and nothing made up:
+// the date and time, then mode / number / point, then vehicle and status.
+// '' when nothing at all is set (the caller says "Not set").
+function guestLegHtml(date, time, mode, number, point, vehicle, status) {
+  const route = [mode, number, point].filter(Boolean).map(esc).join(' · ');
+  const transfer = [vehicle ? esc(vehicle) : (date ? '<span class="text-slate-400">No vehicle</span>' : ''), status ? esc(status) : ''].filter(Boolean).join(' · ');
+  return [
+    date ? `<p class="font-semibold text-slate-800">${esc(guestWhen(date, time))}</p>` : '',
+    route ? `<p class="text-xs text-slate-500">${route}</p>` : '',
+    transfer ? `<p class="text-xs mt-0.5">${transfer}</p>` : '',
+  ].join('');
+}
+// Whatever has been entered for the stay: the place and room, then type,
+// dates (one alone is shown too) and nights. Arranging their own stay says
+// so, and the details kept from before are not shown.
+function guestStayHtml(g) {
+  if (Number(g.stay_not_needed)) return '<p class="text-xs text-slate-500">Arranging their own stay</p>';
+  const place = [g.accommodation, g.room_no ? (g.accommodation ? g.room_no : `Room ${g.room_no}`) : ''].filter(Boolean).map(esc).join(' · ');
+  const dates = g.checkin_date && g.checkout_date ? `${formatFullDate(g.checkin_date)} → ${formatFullDate(g.checkout_date)}`
+    : g.checkin_date ? `From ${formatFullDate(g.checkin_date)}` : g.checkout_date ? `Until ${formatFullDate(g.checkout_date)}` : '';
+  const detail = [g.room_type, dates, nightsLabel(guestNights(g.checkin_date, g.checkout_date))].filter(Boolean).map(esc).join(' · ');
+  return [place ? `<p class="font-semibold text-slate-800">${place}</p>` : '', detail ? `<p class="text-xs text-slate-500">${detail}</p>` : ''].join('');
+}
+
 // Read what a coordinator types: "9:30 pm", "930p", "9.30 PM", "21:30",
 // "2130", "9pm". Returns { hhmm } (24-hour), { empty }, { ambiguous } for an
 // hour of 1-12 with no AM/PM, or { invalid }.

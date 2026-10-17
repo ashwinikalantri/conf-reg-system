@@ -236,12 +236,12 @@ check('"Assigned to me" shows a volunteer their own faculty', el('guests-tbody')
 el('guests-filter-flag').value = mineBefore;
 const dsb = { String, Number, Date, Math };
 vm.createContext(dsb);
-vm.runInContext([grabT('esc'), grabT('formatFullDate'), grabT('guestTime12'), grabT('guestWhen'), grabT('guestNights'), grabT('deskCard'), grabT('deskFacultyCard')].join('\n')
+vm.runInContext([grabT('esc'), grabT('formatFullDate'), grabT('guestTime12'), grabT('guestWhen'), grabT('guestNights'), grabT('guestLegHtml'), grabT('guestStayHtml'), grabT('deskCard'), grabT('deskFacultyCard')].join('\n')
   + `\nconst nightsLabel = ${js.match(/const nightsLabel = ([^;]+);/)[1]};\nglobalThis.card = deskFacultyCard;`, dsb);
 const dcard = dsb.card({ arrival_date: '2026-11-20', arrival_time: '21:30', arrival_mode: 'Flight', arrival_number: '6E 123', pickup_vehicle: 'Car A',
   accommodation: 'Yatri Nivas', room_no: '7', checkin_date: '2026-11-20', checkout_date: '2026-11-22', transport_volunteer: 'Tara' });
 check('the Front Desk shows a faculty member\'s travel and stay', /Faculty — travel &amp; stay|Faculty — travel & stay/.test(dcard)
-  && /20 November 2026, 9:30 PM · Flight · 6E 123/.test(dcard) && /Yatri Nivas · Room 7/.test(dcard) && /2 nights/.test(dcard) && /Tara/.test(dcard));
+  && /20 November 2026, 9:30 PM<\/p><p class="text-xs text-slate-500">Flight · 6E 123/.test(dcard) && /Yatri Nivas · 7/.test(dcard) && /2 nights/.test(dcard) && /Tara/.test(dcard));
 check('...and nothing when there is nothing to show', dsb.card({ id: 1 }) === '' && dsb.card(null) === '');
 check('...placed after the delegate card', /deskWhoCard\(user, reg, checkedIn, guest\),\n\s*deskFacultyCard\(guest\),/.test(js));
 
@@ -271,6 +271,24 @@ check('the editor is full-screen on a phone, Save always in view', /id="modal-gu
   && /h-full sm:h-auto/.test(modal) && /overflow-y-auto flex-1 min-h-0/.test(modal));
 sb.__g.openGuestEditor(rows[0].id);
 check('...its fields in one column on a phone', /grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3/.test(el('guest-edit-body').innerHTML) && !/col-span-2 sm:col-span-4/.test(el('guest-edit-body').innerHTML));
+
+console.log('\n== Whatever is entered is shown ==');
+const psb = { String, Number, Date, Math };
+vm.createContext(psb);
+vm.runInContext([grabT('esc'), grabT('formatFullDate'), grabT('guestTime12'), grabT('guestWhen'), grabT('guestNights'), grabT('guestLegHtml'), grabT('guestStayHtml')].join('\n')
+  + `\nconst nightsLabel = ${js.match(/const nightsLabel = ([^;]+);/)[1]};\nglobalThis.leg = guestLegHtml; globalThis.stayOf = guestStayHtml;`, psb);
+const datesOnly = psb.stayOf({ checkin_date: '2026-11-20', checkout_date: '2026-11-22' });
+check('stay dates with no guesthouse yet are shown, with the nights', /20 November 2026 → 22 November 2026 · 2 nights/.test(datesOnly) && !/Not set/.test(datesOnly));
+check('one date alone is shown too', /From 20 November 2026/.test(psb.stayOf({ checkin_date: '2026-11-20' })) && /Until 22 November 2026/.test(psb.stayOf({ checkout_date: '2026-11-22' })));
+check('a room type alone, a room number alone', /Double/.test(psb.stayOf({ room_type: 'Double' })) && /Room 7/.test(psb.stayOf({ room_no: '7' })));
+check('nothing entered gives nothing (the list says Not set)', psb.stayOf({}) === '' && psb.leg() === '');
+check('arranging their own stay says so, not the details kept from before', /Arranging their own stay/.test(psb.stayOf({ stay_not_needed: 1, accommodation: 'Yatri Nivas' }))
+  && !/Yatri/.test(psb.stayOf({ stay_not_needed: 1, accommodation: 'Yatri Nivas' })));
+const partLeg = psb.leg(null, null, 'Flight', '6E 123', null, null, 'Pending');
+check('a flight number or status with no date yet is shown', /Flight · 6E 123/.test(partLeg) && /Pending/.test(partLeg) && !/No vehicle/.test(partLeg));
+check('"No vehicle" only once there is a date to meet', /No vehicle/.test(psb.leg('2026-11-20')));
+sb.__g.renderGuestList();
+check('the list uses the same, table and cards', /guestStayHtml\(g\) \|\| notSet/.test(js) && /\$\{guestStayHtml\(g\) \|\| '<p class="text-xs text-slate-400 pt-0\.5">Not set<\/p>'\}/.test(js));
 
 console.log('\n== Wiring ==');
 check('Lists & Settings is hidden until shown to an admin', /id="guests-settings-tab" class="guest-subtab hidden/.test(ejs));
