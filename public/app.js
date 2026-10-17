@@ -5120,7 +5120,8 @@ function renderBackendUsers() {
   const instituteFilter = document.getElementById('user-filter-institute')?.value || '';
 
   const filtered = cachedUsers.filter((u) => {
-    if (roleFilter && u.role !== roleFilter) return false;
+    // Held as the main role or as an additional one.
+    if (roleFilter && u.role !== roleFilter && !(u.extra_roles || []).includes(roleFilter)) return false;
     if (designationFilter && (u.designation || '').trim() !== designationFilter) return false;
     if (instituteFilter && (u.institution || '').trim() !== instituteFilter) return false;
     if (statusFilter) {
@@ -5141,7 +5142,8 @@ function renderBackendUsers() {
   tbody.innerHTML = filtered.length ? filtered.map((u) => `
     <tr class="hover:bg-slate-50 cursor-pointer" onclick="openUserDetail('${esc(u.phone_number)}')">
       <td class="p-4 font-mono text-xs">${esc(u.registration_number || '—')}</td>
-      <td class="p-4 font-semibold text-slate-800">${roleMarkBW(u.role)}${u.salutation ? esc(u.salutation) + ' ' : ''}${esc(u.full_name)}</td>
+      <td class="p-4 font-semibold text-slate-800">${roleMarkBW(u.role)}${u.salutation ? esc(u.salutation) + ' ' : ''}${esc(u.full_name)}${(u.extra_roles || []).length
+        ? `<p class="text-[11px] font-normal text-slate-500 mt-0.5">${esc(roleLabel(u.role))} + ${esc(u.extra_roles.map(roleLabel).join(', '))}</p>` : ''}</td>
       <td class="p-4 text-slate-600">${esc(u.designation || '—')}</td>
       <td class="p-4 text-slate-600">${esc(u.institution || '—')}</td>
       <td class="p-4 whitespace-nowrap">${accountMarks(u)}</td>
@@ -5432,7 +5434,7 @@ function renderUserDetail() {
     + detailCard('Registration', regHtml)
     + (ledger ? detailCard('Payments', ledger) : '')
     + detailCard('Programs', programs)
-    + detailCard('Role', roleSelect);
+    + detailCard('Role', roleSelect + userDetailExtraRolesHtml(u, canAssign && !roleLocked));
 }
 
 // Reset somebody's password to a one-time value.
@@ -5649,6 +5651,40 @@ async function saveUserDetailEdit() {
   userDetailEditing = false;
   await loadBackendUsers();
   await openUserDetail(userDetailPhone); // refetch + re-render the panel
+}
+
+// Additional roles, under the main one: staff only, and never Super Admin
+// (a main role that already holds everything). What the person may do is
+// everything any of their roles allows. See PUT /api/users/:phone/roles.
+function userDetailExtraRolesHtml(u, canAssign) {
+  if (!u.role || u.role === 'DELEGATE' || u.role === 'SUPER_ADMIN') return '';
+  const held = (userDetailData && userDetailData.extraRoles) || [];
+  const options = cachedRoleOptions.filter((r) => r.key !== 'SUPER_ADMIN' && r.key !== u.role);
+  if (!canAssign) {
+    return `<p class="text-[11px] text-slate-500 mt-2">Additional roles: ${held.length ? esc(held.map(roleLabel).join(', ')) : 'none'}</p>`;
+  }
+  if (!options.length) return '';
+  return `<div class="mt-3 pt-3 border-t border-slate-100">
+      <p class="text-xs font-semibold text-slate-700">Additional roles</p>
+      <p class="text-[11px] text-slate-500 mb-2">They can do everything each of their roles allows.</p>
+      <div id="user-detail-extra-roles" class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">${options.map((r) => `
+        <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+          <input type="checkbox" value="${esc(r.key)}" ${held.includes(r.key) ? 'checked' : ''}> ${esc(r.label)}
+        </label>`).join('')}</div>
+      <button type="button" onclick="saveUserDetailExtraRoles()" class="mt-2 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Save additional roles</button>
+    </div>`;
+}
+
+async function saveUserDetailExtraRoles() {
+  if (!userDetailPhone) return;
+  const roles = Array.from(document.querySelectorAll('#user-detail-extra-roles input:checked')).map((b) => b.value);
+  const data = await (await fetch(`/api/users/${encodeURIComponent(userDetailPhone)}/roles`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roles }),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not save the roles.');
+  showToast(roles.length ? 'Additional roles saved.' : 'Additional roles removed.', 'success');
+  await loadBackendUsers();
+  await openUserDetail(userDetailPhone);
 }
 
 async function saveUserDetailRole() {

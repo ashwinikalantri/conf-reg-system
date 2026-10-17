@@ -140,6 +140,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/guests/lists': 'Adds a value to a dropdown list. guests.manage.',
     'PUT /api/guests/lists/:id': 'Switches a dropdown value off or on, or moves it. guests.manage.',
     'DELETE /api/guests/lists/:id': 'Removes an unused dropdown value. guests.manage.',
+    'PUT /api/users/:phone/roles': 'Gives a staff member additional roles, on top of their main one; what they may do is everything any of their roles allows. users.assign_role, the same key and Super Admin boundary as changing the main role -- Super Admin is never an additional role.',
     'PUT /api/registrations/:id/unreject': 'Returns a rejected registration to pending review, silently -- the mirror of un-approve, and under the same key (payments.unapprove, Super Admin only), since both reverse a decision already made. No role gains anything it could not already do to a confirmed registration.',
     'PUT /api/abstracts/extensions/:phone': 'Allows one delegate to submit an abstract after the last date, until a date chosen for them (or changes it), optionally emailing them. Set from their Front Desk page. abstracts.extend_deadline, a new key held by Super Admin and the Front Desk (whose page it is on); no other role has it.',
     'DELETE /api/abstracts/extensions/:phone': 'Withdraws that permission. abstracts.extend_deadline.',

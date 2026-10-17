@@ -273,6 +273,7 @@ const ROUTE_PERMISSIONS = {
   'POST /api/users': 'users.create',
   'PUT /api/users/:phone': 'users.edit',
   'PUT /api/users/:phone/role': 'users.assign_role',
+  'PUT /api/users/:phone/roles': 'users.assign_role',
   'POST /api/users/:phone/reset-password': 'users.reset_password',
   'POST /api/admin/roles/reload': 'users.manage_roles',
   'GET /api/admin/roles': 'users.manage_roles',

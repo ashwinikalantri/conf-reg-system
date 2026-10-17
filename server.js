@@ -1764,6 +1764,18 @@ db.serialize(() => {
     )
   `);
 
+  // Additional roles. users.role is a person's main role -- it decides
+  // whether they are a delegate or staff, and is the one the Super Admin
+  // checks read. A staff member may hold more roles here; what they may do
+  // is everything any of their roles allows. See rolesOfUser().
+  db.run(`
+    CREATE TABLE IF NOT EXISTS user_roles (
+      phone_number TEXT NOT NULL,
+      role_key TEXT NOT NULL,
+      PRIMARY KEY (phone_number, role_key)
+    )
+  `);
+
   // Guest coordination (see GUEST COORDINATION below). One row per faculty
   // guest, linked to their account once they have one (the table's shape is
   // in guests.js, which also migrates the first version); the dropdown
@@ -2660,6 +2672,29 @@ async function backfillNewSystemPermissions() {
 // shipped with. A role that is simply absent from a cache that DID load is
 // denied: that is a role someone deleted, not a database that is broken, and
 // the two must not be treated alike.
+// Every role a person holds: their main role, then any additional ones.
+// Additional roles count only for staff -- a delegate's main role is
+// DELEGATE, and nothing else is read for them.
+async function rolesOfUser(phone, mainRole) {
+  if (!mainRole || mainRole === 'DELEGATE') return [mainRole].filter(Boolean);
+  const extra = await dbAll('SELECT role_key FROM user_roles WHERE phone_number = ? ORDER BY role_key', [phone]);
+  return [mainRole, ...extra.map((r) => r.role_key).filter((k) => k !== mainRole)];
+}
+// May any of these roles do this?
+const rolesCan = (roles, permission) => (roles || []).some((r) => can(r, permission));
+// May the signed-in person do this, through any role they hold?
+const sessionCan = (req, permission) => !!req.session && rolesCan(req.session.roles || [req.session.role], permission);
+
+// Every staff account with all its roles, for "who could do X" lists (the
+// cash collectors, the guest coordinators).
+async function staffWithRoles() {
+  const staff = await dbAll("SELECT phone_number, salutation, full_name, role FROM users WHERE role IS NOT NULL AND role != 'DELEGATE' ORDER BY full_name");
+  const extra = await dbAll('SELECT phone_number, role_key FROM user_roles');
+  const byPhone = new Map();
+  for (const e of extra) { if (!byPhone.has(e.phone_number)) byPhone.set(e.phone_number, []); byPhone.get(e.phone_number).push(e.role_key); }
+  return staff.map((u) => ({ ...u, roles: [u.role, ...(byPhone.get(u.phone_number) || []).filter((k) => k !== u.role)] }));
+}
+
 function can(roleKey, permission) {
   if (!roleCache || roleCache.size === 0) {
     if (!can.warned) {
@@ -3256,7 +3291,9 @@ async function loadSession(req, res, next) {
       return next();
     }
 
-    req.session = { phone: row.phone_number, role: user.role, name: user.full_name, tokenHash };
+    // `role` is the main role; `roles` is every role held, main first, and
+    // is what permission checks read (sessionCan).
+    req.session = { phone: row.phone_number, role: user.role, roles: await rolesOfUser(row.phone_number, user.role), name: user.full_name, tokenHash };
     next();
   } catch (err) {
     next(err);
@@ -3324,7 +3361,7 @@ function requirePermission(permission) {
   }
   const guard = (req, res, next) => {
     if (!req.session) return res.status(401).json({ success: false, error: 'Login required.' });
-    if (!can(req.session.role, permission)) {
+    if (!sessionCan(req, permission)) {
       return res.status(403).json({ success: false, error: 'You do not have permission for this action.' });
     }
     next();
@@ -4081,10 +4118,12 @@ app.get('/api/auth/me', requireAuth, async (req, res, next) => {
     // `sections` rather than making the client re-implement
     // roleSeesSection(): a screen opens or it doesn't, and that decision
     // belongs with the one file that knows what each screen requires.
-    const permissions = permissionsOf(user.role);
+    // Everything any of their roles allows.
+    const roles = await rolesOfUser(user.phone_number, user.role);
+    const permissions = [...new Set(roles.flatMap((r) => permissionsOf(r)))];
     const sections = {};
-    for (const key of Object.keys(SECTION_PERMISSIONS)) sections[key] = sectionVisible(user.role, key);
-    res.json({ success: true, user: omitPasswordHash(user), permissions, sections });
+    for (const key of Object.keys(SECTION_PERMISSIONS)) sections[key] = roles.some((r) => sectionVisible(r, key));
+    res.json({ success: true, user: omitPasswordHash(user), roles, permissions, sections });
   } catch (err) {
     next(err);
   }
@@ -5386,7 +5425,7 @@ app.get('/api/registrations/:id/screenshot', requireAuth, async (req, res, next)
 
     // Whoever may read payments may read the evidence behind them; everyone
     // else only their own. Same set as before -- see permissions.js.
-    const isFinance = can(req.session.role, 'payments.view');
+    const isFinance = sessionCan(req, 'payments.view');
     if (!isFinance && req.session.phone !== row.phone_number) {
       return res.status(403).json({ success: false, error: 'You do not have permission to view this screenshot.' });
     }
@@ -5421,7 +5460,7 @@ app.get('/api/registrations/:id/id-card', requireAuth, async (req, res, next) =>
     }
     // Whoever may read payments may read the evidence behind them; everyone
     // else only their own. Same set as before -- see permissions.js.
-    const isFinance = can(req.session.role, 'payments.view');
+    const isFinance = sessionCan(req, 'payments.view');
     if (!isFinance && req.session.phone !== row.phone_number) {
       return res.status(403).json({ success: false, error: 'You do not have permission to view this ID card.' });
     }
@@ -5452,7 +5491,7 @@ app.get('/api/payment-transactions/:txnId/screenshot', requireAuth, async (req, 
     // staff, or the delegate whose own payment it is.
     // Whoever may read payments may read the evidence behind them; everyone
     // else only their own. Same set as before -- see permissions.js.
-    const isFinance = can(req.session.role, 'payments.view');
+    const isFinance = sessionCan(req, 'payments.view');
     if (!isFinance && req.session.phone !== txn.phone_number) {
       return res.status(403).json({ success: false, error: 'You do not have permission to view this payment slip.' });
     }
@@ -7407,7 +7446,11 @@ app.get('/api/admin/roles', requirePermission('users.manage_roles'), async (req,
   try {
     const roles = await dbAll('SELECT key, label, description, is_system, grants_all FROM roles ORDER BY is_system DESC, label');
     const permRows = await dbAll('SELECT role_key, permission FROM role_permissions');
-    const userCounts = await dbAll('SELECT role, COUNT(*) AS n FROM users GROUP BY role');
+    // People holding the role as their main role or an additional one.
+    const userCounts = await dbAll(`SELECT role, COUNT(*) AS n FROM (
+        SELECT phone_number, role FROM users
+        UNION SELECT ur.phone_number, ur.role_key FROM user_roles ur JOIN users u ON u.phone_number = ur.phone_number
+         WHERE u.role IS NOT NULL AND u.role != 'DELEGATE') GROUP BY role`);
     const countByRole = new Map(userCounts.map((r) => [r.role, r.n]));
     const permsByRole = new Map();
     for (const r of permRows) {
@@ -7502,7 +7545,9 @@ app.put('/api/admin/roles/:key', requirePermission('users.manage_roles'), async 
     // Every other role stays fully editable, including down to zero
     // permissions -- it's only the role the ACTOR currently holds, and only
     // this one permission, that is protected.
-    if (req.session.role === key && !permissions.includes('users.manage_roles')) {
+    const myOtherRoles = (req.session.roles || [req.session.role]).filter((r) => r !== key);
+    if ((req.session.roles || [req.session.role]).includes(key) && !permissions.includes('users.manage_roles')
+      && !rolesCan(myOtherRoles, 'users.manage_roles')) {
       return res.status(409).json({
         success: false,
         error: 'You cannot remove your own ability to manage roles. Have another Super Admin or role manager make this change instead.',
@@ -7541,7 +7586,8 @@ app.delete('/api/admin/roles/:key', requirePermission('users.manage_roles'), asy
     if (!role) return res.status(404).json({ success: false, error: 'Role not found.' });
     if (role.is_system) return res.status(403).json({ success: false, error: 'A built-in role cannot be deleted.' });
 
-    const holders = await dbGet('SELECT COUNT(*) AS n FROM users WHERE role = ?', [key]);
+    const holders = await dbGet(
+      'SELECT (SELECT COUNT(*) FROM users WHERE role = ?) + (SELECT COUNT(*) FROM user_roles WHERE role_key = ?) AS n', [key, key]);
     if (holders.n > 0) {
       return res.status(409).json({
         success: false,
@@ -7583,7 +7629,11 @@ app.get('/api/users', requirePermission('users.view'), async (req, res, next) =>
       if (!selByReg.has(s.registration_id)) selByReg.set(s.registration_id, []);
       selByReg.get(s.registration_id).push(`${s.group_name}: ${s.option_name}`);
     }
+    const extraRows = await dbAll('SELECT phone_number, role_key FROM user_roles ORDER BY role_key');
+    const extraBy = new Map();
+    for (const e of extraRows) { if (!extraBy.has(e.phone_number)) extraBy.set(e.phone_number, []); extraBy.get(e.phone_number).push(e.role_key); }
     const shaped = (rows || []).map((u) => ({
+      extra_roles: u.role && u.role !== 'DELEGATE' ? (extraBy.get(u.phone_number) || []).filter((k) => k !== u.role) : [],
       ...u,
       program_selections: u.registration_id ? (selByReg.get(u.registration_id) || []) : [],
     }));
@@ -7613,6 +7663,8 @@ app.get('/api/users/:phone/detail', requirePermission('users.view'), async (req,
     res.json({
       success: true,
       user: omitPasswordHash(user),
+      // Additional roles (staff only); the main one is user.role.
+      extraRoles: (await rolesOfUser(user.phone_number, user.role)).slice(1),
       registration: reg || null,
       selections,
       payment,
@@ -7675,7 +7727,7 @@ app.put('/api/users/:phone', requirePermission('users.edit'), async (req, res, n
       // somebody's say-so. So it is refused for a role that can edit a user
       // without being able to open the Users screen -- which is exactly the
       // front desk, and not Super Admin.
-      if (emailChanged && current && current.email_verified && !can(req.session.role, 'users.view')) {
+      if (emailChanged && current && current.email_verified && !sessionCan(req, 'users.view')) {
         return res.status(409).json({
           success: false,
           error: 'This email address has been verified by the delegate and cannot be changed at the desk.',
@@ -7708,7 +7760,7 @@ app.put('/api/users/:phone', requirePermission('users.edit'), async (req, res, n
       // it, and re-pointing it is a conversation with them rather than a
       // keystroke at a counter. Scoped to desk-level access, so a full admin
       // can still correct one.
-      if (phoneChanged && currentPhone && currentPhone.phone_verified && !can(req.session.role, 'users.view')) {
+      if (phoneChanged && currentPhone && currentPhone.phone_verified && !sessionCan(req, 'users.view')) {
         return res.status(409).json({
           success: false,
           error: 'This mobile number has been verified by the delegate and cannot be changed at the desk.',
@@ -7880,8 +7932,57 @@ app.put('/api/users/:phone/role', requirePermission('users.assign_role'), async 
         return res.status(403).json({ success: false, error: 'Only a Super Admin can change another Super Admin\'s role.' });
       }
     }
+    const before = await dbGet('SELECT role FROM users WHERE phone_number = ?', [req.params.phone]);
+    if (!before) return res.status(404).json({ success: false, error: 'User not found.' });
     await dbRun('UPDATE users SET role = ? WHERE phone_number = ?', [role, req.params.phone]);
+    // A delegate holds no staff roles, and Super Admin already holds
+    // everything; either way any additional roles go. The new main role is
+    // not also kept as an additional one.
+    if (role === 'DELEGATE' || role === 'SUPER_ADMIN') {
+      await dbRun('DELETE FROM user_roles WHERE phone_number = ?', [req.params.phone]);
+    } else {
+      await dbRun('DELETE FROM user_roles WHERE phone_number = ? AND role_key = ?', [req.params.phone, role]);
+    }
+    if (before.role !== role) {
+      await recordAudit({ req, entityType: 'user', entityId: req.params.phone, action: 'USER_ROLE_CHANGED', oldValue: before.role, newValue: role });
+    }
     res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A staff member's additional roles, replacing whatever they held. Same key
+// and escalation boundary as changing the main role: Super Admin is never an
+// additional role (it is a main role, and holds everything already), a
+// delegate holds none, and only a Super Admin may change a Super Admin.
+app.put('/api/users/:phone/roles', requirePermission('users.assign_role'), async (req, res, next) => {
+  try {
+    const target = await dbGet('SELECT phone_number, role FROM users WHERE phone_number = ?', [req.params.phone]);
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+    if (!target.role || target.role === 'DELEGATE') {
+      return res.status(400).json({ success: false, error: 'Additional roles are for staff. Give them a staff role first.' });
+    }
+    if (target.role === 'SUPER_ADMIN') {
+      return res.status(400).json({ success: false, error: 'A Super Admin already holds every permission.' });
+    }
+    const wanted = [...new Set((Array.isArray(req.body && req.body.roles) ? req.body.roles : []).map(String))]
+      .filter((k) => k !== target.role);
+    if (wanted.includes('SUPER_ADMIN')) {
+      return res.status(400).json({ success: false, error: 'Super Admin can only be a main role.' });
+    }
+    if (wanted.includes('DELEGATE') || wanted.some((k) => !isKnownAdminRole(k))) {
+      return res.status(400).json({ success: false, error: 'Invalid role.' });
+    }
+    const before = (await dbAll('SELECT role_key FROM user_roles WHERE phone_number = ? ORDER BY role_key', [target.phone_number])).map((r) => r.role_key);
+    await dbRun('DELETE FROM user_roles WHERE phone_number = ?', [target.phone_number]);
+    for (const k of wanted) await dbRun('INSERT INTO user_roles (phone_number, role_key) VALUES (?, ?)', [target.phone_number, k]);
+    const after = [...wanted].sort();
+    if (before.join() !== after.join()) {
+      await recordAudit({ req, entityType: 'user', entityId: target.phone_number, action: 'USER_ROLES_CHANGED',
+        oldValue: before.join(', ') || 'none', newValue: after.join(', ') || 'none' });
+    }
+    res.json({ success: true, roles: [target.role, ...after] });
   } catch (err) {
     next(err);
   }
@@ -9310,9 +9411,8 @@ app.post('/api/desk/collect-cash', requirePermission('payments.add_payment'), as
 const CASH_TAKING_PERMISSIONS = ['payments.desk_register', 'payments.add_payment'];
 
 async function deskStaffList() {
-  const rows = await dbAll(
-    "SELECT phone_number, full_name, role FROM users WHERE role IS NOT NULL AND role != 'DELEGATE' ORDER BY full_name");
-  return rows.filter((u) => CASH_TAKING_PERMISSIONS.some((k) => can(u.role, k)))
+  const rows = await staffWithRoles();
+  return rows.filter((u) => CASH_TAKING_PERMISSIONS.some((k) => rolesCan(u.roles, k)))
     .map((u) => ({ key: u.phone_number, name: u.full_name || u.phone_number, role: u.role }));
 }
 
@@ -11240,7 +11340,7 @@ async function buildReport(type, opts = {}) {
   // Operations, who may open the Payments line list, sees counts here but no
   // rupee totals.
   if (type === 'summary') {
-    const may = (key) => can(opts.role, key);
+    const may = (key) => rolesCan(opts.roles || [opts.role], key);
     const num = (v) => Number(v) || 0;
     const rupees = (v) => `₹${inr(Math.round(num(v)))}`;
     const share = summaryShare;
@@ -11724,7 +11824,7 @@ function reportSubline(rep) {
 // this report too, but can't see the masters tab).
 app.get('/api/admin/reports/workshops/options', requireAuth, async (req, res, next) => {
   try {
-    if (!can(req.session.role, REPORT_PERMISSIONS.workshops)) {
+    if (!sessionCan(req, REPORT_PERMISSIONS.workshops)) {
       return res.status(403).json({ success: false, error: 'You do not have permission for this report.' });
     }
     const groups = await fetchProgramGroups({ activeOnly: false });
@@ -11740,13 +11840,13 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
     const type = req.params.type;
     const permission = REPORT_PERMISSIONS[type];
     if (!permission) return res.status(404).json({ success: false, error: 'Unknown report.' });
-    if (!can(req.session.role, permission)) {
+    if (!sessionCan(req, permission)) {
       return res.status(403).json({ success: false, error: 'You do not have permission for this report.' });
     }
     if (type === 'workshops' && !req.query.optionId) {
       return res.status(400).json({ success: false, error: 'Select a workshop or QI practice first.' });
     }
-    const rep = await buildReport(type, { optionId: req.query.optionId, role: req.session.role });
+    const rep = await buildReport(type, { optionId: req.query.optionId, role: req.session.role, roles: req.session.roles });
     res.set('Cache-Control', 'private, no-store');
     if (req.query.format === 'csv') {
       res.set('Content-Type', 'text/csv; charset=utf-8');
@@ -12034,8 +12134,8 @@ const activeGuestLists = (rows) => {
 
 // Staff who can be named coordinator: anyone whose role may edit that side.
 async function guestCoordinatorPool() {
-  const staff = await dbAll("SELECT phone_number, salutation, full_name, role FROM users WHERE role IS NOT NULL AND role != 'DELEGATE' ORDER BY full_name");
-  const pick = (perm) => staff.filter((u) => can(u.role, perm))
+  const staff = await staffWithRoles();
+  const pick = (perm) => staff.filter((u) => rolesCan(u.roles, perm))
     .map((u) => ({ phone: u.phone_number, name: [u.salutation, u.full_name].filter(Boolean).join(' ') || u.phone_number }));
   return { transport: pick('guests.travel'), accommodation: pick('guests.stay') };
 }
@@ -12509,7 +12609,7 @@ app.put('/api/guests/:id', requirePermission('guests.edit'), async (req, res, ne
     if (current.accommodation_coordinator) coordinators.accommodation.add(current.accommodation_coordinator);
     const lists = activeGuestLists(await guestListRows());
     const { values, errors } = guestLib.validateGuestFields((req.body && req.body.fields) || {}, current, lists, coordinators);
-    const forbidden = guestLib.forbiddenChanges(values, current, (perm) => can(req.session.role, perm));
+    const forbidden = guestLib.forbiddenChanges(values, current, (perm) => sessionCan(req, perm));
     if (forbidden.length) {
       return res.status(403).json({ success: false, error: `You cannot change: ${forbidden.map((f) => guestLib.FIELD_LABELS[f]).join(', ')}.` });
     }
