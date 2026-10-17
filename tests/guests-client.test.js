@@ -88,6 +88,8 @@ check('purple chip on both roommates', /bg-violet-100[^>]*>Shares room/.test(row
 check('not registered is flagged', />Not registered</.test(rowOf('Delta Roommate')) && !/>Not registered</.test(rowOf('Alpha Arriving')));
 check('arrival shows date and time together, 12-hour', />20 November 2026, 9:00 AM</.test(rowOf('Alpha Arriving')));
 check('a coordinator gets Edit', />Edit</.test(rowOf('Alpha Arriving')));
+check('the Faculty column has a fixed width, and a long designation is cut to two lines with the rest on hover',
+  /<div class="w-56 break-words">/.test(rowOf('Alpha Arriving')) && /class="text-xs text-slate-500 line-clamp-2" title="Professor">Professor</.test(rowOf('Alpha Arriving')));
 check('a guest without an account says so, not "Not registered"', />Not signed up</.test(rowOf('Echo Typed')) && !/>Not registered</.test(rowOf('Echo Typed')));
 
 el('guests-filter-flag').value = 'noAccommodation';

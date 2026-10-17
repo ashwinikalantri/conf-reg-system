@@ -10486,6 +10486,9 @@ function renderGuestList() {
     const x = keyOf(a); const y = keyOf(b);
     return (x < y ? -1 : x > y ? 1 : a.sr_no - b.sr_no) * guestSort.dir;
   });
+  // The Faculty column has a fixed width: a long designation (often a whole
+  // affiliation) wraps to two lines, the rest on hover, instead of widening
+  // the column at the expense of travel and stay.
   const line = (parts) => parts.filter(Boolean).map(esc).join(' · ');
   const travel = (date, time, mode, number, point, vehicle, status) => date
     ? `<p class="font-semibold text-slate-800 whitespace-nowrap">${esc(guestWhen(date, time))}</p>
@@ -10495,11 +10498,13 @@ function renderGuestList() {
   tbody.innerHTML = rows.length ? rows.map((g) => `
     <tr class="${guestRowTint(g)} align-top">
       <td class="p-3 text-xs text-slate-400 font-mono">${esc(g.sr_no)}</td>
-      <td class="p-3 min-w-[13rem]">
-        <p class="font-semibold ${g.cancelled ? 'line-through' : 'text-slate-800'}">${esc(g.name)}</p>
-        <p class="text-xs text-slate-500">${esc(g.designation || '')}</p>
-        <p class="text-xs text-slate-500 font-mono">${esc(g.phone || '')}</p>
-        <div class="flex flex-wrap gap-1 mt-1">${guestFlagChips(g)}</div>
+      <td class="p-3">
+        <div class="w-56 break-words">
+          <p class="font-semibold ${g.cancelled ? 'line-through' : 'text-slate-800'}">${esc(g.name)}</p>
+          ${g.designation ? `<p class="text-xs text-slate-500 line-clamp-2" title="${esc(g.designation)}">${esc(g.designation)}</p>` : ''}
+          <p class="text-xs text-slate-500 font-mono">${esc(g.phone || '')}</p>
+          <div class="flex flex-wrap gap-1 mt-1">${guestFlagChips(g)}</div>
+        </div>
       </td>
       <td class="p-3">${travel(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status)}</td>
       <td class="p-3">${travel(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status)}</td>
