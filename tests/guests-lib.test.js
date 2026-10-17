@@ -159,4 +159,47 @@ check('a leading zero is kept as text', G.guestsCsv([{ ...b.guests[0], phone: '0
 check('a value that would run as a formula is neutralised', G.guestsCsv([{ ...b.guests[0], remarks: '=HYPERLINK("x")' }]).includes(`"'=HYPERLINK(""x"")"`));
 check('warnings are spelled out', /No accommodation/.test(csv[4]));
 
-report();
+console.log('\n== Guests without an account ==');
+check('a typed phone keeps its + and leading zero', v({ guest_phone: '+91 0712 230 0000' }).values.guest_phone === '+91 0712 230 0000');
+check('...and must look like a phone', v({ guest_phone: 'call me' }).errors.length === 1 && v({ guest_phone: '12' }).errors.length === 1);
+check('an email must be one', v({ guest_email: 'not-an-email' }).errors.length === 1 && v({ guest_email: 'a@b.in' }).errors.length === 0);
+check('who they are is shared work (guests.edit)', G.IDENTITY_FIELDS.every((f) => G.FIELD_PERMISSION[f] === 'guests.edit'));
+const unl = G.buildBoard({ guests: [{ id: 1, name: 'Typed In', linked: false, registered: 0 }, { id: 2, name: 'Has Account', linked: true, registered: 0 }], lists, settings, today });
+check('not signed up is its own flag', unl.guests[0].flags.notSignedUp === true && unl.guests[1].flags.notSignedUp === false);
+check('...and both count as not registered', unl.dashboard.notRegistered === 2 && unl.dashboard.notSignedUp === 1);
+const csvU = G.guestsCsv(unl.guests);
+check('the CSV says which', csvU.includes('Not signed up') && csvU.includes('Signed up, not registered'));
+
+console.log('\n== The table migration ==');
+const sqlite3 = require('sqlite3');
+const os = require('os');
+const path = require('path');
+const fs = require('fs');
+const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'guests-mig-')), 't.db');
+const tdb = new sqlite3.Database(file);
+const run = (q, p = []) => new Promise((ok, no) => tdb.run(q, p, function (e) { e ? no(e) : ok(this); }));
+const all = (q, p = []) => new Promise((ok, no) => tdb.all(q, p, (e, r) => (e ? no(e) : ok(r))));
+(async () => {
+  check('no table yet: nothing to do', (await G.migrateGuestsTable(run, all)) === 'absent');
+  // The first version: every guest had to have an account.
+  await run(`CREATE TABLE guests (id INTEGER PRIMARY KEY AUTOINCREMENT, phone_number TEXT NOT NULL UNIQUE,
+    arrival_date TEXT, room_no TEXT, overall_status TEXT, created_at INTEGER NOT NULL, created_by TEXT, updated_at INTEGER, updated_by TEXT)`);
+  await run("INSERT INTO guests (id, phone_number, arrival_date, room_no, overall_status, created_at) VALUES (4, '9800000001', '2026-11-20', '101', 'Invited', 1)");
+  await run("INSERT INTO guests (id, phone_number, overall_status, created_at) VALUES (9, '9800000002', 'Confirmed', 2)");
+  check('the old table is rebuilt', (await G.migrateGuestsTable(run, all)) === 'rebuilt');
+  const rows = await all('SELECT id, phone_number, arrival_date, room_no, overall_status FROM guests ORDER BY id');
+  check('...every row kept, with its id and details', JSON.stringify(rows) === JSON.stringify([
+    { id: 4, phone_number: '9800000001', arrival_date: '2026-11-20', room_no: '101', overall_status: 'Invited' },
+    { id: 9, phone_number: '9800000002', arrival_date: null, room_no: null, overall_status: 'Confirmed' }]), rows);
+  await run("INSERT INTO guests (guest_name, created_at) VALUES ('No Account A', 3)");
+  await run("INSERT INTO guests (guest_name, created_at) VALUES ('No Account B', 3)");
+  check('guests without an account can now be added, more than one', (await all('SELECT COUNT(*) AS n FROM guests WHERE phone_number IS NULL'))[0].n === 2);
+  check('...new ids continue after the old ones', (await all("SELECT id FROM guests WHERE guest_name = 'No Account A'"))[0].id === 10);
+  let dupe = false;
+  try { await run("INSERT INTO guests (phone_number, created_at) VALUES ('9800000001', 5)"); } catch (e) { dupe = /UNIQUE/.test(e.message); }
+  check('...and an account still cannot be on the list twice', dupe);
+  check('running it again leaves the table alone', (await G.migrateGuestsTable(run, all)) === 'current');
+  check('no rebuild table is left behind', (await all("SELECT name FROM sqlite_master WHERE name = 'guests_rebuild'")).length === 0);
+  tdb.close();
+  report();
+})();

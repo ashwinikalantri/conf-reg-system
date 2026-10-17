@@ -5,9 +5,11 @@
 // without a server, and nothing derived is ever stored.
 //
 // A guest is a faculty member the conference looks after: one row per
-// person, always linked to their portal account, which supplies their name,
-// designation and phone. Everything else -- travel, pickup, stay -- lives on
-// the guest row.
+// person. Usually linked to their portal account, which then supplies their
+// name, designation, phone and email. A guest who has not signed up yet is
+// added by name, with those details typed in (the guest_* fields), and linked
+// to their account once they have one. Everything else -- travel, pickup,
+// stay -- lives on the guest row either way.
 
 // Who may edit what. Travel belongs to the Transport Coordinator, stay to the
 // Accommodation Coordinator; the rest is shared by both.
@@ -18,8 +20,11 @@ const TRAVEL_FIELDS = [
 ];
 const STAY_FIELDS = ['accommodation', 'room_no', 'checkin_date', 'checkout_date', 'room_type', 'accommodation_coordinator'];
 const GENERAL_FIELDS = ['special_needs', 'overall_status', 'remarks'];
-const ALL_FIELDS = [...TRAVEL_FIELDS, ...STAY_FIELDS, ...GENERAL_FIELDS];
+// Who a guest without an account is. Ignored once linked: the account says.
+const IDENTITY_FIELDS = ['guest_name', 'guest_designation', 'guest_phone', 'guest_email'];
+const ALL_FIELDS = [...IDENTITY_FIELDS, ...TRAVEL_FIELDS, ...STAY_FIELDS, ...GENERAL_FIELDS];
 const FIELD_PERMISSION = Object.fromEntries([
+  ...IDENTITY_FIELDS.map((f) => [f, 'guests.edit']),
   ...TRAVEL_FIELDS.map((f) => [f, 'guests.travel']),
   ...STAY_FIELDS.map((f) => [f, 'guests.stay']),
   ...GENERAL_FIELDS.map((f) => [f, 'guests.edit']),
@@ -32,6 +37,7 @@ const TRAVEL_NOTIFY_FIELDS = TRAVEL_FIELDS.filter((f) => f !== 'transport_coordi
 const STAY_NOTIFY_FIELDS = STAY_FIELDS.filter((f) => f !== 'accommodation_coordinator');
 
 const FIELD_LABELS = {
+  guest_name: 'Name', guest_designation: 'Designation', guest_phone: 'Phone', guest_email: 'Email',
   arrival_date: 'Arrival Date', arrival_time: 'Arrival Time', arrival_mode: 'Arrival Mode',
   arrival_number: 'Arrival Flight/Train No', arrival_point: 'Arrival Point',
   pickup_vehicle: 'Pickup Vehicle/Driver', pickup_status: 'Pickup Status',
@@ -130,6 +136,11 @@ function validateGuestFields(input, current = {}, lists = {}, coordinators = {})
     }
     if (v != null && DATE_FIELDS.has(field) && !validDate(v)) { errors.push(`${label} is not a valid date.`); continue; }
     if (v != null && TIME_FIELDS.has(field) && !validTime(v)) { errors.push(`${label} must be 24-hour HH:MM, e.g. 14:30.`); continue; }
+    // Kept exactly as typed (a leading + or 0 included); only its shape is checked.
+    if (v != null && field === 'guest_phone' && !(/^\+?[0-9][0-9 ()-]*$/.test(v) && v.replace(/\D/g, '').length >= 6 && v.length <= 20)) {
+      errors.push('Phone should be digits, with an optional leading +.'); continue;
+    }
+    if (v != null && field === 'guest_email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) { errors.push('Email is not a valid address.'); continue; }
     if (v != null && FIELD_LISTS[field]) {
       const allowed = lists[FIELD_LISTS[field]] || [];
       // A value already on the guest stays acceptable after it is switched
@@ -311,6 +322,8 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
         sharedRoom: roommates,
         vehicleClash: clashGuests.get(g.id) || [],
         notRegistered: !Number(g.registered),
+        // Added by name, not yet linked to an account.
+        notSignedUp: !g.linked,
       },
     };
   });
@@ -407,6 +420,7 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
     alert: { days: settings.alertDays, from: today, to: windowEnd, arriving: soon.length, noVehicle: soon.filter((g) => blank(g.pickup_vehicle)).length },
     noAccommodation: rows.filter((g) => g.flags.noAccommodation).length,
     notRegistered: live.filter((g) => !Number(g.registered)).length,
+    notSignedUp: live.filter((g) => !g.linked).length,
     sharedRooms: [...byRoom.values()].filter((gs) => gs.length > 1).length,
     vehicleClashes: clashes.length,
     arrivals: movement('arrival_date', 'arrival_time', 'arrival_point'),
@@ -423,7 +437,9 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
 // zeros as typed.
 const CSV_COLUMNS = [
   ['Sr No', (g) => g.sr_no], ['Name', (g) => g.name], ['Designation', (g) => g.designation], ['Phone', (g) => g.phone],
-  ['Registration No', (g) => g.registration_number], ['Registered', (g) => (Number(g.registered) ? 'Yes' : 'No')],
+  ['Email', (g) => g.email],
+  ['Registration No', (g) => g.registration_number],
+  ['Account', (g) => (!g.linked ? 'Not signed up' : Number(g.registered) ? 'Registered' : 'Signed up, not registered')],
   ...['arrival_date', 'arrival_time', 'arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle', 'pickup_status',
     'departure_date', 'departure_time', 'departure_mode', 'departure_number', 'departure_point', 'drop_vehicle', 'drop_status',
     'accommodation', 'room_no', 'checkin_date', 'checkout_date', 'room_type', 'special_needs']
@@ -436,7 +452,7 @@ const CSV_COLUMNS = [
     g.flags.noAccommodation ? 'No accommodation' : '',
     g.flags.sharedRoom.length ? `Shares room with ${g.flags.sharedRoom.join(', ')}` : '',
     ...g.flags.vehicleClash,
-    g.flags.notRegistered ? 'Not registered' : '',
+    g.flags.notSignedUp ? 'Not signed up' : g.flags.notRegistered ? 'Not registered' : '',
   ].filter(Boolean).join('; ')],
 ];
 function guestsCsv(rows) {
@@ -449,7 +465,51 @@ function guestsCsv(rows) {
     .map((r) => r.map(cell).join(',')).join('\r\n');
 }
 
+// The guests table. phone_number is the linked account, NULL until linked
+// (SQLite lets UNIQUE hold any number of NULLs).
+const GUEST_TABLE_SQL = (name) => `
+  CREATE TABLE IF NOT EXISTS ${name} (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone_number TEXT UNIQUE,
+    guest_name TEXT, guest_designation TEXT, guest_phone TEXT, guest_email TEXT,
+    arrival_date TEXT, arrival_time TEXT, arrival_mode TEXT, arrival_number TEXT, arrival_point TEXT,
+    pickup_vehicle TEXT, pickup_status TEXT,
+    departure_date TEXT, departure_time TEXT, departure_mode TEXT, departure_number TEXT, departure_point TEXT,
+    drop_vehicle TEXT, drop_status TEXT,
+    accommodation TEXT, room_no TEXT, checkin_date TEXT, checkout_date TEXT, room_type TEXT,
+    special_needs TEXT, transport_coordinator TEXT, accommodation_coordinator TEXT, overall_status TEXT, remarks TEXT,
+    created_at INTEGER NOT NULL, created_by TEXT, updated_at INTEGER, updated_by TEXT,
+    linked_at INTEGER, linked_by TEXT
+  )`;
+
+// The first version of the table made phone_number NOT NULL -- every guest
+// had to have an account. SQLite cannot drop a NOT NULL, so the table is
+// rebuilt: same rows, same ids, one transaction. Run once at boot; a table
+// already in the new shape is left alone. run/all are promise-returning
+// wrappers over the database.
+async function migrateGuestsTable(run, all) {
+  const cols = await all('PRAGMA table_info(guests)');
+  if (!cols.length) return 'absent';
+  const phone = cols.find((c) => c.name === 'phone_number');
+  if (phone && !phone.notnull) return 'current';
+  const keep = cols.map((c) => c.name).join(', ');
+  await run('BEGIN');
+  try {
+    await run('DROP TABLE IF EXISTS guests_rebuild');
+    await run(GUEST_TABLE_SQL('guests_rebuild'));
+    await run(`INSERT INTO guests_rebuild (${keep}) SELECT ${keep} FROM guests`);
+    await run('DROP TABLE guests');
+    await run('ALTER TABLE guests_rebuild RENAME TO guests');
+    await run('COMMIT');
+  } catch (err) {
+    await run('ROLLBACK').catch(() => {});
+    throw err;
+  }
+  return 'rebuilt';
+}
+
 module.exports = {
+  GUEST_TABLE_SQL, migrateGuestsTable, IDENTITY_FIELDS,
   TRAVEL_FIELDS, STAY_FIELDS, GENERAL_FIELDS, ALL_FIELDS, FIELD_PERMISSION, FIELD_LABELS, FIELD_LISTS,
   TRAVEL_NOTIFY_FIELDS, STAY_NOTIFY_FIELDS,
   LIST_LABELS, DEFAULT_LISTS, PROTECTED_VALUES, CANCELLED, DEFAULT_SETTINGS, SLOT_NAMES,

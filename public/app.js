@@ -5979,7 +5979,7 @@ const ACTIVITY_ACTION_LABELS = {
   PAYMENT_MODE_CORRECTION: 'Mode Fix', ADMIN_ENROLL: 'Roster +', ADMIN_UNENROLL: 'Roster −',
   BANK_TXN_LINK: 'Linked', BANK_TXN_UNLINK: 'Unlinked', PAYMENT_ADMIN_ADDED: 'Payment Added', ABSTRACT_STATUS_CHANGE: 'Status', ABSTRACT_ALLOCATION: 'Allotted',
   ABSTRACT_EXTENSION_GRANT: 'Late Submission Allowed', ABSTRACT_EXTENSION_REVOKE: 'Late Submission Withdrawn',
-  GUEST_ADDED: 'Marked Faculty', GUEST_UPDATED: 'Guest Updated', GUEST_REMOVED: 'Guest Removed',
+  GUEST_ADDED: 'Marked Faculty', GUEST_UPDATED: 'Guest Updated', GUEST_REMOVED: 'Guest Removed', GUEST_LINKED: 'Guest Linked',
   GUEST_VEHICLE_ADDED: 'Vehicle Added', GUEST_VEHICLE_UPDATED: 'Vehicle Updated', GUEST_VEHICLE_DELETED: 'Vehicle Deleted',
   GUEST_ROOM_ADDED: 'Room Added', GUEST_ROOM_UPDATED: 'Room Updated', GUEST_ROOM_DELETED: 'Room Deleted',
   GUEST_LIST_VALUE_ADDED: 'List Value Added', GUEST_LIST_VALUE_ON: 'List Value On', GUEST_LIST_VALUE_OFF: 'List Value Off',
@@ -10299,7 +10299,8 @@ function guestFlagChips(g) {
   if (f.noAccommodation) out.push(guestPill(GUEST_FLAG_STYLES.noAccommodation, 'No accommodation'));
   if (f.sharedRoom && f.sharedRoom.length) out.push(guestPill(GUEST_FLAG_STYLES.sharedRoom, `Shares room · ${f.sharedRoom.length + 1}`, `With ${f.sharedRoom.join(', ')}`));
   if (f.vehicleClash && f.vehicleClash.length) out.push(guestPill(GUEST_FLAG_STYLES.vehicleClash, 'Vehicle clash', f.vehicleClash.join('\n')));
-  if (f.notRegistered) out.push(guestPill(GUEST_FLAG_STYLES.notRegistered, 'Not registered'));
+  if (f.notSignedUp) out.push(guestPill(GUEST_FLAG_STYLES.notRegistered, 'Not signed up'));
+  else if (f.notRegistered) out.push(guestPill(GUEST_FLAG_STYLES.notRegistered, 'Not registered'));
   return out.join(' ');
 }
 // Red outranks orange on the row itself; purple is a chip only (sharing a
@@ -10504,9 +10505,27 @@ function openGuestEditor(id) {
       ${enabled ? '' : `<p class="text-[11px] text-slate-400 -mt-1 mb-2">${esc(note)}</p>`}
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">${body}</div></fieldset>`;
   document.getElementById('guest-edit-name').textContent = g.name;
-  document.getElementById('guest-edit-who').textContent = [g.designation, g.phone, g.registration_number].filter(Boolean).join(' · ');
+  document.getElementById('guest-edit-who').textContent = g.linked
+    ? [g.designation, g.phone, g.registration_number].filter(Boolean).join(' · ')
+    : 'Not signed up yet — details as typed in, until linked to their account.';
+  // Added by name: who they are is edited here, and they are linked to their
+  // account once they have one.
+  const identity = g.linked ? '' : group('Guest', shared, '',
+    field('guest_name', 'Name *', input('guest_name', 'text', shared, 'required maxlength="120"'))
+    + field('guest_designation', 'Designation', input('guest_designation', 'text', shared, 'maxlength="120"'))
+    + field('guest_phone', 'Phone', input('guest_phone', 'text', shared, 'inputmode="tel" maxlength="20"'))
+    + field('guest_email', 'Email', input('guest_email', 'email', shared, 'maxlength="120"')))
+    + (shared ? `<div class="mt-3 border border-sky-200 bg-sky-50 rounded-xl p-3">
+        <p class="text-xs font-bold text-sky-900 mb-1">Link to their account</p>
+        ${g.possible_account && !g.possible_account.taken
+          ? `<p class="text-xs text-sky-900 mb-2">An account matches this phone or email: <b>${esc(g.possible_account.name)}</b>.
+               <button type="button" onclick="linkGuest(${esc(g.id)}, '${esc(g.possible_account.phone_number)}')" class="ml-1 px-2.5 py-1 bg-sky-700 hover:bg-sky-800 text-white text-[11px] font-semibold rounded-md">Link to ${esc(g.possible_account.name)}</button></p>`
+          : ''}
+        <input id="guest-link-search" autocomplete="off" oninput="searchGuestLink(this.value)" placeholder="Find their account: name, mobile, email or ID" class="w-full h-9 px-3 border border-sky-200 rounded-lg text-sm bg-white outline-none">
+        <div id="guest-link-results" class="mt-2 space-y-1.5"></div>
+      </div>` : '');
   document.getElementById('guest-edit-flags').innerHTML = `${guestStatusBadge(g.overall_status)} ${guestFlagChips(g)}`;
-  document.getElementById('guest-edit-body').innerHTML = vehicles + [
+  document.getElementById('guest-edit-body').innerHTML = vehicles + identity + (identity ? '<div class="h-4"></div>' : '') + [
     group('Arrival', travel, 'Only a transport coordinator can change travel.',
       field('arrival_date', 'Date', input('arrival_date', 'date', travel))
       + field('arrival_time', 'Time (24-hour)', time('arrival_time', travel))
@@ -10621,6 +10640,58 @@ async function markFaculty(i, phoneOverride) {
   return data;
 }
 
+async function addUnlinkedGuest(ev) {
+  ev.preventDefault();
+  const f = ev.target;
+  const note = document.getElementById('guest-add-new-note');
+  note.classList.add('hidden');
+  const data = await (await fetch('/api/guests', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ guest: { name: f.guestName.value, designation: f.guestDesignation.value, phone: f.guestPhone.value, email: f.guestEmail.value } }),
+  })).json().catch(() => ({}));
+  if (data.code === 'ACCOUNT_EXISTS' && data.account) {
+    // They have an account after all: mark that, rather than typing them in twice.
+    facultyCandidates = [{ phone_number: data.account.phone_number }];
+    note.innerHTML = `${esc(data.error)}${data.account.guestId ? ''
+      : ' <button type="button" onclick="markFaculty(0)" class="ml-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold rounded-md">Mark as faculty</button>'}`;
+    note.classList.remove('hidden');
+    return;
+  }
+  if (!data.success) { note.textContent = data.error || 'Could not add the guest.'; note.classList.remove('hidden'); return; }
+  showToast('Added. Link them to their account once they sign up.', 'success');
+  f.reset();
+  closeModal('modal-guest-add');
+  renderGuests();
+}
+
+let guestLinkSeq = 0;
+async function searchGuestLink(q) {
+  const box = document.getElementById('guest-link-results');
+  const id = document.getElementById('guest-edit-form').dataset.id;
+  q = String(q || '').trim();
+  if (q.length < 2) { box.innerHTML = ''; return; }
+  const seq = ++guestLinkSeq;
+  const res = await fetch(`/api/guests/candidates?q=${encodeURIComponent(q)}`);
+  if (seq !== guestLinkSeq || !res.ok) return;
+  const results = (await res.json()).results || [];
+  box.innerHTML = results.length ? results.map((u) => `<div class="flex items-center justify-between gap-2 bg-white border border-sky-100 rounded-lg px-2.5 py-1.5">
+      <span class="min-w-0 text-xs"><b class="text-slate-800">${esc(u.name)}</b> <span class="text-slate-500">${esc([u.phone, u.email].filter(Boolean).join(' · '))}</span></span>
+      ${u.guestId ? '<span class="text-[11px] text-slate-400 shrink-0">Already a guest</span>'
+        : `<button type="button" onclick="linkGuest(${esc(id)}, '${esc(u.phone_number)}')" class="shrink-0 px-2.5 py-1 bg-sky-700 hover:bg-sky-800 text-white text-[11px] font-semibold rounded-md">Link</button>`}
+    </div>`).join('') : '<p class="text-xs text-sky-900/70">No delegate account matches.</p>';
+}
+
+async function linkGuest(id, phone) {
+  if (!(await showConfirm('Link this guest to that account? From now on their name, designation, phone and email come from the account.'))) return;
+  const data = await (await fetch(`/api/guests/${encodeURIComponent(id)}/link`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not link.');
+  showToast(data.registered ? 'Linked to their account.' : 'Linked to their account. They have not registered yet.', 'success');
+  closeModal('modal-guest-edit');
+  renderGuests();
+}
+
 // --- dashboard ---
 function renderGuestDashboard() {
   const box = document.getElementById('guests-view-dashboard');
@@ -10645,7 +10716,7 @@ function renderGuestDashboard() {
       ${card(`Arriving in ${a.days} day(s)`, `${big(a.arriving, `${formatFullDate(a.from)} – ${formatFullDate(a.to)}`)}
         <p class="mt-1 text-xs font-semibold ${a.noVehicle ? 'text-orange-700' : 'text-emerald-700'}">${a.noVehicle ? `${a.noVehicle} with no pickup vehicle` : 'All have a pickup vehicle'}</p>`, a.noVehicle ? 'border-orange-300' : '')}
       ${card('No accommodation', big(d.noAccommodation, 'guests with nowhere to stay', d.noAccommodation ? 'text-rose-700' : 'text-slate-800'), d.noAccommodation ? 'border-rose-300' : '')}
-      ${card('Not registered', big(d.notRegistered, 'faculty who still have to register', d.notRegistered ? 'text-sky-700' : 'text-slate-800'))}
+      ${card('Not registered', big(d.notRegistered, `faculty who still have to register${d.notSignedUp ? ` · ${d.notSignedUp} not signed up` : ''}`, d.notRegistered ? 'text-sky-700' : 'text-slate-800'))}
     </div>
     <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
       ${card('Overall status (all guests)', counts(d.byOverallStatus))}

@@ -28,9 +28,24 @@
   <div id="modal-guest-add" class="hidden fixed inset-0 bg-slate-900/60 flex justify-center items-start sm:items-center p-4 z-50">
     <div class="bg-white max-w-md w-full rounded-2xl p-6 shadow-card relative">
       <button type="button" onclick="closeModal('modal-guest-add')" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold" aria-label="Close">✕</button>
-      <h3 class="text-lg font-bold text-slate-800 mb-1">Mark Delegate as Faculty</h3>
-      <p class="text-xs text-slate-500 mb-4">They join the guest list, and their travel and stay can then be coordinated. Their name, designation and phone come from their account. Faculty must register, like anyone presenting.</p>
+      <h3 class="text-lg font-bold text-slate-800 mb-1">Add Faculty</h3>
+      <p class="text-xs text-slate-500 mb-4">They join the guest list, and their travel and stay can then be coordinated. Faculty must register, like anyone presenting.</p>
+      <p class="text-xs font-bold text-slate-700 uppercase tracking-wide mb-1.5">Has an account</p>
       <input id="guest-add-search" autocomplete="off" oninput="searchFacultyCandidates(this.value)" placeholder="Name, mobile, email or ID" class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
-      <div id="guest-add-results" class="mt-3 space-y-2 max-h-80 overflow-y-auto"></div>
+      <div id="guest-add-results" class="mt-3 space-y-2 max-h-64 overflow-y-auto"></div>
+      <!-- Not signed up yet: added by name, linked to their account later
+           from the guest's editor. -->
+      <form id="guest-add-new" onsubmit="addUnlinkedGuest(event)" class="mt-5 pt-4 border-t border-slate-200 space-y-2">
+        <p class="text-xs font-bold text-slate-700 uppercase tracking-wide">Not signed up yet</p>
+        <p class="text-[11px] text-slate-500 -mt-1">Add them by name now; link them to their account when they sign up.</p>
+        <input name="guestName" required maxlength="120" placeholder="Name *" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm">
+        <input name="guestDesignation" maxlength="120" placeholder="Designation" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm">
+        <div class="grid grid-cols-2 gap-2">
+          <input name="guestPhone" inputmode="tel" maxlength="20" placeholder="Phone" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm">
+          <input name="guestEmail" type="email" maxlength="120" placeholder="Email" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm">
+        </div>
+        <div id="guest-add-new-note" class="hidden text-xs rounded-lg px-3 py-2 bg-amber-50 border border-amber-200 text-amber-900"></div>
+        <button type="submit" class="w-full h-9 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-sm font-semibold rounded-lg">Add guest without an account</button>
+      </form>
     </div>
   </div>

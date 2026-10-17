@@ -1765,21 +1765,10 @@ db.serialize(() => {
   `);
 
   // Guest coordination (see GUEST COORDINATION below). One row per faculty
-  // guest, keyed by their account; the dropdown values, vehicles and rooms
-  // are small lists of their own.
-  db.run(`
-    CREATE TABLE IF NOT EXISTS guests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      phone_number TEXT NOT NULL UNIQUE,
-      arrival_date TEXT, arrival_time TEXT, arrival_mode TEXT, arrival_number TEXT, arrival_point TEXT,
-      pickup_vehicle TEXT, pickup_status TEXT,
-      departure_date TEXT, departure_time TEXT, departure_mode TEXT, departure_number TEXT, departure_point TEXT,
-      drop_vehicle TEXT, drop_status TEXT,
-      accommodation TEXT, room_no TEXT, checkin_date TEXT, checkout_date TEXT, room_type TEXT,
-      special_needs TEXT, transport_coordinator TEXT, accommodation_coordinator TEXT, overall_status TEXT, remarks TEXT,
-      created_at INTEGER NOT NULL, created_by TEXT, updated_at INTEGER, updated_by TEXT
-    )
-  `);
+  // guest, linked to their account once they have one (the table's shape is
+  // in guests.js, which also migrates the first version); the dropdown
+  // values, vehicles and rooms are small lists of their own.
+  db.run(guestLib.GUEST_TABLE_SQL('guests'));
   db.run(`
     CREATE TABLE IF NOT EXISTS guest_lists (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -12006,9 +11995,10 @@ app.put('/api/abstracts/:id/allocation', requirePermission('abstracts.assign'), 
 
 // --- GUEST COORDINATION ---------------------------------------------------
 // Faculty guests: their travel, pickup, drop and stay, coordinated by a
-// Transport Coordinator and an Accommodation Coordinator. A guest is always a
-// delegate account marked as faculty; their name, designation and phone come
-// from that account. Everything worked out from the list -- flags,
+// Transport Coordinator and an Accommodation Coordinator. A guest is a
+// delegate account marked as faculty -- name, designation, phone and email
+// then come from that account -- or someone added by name who has not signed
+// up yet, linked to their account later (PUT /api/guests/:id/link). Everything worked out from the list -- flags,
 // schedules, room and vehicle tallies, the dashboard -- is in guests.js and
 // never stored. Permissions:
 //   guests.view    the Guests tab
@@ -12064,13 +12054,48 @@ async function guestRowsJoined(where = '', params = []) {
        LEFT JOIN users ac ON ac.phone_number = g.accommodation_coordinator
       ${where}
       ORDER BY g.id`, params);
-  return rows.map((g) => ({
+  const out = rows.map((g) => ({
     ...g,
-    name: [g.salutation, g.full_name].filter(Boolean).join(' ') || g.phone_number,
-    phone: displayPhone({ phone: g.phone, phone_number: g.phone_number }),
+    linked: !!g.phone_number,
+    // Linked: the account says who they are. Not yet: what was typed in.
+    name: g.phone_number ? ([g.salutation, g.full_name].filter(Boolean).join(' ') || g.phone_number) : (g.guest_name || ''),
+    designation: g.phone_number ? g.designation : g.guest_designation,
+    phone: g.phone_number ? displayPhone({ phone: g.phone, phone_number: g.phone_number }) : (g.guest_phone || ''),
+    email: g.phone_number ? g.email : g.guest_email,
     transport_coordinator_name: g.transport_coordinator ? ([g.tc_salutation, g.tc_name].filter(Boolean).join(' ') || g.transport_coordinator) : null,
     accommodation_coordinator_name: g.accommodation_coordinator ? ([g.ac_salutation, g.ac_name].filter(Boolean).join(' ') || g.accommodation_coordinator) : null,
   }));
+  // A guest not yet linked whose typed phone or email belongs to a delegate
+  // account: offered as the account to link, never linked by itself.
+  for (const g of out) {
+    if (g.linked) continue;
+    const u = await accountMatchingGuest(g.guest_phone, g.guest_email);
+    g.possible_account = u ? { phone_number: u.phone_number, name: [u.salutation, u.full_name].filter(Boolean).join(' '), taken: !!u.guest_id } : null;
+  }
+  return out;
+}
+
+// The delegate account at this phone or email, if there is exactly one.
+async function accountMatchingGuest(phone, email) {
+  const params = phone ? phoneMatchParams(phone) : null;
+  const clauses = [];
+  const args = [];
+  if (params) { clauses.push(PHONE_MATCH_SQL); args.push(...params); }
+  if (email) { clauses.push('LOWER(email) = LOWER(?)'); args.push(String(email).trim()); }
+  if (!clauses.length) return null;
+  const rows = await dbAll(
+    `SELECT phone_number, salutation, full_name, (SELECT id FROM guests g WHERE g.phone_number = users.phone_number) AS guest_id
+       FROM users WHERE role = 'DELEGATE' AND (${clauses.join(' OR ')}) LIMIT 2`, args);
+  return rows.length === 1 ? rows[0] : null;
+}
+
+// A guest not yet linked who typed this phone or email -- the same person,
+// about to be entered twice.
+async function unlinkedGuestMatching(phone, email, exceptId = null) {
+  const e164 = phone ? toE164(phone) : '';
+  const rows = await dbAll('SELECT id, guest_name, guest_phone, guest_email FROM guests WHERE phone_number IS NULL AND id != ?', [exceptId || 0]);
+  return rows.find((r) => (e164 && toE164(r.guest_phone) === e164)
+    || (email && r.guest_email && r.guest_email.trim().toLowerCase() === String(email).trim().toLowerCase())) || null;
 }
 
 async function guestBoard() {
@@ -12170,28 +12195,93 @@ app.get('/api/guests/candidates', requirePermission('guests.edit'), async (req, 
   }
 });
 
-// Mark a delegate as faculty: they join the guest list. Someone who has not
-// registered can be marked -- like an abstract, they still have to register,
-// and the list says so until they do.
+// Add a guest, two ways:
+//   { phone }  mark a delegate as faculty. Someone who has not registered
+//              can be marked -- like an abstract, they still have to
+//              register, and the list says so until they do.
+//   { name, designation, phone?, email? } in `guest`: someone who has not
+//              signed up at all, added by name and linked later.
+// Either way the same person is not entered twice: an account already at the
+// typed phone or email is offered instead, and a guest already typed in with
+// it is pointed to.
 app.post('/api/guests', requirePermission('guests.edit'), async (req, res, next) => {
   try {
-    const phone = String((req.body && req.body.phone) || '');
-    const u = await dbGet('SELECT phone_number, salutation, full_name, role FROM users WHERE phone_number = ?', [phone]);
-    if (!u || u.role !== 'DELEGATE') return res.status(404).json({ success: false, error: 'Delegate not found.' });
-    if (await dbGet('SELECT id FROM guests WHERE phone_number = ?', [phone])) {
-      return res.status(409).json({ success: false, error: 'They are already on the guest list.' });
-    }
+    const body = req.body || {};
     const lists = activeGuestLists(await guestListRows());
     const invited = lists.overall_status.find((v) => v === 'Invited') || null;
     const now = Date.now();
     const by = req.session.name || req.session.phone;
+
+    if (body.guest) {
+      const input = body.guest || {};
+      const { values, errors } = guestLib.validateGuestFields({
+        guest_name: input.name, guest_designation: input.designation, guest_phone: input.phone, guest_email: input.email,
+      });
+      if (!values.guest_name) errors.unshift('Enter the guest\'s name.');
+      if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
+      const account = await accountMatchingGuest(values.guest_phone, values.guest_email);
+      if (account) {
+        const name = [account.salutation, account.full_name].filter(Boolean).join(' ');
+        return res.status(409).json({
+          success: false, code: 'ACCOUNT_EXISTS',
+          error: account.guest_id ? `${name} has an account and is already on the guest list.`
+            : `${name} already has an account with that phone or email. Mark them as faculty instead.`,
+          account: { phone_number: account.phone_number, name, guestId: account.guest_id || null },
+        });
+      }
+      const twin = await unlinkedGuestMatching(values.guest_phone, values.guest_email);
+      if (twin) return res.status(409).json({ success: false, code: 'GUEST_EXISTS', error: `${twin.guest_name} is already on the guest list with that phone or email.`, guestId: twin.id });
+      const r = await dbRun(
+        `INSERT INTO guests (guest_name, guest_designation, guest_phone, guest_email, overall_status, created_at, created_by, updated_at, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [values.guest_name, values.guest_designation || null, values.guest_phone || null, values.guest_email || null, invited, now, by, now, by]);
+      await recordAudit({ req, entityType: 'guest', entityId: String(r.lastID), action: 'GUEST_ADDED', oldValue: null, newValue: `${values.guest_name} added as faculty (not signed up)` });
+      return res.json({ success: true, id: r.lastID, registered: false, linked: false });
+    }
+
+    const phone = String(body.phone || '');
+    const u = await dbGet('SELECT phone_number, salutation, full_name, role, phone, email FROM users WHERE phone_number = ?', [phone]);
+    if (!u || u.role !== 'DELEGATE') return res.status(404).json({ success: false, error: 'Delegate not found.' });
+    if (await dbGet('SELECT id FROM guests WHERE phone_number = ?', [phone])) {
+      return res.status(409).json({ success: false, error: 'They are already on the guest list.' });
+    }
+    const twin = await unlinkedGuestMatching(u.phone || (isPhoneValue(u.phone_number) ? u.phone_number : null), u.email);
+    if (twin) {
+      return res.status(409).json({ success: false, code: 'GUEST_EXISTS', guestId: twin.id,
+        error: `${twin.guest_name} is already on the guest list with this phone or email, not yet linked. Link them to this account instead.` });
+    }
     const r = await dbRun(
-      'INSERT INTO guests (phone_number, overall_status, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?)',
-      [phone, invited, now, by, now, by]);
+      'INSERT INTO guests (phone_number, overall_status, created_at, created_by, updated_at, updated_by, linked_at, linked_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [phone, invited, now, by, now, by, now, by]);
     const name = [u.salutation, u.full_name].filter(Boolean).join(' ');
     await recordAudit({ req, entityType: 'guest', entityId: String(r.lastID), action: 'GUEST_ADDED', oldValue: null, newValue: `${name} marked as faculty` });
     const registered = !!(await dbGet(`SELECT ${authorRegisteredSql('?')} AS yes`, [phone])).yes;
-    res.json({ success: true, id: r.lastID, registered });
+    res.json({ success: true, id: r.lastID, registered, linked: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Link a guest who was added by name to their account, once they have one.
+// From then on the account supplies their name, designation, phone and
+// email; what was typed in stays on the row, unused, for the record.
+app.put('/api/guests/:id/link', requirePermission('guests.edit'), async (req, res, next) => {
+  try {
+    const g = await dbGet('SELECT * FROM guests WHERE id = ?', [req.params.id]);
+    if (!g) return res.status(404).json({ success: false, error: 'Guest not found.' });
+    if (g.phone_number) return res.status(409).json({ success: false, error: 'This guest is already linked to an account.' });
+    const phone = String((req.body && req.body.phone) || '');
+    const u = await dbGet('SELECT phone_number, salutation, full_name, role FROM users WHERE phone_number = ?', [phone]);
+    if (!u || u.role !== 'DELEGATE') return res.status(404).json({ success: false, error: 'Delegate not found.' });
+    if (await dbGet('SELECT id FROM guests WHERE phone_number = ?', [phone])) {
+      return res.status(409).json({ success: false, error: 'That account is already on the guest list as someone else.' });
+    }
+    await dbRun('UPDATE guests SET phone_number = ?, linked_at = ?, linked_by = ?, updated_at = ?, updated_by = ? WHERE id = ?',
+      [phone, Date.now(), req.session.name || req.session.phone, Date.now(), req.session.name || req.session.phone, g.id]);
+    const name = [u.salutation, u.full_name].filter(Boolean).join(' ');
+    await recordAudit({ req, entityType: 'guest', entityId: String(g.id), action: 'GUEST_LINKED', oldValue: g.guest_name, newValue: `linked to ${name}'s account` });
+    const registered = !!(await dbGet(`SELECT ${authorRegisteredSql('?')} AS yes`, [phone])).yes;
+    res.json({ success: true, registered });
   } catch (err) {
     next(err);
   }
@@ -12423,6 +12513,12 @@ app.put('/api/guests/:id', requirePermission('guests.edit'), async (req, res, ne
     if (forbidden.length) {
       return res.status(403).json({ success: false, error: `You cannot change: ${forbidden.map((f) => guestLib.FIELD_LABELS[f]).join(', ')}.` });
     }
+    const identity = guestLib.IDENTITY_FIELDS.filter((f) => f in values);
+    if (current.phone_number && identity.some((f) => (values[f] || null) !== (current[f] || null))) {
+      return res.status(400).json({ success: false, error: 'This guest is linked to an account; their name, designation, phone and email come from it.' });
+    }
+    if (current.phone_number) identity.forEach((f) => { delete values[f]; });
+    if (!current.phone_number && 'guest_name' in values && !values.guest_name) errors.unshift('Enter the guest\'s name.');
     if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
     const changes = guestLib.changedFields(current, values);
     if (!changes.length) return res.json({ success: true, changed: 0, notified: [] });
@@ -12508,6 +12604,9 @@ registrationsMigrationReady.then(retitleNamesOnBoot)
   .then(() => migrateProgramGroupsOnBoot().catch((err) => console.error('Program-groups migration failed (continuing to start):', err.message)))
   .then(() => backfillPaymentTransactionsOnBoot().catch((err) => console.error('Payment-transaction backfill failed (continuing to start):', err.message)))
   .then(() => retireCodesOfRegisteredHoldersOnBoot().catch((err) => console.error('Code retirement sweep failed (continuing to start):', err.message)))
+  .then(() => guestLib.migrateGuestsTable(dbRun, dbAll)
+    .then((r) => { if (r === 'rebuilt') console.log('Guests table rebuilt: guests no longer need an account.'); })
+    .catch((err) => console.error('Guests table migration failed (continuing to start):', err.message)))
   .then(() => seedGuestListsOnBoot().catch((err) => console.error('Guest list seed failed (continuing to start):', err.message)))
   .then(() => autoLinkTransactions().catch((err) => console.error('Bank-transaction auto-link failed (continuing to start):', err.message)))
   .then(() => loadNotificationToggles().catch((err) => console.error('Notification-toggle load failed (continuing to start):', err.message)))

@@ -53,12 +53,14 @@ function load(perms) {
 
 let id = 0;
 const lists = Object.fromEntries(Object.entries(G.DEFAULT_LISTS).map(([k, v]) => [k, [...v]]));
-const g = (name, f = {}) => ({ id: ++id, name, phone: '+919800000001', designation: 'Professor', registered: 1, ...f });
+const g = (name, f = {}) => ({ id: ++id, name, phone: '+919800000001', designation: 'Professor', registered: 1, linked: true, ...f });
 const rows = [
   g('Alpha Arriving', { arrival_date: '2026-11-20', arrival_time: '09:00', accommodation: 'Yatri Nivas', room_no: '1', overall_status: 'Confirmed' }),
   g('Bravo Homeless', { arrival_date: '2026-11-25', overall_status: 'Invited', pickup_vehicle: 'Car A', arrival_time: '08:00' }),
   g('Charlie Cancelled', { overall_status: 'Cancelled' }),
   g('Delta Roommate', { accommodation: 'Yatri Nivas', room_no: '1', overall_status: 'Arrived', registered: 0, departure_date: '2026-11-22', departure_time: '18:30', drop_vehicle: 'Car A' }),
+  g('Echo Typed', { linked: false, registered: 0, guest_name: 'Echo Typed', guest_phone: '+91 0712 000', overall_status: 'Invited', accommodation: 'MGIMS Guesthouse',
+    possible_account: { phone_number: '9811111111', name: 'Echo Account', taken: false } }),
 ];
 const settings = { alertDays: 2, slotBounds: [6, 12, 18], clashMinutes: 60 };
 const board = G.buildBoard({ guests: rows, vehicles: [{ id: 1, label: 'Car A', driver_phone: '0712', seats: 4 }],
@@ -76,7 +78,7 @@ sb.__g.fillGuestFilters();
 sb.__g.renderGuestList();
 const body = el('guests-tbody').innerHTML;
 const rowOf = (name) => (body.split('<tr').find((r) => r.includes(`>${name}<`)) || '');
-check('every guest is listed', ['Alpha Arriving', 'Bravo Homeless', 'Charlie Cancelled', 'Delta Roommate'].every((n) => body.includes(`>${n}<`)));
+check('every guest is listed', ['Alpha Arriving', 'Bravo Homeless', 'Charlie Cancelled', 'Delta Roommate', 'Echo Typed'].every((n) => body.includes(`>${n}<`)));
 check('Invited yellow, Confirmed green, Arrived blue', /bg-amber-100[^"]*">Invited</.test(body) && /bg-emerald-100[^"]*">Confirmed</.test(body) && /bg-blue-100[^"]*">Arrived</.test(body));
 check('Cancelled red with strikethrough', /bg-rose-100 text-rose-800 border-rose-300 line-through">Cancelled</.test(body));
 check('orange row: arriving within the window, no vehicle', /class="bg-orange-50 /.test(rowOf('Alpha Arriving')));
@@ -86,6 +88,7 @@ check('purple chip on both roommates', /bg-violet-100[^>]*>Shares room/.test(row
 check('not registered is flagged', />Not registered</.test(rowOf('Delta Roommate')) && !/>Not registered</.test(rowOf('Alpha Arriving')));
 check('arrival shows date and time together', />2026-11-20 09:00</.test(rowOf('Alpha Arriving')));
 check('a coordinator gets Edit', />Edit</.test(rowOf('Alpha Arriving')));
+check('a guest without an account says so, not "Not registered"', />Not signed up</.test(rowOf('Echo Typed')) && !/>Not registered</.test(rowOf('Echo Typed')));
 
 el('guests-filter-flag').value = 'noAccommodation';
 sb.__g.renderGuestList();
@@ -102,7 +105,7 @@ el('guests-search').value = '';
 sb.__g.sortGuests('name');
 sb.__g.sortGuests('name');
 const order = [...el('guests-tbody').innerHTML.matchAll(/font-semibold[^>]*>([A-Z][a-z]+ [A-Za-z]+)</g)].map((m) => m[1]);
-check('sorting by name, then reversed', order[0] === 'Delta Roommate' && order[order.length - 1] === 'Alpha Arriving', order);
+check('sorting by name, then reversed', order[0] === 'Echo Typed' && order[order.length - 1] === 'Alpha Arriving', order);
 check('the header shows the sort', /Guest ▼/.test(el('guests-thead').innerHTML));
 
 console.log('\n== The editor follows the role ==');
@@ -126,6 +129,14 @@ const adminView = load(['guests.view', 'guests.edit', 'guests.travel', 'guests.s
 adminView.sb.__set(data);
 adminView.sb.__g.openGuestEditor(rows[0].id);
 check('an admin can remove', !adminView.el('guest-remove-btn').classList.contains('hidden'));
+sb.__g.openGuestEditor(rows[4].id);
+const uform = el('guest-edit-body').innerHTML;
+check('a guest without an account: who they are is editable', /name="guest_name" type="text" value="Echo Typed"(?![^>]*\sdisabled(?=[\s>]))/.test(uform) && /name="guest_phone" type="text" value="\+91 0712 000"/.test(uform));
+check('...with the matching account offered to link', /Link to Echo Account</.test(uform) && /linkGuest\(\d+, '9811111111'\)/.test(uform));
+check('...and a search to find another', /id="guest-link-search"/.test(uform));
+check('...and the header says they are not signed up', /Not signed up yet/.test(el('guest-edit-who').textContent));
+sb.__g.openGuestEditor(rows[0].id);
+check('a linked guest has none of that', !/name="guest_name"/.test(el('guest-edit-body').innerHTML) && !/guest-link-search/.test(el('guest-edit-body').innerHTML));
 
 console.log('\n== The other views ==');
 sb.__g.renderGuestSchedule('pickups');
@@ -142,7 +153,8 @@ sb.__g.renderGuestVehicles();
 check('vehicles: the form for a transport coordinator, no Delete', el('guests-view-vehicles').innerHTML.includes('guest-vehicle-form') && !/>Delete</.test(el('guests-view-vehicles').innerHTML));
 sb.__g.renderGuestDashboard();
 const dash = el('guests-view-dashboard').innerHTML;
-check('dashboard: guests listed, cancelled left out', />3</.test(dash) && /1 cancelled not counted/.test(dash));
+check('dashboard: guests listed, cancelled left out', />4</.test(dash) && /1 cancelled not counted/.test(dash));
+check('...and how many are not signed up', /1 not signed up/.test(dash));
 check('...arrivals in the window, with how many lack a vehicle', /1 with no pickup vehicle/.test(dash));
 check('...counts include "Not set"', /Not set/.test(dash));
 check('...time slots by name', /Morning 06-12/.test(dash) && /Evening 18-24/.test(dash));
