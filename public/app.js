@@ -2966,8 +2966,8 @@ function applyRoleVisibility() {
   if (tabStatement) tabStatement.classList.toggle('hidden', !canSee('statement'));
   if (tabAbstracts) tabAbstracts.classList.toggle('hidden', !canSee('abstracts'));
   if (tabReports) tabReports.classList.toggle('hidden', !canSee('reports'));
-  const tabGuests = document.getElementById('nav-tab-guests');
-  if (tabGuests) tabGuests.classList.toggle('hidden', !canSee('guests'));
+  const tabFaculty = document.getElementById('nav-tab-faculty');
+  if (tabFaculty) tabFaculty.classList.toggle('hidden', !canSee('faculty'));
 
   // The walk-in registration button now lives on the Front Desk tab
   // (#desk-register-btn, toggled in initFrontDesk) rather than in the
@@ -3057,10 +3057,10 @@ async function initBackendPortal() {
     : canSee('abstracts') ? 'abstracts'
     : canSee('reports') ? 'reports'
     // The coordinators' whole job is the Guests tab.
-    : canSee('guests') ? 'guests'
+    : canSee('faculty') ? 'faculty'
     : 'workshops'; // unreachable for the five built-in roles; a defensive fallback for an unrecognised one
   const allowed = allowedBackendTabs();
-  const hashTab = window.location.hash.slice(1);
+  const hashTab = tabFromHash();
   const loading = document.getElementById('admin-initial-loading');
   if (loading) loading.classList.add('hidden');
   switchBackendTab(allowed.includes(hashTab) ? hashTab : defaultTab);
@@ -3072,7 +3072,7 @@ async function initBackendPortal() {
   if (canSee('payments')) renderDelegateMap();
   if (canSee('abstracts')) await renderBackendAbstracts();
   // Fills the Faculty tab badge (arrivals without a vehicle, faculty without a room).
-  if (canSee('guests')) renderGuests();
+  if (canSee('faculty')) renderGuests();
   if (canSee('users')) await loadBackendUsers();
   // The role picker used in Users & Roles and the Create Staff User modal --
   // needed by anyone who can assign a role, not only someone who can also
@@ -10918,7 +10918,7 @@ async function markFaculty(i, phoneOverride) {
   showToast(data.registered ? 'Marked as faculty. They are on the faculty list.'
     : 'Marked as faculty. They have not registered yet; the faculty list flags it until they do.', 'success');
   if (!phoneOverride) closeModal('modal-guest-add');
-  if (guestData || currentBackendTab === 'guests') renderGuests();
+  if (guestData || currentBackendTab === 'faculty') renderGuests();
   return data;
 }
 
@@ -11241,7 +11241,7 @@ async function deleteGuestListValue(id) {
 }
 
 const SETTINGS_TABS = ['programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
-const MAIN_TABS = ['overview', 'desk', 'payments', 'statement', 'abstracts', 'guests', 'reports'];
+const MAIN_TABS = ['overview', 'desk', 'payments', 'statement', 'abstracts', 'faculty', 'reports'];
 
 // Which tabs each role may open -- the single source of truth used both to
 // pick the landing tab and to validate a tab restored from the URL, so a
@@ -11274,7 +11274,7 @@ function switchBackendTab(tab) {
   if (tab === 'payments') renderBackendPayments();
   if (tab === 'abstracts') renderBackendAbstracts();
   if (tab === 'reports') loadReportWorkshopOptions();
-  if (tab === 'guests') renderGuests();
+  if (tab === 'faculty') renderGuests();
   if (tab === 'programs') renderBackendPrograms();
   if (tab === 'fees') renderBackendFees();
   if (tab === 'discount') renderDiscountCodes();
@@ -11316,8 +11316,15 @@ function switchBackendTab(tab) {
 // it with replaceState (no new history entry, so clicking through tabs doesn't
 // bury the previous page behind a dozen Back presses), which doesn't emit
 // hashchange, and the guard below ignores a tab already showing.
-window.addEventListener('hashchange', () => {
+// The tab named in the address. #guests was the Faculty tab's first name;
+// old bookmarks and links still open it.
+function tabFromHash() {
   const tab = window.location.hash.slice(1);
+  return tab === 'guests' ? 'faculty' : tab;
+}
+
+window.addEventListener('hashchange', () => {
+  const tab = tabFromHash();
   if (!tab || tab === currentBackendTab || !activeAdminUser) return;
   if (allowedBackendTabs().includes(tab)) switchBackendTab(tab);
 });

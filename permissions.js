@@ -389,7 +389,9 @@ const SECTION_PERMISSIONS = {
   discount: { permission: 'discounts.view' },
   groupdiscount: { permission: 'discounts.group_view' },
   reminders: { permission: 'comms.reminders_view' },
-  guests: { permission: 'guests.view' },
+  // The Faculty tab (#faculty in the address); its permissions keep their
+  // original guests.* names.
+  faculty: { permission: 'guests.view' },
   general: { permission: 'system.settings_view' },
   activity: { permission: 'system.activity_log' },
 };

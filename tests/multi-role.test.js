@@ -42,7 +42,7 @@ const CUSTOM = `TEMPROLE${N.slice(-4)}`;
     console.log('\n== One role: the Front Desk, nothing else ==');
     const before = await me(staff);
     check('main role only', JSON.stringify(before.roles) === '["FRONT_DESK"]', before.roles);
-    check('the desk opens, the Guests tab does not', before.sections.desk === true && !before.sections.guests);
+    check('the desk opens, the Guests tab does not', before.sections.desk === true && !before.sections.faculty);
     check('...and the server agrees', (await call('GET', '/api/guests', null, staff)).status === 403);
 
     console.log('\n== Adding a role ==');
@@ -51,7 +51,7 @@ const CUSTOM = `TEMPROLE${N.slice(-4)}`;
     const after = await me(staff);
     check('they now hold both, main role first', JSON.stringify(after.roles) === '["FRONT_DESK","TRANSPORT_COORDINATOR"]', after.roles);
     check('...with both sets of permissions', after.permissions.includes('desk.view') && after.permissions.includes('guests.travel'));
-    check('...and both sections', after.sections.desk === true && after.sections.guests === true);
+    check('...and both sections', after.sections.desk === true && after.sections.faculty === true);
     check('the Guests tab opens for them, without signing in again', (await call('GET', '/api/guests', null, staff)).status === 200);
     check('the desk still does', (await call('GET', '/api/desk/staff', null, staff)).status === 200);
     check('...but nothing neither role grants', (await call('GET', '/api/registrations', null, staff)).status === 403
@@ -93,7 +93,7 @@ const CUSTOM = `TEMPROLE${N.slice(-4)}`;
     console.log('\n== Taking roles away ==');
     await setExtra(P.staff, []);
     const none = await me(staff);
-    check('with none, they are back to their main role', JSON.stringify(none.roles) === '["FRONT_DESK"]' && !none.sections.guests);
+    check('with none, they are back to their main role', JSON.stringify(none.roles) === '["FRONT_DESK"]' && !none.sections.faculty);
     check('...and the Guests tab is refused again', (await call('GET', '/api/guests', null, staff)).status === 403);
     check('the custom role can now be deleted', (await call('DELETE', `/api/admin/roles/${CUSTOM}`, null, admin)).body.success === true);
     await setExtra(P.staff, ['TRANSPORT_COORDINATOR', 'ACCOMMODATION_COORDINATOR']);
