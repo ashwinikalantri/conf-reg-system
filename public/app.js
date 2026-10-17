@@ -10342,7 +10342,6 @@ function guestFlagChips(g) {
   if (f.noAccommodation) out.push(guestPill(GUEST_FLAG_STYLES.noAccommodation, 'No accommodation'));
   if (f.sharedRoom && f.sharedRoom.length) out.push(guestPill(GUEST_FLAG_STYLES.sharedRoom, `Shares room · ${f.sharedRoom.length + 1}`, `With ${f.sharedRoom.join(', ')}`));
   if (f.vehicleClash && f.vehicleClash.length) out.push(guestPill(GUEST_FLAG_STYLES.vehicleClash, 'Vehicle clash', f.vehicleClash.join('\n')));
-  if (f.ownTransport) out.push(guestPill(GUEST_FLAG_STYLES.own, 'Own transport'));
   if (f.ownStay) out.push(guestPill(GUEST_FLAG_STYLES.own, 'Own stay'));
   if (f.notSignedUp) out.push(guestPill(GUEST_FLAG_STYLES.notRegistered, 'Not signed up'));
   else if (f.notRegistered) out.push(guestPill(GUEST_FLAG_STYLES.notRegistered, 'Not registered'));
@@ -10488,8 +10487,8 @@ function renderGuestList() {
     return (x < y ? -1 : x > y ? 1 : a.sr_no - b.sr_no) * guestSort.dir;
   });
   const line = (parts) => parts.filter(Boolean).map(esc).join(' · ');
-  const travel = (at, mode, number, point, vehicle, status) => at
-    ? `<p class="font-semibold text-slate-800 whitespace-nowrap">${esc(at)}</p>
+  const travel = (date, time, mode, number, point, vehicle, status) => date
+    ? `<p class="font-semibold text-slate-800 whitespace-nowrap">${esc(guestWhen(date, time))}</p>
        <p class="text-xs text-slate-500">${line([mode, number, point]) || '—'}</p>
        <p class="text-xs mt-0.5">${vehicle ? esc(vehicle) : '<span class="text-slate-400">No vehicle</span>'} ${status ? guestPill('bg-white text-slate-600 border-slate-300', status) : ''}</p>`
     : '<span class="text-xs text-slate-400">Not set</span>';
@@ -10502,8 +10501,8 @@ function renderGuestList() {
         <p class="text-xs text-slate-500 font-mono">${esc(g.phone || '')}</p>
         <div class="flex flex-wrap gap-1 mt-1">${guestFlagChips(g)}</div>
       </td>
-      <td class="p-3">${travel(g.arrival_at, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status)}</td>
-      <td class="p-3">${travel(g.departure_at, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status)}</td>
+      <td class="p-3">${travel(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status)}</td>
+      <td class="p-3">${travel(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status)}</td>
       <td class="p-3">${g.accommodation
         ? `<p class="font-semibold text-slate-800">${esc(g.accommodation)}${g.room_no ? ` · ${esc(g.room_no)}` : ''}</p>
            <p class="text-xs text-slate-500">${line([g.room_type, g.checkin_date && g.checkout_date ? `${g.checkin_date} → ${g.checkout_date}` : (g.checkin_date || g.checkout_date)]) || '—'}</p>`
@@ -10521,6 +10520,107 @@ function renderGuestList() {
   setText('guests-count', `Showing ${rows.length} of ${guestData.guests.length} faculty (${live} not cancelled).`);
 }
 
+// --- 12-hour times ---------------------------------------------------------
+// Shown and typed in 12-hour form; stored 24-hour (HH:MM), which is what
+// sorts and what the time slots read.
+function guestTime12(hhmm) {
+  const m = /^(\d{2}):(\d{2})$/.exec(String(hhmm || ''));
+  if (!m) return hhmm || '';
+  const h = Number(m[1]);
+  return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
+}
+// "20 November 2026, 9:30 AM", or just the date.
+function guestWhen(date, time) {
+  if (!date) return '';
+  return `${formatFullDate(date) || date}${time ? `, ${guestTime12(time)}` : ''}`;
+}
+// Read what a coordinator types: "9:30 pm", "930p", "9.30 PM", "21:30",
+// "2130", "9pm". Returns { hhmm } (24-hour), { empty }, { ambiguous } for an
+// hour of 1-12 with no AM/PM, or { invalid }.
+function parseTime12(raw) {
+  let t = String(raw || '').trim().toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ');
+  if (!t) return { empty: true };
+  let suffix = null;
+  const sm = /\s*(am|a|pm|p)$/.exec(t);
+  if (sm) { suffix = sm[1][0]; t = t.slice(0, sm.index).trim(); }
+  let hs; let m;
+  const parts = /^(\d{1,2})[: ](\d{2})$/.exec(t);
+  if (parts) { hs = parts[1]; m = Number(parts[2]); }
+  else if (/^\d{1,4}$/.test(t)) {
+    if (t.length <= 2) { hs = t; m = 0; }
+    else { hs = t.slice(0, t.length - 2); m = Number(t.slice(-2)); }
+  } else return { invalid: true };
+  let h = Number(hs);
+  if (m > 59) return { invalid: true };
+  if (suffix) {
+    if (h < 1 || h > 12) return { invalid: true };
+    h = (h % 12) + (suffix === 'p' ? 12 : 0);
+  } else if (h > 23) {
+    return { invalid: true };
+  } else if (h >= 1 && h <= 12 && !(hs.length === 2 && hs[0] === '0')) {
+    // "9:30" could be either; "09:30" or "0930" is 24-hour already.
+    return { ambiguous: true };
+  }
+  return { hhmm: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` };
+}
+// The visible box: as they type, keep the hidden 24-hour value in step;
+// on leaving it, tidy the box into "9:30 PM" or say what is wrong.
+function onTime12Input(el) {
+  const hidden = el.form && el.form.querySelector(`input[type="hidden"][name="${el.dataset.time12}"]`);
+  const p = parseTime12(el.value);
+  if (hidden) hidden.value = p.hhmm || '';
+  el.dataset.invalid = p.hhmm || p.empty ? '' : '1';
+  if (p.hhmm || p.empty) setTime12Error(el, '');
+}
+function onTime12Blur(el) {
+  onTime12Input(el);
+  const p = parseTime12(el.value);
+  if (p.hhmm) el.value = guestTime12(p.hhmm);
+  setTime12Error(el, p.ambiguous ? 'Add AM or PM, e.g. 9:30 PM.' : p.invalid ? 'Not a time. Try 9:30 AM.' : '');
+}
+function setTime12Error(el, msg) {
+  const box = el.parentElement && el.parentElement.querySelector('[data-time12-error]');
+  if (box) { box.textContent = msg; box.classList.toggle('hidden', !msg); }
+  el.classList.toggle('border-rose-400', !!msg);
+}
+// Set a time from code (the flight look-up), in both boxes.
+function setGuestTime(form, name, hhmm) {
+  const hidden = form.querySelector(`input[type="hidden"][name="${name}"]`);
+  const shown = form.querySelector(`[data-time12="${name}"]`);
+  if (!hidden || !shown || shown.disabled) return;
+  hidden.value = hhmm;
+  shown.value = guestTime12(hhmm);
+  shown.dataset.invalid = '';
+  setTime12Error(shown, '');
+}
+
+// The form follows what is chosen: the Flight/Train No field takes its
+// name from the mode (and goes for Road), and ticking "accommodation not
+// needed" hides the stay details -- kept, not deleted, so unticking brings
+// them back.
+function syncGuestModeFields(leg) {
+  const form = document.getElementById('guest-edit-form');
+  if (!form) return;
+  const modeEl = form.querySelector(`[name="${leg}_mode"]`);
+  const mode = String(modeEl ? modeEl.value : '').toLowerCase();
+  const wrap = form.querySelector(`[data-number-for="${leg}"]`);
+  if (!wrap) return;
+  const label = wrap.querySelector('[data-number-label]');
+  const checks = wrap.querySelector('[data-flight-checks]');
+  wrap.classList.toggle('hidden', mode === 'road');
+  if (label) label.textContent = mode === 'flight' ? 'Flight No' : mode === 'train' ? 'Train No' : 'Flight/Train No';
+  if (checks) checks.classList.toggle('hidden', mode === 'train');
+}
+function syncGuestStayFields() {
+  const form = document.getElementById('guest-edit-form');
+  const tickEl = form && form.querySelector('[name="stay_not_needed"]');
+  const fields = document.getElementById('guest-stay-fields');
+  const note = document.getElementById('guest-stay-note');
+  if (!tickEl || !fields) return;
+  fields.classList.toggle('hidden', tickEl.checked);
+  if (note) note.classList.toggle('hidden', !tickEl.checked);
+}
+
 // --- the editor ---
 function openGuestEditor(id) {
   const g = guestData && guestData.guests.find((x) => x.id === id);
@@ -10533,10 +10633,10 @@ function openGuestEditor(id) {
   const cls = 'w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm bg-white outline-none disabled:bg-slate-50 disabled:text-slate-500';
   const input = (name, type, enabled, extra = '') =>
     `<input name="${name}" type="${type}" value="${esc(g[name] || '')}" ${enabled ? '' : 'disabled'} class="${cls}" ${extra}>`;
-  const select = (name, listKey, enabled) => {
+  const select = (name, listKey, enabled, extra = '') => {
     const values = [...(lists[listKey] || [])];
     if (g[name] && !values.includes(g[name])) values.push(g[name]);   // switched off since, still shown
-    return `<select name="${name}" ${enabled ? '' : 'disabled'} class="${cls}"><option value="">—</option>${values.map((v) => `<option value="${esc(v)}" ${v === g[name] ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
+    return `<select name="${name}" ${enabled ? '' : 'disabled'} class="${cls}" ${extra}><option value="">—</option>${values.map((v) => `<option value="${esc(v)}" ${v === g[name] ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
   };
   const people = (name, pool, enabled) => {
     const opts = [...pool];
@@ -10544,21 +10644,26 @@ function openGuestEditor(id) {
     return `<select name="${name}" ${enabled ? '' : 'disabled'} class="${cls}"><option value="">—</option>${opts.map((p) => `<option value="${esc(p.phone)}" ${p.phone === g[name] ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>`;
   };
   const vehicles = `<datalist id="guest-vehicle-options">${guestData.vehicles.map((v) => `<option value="${esc(v.label)}">${esc([v.driver_phone, v.seats ? `${v.seats} seats` : ''].filter(Boolean).join(' · '))}</option>`).join('')}</datalist>`;
-  const time = (name, enabled) => input(name, 'text', enabled, 'inputmode="numeric" placeholder="HH:MM" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" title="24-hour time, e.g. 14:30"');
+  // 12-hour box; the hidden input under the field's name holds the 24-hour
+  // value that is saved.
+  const time = (name, enabled) => `<input type="hidden" name="${name}" value="${esc(g[name] || '')}" ${enabled ? '' : 'disabled'}>
+      <input type="text" data-time12="${name}" value="${esc(guestTime12(g[name]))}" ${enabled ? '' : 'disabled'} autocomplete="off" placeholder="e.g. 9:30 AM"
+        class="${cls}" oninput="onTime12Input(this)" onblur="onTime12Blur(this)">
+      <p data-time12-error class="hidden text-[11px] text-rose-700 mt-1"></p>`;
   // Flight look-up, when a key is set: fills the time (and Nagpur as the
   // point) from the flight number and date, for the coordinator to check
   // and save. See GET /api/guests/flight.
   const canFetch = travel && guestData.flightLookup;
-  const fetchBtn = (leg) => `<span class="mt-1 flex flex-wrap gap-x-2 text-[11px]">
+  const fetchBtn = (leg) => `<span data-flight-checks class="mt-1 flex flex-wrap gap-x-2 text-[11px]">
       ${canFetch ? `<button type="button" onclick="fetchGuestFlight('${leg}')" class="font-semibold text-indigo-700 hover:text-indigo-900 underline">Fetch flight times</button>` : ''}
       <span class="text-slate-500">Check flight:
         <button type="button" onclick="openFlightCheck('${leg}', 'google')" class="font-semibold text-indigo-700 hover:text-indigo-900 underline">Google</button> ·
         <button type="button" onclick="openFlightCheck('${leg}', 'fr24')" class="font-semibold text-indigo-700 hover:text-indigo-900 underline">Flightradar24</button></span>
     </span>`;
   const flightPanel = (leg) => (canFetch ? `<div id="guest-flight-${leg}" class="hidden col-span-2 sm:col-span-4"></div>` : '');
-  // A yes/no that spans the row: they make their own way, or their own stay.
-  const tick = (name, label, enabled) => `<label class="col-span-2 sm:col-span-4 flex items-center gap-2 text-sm text-slate-700 ${enabled ? 'cursor-pointer' : 'opacity-60'}">
-      <input type="checkbox" name="${name}" ${Number(g[name]) ? 'checked' : ''} ${enabled ? '' : 'disabled'}> ${esc(label)}</label>`;
+  // The flight or train number, named after the mode (see syncGuestModeFields).
+  const numberField = (leg) => `<label class="block min-w-0" data-number-for="${leg}"><span data-number-label class="block text-[11px] font-semibold text-slate-600 mb-1">Flight/Train No</span>${input(`${leg}_number`, 'text', travel)}${fetchBtn(leg)}</label>`;
+  const modeSelect = (leg) => select(`${leg}_mode`, 'mode', travel, `onchange="syncGuestModeFields('${leg}')"`);
   const group = (title, enabled, note, body) => `<fieldset class="border border-slate-200 rounded-xl p-4">
       <legend class="px-1.5 text-xs font-bold text-slate-700 uppercase tracking-wide">${esc(title)}</legend>
       ${enabled ? '' : `<p class="text-[11px] text-slate-400 -mt-1 mb-2">${esc(note)}</p>`}
@@ -10586,31 +10691,34 @@ function openGuestEditor(id) {
   document.getElementById('guest-edit-flags').innerHTML = `${guestStatusBadge(g.overall_status)} ${guestFlagChips(g)}`;
   document.getElementById('guest-edit-body').innerHTML = vehicles + identity + (identity ? '<div class="h-4"></div>' : '') + [
     group('Arrival', travel, 'Only a transport coordinator can change travel.',
-      tick('transport_not_needed', 'Local transport not needed — they make their own way (no pickup or drop)', travel)
-      + field('arrival_date', 'Date', input('arrival_date', 'date', travel))
-      + field('arrival_time', 'Time (24-hour)', time('arrival_time', travel))
-      + field('arrival_mode', 'Mode', select('arrival_mode', 'mode', travel))
-      + field('arrival_number', 'Flight/Train No', input('arrival_number', 'text', travel) + fetchBtn('arrival'))
+      field('arrival_date', 'Date', input('arrival_date', 'date', travel))
+      + field('arrival_time', 'Time', time('arrival_time', travel))
+      + field('arrival_mode', 'Mode', modeSelect('arrival'))
+      + numberField('arrival')
       + field('arrival_point', 'Point', select('arrival_point', 'point', travel))
       + field('pickup_vehicle', 'Pickup Vehicle/Driver', input('pickup_vehicle', 'text', travel, 'list="guest-vehicle-options" autocomplete="off"'))
       + field('pickup_status', 'Pickup Status', select('pickup_status', 'transfer_status', travel))
       + flightPanel('arrival')),
     group('Departure', travel, 'Only a transport coordinator can change travel.',
       field('departure_date', 'Date', input('departure_date', 'date', travel))
-      + field('departure_time', 'Time (24-hour)', time('departure_time', travel))
-      + field('departure_mode', 'Mode', select('departure_mode', 'mode', travel))
-      + field('departure_number', 'Flight/Train No', input('departure_number', 'text', travel) + fetchBtn('departure'))
+      + field('departure_time', 'Time', time('departure_time', travel))
+      + field('departure_mode', 'Mode', modeSelect('departure'))
+      + numberField('departure')
       + field('departure_point', 'Point', select('departure_point', 'point', travel))
       + field('drop_vehicle', 'Drop Vehicle/Driver', input('drop_vehicle', 'text', travel, 'list="guest-vehicle-options" autocomplete="off"'))
       + field('drop_status', 'Drop Status', select('drop_status', 'transfer_status', travel))
       + flightPanel('departure')),
     group('Stay', stay, 'Only an accommodation coordinator can change the stay.',
-      tick('stay_not_needed', 'Accommodation not needed — they arrange their own stay', stay)
+      `<label class="col-span-2 sm:col-span-4 flex items-center gap-2 text-sm text-slate-700 ${stay ? 'cursor-pointer' : 'opacity-60'}">
+        <input type="checkbox" name="stay_not_needed" ${Number(g.stay_not_needed) ? 'checked' : ''} ${stay ? '' : 'disabled'} onchange="syncGuestStayFields()"> Accommodation not needed — they arrange their own stay</label>
+      <p id="guest-stay-note" class="${Number(g.stay_not_needed) ? '' : 'hidden'} col-span-2 sm:col-span-4 text-[11px] text-slate-500 -mt-1">No stay details needed.${g.accommodation ? ' Those entered earlier are kept, unused, and return if you untick this.' : ''}</p>
+      <div id="guest-stay-fields" class="${Number(g.stay_not_needed) ? 'hidden ' : ''}col-span-2 sm:col-span-4 grid grid-cols-2 sm:grid-cols-4 gap-3">`
       + field('accommodation', 'Accommodation', select('accommodation', 'accommodation', stay))
       + field('room_no', 'Room No', input('room_no', 'text', stay))
       + field('checkin_date', 'Check-in Date', input('checkin_date', 'date', stay))
       + field('checkout_date', 'Check-out Date', input('checkout_date', 'date', stay))
-      + field('room_type', 'Room Type', select('room_type', 'room_type', stay))),
+      + field('room_type', 'Room Type', select('room_type', 'room_type', stay))
+      + '</div>'),
     group('Other', shared, '',
       field('overall_status', 'Overall Status', select('overall_status', 'overall_status', shared))
       + field('transport_coordinator', 'Transport Coordinator', people('transport_coordinator', guestData.coordinators.transport, travel))
@@ -10622,6 +10730,9 @@ function openGuestEditor(id) {
   ].join('<div class="h-4"></div>');
   const form = document.getElementById('guest-edit-form');
   form.dataset.id = g.id;
+  syncGuestModeFields('arrival');
+  syncGuestModeFields('departure');
+  syncGuestStayFields();
   const save = document.getElementById('guest-save-btn');
   if (save) save.classList.toggle('hidden', !(travel || stay || shared));
   const remove = document.getElementById('guest-remove-btn');
@@ -10679,12 +10790,12 @@ async function fetchGuestFlight(leg) {
   if (!data.flights.length) return show(esc(data.message || 'No such flight found.'), 'bg-amber-50 border-amber-200 text-amber-900');
   guestFlightResults[leg] = data;
   const line = (f) => {
-    const end = (p, t) => `${esc(p.iata || '')}${p.city || p.name ? ` ${esc(p.city || p.name)}` : ''} ${t ? `<b>${esc(t.time)}</b>${t.date !== date ? ` (${esc(formatFullDate(t.date))})` : ''}` : ''}`;
+    const end = (p, t) => `${esc(p.iata || '')}${p.city || p.name ? ` ${esc(p.city || p.name)}` : ''} ${t ? `<b>${esc(guestTime12(t.time))}</b>${t.date !== date ? ` (${esc(formatFullDate(t.date))})` : ''}` : ''}`;
     return `<p>${esc([f.airline, f.number].filter(Boolean).join(' '))} · ${end(f.from, f.departs)} → ${end(f.to, f.arrives)}${f.status ? ` · ${esc(f.status)}` : ''}</p>`;
   };
   const s = data.suggestion;
   show(`${data.flights.map(line).join('')}
-    ${s ? `<button type="button" onclick="useGuestFlight('${leg}')" class="mt-1.5 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold rounded-md">Use ${esc(s.time)}${s.point ? ` · ${esc(s.point)}` : ''}</button>`
+    ${s ? `<button type="button" onclick="useGuestFlight('${leg}')" class="mt-1.5 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold rounded-md">Use ${esc(guestTime12(s.time))}${s.point ? ` · ${esc(s.point)}` : ''}</button>`
       : '<p class="mt-1 text-slate-500">Several legs, none at Nagpur — enter the time by hand.</p>'}`, 'bg-indigo-50 border-indigo-200 text-slate-800');
 }
 function useGuestFlight(leg) {
@@ -10699,9 +10810,10 @@ function useGuestFlight(leg) {
     if (el.tagName === 'SELECT' && ![...el.options].some((o) => o.value === v)) return;
     el.value = v;
   };
-  setIf(`${leg}_time`, s.time);
+  setGuestTime(form, `${leg}_time`, s.time);
   setIf(`${leg}_mode`, s.mode);
   setIf(`${leg}_point`, s.point);
+  syncGuestModeFields(leg);
   const panel = document.getElementById(`guest-flight-${leg}`);
   if (panel) panel.insertAdjacentHTML('beforeend', '<p class="mt-1 font-semibold text-emerald-700">Filled in. Save to keep it.</p>');
 }
@@ -10710,6 +10822,8 @@ async function saveGuest(ev) {
   ev.preventDefault();
   const form = document.getElementById('guest-edit-form');
   const id = form.dataset.id;
+  const bad = [...form.querySelectorAll('[data-time12]')].find((el) => !el.disabled && el.dataset.invalid === '1');
+  if (bad) { onTime12Blur(bad); bad.focus(); return showToast('Fix the time first: add AM or PM, e.g. 9:30 PM.'); }
   const fields = {};
   // Only what this role may edit: disabled controls are not sent.
   form.querySelectorAll('input[name], select[name], textarea[name]').forEach((el) => {
@@ -10862,8 +10976,8 @@ function renderGuestDashboard() {
     </div>
     <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
       ${card('Overall status (everyone)', counts(d.byOverallStatus))}
-      ${card('Pickup status', counts(d.byPickupStatus) + (d.ownTransport ? `<p class="text-[11px] text-slate-500 mt-2">${esc(d.ownTransport)} making their own way, not counted</p>` : ''))}
-      ${card('Drop status', counts(d.byDropStatus) + (d.ownTransport ? `<p class="text-[11px] text-slate-500 mt-2">${esc(d.ownTransport)} making their own way, not counted</p>` : ''))}
+      ${card('Pickup status', counts(d.byPickupStatus))}
+      ${card('Drop status', counts(d.byDropStatus))}
       ${card('Warnings', `<dl class="space-y-1 text-sm">
           <div class="flex justify-between"><dt class="text-slate-600">Rooms shared</dt><dd class="font-bold tabular-nums ${d.sharedRooms ? 'text-violet-700' : ''}">${esc(d.sharedRooms)}</dd></div>
           <div class="flex justify-between"><dt class="text-slate-600">Vehicle clashes</dt><dd class="font-bold tabular-nums ${d.vehicleClashes ? 'text-amber-700' : ''}">${esc(d.vehicleClashes)}</dd></div></dl>`)}
@@ -10892,7 +11006,7 @@ function renderGuestSchedule(kind) {
         </tr></thead>
         <tbody class="divide-y divide-slate-100">${rows.length ? rows.map((r) => `
           <tr class="${r.alert ? 'bg-orange-50' : ''} align-top">
-            <td class="p-3 whitespace-nowrap font-semibold ${r.at ? 'text-slate-800' : 'text-slate-400'}">${esc(r.at || 'Not set')}</td>
+            <td class="p-3 whitespace-nowrap font-semibold ${r.at ? 'text-slate-800' : 'text-slate-400'}">${esc(r.at ? guestWhen(r.at.slice(0, 10), r.at.slice(11)) : 'Not set')}</td>
             <td class="p-3"><button type="button" onclick="openGuestEditor(${esc(r.id)})" class="font-semibold text-indigo-700 hover:underline text-left">${esc(r.name)}</button></td>
             <td class="p-3 font-mono text-xs">${esc(r.phone || '')}</td>
             <td class="p-3">${esc(r.mode || '—')}</td><td class="p-3">${flightNumberLink(r.number, r.at ? r.at.slice(0, 10) : '')}</td><td class="p-3">${esc(r.point || '—')}</td>
@@ -10903,7 +11017,7 @@ function renderGuestSchedule(kind) {
         </tbody>
       </table>
     </div>
-    <p class="text-xs text-slate-500 mt-2">Cancelled faculty and those making their own way are left out. Anyone with no ${isPickup ? 'arrival' : 'departure'} date is at the end.</p>`;
+    <p class="text-xs text-slate-500 mt-2">Cancelled faculty are left out. Anyone with no ${isPickup ? 'arrival' : 'departure'} date is at the end.</p>`;
 }
 
 // --- vehicles ---

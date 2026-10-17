@@ -86,7 +86,7 @@ check('red row: no accommodation', /class="bg-rose-50 /.test(rowOf('Bravo Homele
 check('the cancelled guest is neither, and struck through', !/bg-rose-50|bg-orange-50/.test(rowOf('Charlie Cancelled')) && /line-through">Charlie Cancelled/.test(rowOf('Charlie Cancelled')));
 check('purple chip on both roommates', /bg-violet-100[^>]*>Shares room/.test(rowOf('Alpha Arriving')) && /bg-violet-100[^>]*>Shares room/.test(rowOf('Delta Roommate')));
 check('not registered is flagged', />Not registered</.test(rowOf('Delta Roommate')) && !/>Not registered</.test(rowOf('Alpha Arriving')));
-check('arrival shows date and time together', />2026-11-20 09:00</.test(rowOf('Alpha Arriving')));
+check('arrival shows date and time together, 12-hour', />20 November 2026, 9:00 AM</.test(rowOf('Alpha Arriving')));
 check('a coordinator gets Edit', />Edit</.test(rowOf('Alpha Arriving')));
 check('a guest without an account says so, not "Not registered"', />Not signed up</.test(rowOf('Echo Typed')) && !/>Not registered</.test(rowOf('Echo Typed')));
 
@@ -116,11 +116,14 @@ const disabled = (name) => new RegExp(`name="${name}"[^>]*\\sdisabled(?=[\\s>])`
 check('a transport coordinator edits arrival and departure', !disabled('arrival_date') && !disabled('drop_vehicle'));
 check('...not the stay', disabled('accommodation') && disabled('room_no') && disabled('accommodation_coordinator'));
 check('...and the shared fields', !disabled('overall_status') && !disabled('remarks'));
-check('times are 24-hour text, not a 12-hour picker', /name="arrival_time" type="text"[^>]*pattern="\(\[01\]\[0-9\]\|2\[0-3\]\):\[0-5\]\[0-9\]"/.test(form));
+check('time is a 12-hour box over a hidden 24-hour value', /<input type="hidden" name="arrival_time" value="09:00"/.test(form)
+  && /data-time12="arrival_time" value="9:00 AM"[^>]*oninput="onTime12Input\(this\)" onblur="onTime12Blur\(this\)"/.test(form));
 check('the vehicle field suggests vehicles but takes free text', /name="pickup_vehicle" type="text"[^>]*list="guest-vehicle-options"/.test(form) && /<option value="Car A">/.test(form));
 check('no Remove for a coordinator', el('guest-remove-btn').classList.contains('hidden'));
-check('"local transport not needed" is a tick-box the transport coordinator can use', /type="checkbox" name="transport_not_needed"(?![^>]*\sdisabled(?=[\s>]))/.test(form));
-check('..."accommodation not needed" is not theirs', /type="checkbox" name="stay_not_needed"[^>]*\sdisabled/.test(form));
+check('there is no "local transport not needed" tick-box', !/transport_not_needed/.test(form));
+check('"accommodation not needed" is not the transport coordinator\'s', /type="checkbox" name="stay_not_needed"[^>]*\sdisabled/.test(form));
+check('the flight number field is named after the mode', /data-number-for="arrival"><span data-number-label[^>]*>Flight\/Train No</.test(form)
+  && /name="arrival_mode"[^>]*onchange="syncGuestModeFields\('arrival'\)"/.test(form));
 check('a tick-box is saved as ticked or not, not as its label', /fields\[el\.name\] = el\.type === 'checkbox' \? el\.checked : el\.value/.test(js));
 const stay = load(['guests.view', 'guests.edit', 'guests.stay']);
 stay.sb.__set(data);
@@ -147,7 +150,7 @@ const pick = el('guests-view-pickups').innerHTML;
 check('pickups in arrival order, Cancelled out', pick.indexOf('Alpha Arriving') < pick.indexOf('Bravo Homeless') && !pick.includes('Charlie Cancelled'));
 check('...with the driver\'s phone from the vehicle list', pick.includes('>0712<'));
 sb.__g.renderGuestSchedule('drops');
-check('drops list departures', el('guests-view-drops').innerHTML.includes('2026-11-22 18:30'));
+check('drops list departures, 12-hour', el('guests-view-drops').innerHTML.includes('22 November 2026, 6:30 PM'));
 sb.__g.renderGuestRooms();
 const roomsHtml = el('guests-view-rooms').innerHTML;
 check('rooms: occupied, Full, and who', /Full</.test(roomsHtml) && roomsHtml.includes('Alpha Arriving, Delta Roommate'));
@@ -160,12 +163,39 @@ check('dashboard: guests listed, cancelled left out', />4</.test(dash) && /1 can
 check('...and how many are not signed up', /1 not signed up/.test(dash));
 check('...arrivals in the window, with how many lack a vehicle', /1 with no pickup vehicle/.test(dash));
 check('...counts include "Not set"', /Not set/.test(dash));
-check('...time slots by name', /Morning 06-12/.test(dash) && /Evening 18-24/.test(dash));
+check('...time slots by name, 12-hour', /Morning 6 AM–12 PM/.test(dash) && /Evening 6 PM–12 AM/.test(dash));
 check('...beds per accommodation', /Yatri Nivas/.test(dash));
 adminView.sb.__g.renderGuestSettings();
 const settingsHtml = adminView.el('guests-view-settings').innerHTML;
 check('lists: "Cancelled" cannot be switched off or removed', /Cancelled <span class="text-\[10px\] text-slate-400">\(required\)<\/span>/.test(settingsHtml));
 check('the settings show the slot boundaries', /value="6"/.test(settingsHtml) && /value="18"/.test(settingsHtml));
+
+console.log('\n== Reading a typed time ==');
+const tsb = { String, Number };
+vm.createContext(tsb);
+const grabT = (n) => { const i = js.indexOf(`function ${n}(`); return js.slice(i, js.indexOf('\n}', i) + 2); };
+vm.runInContext([grabT('parseTime12'), grabT('guestTime12')].join('\n') + '\nglobalThis.p = parseTime12; globalThis.t12 = guestTime12;', tsb);
+const as24 = (t) => tsb.p(t).hhmm;
+check('9:30 pm, 930p, 9.30 P.M. and 21:30 are all 9:30 PM', ['9:30 pm', '930p', '9.30 P.M.', '21:30', '2130'].every((t) => as24(t) === '21:30'));
+check('9am, 12am, 12:15 pm', as24('9am') === '09:00' && as24('12am') === '00:00' && as24('12:15 pm') === '12:15');
+check('a leading zero means 24-hour already', as24('0930') === '09:30' && as24('09:30') === '09:30');
+check('9:30 with no AM or PM is asked about, not guessed', tsb.p('9:30').ambiguous === true && tsb.p('12').ambiguous === true);
+check('nonsense is refused', ['25:00', '9:75 am', '13pm', 'soon'].every((t) => tsb.p(t).invalid === true));
+check('shown as 9:30 PM', tsb.t12('21:30') === '9:30 PM' && tsb.t12('00:05') === '12:05 AM');
+check('a time that could not be read stops the save', /const bad = \[\.\.\.form\.querySelectorAll\('\[data-time12\]'\)\]\.find/.test(js));
+
+console.log('\n== Accommodation not needed ==');
+const stayRow = data.guests.find((x) => x.name === 'Alpha Arriving');
+stayRow.stay_not_needed = 1;
+stay.sb.__set(data);
+stay.sb.__g.openGuestEditor(stayRow.id);
+const sh = stay.el('guest-edit-body').innerHTML;
+check('ticked: the stay details are hidden', /id="guest-stay-fields" class="hidden /.test(sh));
+check('...kept, with a note saying unticking brings them back', /id="guest-stay-note" class=" col-span-2/.test(sh) && /return if you untick this/.test(sh));
+check('ticking or unticking shows or hides them at once', /name="stay_not_needed"[^>]*onchange="syncGuestStayFields\(\)"/.test(sh));
+stayRow.stay_not_needed = 0;
+stay.sb.__g.openGuestEditor(stayRow.id);
+check('unticked: the stay details are asked for', /id="guest-stay-fields" class="col-span-2/.test(stay.el('guest-edit-body').innerHTML));
 
 console.log('\n== Checking a flight by hand ==');
 const fsb = { String, encodeURIComponent };

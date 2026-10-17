@@ -101,19 +101,20 @@ const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `
       && (await put(ids.reg, { accommodation_coordinator: P.ac }, ac)).body.success === true);
     check('...and must hold that role', (await put(ids.reg, { transport_coordinator: P.ac }, tc)).status === 400);
 
-    console.log('\n== Own transport, own stay ==');
-    check('the transport coordinator marks local transport not needed', (await put(ids.unreg, { transport_not_needed: true }, tc)).body.success === true);
-    check('...but not accommodation', (await put(ids.unreg, { stay_not_needed: true }, tc)).status === 403);
-    check('the accommodation coordinator marks accommodation not needed', (await put(ids.unreg, { stay_not_needed: true }, ac)).body.success === true);
-    const ownRow = await guestRow(ids.unreg);
-    check('both are stored', ownRow.transport_not_needed === 1 && ownRow.stay_not_needed === 1, ownRow);
+    console.log('\n== Own stay ==');
+    check('the transport coordinator cannot mark accommodation not needed', (await put(ids.unreg, { stay_not_needed: true }, tc)).status === 403);
+    check('the accommodation coordinator can', (await put(ids.unreg, { stay_not_needed: true }, ac)).body.success === true);
+    check('...and it is stored', (await guestRow(ids.unreg)).stay_not_needed === 1);
     const ownBoard = (await call('GET', '/api/guests', null, tc)).body;
-    check('they are off the pickup schedule and not short of a room', !ownBoard.pickups.some((p) => p.id === ids.unreg)
-      && ownBoard.guests.find((x) => x.id === ids.unreg).flags.noAccommodation === false);
-    const ownLog = await db.get("SELECT new_value FROM audit_log WHERE action = 'GUEST_UPDATED' AND entity_id = ? AND new_value LIKE 'Accommodation not needed%'", [String(ids.unreg)]);
-    check('the log reads Yes/No', ownLog && /Accommodation not needed: No → Yes/.test(ownLog.new_value), ownLog);
-    await put(ids.unreg, { transport_not_needed: false }, tc);
-    await put(ids.unreg, { stay_not_needed: false }, ac);
+    check('they are not short of a room', ownBoard.guests.find((x) => x.id === ids.unreg).flags.noAccommodation === false);
+    // The reported error: unticking saved NULL into a NOT NULL column.
+    const untick = await put(ids.unreg, { stay_not_needed: false }, ac);
+    check('unticking saves, without a server error', untick.status === 200 && untick.body.success === true, [untick.status, untick.body]);
+    check('...and it is unticked', (await guestRow(ids.unreg)).stay_not_needed === 0);
+    const ownLog = await db.all("SELECT new_value FROM audit_log WHERE action = 'GUEST_UPDATED' AND entity_id = ? AND new_value LIKE 'Accommodation not needed%' ORDER BY id", [String(ids.unreg)]);
+    check('the log reads Yes/No both ways', ownLog.length === 2 && /No → Yes/.test(ownLog[0].new_value) && /Yes → No/.test(ownLog[1].new_value), ownLog);
+    const legacy = await put(ids.unreg, { transport_not_needed: true }, tc);
+    check('"local transport not needed" is gone: sending it changes nothing', legacy.body.success === true && legacy.body.changed === 0);
 
     console.log('\n== Validation, through the API ==');
     const bad = await put(ids.reg, { departure_date: '2026-11-31', departure_time: '7pm' }, tc);
@@ -182,7 +183,7 @@ const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `
     check('settings refuse nonsense', (await call('PUT', '/api/guests/settings', { alertDays: -1, clashMinutes: 0, slotBounds: [18, 12, 6] }, admin)).status === 400);
     check('...and save sense', (await call('PUT', '/api/guests/settings', { alertDays: 3, clashMinutes: 45, slotBounds: [5, 12, 17] }, admin)).body.success === true);
     const after = (await call('GET', '/api/guests', null, admin)).body;
-    check('...which the board then uses', after.settings.alertDays === 3 && after.slotLabels[0] === 'Night 00-05', after.slotLabels);
+    check('...which the board then uses', after.settings.alertDays === 3 && after.slotLabels[0] === 'Night 12 AM–5 AM', after.slotLabels);
     await call('PUT', '/api/guests/settings', before, admin);
 
     console.log('\n== CSV, the Front Desk, the activity log ==');

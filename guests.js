@@ -14,7 +14,6 @@
 // Who may edit what. Travel belongs to the Transport Coordinator, stay to the
 // Accommodation Coordinator; the rest is shared by both.
 const TRAVEL_FIELDS = [
-  'transport_not_needed',
   'arrival_date', 'arrival_time', 'arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle', 'pickup_status',
   'departure_date', 'departure_time', 'departure_mode', 'departure_number', 'departure_point', 'drop_vehicle', 'drop_status',
   'transport_coordinator',
@@ -39,7 +38,7 @@ const STAY_NOTIFY_FIELDS = STAY_FIELDS.filter((f) => f !== 'accommodation_coordi
 
 const FIELD_LABELS = {
   guest_name: 'Name', guest_designation: 'Designation', guest_phone: 'Phone', guest_email: 'Email',
-  transport_not_needed: 'Local transport not needed', stay_not_needed: 'Accommodation not needed',
+  stay_not_needed: 'Accommodation not needed',
   arrival_date: 'Arrival Date', arrival_time: 'Arrival Time', arrival_mode: 'Arrival Mode',
   arrival_number: 'Arrival Flight/Train No', arrival_point: 'Arrival Point',
   pickup_vehicle: 'Pickup Vehicle/Driver', pickup_status: 'Pickup Status',
@@ -83,8 +82,9 @@ const SLOT_NAMES = ['Night', 'Morning', 'Afternoon', 'Evening'];
 // Longest a field may be. A typed-in designation is often the whole
 // affiliation ("Professor & Head, Dept of ..., College, City").
 const MAX_LENGTH = { special_needs: 1000, remarks: 1000, guest_designation: 300 };
-// Yes/no: they make their own way, or their own stay.
-const BOOL_FIELDS = new Set(['transport_not_needed', 'stay_not_needed']);
+// Yes/no: they arrange their own stay. (A "local transport not needed" option
+// existed briefly; its column remains in the table, unused.)
+const BOOL_FIELDS = new Set(['stay_not_needed']);
 const truthy = (v) => v === true || v === 1 || ['1', 'true', 'on', 'yes'].includes(String(v).trim().toLowerCase());
 // How a value reads in the activity log and an email.
 const displayValue = (field, v) => (BOOL_FIELDS.has(field) ? (Number(v) ? 'Yes' : 'No') : (v == null || v === '' ? '—' : String(v)));
@@ -110,8 +110,17 @@ function addDays(iso, n) {
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
 }
 
-// "2026-11-20 14:30", or just the date when no time is set.
+// "2026-11-20 14:30", or just the date when no time is set. Kept 24-hour so
+// it sorts; shown 12-hour (to12h).
 const joinDateTime = (date, time) => (date ? (time ? `${date} ${time}` : date) : '');
+// "14:30" -> "2:30 PM"; "00:05" -> "12:05 AM".
+function to12h(hhmm) {
+  const m = /^(\d{2}):(\d{2})$/.exec(String(hhmm || ''));
+  if (!m) return hhmm || '';
+  const h = Number(m[1]);
+  return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
+}
+const dateTime12 = (date, time) => (date ? (time ? `${date} ${to12h(time)}` : date) : '');
 // Minutes on a common scale, for comparing two trips; null without a time.
 const minutesAt = (date, time) => {
   if (!date || !time) return null;
@@ -193,8 +202,11 @@ function forbiddenChanges(values, current, mayEdit) {
 // Field-by-field differences, for the activity log and the coordinator email.
 function changedFields(before, values, fields = ALL_FIELDS) {
   const same = (f) => (BOOL_FIELDS.has(f) ? Number(before[f] || 0) === Number(values[f] || 0) : (before[f] || null) === (values[f] || null));
+  // A yes/no is 0 or 1, never empty: "|| null" would turn an untick into
+  // NULL, which the column refuses.
+  const val = (f, v) => (BOOL_FIELDS.has(f) ? (Number(v) ? 1 : 0) : (v || null));
   return fields.filter((f) => f in values && !same(f))
-    .map((f) => ({ field: f, label: FIELD_LABELS[f], from: before[f] || null, to: values[f] || null }));
+    .map((f) => ({ field: f, label: FIELD_LABELS[f], from: val(f, before[f]), to: val(f, values[f]) }));
 }
 
 function validateVehicle(body) {
@@ -252,10 +264,11 @@ function slotOf(time, bounds) {
   if (h < bounds[2]) return 2;
   return 3;
 }
+// "Morning 6 AM–12 PM", from the boundaries in 24-hour hours.
 function slotLabels(bounds) {
-  const pad = (n) => String(n).padStart(2, '0');
+  const hour = (h) => `${h % 12 || 12} ${h % 24 < 12 ? 'AM' : 'PM'}`;
   const edges = [0, ...bounds, 24];
-  return SLOT_NAMES.map((name, i) => `${name} ${pad(edges[i])}-${pad(edges[i + 1])}`);
+  return SLOT_NAMES.map((name, i) => `${name} ${hour(edges[i])}–${hour(edges[i + 1])}`);
 }
 
 // Everything the Guests tab shows, from the rows as stored.
@@ -274,9 +287,13 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
   const windowEnd = addDays(today, settings.alertDays);
   const roomKey = (acc, no) => (blank(acc) || blank(no) ? null : `${norm(acc)}|${norm(no)}`);
 
+  // Someone arranging their own stay keeps any stay details entered before,
+  // but they are set aside: no room, no bed, no shared-room warning.
+  const needsStay = (g) => !Number(g.stay_not_needed);
+  const staying = live.filter(needsStay);
   // Guests sharing a room (Accommodation + Room No), cancelled ones aside.
   const byRoom = new Map();
-  for (const g of live) {
+  for (const g of staying) {
     const k = roomKey(g.accommodation, g.room_no);
     if (!k) continue;
     if (!byRoom.has(k)) byRoom.set(k, []);
@@ -286,11 +303,8 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
   // Every timed trip a named vehicle makes, pickups and drops together -- a
   // car cannot be at the airport and the station at once.
   const vehicleByKey = new Map(vehicles.map((v) => [norm(v.label), v]));
-  // Someone making their own way is not met, dropped, or driven.
-  const needsTransport = (g) => !Number(g.transport_not_needed);
-  const needsStay = (g) => !Number(g.stay_not_needed);
   const trips = [];
-  for (const g of live.filter(needsTransport)) {
+  for (const g of live) {
     if (!blank(g.pickup_vehicle)) {
       trips.push({ key: norm(g.pickup_vehicle), vehicle: g.pickup_vehicle, kind: 'Pickup', guestId: g.id, name: g.name,
         date: g.arrival_date, time: g.arrival_time, point: g.arrival_point, at: minutesAt(g.arrival_date, g.arrival_time) });
@@ -318,15 +332,15 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
   for (const c of clashes) {
     for (const [self, other] of [[c.a, c.b], [c.b, c.a]]) {
       if (!clashGuests.has(self.guestId)) clashGuests.set(self.guestId, []);
-      clashGuests.get(self.guestId).push(`${self.kind} in ${c.vehicle} is ${c.minutesApart} min from ${other.name}'s ${other.kind.toLowerCase()} (${other.time})`);
+      clashGuests.get(self.guestId).push(`${self.kind} in ${c.vehicle} is ${c.minutesApart} min from ${other.name}'s ${other.kind.toLowerCase()} (${to12h(other.time)})`);
     }
   }
 
   const rows = ordered.map((g, i) => {
     const cancelled = isCancelled(g);
     const k = roomKey(g.accommodation, g.room_no);
-    const roommates = !cancelled && k ? byRoom.get(k).filter((o) => o.id !== g.id).map((o) => o.name) : [];
-    const arrivingSoon = !cancelled && needsTransport(g) && !blank(g.arrival_date) && g.arrival_date >= today && g.arrival_date <= windowEnd;
+    const roommates = !cancelled && k && needsStay(g) ? byRoom.get(k).filter((o) => o.id !== g.id).map((o) => o.name) : [];
+    const arrivingSoon = !cancelled && !blank(g.arrival_date) && g.arrival_date >= today && g.arrival_date <= windowEnd;
     return {
       ...g,
       sr_no: i + 1,
@@ -338,7 +352,6 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
         pickupAlert: arrivingSoon && blank(g.pickup_vehicle),
         // Red: nowhere to stay.
         noAccommodation: !cancelled && needsStay(g) && !blank(g.name) && blank(g.accommodation),
-        ownTransport: !needsTransport(g),
         ownStay: !needsStay(g),
         // Purple, a warning only: sharing can be intended.
         sharedRoom: roommates,
@@ -401,18 +414,18 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
 
   // Per accommodation: guests placed there against beds on the room list.
   const accNames = [...(lists.accommodation || [])];
-  for (const n of [...rooms.map((r) => r.accommodation), ...live.map((g) => g.accommodation)]) {
+  for (const n of [...rooms.map((r) => r.accommodation), ...staying.map((g) => g.accommodation)]) {
     if (!blank(n) && !accNames.some((a) => norm(a) === norm(n))) accNames.push(n);
   }
   const perAccommodation = accNames.map((name) => {
-    const assigned = live.filter((g) => norm(g.accommodation) === norm(name)).length;
+    const assigned = staying.filter((g) => norm(g.accommodation) === norm(name)).length;
     const beds = rooms.filter((r) => norm(r.accommodation) === norm(name)).reduce((s, r) => s + (Number(r.beds) || 0), 0);
     return { accommodation: name, assigned, beds, free: beds - assigned };
   });
 
   // Schedules: who to meet and who to see off, in order. Undated last; on a
   // date, untimed after the timed ones.
-  const schedule = (dateF, timeF) => [...rows.filter((g) => !g.cancelled && needsTransport(g))].sort((a, b) => {
+  const schedule = (dateF, timeF) => [...rows.filter((g) => !g.cancelled)].sort((a, b) => {
     if (blank(a[dateF]) !== blank(b[dateF])) return blank(a[dateF]) ? 1 : -1;
     if (a[dateF] !== b[dateF]) return String(a[dateF]).localeCompare(String(b[dateF]));
     if (blank(a[timeF]) !== blank(b[timeF])) return blank(a[timeF]) ? 1 : -1;
@@ -431,20 +444,16 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
   }));
 
   const soon = live.filter((g) => !blank(g.arrival_date) && g.arrival_date >= today && g.arrival_date <= windowEnd);
-  const transported = live.filter(needsTransport);
   const dashboard = {
     listed: live.length,
     cancelled: ordered.length - live.length,
     total: ordered.length,
     // Every guest here, Cancelled included: it is one of the statuses.
     byOverallStatus: countBy(ordered, 'overall_status', lists.overall_status || []),
-    // Pickups and drops only for those who need local transport.
-    byPickupStatus: countBy(transported, 'pickup_status', lists.transfer_status || []),
-    byDropStatus: countBy(transported, 'drop_status', lists.transfer_status || []),
-    ownTransport: live.length - transported.length,
-    ownStay: live.filter((g) => !needsStay(g)).length,
-    alert: { days: settings.alertDays, from: today, to: windowEnd, arriving: soon.length,
-      noVehicle: soon.filter((g) => needsTransport(g) && blank(g.pickup_vehicle)).length },
+    byPickupStatus: countBy(live, 'pickup_status', lists.transfer_status || []),
+    byDropStatus: countBy(live, 'drop_status', lists.transfer_status || []),
+    ownStay: live.length - staying.length,
+    alert: { days: settings.alertDays, from: today, to: windowEnd, arriving: soon.length, noVehicle: soon.filter((g) => blank(g.pickup_vehicle)).length },
     noAccommodation: rows.filter((g) => g.flags.noAccommodation).length,
     notRegistered: live.filter((g) => !Number(g.registered)).length,
     notSignedUp: live.filter((g) => !g.linked).length,
@@ -470,12 +479,11 @@ const CSV_COLUMNS = [
   ...['arrival_date', 'arrival_time', 'arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle', 'pickup_status',
     'departure_date', 'departure_time', 'departure_mode', 'departure_number', 'departure_point', 'drop_vehicle', 'drop_status',
     'accommodation', 'room_no', 'checkin_date', 'checkout_date', 'room_type', 'special_needs']
-    .map((f) => [FIELD_LABELS[f], (g) => g[f]]),
+    .map((f) => [FIELD_LABELS[f], (g) => (TIME_FIELDS.has(f) ? to12h(g[f]) : g[f])]),
   ['Transport Coordinator', (g) => g.transport_coordinator_name], ['Accommodation Coordinator', (g) => g.accommodation_coordinator_name],
-  ['Local transport needed', (g) => (Number(g.transport_not_needed) ? 'No' : 'Yes')],
   ['Accommodation needed', (g) => (Number(g.stay_not_needed) ? 'No' : 'Yes')],
   ['Overall Status', (g) => g.overall_status], ['Remarks', (g) => g.remarks],
-  ['Arrival Date & Time', (g) => g.arrival_at], ['Departure Date & Time', (g) => g.departure_at],
+  ['Arrival Date & Time', (g) => dateTime12(g.arrival_date, g.arrival_time)], ['Departure Date & Time', (g) => dateTime12(g.departure_date, g.departure_time)],
   ['Warnings', (g) => [
     g.flags.pickupAlert ? 'Arriving soon, no pickup vehicle' : '',
     g.flags.noAccommodation ? 'No accommodation' : '',
@@ -604,7 +612,7 @@ module.exports = {
   TRAVEL_FIELDS, STAY_FIELDS, GENERAL_FIELDS, ALL_FIELDS, FIELD_PERMISSION, FIELD_LABELS, FIELD_LISTS,
   TRAVEL_NOTIFY_FIELDS, STAY_NOTIFY_FIELDS,
   LIST_LABELS, DEFAULT_LISTS, PROTECTED_VALUES, CANCELLED, DEFAULT_SETTINGS, SLOT_NAMES,
-  validDate, validTime, addDays, joinDateTime, slotOf, slotLabels,
+  validDate, validTime, addDays, joinDateTime, to12h, dateTime12, slotOf, slotLabels,
   validateGuestFields, forbiddenChanges, changedFields, validateVehicle, validateRoom, validateSettings,
   buildBoard, guestsCsv,
 };

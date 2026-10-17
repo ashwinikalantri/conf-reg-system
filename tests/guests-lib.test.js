@@ -131,11 +131,11 @@ check('faculty not registered', d.notRegistered === 1);
 check('arrivals per date', JSON.stringify(d.arrivals.byDate) === JSON.stringify([
   { value: '2026-11-20', count: 3 }, { value: '2026-11-25', count: 1 }]), d.arrivals.byDate);
 check('arrivals per point, with "not set"', count(d.arrivals.byPoint, 'Nagpur Airport') === 1 && count(d.arrivals.byPoint, null) === 3);
-check('arrivals per slot: all morning, one undated-time', count(d.arrivals.bySlot, 'Morning 06-12') === 3 && count(d.arrivals.bySlot, null) === 1, d.arrivals.bySlot);
-check('departures per slot: evening', count(d.departures.bySlot, 'Evening 18-24') === 1);
+check('arrivals per slot: all morning, one undated-time', count(d.arrivals.bySlot, 'Morning 6 AM–12 PM') === 3 && count(d.arrivals.bySlot, null) === 1, d.arrivals.bySlot);
+check('departures per slot: evening', count(d.departures.bySlot, 'Evening 6 PM–12 AM') === 1);
 const moved = G.buildBoard({ guests, rooms, lists, settings: { ...settings, slotBounds: [9, 12, 18] }, today });
-check('moving a slot boundary moves the guests', count(moved.dashboard.arrivals.bySlot, 'Night 00-09') === 0
-  && count(moved.dashboard.arrivals.bySlot, 'Morning 09-12') === 3, moved.dashboard.arrivals.bySlot);
+check('moving a slot boundary moves the guests', count(moved.dashboard.arrivals.bySlot, 'Night 12 AM–9 AM') === 0
+  && count(moved.dashboard.arrivals.bySlot, 'Morning 9 AM–12 PM') === 3, moved.dashboard.arrivals.bySlot);
 check('...09:00 is Morning, not Night, at a 9 o\'clock boundary', G.slotOf('09:00', [9, 12, 18]) === 1 && G.slotOf('08:59', [9, 12, 18]) === 0);
 const acc = (n) => d.perAccommodation.find((r) => r.accommodation === n);
 check('per accommodation: guests, beds listed, beds free', acc('Yatri Nivas').assigned === 2 && acc('Yatri Nivas').beds === 3 && acc('Yatri Nivas').free === 1, acc('Yatri Nivas'));
@@ -159,29 +159,40 @@ check('a leading zero is kept as text', G.guestsCsv([{ ...b.guests[0], phone: '0
 check('a value that would run as a formula is neutralised', G.guestsCsv([{ ...b.guests[0], remarks: '=HYPERLINK("x")' }]).includes(`"'=HYPERLINK(""x"")"`));
 check('warnings are spelled out', /No accommodation/.test(csv[4]));
 
-console.log('\n== Own transport, own stay ==');
-check('the options are yes/no, whatever the client sends', v({ transport_not_needed: true }).values.transport_not_needed === 1
-  && v({ transport_not_needed: 'on' }).values.transport_not_needed === 1 && v({ stay_not_needed: false }).values.stay_not_needed === 0);
-check('transport is travel\'s to set, stay is the stay\'s', G.FIELD_PERMISSION.transport_not_needed === 'guests.travel' && G.FIELD_PERMISSION.stay_not_needed === 'guests.stay');
+console.log('\n== Own stay ==');
+check('"accommodation not needed" is yes/no, whatever the client sends', v({ stay_not_needed: true }).values.stay_not_needed === 1
+  && v({ stay_not_needed: 'on' }).values.stay_not_needed === 1 && v({ stay_not_needed: false }).values.stay_not_needed === 0);
+check('...and the stay\'s to set', G.FIELD_PERMISSION.stay_not_needed === 'guests.stay');
+check('there is no "local transport not needed" any more', !G.ALL_FIELDS.includes('transport_not_needed') && !('transport_not_needed' in v({ transport_not_needed: true }).values));
 check('unticking what was never ticked is not a change', G.changedFields({ stay_not_needed: 0 }, { stay_not_needed: 0 }).length === 0
   && G.changedFields({ stay_not_needed: null }, { stay_not_needed: 0 }).length === 0);
+// The bug: unticking turned 0 into NULL, which the column refuses.
+const untick = G.changedFields({ stay_not_needed: 1 }, { stay_not_needed: 0 });
+check('unticking saves 0, never empty', untick.length === 1 && untick[0].to === 0 && untick[0].from === 1, untick);
 check('...and reads as Yes/No in the log', G.displayValue('stay_not_needed', 1) === 'Yes' && G.displayValue('stay_not_needed', 0) === 'No');
 const own = G.buildBoard({ guests: [
-  guest('Self Driver', { arrival_date: '2026-11-20', arrival_time: '09:00', transport_not_needed: 1, accommodation: 'Yatri Nivas' }),
-  guest('Day Visitor', { stay_not_needed: 1, arrival_date: '2026-11-20', pickup_vehicle: 'Car' }),
-  guest('Needs Both', { arrival_date: '2026-11-20' }),
-], lists, settings, today });
+  guest('Day Visitor', { stay_not_needed: 1, arrival_date: '2026-11-20', accommodation: 'Yatri Nivas', room_no: '101' }),
+  guest('Room Mate', { accommodation: 'Yatri Nivas', room_no: '101' }),
+  guest('Needs Room', { arrival_date: '2026-11-20' }),
+], rooms, lists, settings, today });
 const ob = (n) => own.guests.find((g) => g.name === n);
-check('making their own way: no orange warning', ob('Self Driver').flags.pickupAlert === false && ob('Needs Both').flags.pickupAlert === true);
-check('...and a chip saying so', ob('Self Driver').flags.ownTransport === true);
-check('...left off the pickup and drop schedules', !own.pickups.some((p) => p.name === 'Self Driver') && !own.drops.some((p) => p.name === 'Self Driver'));
-check('...and the pickup and drop counts, which say how many', own.dashboard.ownTransport === 1
-  && own.dashboard.byPickupStatus.reduce((n, r) => n + r.count, 0) === 2);
-check('...though still counted as arriving', own.dashboard.arrivals.total === 3 && own.dashboard.alert.arriving === 3 && own.dashboard.alert.noVehicle === 1);
-check('their own stay: no red warning', ob('Day Visitor').flags.noAccommodation === false && ob('Needs Both').flags.noAccommodation === true);
-check('...counted apart', own.dashboard.noAccommodation === 1 && own.dashboard.ownStay === 1);
-check('the CSV says what each needs', /Local transport needed,Accommodation needed/.test(G.guestsCsv(own.guests).split('\r\n')[0])
-  && G.guestsCsv(own.guests).split('\r\n')[1].includes(',No,Yes,'));
+check('their own stay: no red warning, an "own stay" chip', ob('Day Visitor').flags.noAccommodation === false && ob('Day Visitor').flags.ownStay === true
+  && ob('Needs Room').flags.noAccommodation === true);
+check('stay details entered earlier are set aside: no bed, no shared-room warning', ob('Room Mate').flags.sharedRoom.length === 0
+  && ob('Day Visitor').flags.sharedRoom.length === 0
+  && own.rooms.find((r) => r.room_no === '101').occupied === 1);
+check('...and not counted for the accommodation', own.dashboard.perAccommodation.find((r) => r.accommodation === 'Yatri Nivas').assigned === 1);
+check('counted apart on the dashboard', own.dashboard.noAccommodation === 1 && own.dashboard.ownStay === 1);
+check('everyone is on the pickup schedule again', own.pickups.length === 3);
+check('the CSV says who needs accommodation', /,Accommodation needed,/.test(G.guestsCsv(own.guests).split('\r\n')[0])
+  && !/Local transport needed/.test(G.guestsCsv(own.guests)));
+
+console.log('\n== 12-hour times ==');
+check('shown 12-hour', G.to12h('00:05') === '12:05 AM' && G.to12h('12:00') === '12:00 PM' && G.to12h('21:30') === '9:30 PM');
+check('time slots named in 12-hour time', G.slotLabels([6, 12, 18]).join('|') === 'Night 12 AM–6 AM|Morning 6 AM–12 PM|Afternoon 12 PM–6 PM|Evening 6 PM–12 AM');
+const csv12 = G.guestsCsv(G.buildBoard({ guests: [guest('T', { arrival_date: '2026-11-20', arrival_time: '21:30' })], lists, settings, today }).guests);
+check('the CSV writes times 12-hour', csv12.includes(',9:30 PM,') && csv12.includes(',2026-11-20 9:30 PM,'));
+check('clash warnings name the time 12-hour', /\(9:30 AM\)|\(10:15 AM\)/.test(b.guests.find((g) => g.name === 'Homeless').flags.vehicleClash.join(' ')));
 
 console.log('\n== Guests without an account ==');
 check('a typed phone keeps its + and leading zero, and loses its spaces', v({ guest_phone: '+91 0712 230 0000' }).values.guest_phone === '+9107122300000');
