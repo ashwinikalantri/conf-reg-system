@@ -252,6 +252,7 @@ const ROUTE_PERMISSIONS = {
   'GET /api/guests': 'guests.view',
   'GET /api/guests/export.csv': 'guests.view',
   'GET /api/guests/candidates': 'guests.edit',
+  'GET /api/guests/flight': 'guests.travel',
   'POST /api/guests': 'guests.edit',
   'PUT /api/guests/:id': 'guests.edit',
   'PUT /api/guests/:id/link': 'guests.edit',

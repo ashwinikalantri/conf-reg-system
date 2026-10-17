@@ -70,6 +70,21 @@
         </form>
       </div>
 
+      <!-- Flight look-up: lets transport coordinators fill a faculty member's
+           arrival or departure time from the flight number (Faculty tab). -->
+      <div id="gs-card-flights" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-800"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M2 16l20-6-20-6 5 6z"/><line x1="7" y1="10" x2="13" y2="10"/></svg>Flight Look-up</h3>
+        <p class="text-xs text-slate-500 mb-3">AeroDataBox, through RapidAPI. With a key, the Faculty tab can fill a flight's scheduled time from its number. Without one, times are typed in as before.</p>
+        <form onsubmit="saveGeneralSettings(event, 'flights')" class="space-y-3">
+          <div>
+            <label class="block text-[10px] font-semibold text-slate-600 mb-1">RapidAPI Key <span id="gs-flights-apikey-hint" class="font-normal text-slate-400"></span></label>
+            <input id="gs-flights-apikey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
+            <p class="text-[10px] text-slate-400 mt-1">Stored in the server's .env file, never in the database. Only entered when changing it.</p>
+          </div>
+          <button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Flight Look-up Key</button>
+        </form>
+      </div>
+
       <!-- Email -->
       <div id="gs-card-email" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">

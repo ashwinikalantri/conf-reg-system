@@ -7199,6 +7199,7 @@ async function renderGeneralSettings() {
   // DOM. The AWS Access Key ID isn't a bearer secret, so a last-4 preview is
   // shown to help confirm which key is active.
   setText('gs-sms-apikey-hint', data.sms.hasApiKey ? '(configured)' : '(not set)');
+  setText('gs-flights-apikey-hint', data.flights && data.flights.hasApiKey ? '(configured)' : '(not set)');
   setText('gs-email-accesskey-hint', data.email.accessKeyMasked ? `(current: ${data.email.accessKeyMasked})` : '(not set)');
   setText('gs-email-secretkey-hint', data.email.hasSecretKey ? '(configured)' : '(not set)');
 
@@ -7295,6 +7296,11 @@ async function saveGeneralSettings(e, group) {
       id: document.getElementById('gs-upi-id').value,
       payeeName: document.getElementById('gs-upi-payeename').value,
     } };
+  } else if (group === 'flights') {
+    const apiKey = document.getElementById('gs-flights-apikey').value.trim();
+    if (!apiKey) return showToast('Paste the key to save it.');
+    body = { flights: { apiKey } };
+    credentialInputs = ['gs-flights-apikey'];
   } else if (group === 'bank') {
     body = { bank: {
       accountName: document.getElementById('gs-bank-accountname').value,
@@ -10539,6 +10545,13 @@ function openGuestEditor(id) {
   };
   const vehicles = `<datalist id="guest-vehicle-options">${guestData.vehicles.map((v) => `<option value="${esc(v.label)}">${esc([v.driver_phone, v.seats ? `${v.seats} seats` : ''].filter(Boolean).join(' · '))}</option>`).join('')}</datalist>`;
   const time = (name, enabled) => input(name, 'text', enabled, 'inputmode="numeric" placeholder="HH:MM" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" title="24-hour time, e.g. 14:30"');
+  // Flight look-up, when a key is set: fills the time (and Nagpur as the
+  // point) from the flight number and date, for the coordinator to check
+  // and save. See GET /api/guests/flight.
+  const canFetch = travel && guestData.flightLookup;
+  const fetchBtn = (leg) => (canFetch
+    ? `<button type="button" onclick="fetchGuestFlight('${leg}')" class="mt-1 text-[11px] font-semibold text-indigo-700 hover:text-indigo-900 underline">Fetch flight times</button>` : '');
+  const flightPanel = (leg) => (canFetch ? `<div id="guest-flight-${leg}" class="hidden col-span-2 sm:col-span-4"></div>` : '');
   // A yes/no that spans the row: they make their own way, or their own stay.
   const tick = (name, label, enabled) => `<label class="col-span-2 sm:col-span-4 flex items-center gap-2 text-sm text-slate-700 ${enabled ? 'cursor-pointer' : 'opacity-60'}">
       <input type="checkbox" name="${name}" ${Number(g[name]) ? 'checked' : ''} ${enabled ? '' : 'disabled'}> ${esc(label)}</label>`;
@@ -10573,18 +10586,20 @@ function openGuestEditor(id) {
       + field('arrival_date', 'Date', input('arrival_date', 'date', travel))
       + field('arrival_time', 'Time (24-hour)', time('arrival_time', travel))
       + field('arrival_mode', 'Mode', select('arrival_mode', 'mode', travel))
-      + field('arrival_number', 'Flight/Train No', input('arrival_number', 'text', travel))
+      + field('arrival_number', 'Flight/Train No', input('arrival_number', 'text', travel) + fetchBtn('arrival'))
       + field('arrival_point', 'Point', select('arrival_point', 'point', travel))
       + field('pickup_vehicle', 'Pickup Vehicle/Driver', input('pickup_vehicle', 'text', travel, 'list="guest-vehicle-options" autocomplete="off"'))
-      + field('pickup_status', 'Pickup Status', select('pickup_status', 'transfer_status', travel))),
+      + field('pickup_status', 'Pickup Status', select('pickup_status', 'transfer_status', travel))
+      + flightPanel('arrival')),
     group('Departure', travel, 'Only a transport coordinator can change travel.',
       field('departure_date', 'Date', input('departure_date', 'date', travel))
       + field('departure_time', 'Time (24-hour)', time('departure_time', travel))
       + field('departure_mode', 'Mode', select('departure_mode', 'mode', travel))
-      + field('departure_number', 'Flight/Train No', input('departure_number', 'text', travel))
+      + field('departure_number', 'Flight/Train No', input('departure_number', 'text', travel) + fetchBtn('departure'))
       + field('departure_point', 'Point', select('departure_point', 'point', travel))
       + field('drop_vehicle', 'Drop Vehicle/Driver', input('drop_vehicle', 'text', travel, 'list="guest-vehicle-options" autocomplete="off"'))
-      + field('drop_status', 'Drop Status', select('drop_status', 'transfer_status', travel))),
+      + field('drop_status', 'Drop Status', select('drop_status', 'transfer_status', travel))
+      + flightPanel('departure')),
     group('Stay', stay, 'Only an accommodation coordinator can change the stay.',
       tick('stay_not_needed', 'Accommodation not needed — they arrange their own stay', stay)
       + field('accommodation', 'Accommodation', select('accommodation', 'accommodation', stay))
@@ -10608,6 +10623,53 @@ function openGuestEditor(id) {
   const remove = document.getElementById('guest-remove-btn');
   if (remove) remove.classList.toggle('hidden', !can('guests.manage'));
   openModal('modal-guest-edit');
+}
+
+// What the flight service said, per leg, until the coordinator uses it.
+const guestFlightResults = {};
+async function fetchGuestFlight(leg) {
+  const form = document.getElementById('guest-edit-form');
+  const panel = document.getElementById(`guest-flight-${leg}`);
+  if (!form || !panel) return;
+  const number = form.querySelector(`[name="${leg}_number"]`).value.trim();
+  const date = form.querySelector(`[name="${leg}_date"]`).value;
+  const show = (html, tone = 'bg-slate-50 border-slate-200 text-slate-700') => {
+    panel.className = `col-span-2 sm:col-span-4 text-xs rounded-lg border px-3 py-2 ${tone}`;
+    panel.innerHTML = html;
+  };
+  if (!number || !date) return show(`Enter the ${leg} date and the flight number first.`, 'bg-amber-50 border-amber-200 text-amber-900');
+  show('Looking up the flight…');
+  const res = await fetch(`/api/guests/flight?number=${encodeURIComponent(number)}&date=${encodeURIComponent(date)}&leg=${leg}`);
+  const data = await res.json().catch(() => ({}));
+  if (!data.success) return show(esc(data.error || 'The look-up failed.'), 'bg-rose-50 border-rose-200 text-rose-800');
+  if (!data.flights.length) return show(esc(data.message || 'No such flight found.'), 'bg-amber-50 border-amber-200 text-amber-900');
+  guestFlightResults[leg] = data;
+  const line = (f) => {
+    const end = (p, t) => `${esc(p.iata || '')}${p.city || p.name ? ` ${esc(p.city || p.name)}` : ''} ${t ? `<b>${esc(t.time)}</b>${t.date !== date ? ` (${esc(formatFullDate(t.date))})` : ''}` : ''}`;
+    return `<p>${esc([f.airline, f.number].filter(Boolean).join(' '))} · ${end(f.from, f.departs)} → ${end(f.to, f.arrives)}${f.status ? ` · ${esc(f.status)}` : ''}</p>`;
+  };
+  const s = data.suggestion;
+  show(`${data.flights.map(line).join('')}
+    ${s ? `<button type="button" onclick="useGuestFlight('${leg}')" class="mt-1.5 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold rounded-md">Use ${esc(s.time)}${s.point ? ` · ${esc(s.point)}` : ''}</button>`
+      : '<p class="mt-1 text-slate-500">Several legs, none at Nagpur — enter the time by hand.</p>'}`, 'bg-indigo-50 border-indigo-200 text-slate-800');
+}
+function useGuestFlight(leg) {
+  const data = guestFlightResults[leg];
+  const form = document.getElementById('guest-edit-form');
+  if (!data || !data.suggestion || !form) return;
+  const s = data.suggestion;
+  const setIf = (name, v) => {
+    const el = form.querySelector(`[name="${name}"]`);
+    if (!el || el.disabled || v == null) return;
+    // A select only takes a value it offers.
+    if (el.tagName === 'SELECT' && ![...el.options].some((o) => o.value === v)) return;
+    el.value = v;
+  };
+  setIf(`${leg}_time`, s.time);
+  setIf(`${leg}_mode`, s.mode);
+  setIf(`${leg}_point`, s.point);
+  const panel = document.getElementById(`guest-flight-${leg}`);
+  if (panel) panel.insertAdjacentHTML('beforeend', '<p class="mt-1 font-semibold text-emerald-700">Filled in. Save to keep it.</p>');
 }
 
 async function saveGuest(ev) {
