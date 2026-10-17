@@ -114,6 +114,8 @@ const PERMISSIONS = [
   ['guests.edit', 'guests', 'Mark faculty, edit shared details', 'Mark a delegate as faculty (adding them to the faculty list), and edit Special Needs, Overall Status and Remarks.'],
   ['guests.travel', 'guests', 'Edit travel', 'Edit arrival, departure, pickup and drop details, whether local transport is needed and the transport coordinator, and add or edit vehicles.'],
   ['guests.stay', 'guests', 'Edit stay', 'Edit accommodation, room and check-in/out details, whether accommodation is needed and the accommodation coordinator, and add or edit rooms.'],
+  ['guests.travel_assigned', 'guests', 'Update transport (assigned faculty)', 'For the faculty assigned to them as transport volunteer only: update the pickup and drop vehicle and status.'],
+  ['guests.stay_assigned', 'guests', 'Update stay (assigned faculty)', 'For the faculty assigned to them as accommodation volunteer only: update the accommodation, room, check-in and check-out, and room type.'],
   ['guests.manage', 'guests', 'Manage faculty coordination', 'Remove someone from the faculty list, delete vehicles and rooms, and change the dropdown lists and the alert, time-slot and clash settings.'],
 
   // --- Reports ---
@@ -254,7 +256,9 @@ const ROUTE_PERMISSIONS = {
   'GET /api/guests/candidates': 'guests.edit',
   'GET /api/guests/flight': 'guests.travel',
   'POST /api/guests': 'guests.edit',
-  'PUT /api/guests/:id': 'guests.edit',
+  // Reached with guests.view; each field is then checked -- a coordinator's
+  // permission, or a volunteer's for faculty assigned to them.
+  'PUT /api/guests/:id': 'guests.view',
   'PUT /api/guests/:id/link': 'guests.edit',
   'DELETE /api/guests/:id': 'guests.manage',
   'PUT /api/guests/settings': 'guests.manage',
@@ -509,7 +513,8 @@ const SYSTEM_ROLES = [
   // Volunteers, one role per area; a volunteer in several areas holds several
   // (a main role plus additional ones). Transport and Accommodation
   // volunteers are who a faculty member's Transport and Accommodation
-  // dropdowns list; they see the Faculty tab but change nothing.
+  // dropdowns list; they see the Faculty tab and update only their own
+  // area, for the faculty assigned to them.
   {
     key: 'VOLUNTEER_REGISTRATION',
     label: 'Volunteer – Registration',
@@ -519,14 +524,14 @@ const SYSTEM_ROLES = [
   {
     key: 'VOLUNTEER_TRANSPORT',
     label: 'Volunteer – Transport',
-    description: 'Transport volunteer: can be assigned to faculty for pickups and drops; sees the Faculty tab, changes nothing.',
-    permissions: ['guests.view'],
+    description: 'Transport volunteer: assigned to faculty for pickups and drops; sees the Faculty tab and updates the pickup and drop of the faculty assigned to them.',
+    permissions: ['guests.view', 'guests.travel_assigned'],
   },
   {
     key: 'VOLUNTEER_ACCOMMODATION',
     label: 'Volunteer – Accommodation',
-    description: 'Accommodation volunteer: can be assigned to faculty for their stay; sees the Faculty tab, changes nothing.',
-    permissions: ['guests.view'],
+    description: 'Accommodation volunteer: assigned to faculty for their stay; sees the Faculty tab and updates the stay details of the faculty assigned to them.',
+    permissions: ['guests.view', 'guests.stay_assigned'],
   },
   {
     key: 'TRANSPORT_COORDINATOR',
@@ -572,7 +577,16 @@ function permissionForRoute(route) {
   return ROUTE_PERMISSIONS[route];
 }
 
+// Permissions that do not guard a route of their own but are checked inside
+// one, field by field -- here, a volunteer's say over the faculty assigned
+// to them (guests.js mayEditField). Named with the route they are read in.
+const INNER_PERMISSIONS = {
+  'guests.travel_assigned': 'PUT /api/guests/:id',
+  'guests.stay_assigned': 'PUT /api/guests/:id',
+};
+
 module.exports = {
+  INNER_PERMISSIONS,
   SECTIONS,
   SECTION_PERMISSIONS,
   roleSeesSection,

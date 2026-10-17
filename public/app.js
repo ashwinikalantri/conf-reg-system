@@ -10547,7 +10547,7 @@ function renderGuestList() {
       </td>
       <td class="p-3">${guestStatusBadge(g.overall_status)}</td>
       <td class="p-3 text-xs text-slate-600 max-w-[14rem]">${g.special_needs ? `<p><b>Needs:</b> ${esc(g.special_needs)}</p>` : ''}${g.remarks ? `<p class="text-slate-500">${esc(g.remarks)}</p>` : ''}</td>
-      <td class="p-3 text-right"><button type="button" onclick="openGuestEditor(${esc(g.id)})" class="px-3 py-1.5 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold rounded-lg">${can('guests.edit') ? 'Edit' : 'View'}</button></td>
+      <td class="p-3 text-right"><button type="button" onclick="openGuestEditor(${esc(g.id)})" class="px-3 py-1.5 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold rounded-lg">${can('guests.edit') || guestVolunteerOf(g).mineT || guestVolunteerOf(g).mineS ? 'Edit' : 'View'}</button></td>
     </tr>`).join('')
     : `<tr><td colspan="9" class="p-8 text-center text-slate-400 text-sm">${guestData.guests.length ? 'No one matches these filters.' : 'No faculty yet. Mark a delegate as faculty to start.'}</td></tr>`;
   const live = guestData.guests.filter((g) => !g.cancelled).length;
@@ -10674,6 +10674,16 @@ function syncGuestStayFields() {
   if (note) note.classList.toggle('hidden', !tickEl.checked);
 }
 
+// Is the signed-in person this faculty member's transport or accommodation
+// volunteer, with the permission to update that area?
+function guestVolunteerOf(g) {
+  const me = activeAdminUser && activeAdminUser.phone_number;
+  return {
+    mineT: !!me && can('guests.travel_assigned') && g.transport_coordinator === me,
+    mineS: !!me && can('guests.stay_assigned') && g.accommodation_coordinator === me,
+  };
+}
+
 // --- the editor ---
 function openGuestEditor(id) {
   const g = guestData && guestData.guests.find((x) => x.id === id);
@@ -10681,6 +10691,11 @@ function openGuestEditor(id) {
   const travel = can('guests.travel');
   const stay = can('guests.stay');
   const shared = can('guests.edit');
+  // A volunteer updates their own area for the faculty assigned to them
+  // (the server checks the same: guests.js mayEditField).
+  const { mineT, mineS } = guestVolunteerOf(g);
+  const pickupOk = travel || mineT;
+  const stayOk = stay || mineS;
   const lists = guestData.lists;
   const field = (name, label, html) => `<label class="block min-w-0"><span class="block text-[11px] font-semibold text-slate-600 mb-1">${esc(label)}</span>${html}</label>`;
   const cls = 'w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm bg-white outline-none disabled:bg-slate-50 disabled:text-slate-500';
@@ -10743,34 +10758,34 @@ function openGuestEditor(id) {
       </div>` : '');
   document.getElementById('guest-edit-flags').innerHTML = `${guestStatusBadge(g.overall_status)} ${guestFlagChips(g)}`;
   document.getElementById('guest-edit-body').innerHTML = vehicles + identity + (identity ? '<div class="h-4"></div>' : '') + [
-    group('Arrival', travel, 'Only a transport coordinator can change travel.',
+    group('Arrival', travel, mineT ? 'As their transport volunteer you can update the pickup; the itinerary is the coordinator\'s.' : 'Only a transport coordinator can change travel.',
       field('arrival_date', 'Date', input('arrival_date', 'date', travel))
       + field('arrival_time', 'Time', time('arrival_time', travel))
       + field('arrival_mode', 'Mode', modeSelect('arrival'))
       + numberField('arrival')
       + field('arrival_point', 'Point', select('arrival_point', 'point', travel))
-      + field('pickup_vehicle', 'Pickup Vehicle/Driver', input('pickup_vehicle', 'text', travel, 'list="guest-vehicle-options" autocomplete="off"'))
-      + field('pickup_status', 'Pickup Status', select('pickup_status', 'transfer_status', travel))
+      + field('pickup_vehicle', 'Pickup Vehicle/Driver', input('pickup_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off"'))
+      + field('pickup_status', 'Pickup Status', select('pickup_status', 'transfer_status', pickupOk))
       + flightPanel('arrival')),
-    group('Departure', travel, 'Only a transport coordinator can change travel.',
+    group('Departure', travel, mineT ? 'As their transport volunteer you can update the drop; the itinerary is the coordinator\'s.' : 'Only a transport coordinator can change travel.',
       field('departure_date', 'Date', input('departure_date', 'date', travel))
       + field('departure_time', 'Time', time('departure_time', travel))
       + field('departure_mode', 'Mode', modeSelect('departure'))
       + numberField('departure')
       + field('departure_point', 'Point', select('departure_point', 'point', travel))
-      + field('drop_vehicle', 'Drop Vehicle/Driver', input('drop_vehicle', 'text', travel, 'list="guest-vehicle-options" autocomplete="off"'))
-      + field('drop_status', 'Drop Status', select('drop_status', 'transfer_status', travel))
+      + field('drop_vehicle', 'Drop Vehicle/Driver', input('drop_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off"'))
+      + field('drop_status', 'Drop Status', select('drop_status', 'transfer_status', pickupOk))
       + flightPanel('departure')),
-    group('Stay', stay, 'Only an accommodation coordinator can change the stay.',
+    group('Stay', stay, mineS ? 'As their accommodation volunteer you can update the stay details.' : 'Only an accommodation coordinator can change the stay.',
       `<label class="col-span-2 sm:col-span-4 flex items-center gap-2 text-sm text-slate-700 ${stay ? 'cursor-pointer' : 'opacity-60'}">
         <input type="checkbox" name="stay_not_needed" ${Number(g.stay_not_needed) ? 'checked' : ''} ${stay ? '' : 'disabled'} onchange="syncGuestStayFields()"> Accommodation not needed — they arrange their own stay</label>
       <p id="guest-stay-note" class="${Number(g.stay_not_needed) ? '' : 'hidden'} col-span-2 sm:col-span-4 text-[11px] text-slate-500 -mt-1">No stay details needed.${g.accommodation ? ' Those entered earlier are kept, unused, and return if you untick this.' : ''}</p>
       <div id="guest-stay-fields" class="${Number(g.stay_not_needed) ? 'hidden ' : ''}col-span-2 sm:col-span-4 grid grid-cols-2 sm:grid-cols-4 gap-3">`
-      + field('accommodation', 'Accommodation', select('accommodation', 'accommodation', stay))
-      + field('room_no', 'Room No', input('room_no', 'text', stay))
-      + field('checkin_date', 'Check-in Date', input('checkin_date', 'date', stay, 'onchange="syncGuestNights()"'))
-      + field('checkout_date', 'Check-out Date', input('checkout_date', 'date', stay, 'onchange="syncGuestNights()"'))
-      + field('room_type', 'Room Type', select('room_type', 'room_type', stay))
+      + field('accommodation', 'Accommodation', select('accommodation', 'accommodation', stayOk))
+      + field('room_no', 'Room No', input('room_no', 'text', stayOk))
+      + field('checkin_date', 'Check-in Date', input('checkin_date', 'date', stayOk, 'onchange="syncGuestNights()"'))
+      + field('checkout_date', 'Check-out Date', input('checkout_date', 'date', stayOk, 'onchange="syncGuestNights()"'))
+      + field('room_type', 'Room Type', select('room_type', 'room_type', stayOk))
       + '<p id="guest-nights" class="col-span-2 sm:col-span-4 text-xs font-semibold text-slate-600 -mt-1"></p>'
       + '</div>'),
     group('Other', shared, '',
@@ -10793,7 +10808,7 @@ function openGuestEditor(id) {
   syncGuestStayFields();
   syncGuestNights();
   const save = document.getElementById('guest-save-btn');
-  if (save) save.classList.toggle('hidden', !(travel || stay || shared));
+  if (save) save.classList.toggle('hidden', !(travel || stay || shared || mineT || mineS));
   const remove = document.getElementById('guest-remove-btn');
   if (remove) remove.classList.toggle('hidden', !can('guests.manage'));
   openModal('modal-guest-edit');

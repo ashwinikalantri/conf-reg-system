@@ -12744,10 +12744,12 @@ app.delete('/api/guests/lists/:id', requirePermission('guests.manage'), async (r
 
 // Edit a guest. Each field belongs to one permission (guests.js
 // FIELD_PERMISSION): travel to guests.travel, stay to guests.stay, the rest to
-// guests.edit. A request changing a field the role may not edit is refused
-// whole, naming the fields. Whoever is named coordinator for that side is
+// guests.edit -- and a volunteer may change their own area's fields for the
+// faculty assigned to them (guests.js mayEditField). Reached with
+// guests.view; a request changing a field this person may not edit is
+// refused whole, naming the fields. Whoever is named coordinator for that side is
 // emailed when somebody else changes the guest's travel or stay details.
-app.put('/api/guests/:id', requirePermission('guests.edit'), async (req, res, next) => {
+app.put('/api/guests/:id', requirePermission('guests.view'), async (req, res, next) => {
   try {
     const current = await dbGet('SELECT * FROM guests WHERE id = ?', [req.params.id]);
     if (!current) return res.status(404).json({ success: false, error: 'Faculty member not found.' });
@@ -12758,7 +12760,8 @@ app.put('/api/guests/:id', requirePermission('guests.edit'), async (req, res, ne
     if (current.accommodation_coordinator) coordinators.accommodation.add(current.accommodation_coordinator);
     const lists = activeGuestLists(await guestListRows());
     const { values, errors } = guestLib.validateGuestFields((req.body && req.body.fields) || {}, current, lists, coordinators);
-    const forbidden = guestLib.forbiddenChanges(values, current, (perm) => sessionCan(req, perm));
+    const forbidden = guestLib.forbiddenChanges(values, current,
+      (perm, field) => guestLib.mayEditField(field, current, (p) => sessionCan(req, p), req.session.phone));
     if (forbidden.length) {
       return res.status(403).json({ success: false, error: `You cannot change: ${forbidden.map((f) => guestLib.FIELD_LABELS[f]).join(', ')}.` });
     }

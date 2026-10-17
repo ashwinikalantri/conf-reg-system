@@ -41,6 +41,20 @@ check('...not the stay', JSON.stringify(G.forbiddenChanges({ accommodation: 'Yat
 check('...though sending it back unchanged is not a change', G.forbiddenChanges({ remarks: 'x', accommodation: null }, cur, () => false).length === 0);
 check('every field belongs to exactly one permission', G.ALL_FIELDS.every((f) => ['guests.travel', 'guests.stay', 'guests.edit'].includes(G.FIELD_PERMISSION[f])));
 
+console.log('\n== Volunteers update their own area, for their own faculty ==');
+const vcan = (perms) => (p) => perms.includes(p);
+const mine = { transport_coordinator: 'TV', accommodation_coordinator: 'AV' };
+check('a transport volunteer updates the pickup and drop of their faculty', ['pickup_vehicle', 'pickup_status', 'drop_vehicle', 'drop_status']
+  .every((f) => G.mayEditField(f, mine, vcan(['guests.view', 'guests.travel_assigned']), 'TV')));
+check('...not the itinerary, the stay, the status, or who is assigned', ['arrival_date', 'departure_time', 'room_no', 'overall_status', 'transport_coordinator', 'stay_not_needed']
+  .every((f) => !G.mayEditField(f, mine, vcan(['guests.view', 'guests.travel_assigned']), 'TV')));
+check('...and nothing for faculty assigned to someone else', !G.mayEditField('pickup_status', { transport_coordinator: 'OTHER' }, vcan(['guests.travel_assigned']), 'TV'));
+check('an accommodation volunteer updates the stay details of their faculty', ['accommodation', 'room_no', 'checkin_date', 'checkout_date', 'room_type']
+  .every((f) => G.mayEditField(f, mine, vcan(['guests.stay_assigned']), 'AV')) && !G.mayEditField('pickup_status', mine, vcan(['guests.stay_assigned']), 'AV'));
+check('the permission alone is not enough, nor the assignment alone', !G.mayEditField('pickup_status', mine, vcan([]), 'TV')
+  && !G.mayEditField('pickup_status', mine, vcan(['guests.travel_assigned']), null));
+check('a coordinator\'s permission covers everyone', G.mayEditField('pickup_status', { transport_coordinator: 'OTHER' }, vcan(['guests.travel']), 'TC'));
+
 console.log('\n== Masters ==');
 check('beds must be 1-20, whole', [0, 21, 2.5, '', 'two'].every((b) => G.validateRoom({ accommodation: 'Yatri Nivas', roomNo: '1', beds: b }, lists).errors.some((e) => /Beds/.test(e))));
 check('...1 and 20 are fine', [1, 20].every((b) => G.validateRoom({ accommodation: 'Yatri Nivas', roomNo: '1', beds: b }, lists).errors.length === 0));

@@ -30,6 +30,25 @@ const FIELD_PERMISSION = Object.fromEntries([
   ...GENERAL_FIELDS.map((f) => [f, 'guests.edit']),
 ]);
 
+// What a volunteer may update for the faculty assigned to them: a transport
+// volunteer the pickup and drop (vehicle and status), an accommodation
+// volunteer the stay details. Itineraries, "accommodation not needed", who
+// is assigned and the overall status stay with coordinators.
+const VOLUNTEER_FIELDS = {
+  transport: ['pickup_vehicle', 'pickup_status', 'drop_vehicle', 'drop_status'],
+  accommodation: ['accommodation', 'room_no', 'checkin_date', 'checkout_date', 'room_type'],
+};
+// May this person change this field on this faculty member? `can(perm)` is
+// their permissions; `me` their account. A coordinator's permission covers
+// the field for everyone; a volunteer's only for faculty assigned to them.
+function mayEditField(field, current, can, me) {
+  if (can(FIELD_PERMISSION[field])) return true;
+  if (!me) return false;
+  if (VOLUNTEER_FIELDS.transport.includes(field)) return can('guests.travel_assigned') && current.transport_coordinator === me;
+  if (VOLUNTEER_FIELDS.accommodation.includes(field)) return can('guests.stay_assigned') && current.accommodation_coordinator === me;
+  return false;
+}
+
 // The travel details a Transport Coordinator is emailed about when somebody
 // else changes them; the stay details likewise for accommodation. Who the
 // coordinator is does not count as a change to the guest's travel.
@@ -198,8 +217,10 @@ function validateGuestFields(input, current = {}, lists = {}, coordinators = {})
 }
 
 // The fields a role may not change, among those a request would change.
+// mayEdit(permission, field) -- the field is passed too, for volunteers,
+// whose say depends on which faculty member it is.
 function forbiddenChanges(values, current, mayEdit) {
-  return changedFields(current, values, Object.keys(values)).map((c) => c.field).filter((f) => !mayEdit(FIELD_PERMISSION[f]));
+  return changedFields(current, values, Object.keys(values)).map((c) => c.field).filter((f) => !mayEdit(FIELD_PERMISSION[f], f));
 }
 
 // Field-by-field differences, for the activity log and the coordinator email.
@@ -651,7 +672,7 @@ async function migrateGuestsTable(run, all) {
 }
 
 module.exports = {
-  normaliseFlightNumber, readFlightLookup,
+  normaliseFlightNumber, readFlightLookup, VOLUNTEER_FIELDS, mayEditField,
   GUEST_TABLE_SQL, migrateGuestsTable, IDENTITY_FIELDS, BOOL_FIELDS, displayValue,
   TRAVEL_FIELDS, STAY_FIELDS, GENERAL_FIELDS, ALL_FIELDS, FIELD_PERMISSION, FIELD_LABELS, FIELD_LISTS,
   TRAVEL_NOTIFY_FIELDS, STAY_NOTIFY_FIELDS,

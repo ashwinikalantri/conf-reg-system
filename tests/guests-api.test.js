@@ -16,7 +16,7 @@
 const { call, check, report, ADMIN_PW, adminLogin, loginPassword, openDb } = require('./harness');
 
 const N = String(Date.now() % 100000000).padStart(8, '0');
-const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `85${N}` };
+const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `85${N}`, tv: `86${N}`, av: `87${N}` };
 
 (async () => {
   const admin = await adminLogin();
@@ -216,12 +216,39 @@ const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `
     check('...which the board then uses', after.settings.alertDays === 3 && after.slotLabels[0] === 'Night 12 AM–5 AM', after.slotLabels);
     await call('PUT', '/api/guests/settings', before, admin);
 
+    console.log('\n== Volunteers update their own area ==');
+    await mkUser(P.tv, 'Vijay Volunteer', 'VOLUNTEER_TRANSPORT');
+    await mkUser(P.av, 'Asha Volunteer', 'VOLUNTEER_ACCOMMODATION');
+    const tv = await signIn(P.tv);
+    const av = await signIn(P.av);
+    check('a coordinator assigns the volunteers', (await put(ids.reg, { transport_coordinator: P.tv }, tc)).body.success === true
+      && (await put(ids.reg, { accommodation_coordinator: P.av }, ac)).body.success === true);
+    const tvSet = await put(ids.reg, { pickup_vehicle: 'Volunteer Car', pickup_status: 'Done', drop_status: 'Assigned' }, tv);
+    check('the transport volunteer updates the pickup and drop of their faculty', tvSet.body.success === true && tvSet.body.changed === 3, tvSet.body);
+    check('...not the itinerary', (await put(ids.reg, { arrival_date: '2026-11-21' }, tv)).status === 403);
+    check('...not the stay', (await put(ids.reg, { room_no: '999' }, tv)).status === 403);
+    check('...not the overall status', (await put(ids.reg, { overall_status: 'Arrived' }, tv)).status === 403);
+    check('...not who is assigned', (await put(ids.reg, { transport_coordinator: null }, tv)).status === 403);
+    check('...and nothing for faculty not assigned to them', (await put(ids.unreg, { pickup_status: 'Done' }, tv)).status === 403);
+    const avSet = await put(ids.reg, { room_type: 'Single', checkout_date: '2026-11-23' }, av);
+    check('the accommodation volunteer updates the stay details of their faculty', avSet.body.success === true && avSet.body.changed === 2, avSet.body);
+    check('...not "accommodation not needed"', (await put(ids.reg, { stay_not_needed: true }, av)).status === 403);
+    check('...not the pickup', (await put(ids.reg, { pickup_status: 'Pending' }, av)).status === 403);
+    check('...and nothing for faculty not assigned to them', (await put(ids.unreg, { room_no: '1' }, av)).status === 403);
+    const vRow = await guestRow(ids.reg);
+    check('what they changed is stored', vRow.pickup_vehicle === 'Volunteer Car' && vRow.pickup_status === 'Done' && vRow.room_type === 'Single', vRow);
+    check('...and logged under their name', !!(await db.get("SELECT 1 FROM audit_log WHERE action = 'GUEST_UPDATED' AND entity_id = ? AND actor_role = 'VOLUNTEER_TRANSPORT' AND new_value LIKE 'Pickup Vehicle/Driver%'", [String(ids.reg)])));
+    check('once unassigned, they can change nothing', (await put(ids.reg, { transport_coordinator: P.tc }, tc)).body.success === true
+      && (await put(ids.reg, { pickup_status: 'Pending' }, tv)).status === 403);
+    check('the front desk, which can only look, cannot edit through the same route', (await put(ids.reg, { remarks: 'x' }, await loginPassword('9000000006', ADMIN_PW))).status === 403);
+
     console.log('\n== Volunteers ==');
     const perms = require('../permissions');
     check('three volunteer roles: Registration sees the Front Desk and checks in', perms.roleSeesSection('VOLUNTEER_REGISTRATION', 'desk')
       && perms.roleCan('VOLUNTEER_REGISTRATION', 'desk.checkin') && !perms.roleSeesSection('VOLUNTEER_REGISTRATION', 'faculty'));
-    check('...Transport and Accommodation see the Faculty tab and change nothing', ['VOLUNTEER_TRANSPORT', 'VOLUNTEER_ACCOMMODATION'].every((r) =>
-      perms.roleSeesSection(r, 'faculty') && !['guests.edit', 'guests.travel', 'guests.stay', 'guests.manage'].some((k) => perms.roleCan(r, k))));
+    check('...Transport and Accommodation see the Faculty tab, edit only their own area for their own faculty', ['VOLUNTEER_TRANSPORT', 'VOLUNTEER_ACCOMMODATION'].every((r) =>
+      perms.roleSeesSection(r, 'faculty') && !['guests.edit', 'guests.travel', 'guests.stay', 'guests.manage'].some((k) => perms.roleCan(r, k)))
+      && perms.roleCan('VOLUNTEER_TRANSPORT', 'guests.travel_assigned') && perms.roleCan('VOLUNTEER_ACCOMMODATION', 'guests.stay_assigned'));
     const volMe = (await call('GET', '/api/auth/me', null, tc)).body;
     check('a volunteer role added to a coordinator adds nothing they could not already do', volMe.permissions.includes('guests.travel'));
 
@@ -231,7 +258,7 @@ const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `
     const deskView = (await call('GET', `/api/desk/delegate/${P.reg}`, null, admin)).body;
     check('the Front Desk lookup knows they are faculty', deskView.guest && deskView.guest.id === ids.reg, deskView.guest);
     check('...with their travel and stay, and who is looking after them', deskView.guest.arrival_date === '2026-11-20' && deskView.guest.arrival_time === '10:30'
-      && deskView.guest.room_no === `R${N}` && deskView.guest.transport_volunteer === 'Tara Transport' && deskView.guest.accommodation_volunteer === 'Anil Accommodation', deskView.guest);
+      && deskView.guest.room_no === `R${N}` && deskView.guest.transport_volunteer === 'Tara Transport' && deskView.guest.accommodation_volunteer === 'Asha Volunteer', deskView.guest);
     check('...and someone who is not', (await call('GET', `/api/desk/delegate/${P.other}`, null, admin)).body.guest === null);
     const log = (await call('GET', '/api/admin/activity-log', null, admin)).body.master || [];
     check('marking, editing and masters are in the activity log',

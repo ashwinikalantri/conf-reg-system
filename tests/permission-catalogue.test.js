@@ -72,9 +72,15 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     .filter(([, k]) => !perms.PERMISSION_KEYS.includes(k));
   check('every mapping names a catalogued permission', unknownKey.length === 0, unknownKey.slice(0, 5));
 
-  const usedKeys = setOf([...Object.values(perms.ROUTE_PERMISSIONS), ...Object.values(perms.REPORT_PERMISSIONS)]);
+  // A permission checked inside a route rather than guarding one counts as
+  // used -- but only if that route exists and its source really reads it.
+  const usedKeys = setOf([...Object.values(perms.ROUTE_PERMISSIONS), ...Object.values(perms.REPORT_PERMISSIONS), ...Object.keys(perms.INNER_PERMISSIONS)]);
   const orphans = perms.PERMISSION_KEYS.filter((k) => !usedKeys.has(k));
   check('no permission guards nothing', orphans.length === 0, orphans);
+  const guestsLib = fs.readFileSync(appFile('guests.js'), 'utf8');
+  const innerBroken = Object.entries(perms.INNER_PERMISSIONS)
+    .filter(([key, route]) => !ROUTES.some((r) => r.route === route) || !guestsLib.includes(`'${key}'`) || !src.includes('guestLib.mayEditField('));
+  check('...each permission checked inside a route names a real route that reads it', innerBroken.length === 0, innerBroken);
 
   console.log('\n== No permission is coarser than the app it describes ==');
   // Routes sharing a key must have been reachable by the same roles at the
@@ -128,7 +134,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'GET /api/guests/flight': 'Looks up a flight\'s scheduled times by number and date, for filling in arrival or departure. guests.travel, like editing travel; nothing is saved by it.',
     'GET /api/guests/candidates': 'Type-ahead for marking a delegate as faculty: delegates only, at most 8, two characters minimum. guests.edit.',
     'POST /api/guests': 'Marks a delegate as faculty, adding them to the guest list. guests.edit, held by both coordinators.',
-    'PUT /api/guests/:id': 'Edits a guest. guests.edit to reach it at all; within it each field needs its own key -- travel guests.travel, stay guests.stay -- and a change to a field the role may not edit is refused.',
+    'PUT /api/guests/:id': 'Edits a faculty member. guests.view to reach it; within it each field needs its own key -- travel guests.travel, stay guests.stay, the rest guests.edit -- or, for a volunteer, guests.travel_assigned / guests.stay_assigned and being the volunteer assigned to that faculty member. A change to a field this person may not edit is refused.',
     'DELETE /api/guests/:id': 'Removes a guest permanently. guests.manage, Super Admin only.',
     'PUT /api/guests/:id/link': 'Links a guest who was added by name to their account once they sign up. guests.edit, like adding them.',
     'PUT /api/guests/settings': 'The alert window, time slots and vehicle clash window. guests.manage.',
