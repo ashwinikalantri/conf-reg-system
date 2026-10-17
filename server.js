@@ -8851,7 +8851,7 @@ app.post('/api/admin/backup/request', requirePermission('system.backups'), async
 // emailed, and failing that their name.
 async function deskFindDelegate(identifier) {
   const q = String(identifier || '').trim();
-  if (!q) return { error: 'Enter a mobile number, registration number, email or name.' };
+  if (!q) return { error: 'Enter a mobile number, ID, email or name.' };
 
   // Phone or email: exact, unambiguous, and already implemented.
   const direct = await resolveAccountByIdentifier(q);
@@ -8860,8 +8860,13 @@ async function deskFindDelegate(identifier) {
     return { error: 'More than one account uses that email address. Use their mobile number instead.' };
   }
 
-  // Registration number. Matched case-insensitively because it is read off a
-  // phone screen and typed back in by hand.
+  // ID (registration number). Every account is given one at signup, on the
+  // user row, so this finds people who have signed up but not registered as
+  // well; the registration's own copy is the fallback for any row that
+  // predates that. Matched case-insensitively because it is read off a phone
+  // screen and typed back in by hand.
+  const byId = await dbGet('SELECT * FROM users WHERE UPPER(registration_number) = UPPER(?)', [q]);
+  if (byId) return { user: byId };
   const byReg = await dbGet(
     `SELECT u.* FROM registrations r JOIN users u ON u.phone_number = r.phone_number
       WHERE UPPER(r.registration_number) = UPPER(?)`, [q]);
@@ -8872,7 +8877,8 @@ async function deskFindDelegate(identifier) {
   // people, and when it does the desk is asked to choose rather than being
   // handed the first alphabetically.
   const byName = await dbAll(
-    `SELECT u.phone_number, u.full_name, u.email, r.registration_number, r.category_label
+    `SELECT u.phone_number, u.full_name, u.email,
+            COALESCE(r.registration_number, u.registration_number) AS registration_number, r.category_label
        FROM users u LEFT JOIN registrations r ON r.phone_number = u.phone_number
       WHERE u.full_name LIKE ? ORDER BY u.full_name LIMIT 12`, [`%${q}%`]);
   if (byName.length === 1) {
@@ -8880,7 +8886,7 @@ async function deskFindDelegate(identifier) {
     return { user: full };
   }
   if (byName.length > 1) return { candidates: byName };
-  return { error: 'Nobody found with that number, registration number, email or name.' };
+  return { error: 'Nobody found with that number, ID, email or name.' };
 }
 
 // One delegate, whole: who they are, what they owe, what they chose, what
@@ -8950,13 +8956,17 @@ app.get('/api/desk/search', requirePermission('desk.view'), async (req, res, nex
     const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
     const rows = await dbAll(
       `SELECT u.phone_number, u.full_name, u.email, u.phone,
-              r.registration_number, r.category_label, r.checked_in_at
+              COALESCE(r.registration_number, u.registration_number) AS registration_number,
+              r.category_label, r.checked_in_at
          FROM users u
          LEFT JOIN registrations r ON r.phone_number = u.phone_number
         WHERE u.full_name LIKE ? ESCAPE '\\'
            OR u.phone_number LIKE ? ESCAPE '\\'
            OR u.phone LIKE ? ESCAPE '\\'
            OR LOWER(u.email) LIKE LOWER(?) ESCAPE '\\'
+           -- The ID: on the user row for everyone (given at signup), so
+           -- people who have not registered are found by it too.
+           OR UPPER(u.registration_number) LIKE UPPER(?) ESCAPE '\\'
            OR UPPER(r.registration_number) LIKE UPPER(?) ESCAPE '\\'
         ORDER BY
           -- Somebody whose name STARTS with what was typed is much more
@@ -8965,7 +8975,7 @@ app.get('/api/desk/search', requirePermission('desk.view'), async (req, res, nex
           CASE WHEN u.full_name LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END,
           u.full_name
         LIMIT 8`,
-      [like, like, like, like, like, `${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`]);
+      [like, like, like, like, like, like, `${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`]);
     res.json({
       success: true,
       results: rows.map((r) => ({

@@ -9715,7 +9715,7 @@ function deskWhoCard(user, reg, checkedIn) {
         <p class="text-xs text-slate-500">${esc(reg ? reg.category_label : 'No registration yet')}</p>
       </div>
       <div class="flex flex-wrap gap-1.5">
-        ${reg && reg.registration_number ? `<span class="text-[11px] font-mono text-slate-500">${esc(reg.registration_number)}</span>` : ''}
+        ${(reg && reg.registration_number) || user.registration_number ? `<span class="text-[11px] font-mono text-slate-500">${esc((reg && reg.registration_number) || user.registration_number)}</span>` : ''}
         ${arrival}
       </div>
     </div>
