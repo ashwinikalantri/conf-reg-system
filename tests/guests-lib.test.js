@@ -187,6 +187,27 @@ check('everyone is on the pickup schedule again', own.pickups.length === 3);
 check('the CSV says who needs accommodation', /,Accommodation needed,/.test(G.guestsCsv(own.guests).split('\r\n')[0])
   && !/Local transport needed/.test(G.guestsCsv(own.guests)));
 
+console.log('\n== Nights ==');
+check('nights from check-in to check-out', G.nightsBetween('2026-11-20', '2026-11-23') === 3 && G.nightsBetween('2026-11-20', '2026-11-21') === 1);
+check('...a same-day stay is 0, a backwards or missing one nothing', G.nightsBetween('2026-11-20', '2026-11-20') === 0
+  && G.nightsBetween('2026-11-21', '2026-11-20') === null && G.nightsBetween('2026-11-20', null) === null);
+check('...across a month end', G.nightsBetween('2026-11-29', '2026-12-02') === 3);
+const nb = G.buildBoard({ guests: [guest('Stayer', { checkin_date: '2026-11-20', checkout_date: '2026-11-22' }), guest('Undated')], lists, settings, today });
+check('each faculty member carries their nights', nb.guests[0].nights === 2 && nb.guests[1].nights === null);
+check('the CSV has a Nights column after the dates', /,Check-in Date,Check-out Date,Nights,Room Type,/.test(G.guestsCsv(nb.guests).split('\r\n')[0])
+  && G.guestsCsv(nb.guests).split('\r\n')[1].includes(',2026-11-20,2026-11-22,2,'));
+
+console.log('\n== Room numbers, one or many ==');
+const rn = (x) => JSON.stringify(G.parseRoomNumbers(x).rooms);
+check('one room', rn('101') === '["101"]' && rn('Suite A') === '["Suite A"]');
+check('a range', rn('1-10') === JSON.stringify(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']));
+check('...keeping a prefix and zero-padding', rn('A1-A3') === '["A1","A2","A3"]' && rn('01-03') === '["01","02","03"]');
+check('a list of ranges and rooms', rn('101-103, 110, 201-202') === '["101","102","103","110","201","202"]');
+check('repeats are dropped', rn('5, 5, 4-6') === '["5","4","6"]');
+check('a backwards range is refused', /upwards/.test(G.parseRoomNumbers('10-1').error));
+check('at most 200 at a time', /At most 200/.test(G.parseRoomNumbers('1-201').error) && G.parseRoomNumbers('1-200').rooms.length === 200);
+check('nothing is refused', !!G.parseRoomNumbers('  ').error);
+
 console.log('\n== 12-hour times ==');
 check('shown 12-hour', G.to12h('00:05') === '12:05 AM' && G.to12h('12:00') === '12:00 PM' && G.to12h('21:30') === '9:30 PM');
 check('time slots named in 12-hour time', G.slotLabels([6, 12, 18]).join('|') === 'Night 12 AM–6 AM|Morning 6 AM–12 PM|Afternoon 12 PM–6 PM|Evening 6 PM–12 AM');

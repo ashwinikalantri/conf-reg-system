@@ -10510,7 +10510,7 @@ function renderGuestList() {
       <td class="p-3">${travel(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status)}</td>
       <td class="p-3">${g.accommodation
         ? `<p class="font-semibold text-slate-800">${esc(g.accommodation)}${g.room_no ? ` · ${esc(g.room_no)}` : ''}</p>
-           <p class="text-xs text-slate-500">${line([g.room_type, g.checkin_date && g.checkout_date ? `${g.checkin_date} → ${g.checkout_date}` : (g.checkin_date || g.checkout_date)]) || '—'}</p>`
+           <p class="text-xs text-slate-500">${line([g.room_type, g.checkin_date && g.checkout_date ? `${formatFullDate(g.checkin_date)} → ${formatFullDate(g.checkout_date)}` : (g.checkin_date || g.checkout_date), nightsLabel(g.nights)]) || '—'}</p>`
         : '<span class="text-xs text-slate-400">Not set</span>'}</td>
       <td class="p-3 text-xs text-slate-600">
         <p><span class="text-slate-400">Transport:</span> ${esc(g.transport_coordinator_name || '—')}</p>
@@ -10616,6 +10616,25 @@ function syncGuestModeFields(leg) {
   if (label) label.textContent = mode === 'flight' ? 'Flight No' : mode === 'train' ? 'Train No' : 'Flight/Train No';
   if (checks) checks.classList.toggle('hidden', mode === 'train');
 }
+// Nights between the check-in and check-out in the form, as they change.
+function guestNights(checkin, checkout) {
+  const re = /^\d{4}-\d{2}-\d{2}$/;
+  if (!re.test(checkin || '') || !re.test(checkout || '')) return null;
+  const n = Math.round((Date.parse(`${checkout}T00:00:00Z`) - Date.parse(`${checkin}T00:00:00Z`)) / 864e5);
+  return n >= 0 ? n : null;
+}
+const nightsLabel = (n) => (n == null ? '' : n === 0 ? 'Same day, no night' : `${n} night${n === 1 ? '' : 's'}`);
+function syncGuestNights() {
+  const form = document.getElementById('guest-edit-form');
+  const out = document.getElementById('guest-nights');
+  if (!form || !out) return;
+  const cin = (form.querySelector('[name="checkin_date"]') || {}).value;
+  const cout = (form.querySelector('[name="checkout_date"]') || {}).value;
+  const n = guestNights(cin, cout);
+  out.textContent = cin && cout && n == null ? 'Check-out is before check-in.' : nightsLabel(n);
+  out.classList.toggle('text-rose-700', !!(cin && cout && n == null));
+}
+
 function syncGuestStayFields() {
   const form = document.getElementById('guest-edit-form');
   const tickEl = form && form.querySelector('[name="stay_not_needed"]');
@@ -10720,9 +10739,10 @@ function openGuestEditor(id) {
       <div id="guest-stay-fields" class="${Number(g.stay_not_needed) ? 'hidden ' : ''}col-span-2 sm:col-span-4 grid grid-cols-2 sm:grid-cols-4 gap-3">`
       + field('accommodation', 'Accommodation', select('accommodation', 'accommodation', stay))
       + field('room_no', 'Room No', input('room_no', 'text', stay))
-      + field('checkin_date', 'Check-in Date', input('checkin_date', 'date', stay))
-      + field('checkout_date', 'Check-out Date', input('checkout_date', 'date', stay))
+      + field('checkin_date', 'Check-in Date', input('checkin_date', 'date', stay, 'onchange="syncGuestNights()"'))
+      + field('checkout_date', 'Check-out Date', input('checkout_date', 'date', stay, 'onchange="syncGuestNights()"'))
       + field('room_type', 'Room Type', select('room_type', 'room_type', stay))
+      + '<p id="guest-nights" class="col-span-2 sm:col-span-4 text-xs font-semibold text-slate-600 -mt-1"></p>'
       + '</div>'),
     group('Other', shared, '',
       field('overall_status', 'Overall Status', select('overall_status', 'overall_status', shared))
@@ -10738,6 +10758,7 @@ function openGuestEditor(id) {
   syncGuestModeFields('arrival');
   syncGuestModeFields('departure');
   syncGuestStayFields();
+  syncGuestNights();
   const save = document.getElementById('guest-save-btn');
   if (save) save.classList.toggle('hidden', !(travel || stay || shared));
   const remove = document.getElementById('guest-remove-btn');
@@ -11091,7 +11112,7 @@ function renderGuestRooms() {
   box.innerHTML = `${edit ? `<form id="guest-room-form" onsubmit="saveGuestRoom(event)" class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm mb-3 grid sm:grid-cols-[2fr_1fr_1fr_6rem_auto_auto] gap-3 items-end">
       <input type="hidden" name="recordId">
       <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Accommodation</span><select name="accommodation" required class="w-full h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white">${opts('accommodation', 'Choose…')}</select></label>
-      <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Room No</span><input name="roomNo" required maxlength="40" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
+      <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Room No — or a range</span><input name="roomNo" required maxlength="400" placeholder="101, or 1-10, or 101-105, 110" title="One room, a range (1-10, A1-A12) or a list (101-105, 110). A range adds every room with the same details." class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
       <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Room Type</span><select name="roomType" class="w-full h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white">${opts('room_type', '—')}</select></label>
       <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Beds</span><input name="beds" type="number" required min="1" max="20" step="1" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
       <button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Save room</button>
@@ -11133,7 +11154,12 @@ async function saveGuestRoom(ev) {
     body: JSON.stringify({ accommodation: f.accommodation.value, roomNo: f.roomNo.value, roomType: f.roomType.value, beds: f.beds.value }),
   })).json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not save the room.');
-  showToast(id ? 'Room updated.' : 'Room added.', 'success');
+  if (id) showToast('Room updated.', 'success');
+  else {
+    const made = (data.created || []).length;
+    const already = data.skipped || [];
+    showToast(`${made === 1 ? 'Room added' : `${made} rooms added`}.${already.length ? ` Already on the list, so skipped: ${already.join(', ')}.` : ''}`, 'success');
+  }
   renderGuests();
 }
 async function deleteGuestRoom(id) {

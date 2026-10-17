@@ -225,6 +225,42 @@ function validateVehicle(body) {
   return { values: { label, driver_phone: driverPhone, seats }, errors };
 }
 
+// Nights between check-in and check-out (both IST calendar dates); null
+// unless both are set and in order.
+function nightsBetween(checkin, checkout) {
+  if (!validDate(checkin) || !validDate(checkout)) return null;
+  const n = Math.round((Date.parse(`${checkout}T00:00:00Z`) - Date.parse(`${checkin}T00:00:00Z`)) / 864e5);
+  return n >= 0 ? n : null;
+}
+
+// Room numbers for adding several rooms at once: "101", "1-10", "A1-A12",
+// "101-105, 110, 201-203". A range keeps its prefix and its zero-padding
+// ("01-03" -> 01, 02, 03). Returns { rooms } or { error }; at most 200.
+const MAX_BULK_ROOMS = 200;
+function parseRoomNumbers(raw) {
+  const tokens = String(raw || '').split(',').map((t) => t.trim()).filter(Boolean);
+  if (!tokens.length) return { error: 'Enter the room number, or a range such as 1-10.' };
+  const rooms = [];
+  for (const t of tokens) {
+    const m = /^(.*?)(\d+)\s*[-–]\s*(.*?)(\d+)$/.exec(t);
+    if (m && m[1] === m[3]) {
+      const [, prefix, fromS, , toS] = m;
+      const from = Number(fromS); const to = Number(toS);
+      if (to < from) return { error: `"${t}": the range must go upwards.` };
+      if (to - from + 1 + rooms.length > MAX_BULK_ROOMS) return { error: `At most ${MAX_BULK_ROOMS} rooms at a time.` };
+      const width = fromS.length > 1 && fromS[0] === '0' ? fromS.length : 0;
+      for (let n = from; n <= to; n++) rooms.push(`${prefix}${width ? String(n).padStart(width, '0') : n}`);
+    } else {
+      rooms.push(t);
+    }
+  }
+  if (rooms.length > MAX_BULK_ROOMS) return { error: `At most ${MAX_BULK_ROOMS} rooms at a time.` };
+  const long = rooms.find((r) => r.length > 40);
+  if (long) return { error: `"${long.slice(0, 20)}…" is too long for a room number.` };
+  const seen = new Set();
+  return { rooms: rooms.filter((r) => { const k = r.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }) };
+}
+
 function validateRoom(body, lists = {}) {
   const errors = [];
   const accommodation = blank(body.accommodation) ? '' : String(body.accommodation).trim();
@@ -344,6 +380,7 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
     return {
       ...g,
       sr_no: i + 1,
+      nights: nightsBetween(g.checkin_date, g.checkout_date),
       arrival_at: joinDateTime(g.arrival_date, g.arrival_time),
       departure_at: joinDateTime(g.departure_date, g.departure_time),
       cancelled,
@@ -478,8 +515,10 @@ const CSV_COLUMNS = [
   ['Account', (g) => (!g.linked ? 'Not signed up' : Number(g.registered) ? 'Registered' : 'Signed up, not registered')],
   ...['arrival_date', 'arrival_time', 'arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle', 'pickup_status',
     'departure_date', 'departure_time', 'departure_mode', 'departure_number', 'departure_point', 'drop_vehicle', 'drop_status',
-    'accommodation', 'room_no', 'checkin_date', 'checkout_date', 'room_type', 'special_needs']
+    'accommodation', 'room_no', 'checkin_date', 'checkout_date']
     .map((f) => [FIELD_LABELS[f], (g) => (TIME_FIELDS.has(f) ? to12h(g[f]) : g[f])]),
+  ['Nights', (g) => (g.nights == null ? '' : g.nights)],
+  ...['room_type', 'special_needs'].map((f) => [FIELD_LABELS[f], (g) => g[f]]),
   ['Transport Coordinator', (g) => g.transport_coordinator_name], ['Accommodation Coordinator', (g) => g.accommodation_coordinator_name],
   ['Accommodation needed', (g) => (Number(g.stay_not_needed) ? 'No' : 'Yes')],
   ['Overall Status', (g) => g.overall_status], ['Remarks', (g) => g.remarks],
@@ -614,5 +653,6 @@ module.exports = {
   LIST_LABELS, DEFAULT_LISTS, PROTECTED_VALUES, CANCELLED, DEFAULT_SETTINGS, SLOT_NAMES,
   validDate, validTime, addDays, joinDateTime, to12h, dateTime12, slotOf, slotLabels,
   validateGuestFields, forbiddenChanges, changedFields, validateVehicle, validateRoom, validateSettings,
+  nightsBetween, parseRoomNumbers, MAX_BULK_ROOMS,
   buildBoard, guestsCsv,
 };

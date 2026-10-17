@@ -12584,18 +12584,38 @@ async function roomInput(req, existing) {
   return guestLib.validateRoom(req.body || {}, lists);
 }
 
+// One room, or many at once: Room No may be a range or a list ("1-10",
+// "101-105, 110"), each room getting the same accommodation, type and beds.
+// Rooms already on the list are skipped and named, never duplicated.
 app.post('/api/guests/rooms', requirePermission('guests.stay'), async (req, res, next) => {
   try {
-    const { values, errors } = await roomInput(req, null);
+    const parsed = guestLib.parseRoomNumbers((req.body || {}).roomNo);
+    if (parsed.error) return res.status(400).json({ success: false, error: parsed.error });
+    const { values, errors } = await roomInput({ body: { ...req.body, roomNo: parsed.rooms[0] } }, null);
     if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
-    if (await dbGet('SELECT id FROM guest_rooms WHERE LOWER(TRIM(accommodation)) = LOWER(?) AND LOWER(TRIM(room_no)) = LOWER(?)', [values.accommodation, values.room_no])) {
-      return res.status(409).json({ success: false, error: `${values.accommodation} room ${values.room_no} is already on the list.` });
+    const created = [];
+    const skipped = [];
+    let firstId = null;
+    for (const roomNo of parsed.rooms) {
+      if (await dbGet('SELECT id FROM guest_rooms WHERE LOWER(TRIM(accommodation)) = LOWER(?) AND LOWER(TRIM(room_no)) = LOWER(?)', [values.accommodation, roomNo])) {
+        skipped.push(roomNo);
+        continue;
+      }
+      const r = await dbRun('INSERT INTO guest_rooms (accommodation, room_no, room_type, beds, created_at) VALUES (?, ?, ?, ?, ?)',
+        [values.accommodation, roomNo, values.room_type, values.beds, Date.now()]);
+      if (!firstId) firstId = r.lastID;
+      created.push(roomNo);
     }
-    const r = await dbRun('INSERT INTO guest_rooms (accommodation, room_no, room_type, beds, created_at) VALUES (?, ?, ?, ?, ?)',
-      [values.accommodation, values.room_no, values.room_type, values.beds, Date.now()]);
-    await recordAudit({ req, entityType: 'guest_room', entityId: String(r.lastID), action: 'GUEST_ROOM_ADDED', oldValue: null,
-      newValue: `${values.accommodation} ${values.room_no} · ${values.room_type || '—'} · ${values.beds} bed(s)` });
-    res.json({ success: true, id: r.lastID });
+    if (!created.length) {
+      return res.status(409).json({ success: false, skipped,
+        error: skipped.length === 1 ? `${values.accommodation} room ${skipped[0]} is already on the list.`
+          : `All ${skipped.length} rooms are already on the list for ${values.accommodation}.` });
+    }
+    // One line in the activity log for the whole batch.
+    const which = created.length === 1 ? created[0] : `${created.length} rooms (${created.slice(0, 3).join(', ')}${created.length > 3 ? ` … ${created[created.length - 1]}` : ''})`;
+    await recordAudit({ req, entityType: 'guest_room', entityId: String(firstId), action: 'GUEST_ROOM_ADDED', oldValue: null,
+      newValue: `${values.accommodation} ${which} · ${values.room_type || '—'} · ${values.beds} bed(s)` });
+    res.json({ success: true, id: firstId, created, skipped });
   } catch (err) {
     next(err);
   }
@@ -12605,6 +12625,8 @@ app.put('/api/guests/rooms/:id', requirePermission('guests.stay'), async (req, r
   try {
     const existing = await dbGet('SELECT * FROM guest_rooms WHERE id = ?', [req.params.id]);
     if (!existing) return res.status(404).json({ success: false, error: 'Room not found.' });
+    const one = guestLib.parseRoomNumbers((req.body || {}).roomNo);
+    if (one.rooms && one.rooms.length > 1) return res.status(400).json({ success: false, error: 'Change one room at a time; add a range as new rooms.' });
     const { values, errors } = await roomInput(req, existing);
     if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
     if (await dbGet('SELECT id FROM guest_rooms WHERE LOWER(TRIM(accommodation)) = LOWER(?) AND LOWER(TRIM(room_no)) = LOWER(?) AND id != ?', [values.accommodation, values.room_no, existing.id])) {

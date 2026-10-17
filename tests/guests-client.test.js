@@ -186,6 +186,15 @@ check('nonsense is refused', ['25:00', '9:75 am', '13pm', 'soon'].every((t) => t
 check('shown as 9:30 PM', tsb.t12('21:30') === '9:30 PM' && tsb.t12('00:05') === '12:05 AM');
 check('a time that could not be read stops the save', /const bad = \[\.\.\.form\.querySelectorAll\('\[data-time12\]'\)\]\.find/.test(js));
 
+console.log('\n== Nights ==');
+const nsb = { String, Math, Date };
+vm.createContext(nsb);
+vm.runInContext([grabT('guestNights')].join('\n') + `\nconst nightsLabel = ${js.match(/const nightsLabel = ([^;]+);/)[1]};\nglobalThis.n = guestNights; globalThis.l = nightsLabel;`, nsb);
+check('nights in the form, as the dates change', nsb.n('2026-11-20', '2026-11-23') === 3 && nsb.l(3) === '3 nights' && nsb.l(1) === '1 night' && nsb.l(0) === 'Same day, no night');
+check('...worked out again whenever either date changes', /name="checkin_date"[^>]*onchange="syncGuestNights\(\)"/.test(el('guest-edit-body').innerHTML)
+  && /name="checkout_date"[^>]*onchange="syncGuestNights\(\)"/.test(el('guest-edit-body').innerHTML));
+check('the rooms form takes a range', /name="roomNo" required maxlength="400" placeholder="101, or 1-10, or 101-105, 110"/.test(js));
+
 console.log('\n== Accommodation not needed ==');
 const stayRow = data.guests.find((x) => x.name === 'Alpha Arriving');
 stayRow.stay_not_needed = 1;

@@ -164,6 +164,25 @@ const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `
     check('the room shows who is in it, and Full', theRoom.occupied === 2 && theRoom.status === 'Full' && theRoom.guests.length === 2, theRoom);
     check('...and both guests carry the purple warning', rb.guests.find((x) => x.id === ids.reg).flags.sharedRoom.length === 1);
 
+    console.log('\n== Rooms in bulk ==');
+    const bulk = await call('POST', '/api/guests/rooms', { accommodation: 'MGIMS Guesthouse', roomNo: `B${N}-1 , B${N}-2`, beds: 1 }, ac);
+    check('a list of rooms is added in one go', bulk.body.success === true && bulk.body.created.length === 2, bulk.body);
+    const range = await call('POST', '/api/guests/rooms', { accommodation: 'MGIMS Guesthouse', roomNo: `Z${N.slice(-3)}1-Z${N.slice(-3)}5`, roomType: 'Double', beds: 2 }, ac);
+    check('a range adds every room in it, with the same details', range.body.success === true && range.body.created.length === 5 && range.body.skipped.length === 0, range.body);
+    const overlap = await call('POST', '/api/guests/rooms', { accommodation: 'MGIMS Guesthouse', roomNo: `Z${N.slice(-3)}4-Z${N.slice(-3)}7`, roomType: 'Double', beds: 2 }, ac);
+    check('an overlapping range adds only the new rooms, and names the ones skipped', overlap.body.success === true
+      && JSON.stringify(overlap.body.created) === JSON.stringify([`Z${N.slice(-3)}6`, `Z${N.slice(-3)}7`]) && overlap.body.skipped.length === 2, overlap.body);
+    check('a range wholly on the list already is refused', (await call('POST', '/api/guests/rooms', { accommodation: 'MGIMS Guesthouse', roomNo: `Z${N.slice(-3)}1-Z${N.slice(-3)}3`, beds: 2 }, ac)).status === 409);
+    const inDb = await db.all("SELECT room_type, beds FROM guest_rooms WHERE accommodation = 'MGIMS Guesthouse' AND room_no LIKE ?", [`Z${N.slice(-3)}%`]);
+    check('...all seven stored with the details given', inDb.length === 7 && inDb.every((r) => r.room_type === 'Double' && r.beds === 2), inDb.length);
+    check('beds out of range refuse the whole batch', (await call('POST', '/api/guests/rooms', { accommodation: 'MGIMS Guesthouse', roomNo: `Q${N}1-Q${N}3`, beds: 30 }, ac)).status === 400
+      && !(await db.get('SELECT 1 FROM guest_rooms WHERE room_no LIKE ?', [`Q${N}%`])));
+    const batchLog = await db.all("SELECT new_value FROM audit_log WHERE action = 'GUEST_ROOM_ADDED' AND new_value LIKE ?", [`%Z${N.slice(-3)}1%`]);
+    check('a batch is one line in the activity log', batchLog.length === 1 && /5 rooms/.test(batchLog[0].new_value), batchLog);
+    const oneRoom = await db.get("SELECT id FROM guest_rooms WHERE room_no = ?", [`Z${N.slice(-3)}1`]);
+    check('editing stays one room at a time', (await call('PUT', `/api/guests/rooms/${oneRoom.id}`, { accommodation: 'MGIMS Guesthouse', roomNo: '1-3', beds: 2 }, ac)).status === 400);
+    await db.run("DELETE FROM guest_rooms WHERE accommodation = 'MGIMS Guesthouse' AND (room_no LIKE ? OR room_no LIKE ?)", [`Z${N.slice(-3)}%`, `B${N}%`]);
+
     console.log('\n== Lists and settings: admin only ==');
     check('a coordinator cannot add a list value', (await call('POST', '/api/guests/lists', { listKey: 'mode', value: 'Bus' }, tc)).status === 403);
     check('...nor change settings', (await call('PUT', '/api/guests/settings', { alertDays: 3, clashMinutes: 60, slotBounds: [6, 12, 18] }, ac)).status === 403);
