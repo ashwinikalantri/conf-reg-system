@@ -236,7 +236,7 @@ check('"Assigned to me" shows a volunteer their own faculty', el('guests-tbody')
 el('guests-filter-flag').value = mineBefore;
 const dsb = { String, Number, Date, Math };
 vm.createContext(dsb);
-vm.runInContext(['let canKeys = [];', 'function can(k) { return canKeys.includes(k); }', `const deskBtn = ${js.match(/const deskBtn = (\(label, onclick, tone\) => \{[\s\S]*?\n\};)/)[1]}`, grabT('esc'), grabT('formatFullDate'), grabT('guestTime12'), grabT('guestWhen'), grabT('guestNights'), grabT('guestLegHtml'), grabT('guestStayHtml'), grabT('deskCard'), grabT('deskFacultyCard')].join('\n')
+vm.runInContext(['let canKeys = [];', 'function can(k) { return canKeys.includes(k); }', `const deskBtn = ${js.match(/const deskBtn = (\(label, onclick, tone\) => \{[\s\S]*?\n\};)/)[1]}`, grabT('esc'), grabT('formatFullDate'), js.match(/const SHORT_MONTHS = [^\n]+/)[0], grabT('shortDateRange'), grabT('guestTime12'), grabT('guestWhen'), grabT('guestNights'), grabT('guestLegHtml'), grabT('guestStayHtml'), grabT('deskCard'), grabT('deskFacultyCard')].join('\n')
   + `\nconst nightsLabel = ${js.match(/const nightsLabel = ([^;]+);/)[1]};\nglobalThis.card = deskFacultyCard;`, dsb);
 const dcard = dsb.card({ arrival_date: '2026-11-20', arrival_time: '21:30', arrival_mode: 'Flight', arrival_number: '6E 123', pickup_vehicle: 'Car A',
   accommodation: 'Yatri Nivas', room_no: '7', checkin_date: '2026-11-20', checkout_date: '2026-11-22', transport_volunteer: 'Tara' });
@@ -280,10 +280,14 @@ check('...its fields in one column on a phone', /grid grid-cols-1 sm:grid-cols-2
 console.log('\n== Whatever is entered is shown ==');
 const psb = { String, Number, Date, Math };
 vm.createContext(psb);
-vm.runInContext([grabT('esc'), grabT('formatFullDate'), grabT('guestTime12'), grabT('guestWhen'), grabT('guestNights'), grabT('guestLegHtml'), grabT('guestStayHtml')].join('\n')
-  + `\nconst nightsLabel = ${js.match(/const nightsLabel = ([^;]+);/)[1]};\nglobalThis.leg = guestLegHtml; globalThis.stayOf = guestStayHtml;`, psb);
+vm.runInContext([grabT('esc'), grabT('formatFullDate'), js.match(/const SHORT_MONTHS = [^\n]+/)[0], grabT('shortDateRange'), grabT('guestTime12'), grabT('guestWhen'), grabT('guestNights'), grabT('guestLegHtml'), grabT('guestStayHtml')].join('\n')
+  + `\nconst nightsLabel = ${js.match(/const nightsLabel = ([^;]+);/)[1]};\nglobalThis.leg = guestLegHtml; globalThis.stayOf = guestStayHtml; globalThis.range = shortDateRange;`, psb);
 const datesOnly = psb.stayOf({ checkin_date: '2026-11-20', checkout_date: '2026-11-22' });
-check('stay dates with no guesthouse yet are shown, with the nights', /20 November 2026 → 22 November 2026 · 2 nights/.test(datesOnly) && !/Not set/.test(datesOnly));
+check('stay dates with no guesthouse yet are shown, with the nights', /20 - 22 Nov 2026 · 2 nights/.test(datesOnly) && !/Not set/.test(datesOnly), datesOnly);
+check('a stay range is written short: "20 - 23 Nov 2026"', psb.range('2026-11-20', '2026-11-23') === '20 - 23 Nov 2026');
+check('...across months, each month named once', psb.range('2026-11-30', '2026-12-02') === '30 Nov - 2 Dec 2026');
+check('...across years, each year too', psb.range('2026-12-30', '2027-01-02') === '30 Dec 2026 - 2 Jan 2027');
+check('...and one day as one date', psb.range('2026-11-20', '2026-11-20') === '20 Nov 2026');
 check('one date alone is shown too', /From 20 November 2026/.test(psb.stayOf({ checkin_date: '2026-11-20' })) && /Until 22 November 2026/.test(psb.stayOf({ checkout_date: '2026-11-22' })));
 check('a room type alone, a room number alone', /Double/.test(psb.stayOf({ room_type: 'Double' })) && /Room 7/.test(psb.stayOf({ room_no: '7' })));
 check('nothing entered gives nothing (the list says Not set)', psb.stayOf({}) === '' && psb.leg() === '');

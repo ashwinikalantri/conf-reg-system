@@ -10799,13 +10799,28 @@ function guestLegHtml(date, time, mode, number, point, vehicle, status) {
     transfer ? `<p class="text-xs mt-0.5">${transfer}</p>` : '',
   ].join('');
 }
+// A date range as people write it: "20 - 23 Nov 2026"; across months
+// "30 Nov - 2 Dec 2026"; across years "30 Dec 2026 - 2 Jan 2027"; one day
+// "20 Nov 2026". Dates are YYYY-MM-DD.
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function shortDateRange(from, to) {
+  const part = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); return m ? { y: m[1], mon: SHORT_MONTHS[Number(m[2]) - 1], d: String(Number(m[3])) } : null; };
+  const a = part(from);
+  const b = part(to);
+  if (!a || !b) return [from, to].filter(Boolean).join(' - ');
+  if (from === to) return `${a.d} ${a.mon} ${a.y}`;
+  if (a.y !== b.y) return `${a.d} ${a.mon} ${a.y} - ${b.d} ${b.mon} ${b.y}`;
+  if (a.mon !== b.mon) return `${a.d} ${a.mon} - ${b.d} ${b.mon} ${b.y}`;
+  return `${a.d} - ${b.d} ${b.mon} ${b.y}`;
+}
+
 // Whatever has been entered for the stay: the place and room, then type,
 // dates (one alone is shown too) and nights. Arranging their own stay says
 // so, and the details kept from before are not shown.
 function guestStayHtml(g) {
   if (Number(g.stay_not_needed)) return '<p class="text-xs text-slate-500">Arranging their own stay</p>';
   const place = [g.accommodation, g.room_no ? (g.accommodation ? g.room_no : `Room ${g.room_no}`) : ''].filter(Boolean).map(esc).join(' · ');
-  const dates = g.checkin_date && g.checkout_date ? `${formatFullDate(g.checkin_date)} → ${formatFullDate(g.checkout_date)}`
+  const dates = g.checkin_date && g.checkout_date ? shortDateRange(g.checkin_date, g.checkout_date)
     : g.checkin_date ? `From ${formatFullDate(g.checkin_date)}` : g.checkout_date ? `Until ${formatFullDate(g.checkout_date)}` : '';
   const detail = [g.room_type, dates, nightsLabel(guestNights(g.checkin_date, g.checkout_date))].filter(Boolean).map(esc).join(' · ');
   return [place ? `<p class="font-semibold text-slate-800">${place}</p>` : '', detail ? `<p class="text-xs text-slate-500">${detail}</p>` : ''].join('');
@@ -11286,7 +11301,7 @@ function renderGuestDashboard() {
   const a = d.alert;
   box.innerHTML = `<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
       ${card('Faculty', big(d.listed, `listed${d.cancelled ? ` · ${d.cancelled} cancelled not counted` : ''}`))}
-      ${card(`Arriving in ${a.days} day(s)`, `${big(a.arriving, `${formatFullDate(a.from)} – ${formatFullDate(a.to)}`)}
+      ${card(`Arriving in ${a.days} day(s)`, `${big(a.arriving, shortDateRange(a.from, a.to))}
         <p class="mt-1 text-xs font-semibold ${a.noVehicle ? 'text-orange-700' : 'text-emerald-700'}">${a.noVehicle ? `${a.noVehicle} with no pickup vehicle` : 'All have a pickup vehicle'}</p>`, a.noVehicle ? 'border-orange-300' : '')}
       ${card('No accommodation', big(d.noAccommodation, `faculty with nowhere to stay${d.ownStay ? ` · ${d.ownStay} arranging their own` : ''}`, d.noAccommodation ? 'text-rose-700' : 'text-slate-800'), d.noAccommodation ? 'border-rose-300' : '')}
       ${card('Not registered', big(d.notRegistered, `faculty who still have to register${d.notSignedUp ? ` · ${d.notSignedUp} not signed up` : ''}`, d.notRegistered ? 'text-sky-700' : 'text-slate-800'))}
