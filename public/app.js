@@ -10548,7 +10548,7 @@ function openGuestEditor(id) {
   // account once they have one.
   const identity = g.linked ? '' : group('Guest', shared, '',
     field('guest_name', 'Name *', input('guest_name', 'text', shared, 'required maxlength="120"'))
-    + field('guest_designation', 'Designation', input('guest_designation', 'text', shared, 'maxlength="120"'))
+    + field('guest_designation', 'Designation', input('guest_designation', 'text', shared, 'maxlength="300"'))
     + field('guest_phone', 'Phone', input('guest_phone', 'text', shared, 'inputmode="tel" maxlength="20"'))
     + field('guest_email', 'Email', input('guest_email', 'email', shared, 'maxlength="120"')))
     + (shared ? `<div class="mt-3 border border-sky-200 bg-sky-50 rounded-xl p-3">

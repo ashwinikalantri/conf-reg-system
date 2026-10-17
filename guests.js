@@ -78,7 +78,9 @@ const PROTECTED_VALUES = { overall_status: [CANCELLED] };
 const DEFAULT_SETTINGS = { alertDays: 2, slotBounds: [6, 12, 18], clashMinutes: 60 };
 const SLOT_NAMES = ['Night', 'Morning', 'Afternoon', 'Evening'];
 
-const LONG_TEXT = new Set(['special_needs', 'remarks']);
+// Longest a field may be. A typed-in designation is often the whole
+// affiliation ("Professor & Head, Dept of ..., College, City").
+const MAX_LENGTH = { special_needs: 1000, remarks: 1000, guest_designation: 300 };
 const DATE_FIELDS = new Set(['arrival_date', 'departure_date', 'checkin_date', 'checkout_date']);
 const TIME_FIELDS = new Set(['arrival_time', 'departure_time']);
 const COORDINATOR_FIELDS = new Set(['transport_coordinator', 'accommodation_coordinator']);
@@ -130,7 +132,7 @@ function validateGuestFields(input, current = {}, lists = {}, coordinators = {})
     const raw = input[field];
     const v = blank(raw) ? null : String(raw).trim();
     const label = FIELD_LABELS[field];
-    if (v != null && v.length > (LONG_TEXT.has(field) ? 1000 : 120)) {
+    if (v != null && v.length > (MAX_LENGTH[field] || 120)) {
       errors.push(`${label} is too long.`);
       continue;
     }
