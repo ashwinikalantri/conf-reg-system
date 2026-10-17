@@ -236,7 +236,7 @@ check('"Assigned to me" shows a volunteer their own faculty', el('guests-tbody')
 el('guests-filter-flag').value = mineBefore;
 const dsb = { String, Number, Date, Math };
 vm.createContext(dsb);
-vm.runInContext([grabT('esc'), grabT('formatFullDate'), grabT('guestTime12'), grabT('guestWhen'), grabT('guestNights'), grabT('guestLegHtml'), grabT('guestStayHtml'), grabT('deskCard'), grabT('deskFacultyCard')].join('\n')
+vm.runInContext(['let canKeys = [];', 'function can(k) { return canKeys.includes(k); }', `const deskBtn = ${js.match(/const deskBtn = (\(label, onclick, tone\) => \{[\s\S]*?\n\};)/)[1]}`, grabT('esc'), grabT('formatFullDate'), grabT('guestTime12'), grabT('guestWhen'), grabT('guestNights'), grabT('guestLegHtml'), grabT('guestStayHtml'), grabT('deskCard'), grabT('deskFacultyCard')].join('\n')
   + `\nconst nightsLabel = ${js.match(/const nightsLabel = ([^;]+);/)[1]};\nglobalThis.card = deskFacultyCard;`, dsb);
 const dcard = dsb.card({ arrival_date: '2026-11-20', arrival_time: '21:30', arrival_mode: 'Flight', arrival_number: '6E 123', pickup_vehicle: 'Car A',
   accommodation: 'Yatri Nivas', room_no: '7', checkin_date: '2026-11-20', checkout_date: '2026-11-22', transport_volunteer: 'Tara' });
@@ -244,6 +244,11 @@ check('the Front Desk shows a faculty member\'s travel and stay', /Faculty — t
   && /20 November 2026, 9:30 PM<\/p><p class="text-xs text-slate-500">Flight · 6E 123/.test(dcard) && /Yatri Nivas · 7/.test(dcard) && /2 nights/.test(dcard) && /Tara/.test(dcard));
 check('...and nothing when there is nothing to show', dsb.card({ id: 1 }) === '' && dsb.card(null) === '');
 check('...placed after the delegate card', /deskWhoCard\(user, reg, checkedIn, guest\),\n\s*deskFacultyCard\(guest\),/.test(js));
+vm.runInContext("canKeys = ['guests.view', 'guests.travel'];", dsb);
+check('a coordinator gets Travel & stay on the desk, even before details exist', /deskOpenFaculty\(5\)[^>]*>Travel &amp; stay</.test(dsb.card({ id: 5 })) || /deskOpenFaculty\(5\)[^>]*>Travel & stay</.test(dsb.card({ id: 5 })));
+check('...and the empty card says so', /No travel or stay details yet/.test(dsb.card({ id: 5 })));
+vm.runInContext("canKeys = ['guests.view'];", dsb);
+check('someone who may only look gets View record', /deskOpenFaculty\(5\)[^>]*>View record</.test(dsb.card({ id: 5 })));
 
 console.log('\n== On a phone ==');
 el('guests-filter-flag').value = ''; el('guests-filter-status').value = ''; el('guests-search').value = '';

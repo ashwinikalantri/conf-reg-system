@@ -94,6 +94,12 @@
               <p class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Registration Number</p>
               <p id="reg-number-display" class="text-lg font-extrabold font-mono text-emerald-800 mt-0.5">—</p>
             </div>
+            <!-- Desk pass: shown at the registration desk, scanned to bring up
+                 this record. -->
+            <div id="desk-pass" class="hidden flex items-center gap-3 border-t border-emerald-100 pt-3">
+              <img id="desk-pass-qr" alt="Your desk pass QR code" width="96" height="96" class="w-24 h-24 rounded-lg border border-emerald-100 bg-white">
+              <p class="text-xs text-emerald-900"><b>Your desk pass.</b> Show this at the registration desk to be found at once. It is also on your receipt and confirmation email.</p>
+            </div>
             <!-- One line per chosen program option, across every group --
                  populated by loadDashboard() in app.js from reg.selections. -->
             <div id="conf-selections" class="text-xs space-y-1 border-t border-emerald-100 pt-2"></div>

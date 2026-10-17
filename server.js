@@ -31,6 +31,7 @@ const multer = require('multer');
 const XLSX = require('xlsx');
 const guestLib = require('./guests');
 const https = require('https');
+const QRCode = require('qrcode');
 // Shared with scripts/daily-digest.js -- see the note there about why the
 // email chrome is not just the app's own CSS.
 const { emailWrap: renderEmail, emailButton, STEEL: EMAIL_STEEL } = require('./email-template');
@@ -4330,7 +4331,7 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
         emailWrap('Your registration is confirmed',
           `<p>Dear ${escapeHtml(name)},</p>
            <p>Your registration for the ${escapeHtml(CONFERENCE.name)} is <b>confirmed</b> — a discount code brought your fee to ₹0, so no payment was required.</p>
-           <p>Registration number: <b>${escapeHtml(regNo)}</b></p>`));
+           <p>Registration number: <b>${escapeHtml(regNo)}</b></p>${deskPassEmailHtml(regNo)}`));
 
       return res.json({ success: true, expectedAmount: 0, checks: {}, flagged: false });
     }
@@ -5031,6 +5032,32 @@ async function revokeGroupDiscountIfBelowThreshold(groupId) {
 // way to see a delegate's receipt was over their shoulder. Deliberately the
 // SAME renderer rather than an admin-flavoured copy: the point of looking is
 // to see exactly what the delegate sees, and two renderers would drift.
+// --- DESK PASS ------------------------------------------------------------
+// A QR of a delegate's ID (NQOCN2026…), scanned at the Front Desk to bring up
+// their record. Public and ID-shaped only: it encodes the code it is asked
+// for and nothing from the database, so it can sit in an email or a receipt.
+const DESK_PASS_RE = /^[A-Za-z0-9-]{3,32}$/;
+app.get('/api/qr/:code.png', async (req, res, next) => {
+  try {
+    const code = String(req.params.code || '');
+    if (!DESK_PASS_RE.test(code)) return res.status(400).send('Bad code');
+    const png = await QRCode.toBuffer(code, { type: 'png', width: 300, margin: 2, errorCorrectionLevel: 'M' });
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.send(png);
+  } catch (err) {
+    next(err);
+  }
+});
+// The block for a confirmation email: the QR, from the portal's own address
+// (email clients block inline data images), and what to do with it.
+const deskPassEmailHtml = (regNo) => (regNo && DESK_PASS_RE.test(regNo)
+  ? `<div style="text-align:center;margin:1.25rem 0;padding:1rem;border:1px solid #b9cedb;border-radius:12px;background:#eef3f6">
+       <img src="${escapeHtml(String(PORTAL_URL).replace(/\/+$/, ''))}/api/qr/${encodeURIComponent(regNo)}.png" alt="QR code for ${escapeHtml(regNo)}" width="160" height="160" style="display:block;margin:0 auto">
+       <p style="margin:.5rem 0 0;font-weight:700;color:#1c3549;font-family:monospace">${escapeHtml(regNo)}</p>
+       <p style="margin:.25rem 0 0;font-size:.8rem;color:#244560">Show this at the registration desk to be found at once.</p>
+     </div>` : '');
+
 const renderReceipt = async (req, res, next) => {
   try {
     // :id is the admin route (role-gated below); no :id means the caller's
@@ -5355,7 +5382,8 @@ ${STMT_CSS}
     ${summary.overpaid > 0 ? `<div class="note">Paid ${esc(money(summary.overpaid))} more than the ${esc(money(summary.fee))} fee. The excess is due to be refunded.</div>` : ''}
 
     <div class="foot">
-      <span>Computer-generated receipt; valid without signature.<br>Quote ${esc(reg.registration_number)} in all correspondence.</span>
+      ${DESK_PASS_RE.test(reg.registration_number || '') ? `<img src="/api/qr/${encodeURIComponent(reg.registration_number)}.png" alt="Desk pass" width="76" height="76" style="width:76px;height:76px">` : ''}
+      <span>Computer-generated receipt; valid without signature.<br>Quote ${esc(reg.registration_number)} in all correspondence.${DESK_PASS_RE.test(reg.registration_number || '') ? '<br>Show the QR at the registration desk.' : ''}</span>
       <span class="r">${esc(CONFERENCE.acronym)}<br>${esc(CONFERENCE.location)}</span>
     </div>
   </div>
@@ -5393,6 +5421,7 @@ ${STUB_CSS}`, `<div class="stub">
       <div class="reg">
         <span class="k">Registration</span>
         <span class="v">${esc(reg.registration_number)}</span>
+        ${DESK_PASS_RE.test(reg.registration_number || '') ? `<img src="/api/qr/${encodeURIComponent(reg.registration_number)}.png" alt="Desk pass" width="96" height="96" style="width:96px;height:96px;margin-top:6px">` : ''}
       </div>
 
       <div>
@@ -6131,7 +6160,7 @@ app.put('/api/registrations/:id/status', requirePermission('payments.decide'), a
           emailWrap('Your registration is confirmed',
             `<p>Dear ${escapeHtml(reg.delegate_name)},</p>
              <p>Your payment has been verified and your registration is <b>confirmed</b>.</p>
-             <p>Registration number: <b>${escapeHtml(reg.registration_number)}</b></p>
+             <p>Registration number: <b>${escapeHtml(reg.registration_number)}</b></p>${deskPassEmailHtml(reg.registration_number)}
              <p>You can download your receipt from the delegate portal.</p>`));
       } else if (reg && bankStatus === 'REJECTED') {
         const reasonText = {
@@ -7126,7 +7155,7 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
         emailWrap('Your registration is confirmed',
           `<p>Dear ${escapeHtml(name)},</p>
            <p>Your registration for the ${escapeHtml(CONFERENCE.name)} is <b>confirmed</b>.</p>
-           <p>Registration number: <b>${escapeHtml(regNo)}</b></p>`));
+           <p>Registration number: <b>${escapeHtml(regNo)}</b></p>${deskPassEmailHtml(regNo)}`));
     }
 
     res.json({ success: true, registrationId, registrationNumber: regNo, tempPassword, expectedAmount, paidAmount, bankStatus });

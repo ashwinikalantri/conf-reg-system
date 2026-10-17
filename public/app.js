@@ -981,6 +981,11 @@ function applyRegistrationState(reg) {
   }
   if (verified) {
     document.getElementById('reg-number-display').innerText = reg.registration_number || '—';
+    const pass = document.getElementById('desk-pass');
+    if (pass && /^[A-Za-z0-9-]{3,32}$/.test(reg.registration_number || '')) {
+      document.getElementById('desk-pass-qr').src = `/api/qr/${encodeURIComponent(reg.registration_number)}.png`;
+      pass.classList.remove('hidden');
+    }
     const selBox = document.getElementById('conf-selections');
     if (selBox) {
       const selections = reg.selections || [];
@@ -2200,6 +2205,14 @@ function prefillAbstractFormForRevision(abs) {
 }
 function closeModal(id) {
   document.getElementById(id).classList.add('hidden');
+  deskRefreshAfter(id);
+}
+
+// The Front Desk opens other screens' editors for the person on it; when one
+// closes, the desk record is read again so it shows what was just changed.
+const DESK_EDITORS = new Set(['modal-review', 'modal-guest-edit', 'modal-abstract-review', 'user-detail']);
+function deskRefreshAfter(id) {
+  if (DESK_EDITORS.has(id) && typeof currentBackendTab !== 'undefined' && currentBackendTab === 'desk' && deskDelegate) deskReload();
 }
 
 // In-page confirmation dialog. Native confirm() is unreliable — browsers
@@ -3048,11 +3061,11 @@ async function initBackendPortal() {
   // that opening straight into a worklist shows work without showing where
   // the conference stands. Falls through for a role that cannot see it --
   // Operations holds none of the sections it summarises.
-  const defaultTab = canSee('overview') ? 'overview'
-    // Before payments: a role that can open the desk is a role whose work IS
-    // the desk, and Overview (which needs payments/statement/abstracts view)
-    // is invisible to it anyway.
-    : canSee('desk') ? 'desk'
+  // The Front Desk first, for every role that can open it: it is where a
+  // delegate's whole record is, with each role's own actions. Overview stays
+  // a tab.
+  const defaultTab = canSee('desk') ? 'desk'
+    : canSee('overview') ? 'overview'
     : canSee('payments') ? 'payments'
     : canSee('abstracts') ? 'abstracts'
     : canSee('reports') ? 'reports'
@@ -5281,6 +5294,7 @@ function closeUserDetail(event) {
   userDetailPhone = null;
   userDetailData = null;
   userDetailEditing = false;
+  deskRefreshAfter('user-detail');
 }
 
 function detailRow(label, value) {
@@ -9762,6 +9776,9 @@ function deskWhoCard(user, reg, checkedIn, guest) {
       : '',
     // Faculty are on the guest list (Guests tab); marking them puts them there.
     can('guests.edit') && !guest ? deskBtn('Mark as faculty', 'deskMarkFaculty()') : '',
+    // Their whole account -- details, main and additional roles, password --
+    // in the Users panel, for a role that may see it.
+    can('users.view') ? deskBtn('Profile & roles', 'deskOpenProfile()') : '',
   ].filter(Boolean).join('');
   const faculty = guest
     ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-indigo-100 text-indigo-800 border-indigo-300" title="On the faculty list${guest.overall_status ? ` · ${esc(guest.overall_status)}` : ''}">Faculty</span>` : '';
@@ -9825,6 +9842,9 @@ function deskMoneyCard(reg, payment) {
     can('payments.verify_id') && needsId && !reg.id_verified ? deskBtn('Verify student ID', 'deskVerifyId()') : '',
     can('payments.revise') ? deskBtn('Correct category', 'deskOpenCategory()') : '',
     reg.bank_status === 'BANK_VERIFIED' ? `<a href="/api/desk/registrations/${esc(reg.id)}/receipt" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-lg">Receipt</a>` : '',
+    // The finance review -- evidence, accept or reject, un-approve or
+    // un-reject, fee adjustment -- for a role that may open it.
+    can('payments.view') ? deskBtn('Payment review', `deskOpenPaymentReview(${esc(reg.id)})`, 'primary') : '',
   ].filter(Boolean).join('');
 
   // An excess is an obligation to the delegate, so it sits on the record for
@@ -9921,6 +9941,12 @@ function deskAbstractCard(abstracts, win, ext) {
     due: 'bg-amber-100 text-amber-800 border-amber-300',
     bad: 'bg-rose-100 text-rose-800 border-rose-300',
   };
+  // The review window, and oral/poster, for roles that may use them.
+  const abstractActions = (a) => [
+    can('abstracts.view') ? deskBtn('Review', `deskOpenAbstract(${esc(a.id)})`) : '',
+    can('abstracts.assign') && a.status === 'ACCEPTED' ? deskBtn(a.allocation === 'ORAL' ? 'Oral ✓' : 'Oral', `deskAllotAbstract(${esc(a.id)}, 'ORAL')`) : '',
+    can('abstracts.assign') && a.status === 'ACCEPTED' ? deskBtn(a.allocation === 'POSTER' ? 'Poster ✓' : 'Poster', `deskAllotAbstract(${esc(a.id)}, 'POSTER')`) : '',
+  ].filter(Boolean).join('');
   return deskCard('Abstract', abstracts.map((a) => {
     const [tone, label] = DESK_ABSTRACT_STATUS[a.status] || ['due', a.status || 'Submitted'];
     return `<div class="py-2 border-b border-slate-100 last:border-0">
@@ -9930,6 +9956,7 @@ function deskAbstractCard(abstracts, win, ext) {
         <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${a.allocation ? 'bg-indigo-100 text-indigo-800 border-indigo-300' : 'bg-slate-100 text-slate-500 border-slate-300'}">${esc(a.allocation ? a.allocation : 'Format not assigned')}</span>
       </div>
       ${a.revision_note ? `<p class="text-[11px] text-amber-800 mt-1">${esc(a.revision_note)}</p>` : ''}
+      ${abstractActions(a) ? `<div class="flex flex-wrap gap-1.5 mt-2">${abstractActions(a)}</div>` : ''}
     </div>`;
   }).join('') + (ext ? `<p class="text-[11px] text-slate-500 mt-2">They were given a later last date of ${esc(formatFullDate(ext.until))}.</p>` : ''), '');
 }
@@ -9973,6 +10000,10 @@ async function deskWithdrawAbstractExtension() {
 // desk can answer "when is my pickup, where am I staying".
 function deskFacultyCard(g) {
   if (!g) return '';
+  // Their record in the Faculty tab's editor: edit for a coordinator or
+  // their own volunteer, view for anyone else who may see faculty.
+  const open = can('guests.view') ? deskBtn(can('guests.edit') || can('guests.travel') || can('guests.stay')
+    || can('guests.travel_assigned') || can('guests.stay_assigned') ? 'Travel & stay' : 'View record', `deskOpenFaculty(${esc(g.id)})`) : '';
   // Whatever has been entered, piece by piece (see guestLegHtml/guestStayHtml).
   const arrival = guestLegHtml(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status);
   const departure = guestLegHtml(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status);
@@ -9981,9 +10012,109 @@ function deskFacultyCard(g) {
     ['Stay', guestStayHtml(g)], ['Transport volunteer', esc(g.transport_volunteer || '')], ['Accommodation volunteer', esc(g.accommodation_volunteer || '')],
     ['Special needs', esc(g.special_needs || '')],
   ].filter(([, v]) => v);
-  if (!rows.length) return '';
-  return deskCard('Faculty — travel & stay', `<dl class="grid grid-cols-1 sm:grid-cols-2 gap-3">${rows.map(([k, v]) =>
-    `<div><dt class="text-[11px] text-slate-400 uppercase tracking-wide">${esc(k)}</dt><dd class="text-sm text-slate-800">${v}</dd></div>`).join('')}</dl>`, '');
+  if (!rows.length && !open) return '';
+  return deskCard('Faculty — travel & stay', rows.length ? `<dl class="grid grid-cols-1 sm:grid-cols-2 gap-3">${rows.map(([k, v]) =>
+    `<div><dt class="text-[11px] text-slate-400 uppercase tracking-wide">${esc(k)}</dt><dd class="text-sm text-slate-800">${v}</dd></div>`).join('')}</dl>`
+    : '<p class="text-sm text-slate-500">No travel or stay details yet.</p>', open);
+}
+
+// --- opening other screens' editors for the person on the desk ---
+function deskOpenProfile() {
+  if (deskDelegate && deskDelegate.user) openUserDetail(deskDelegate.user.phone_number);
+}
+async function deskOpenPaymentReview(regId) {
+  // The review window reads the payments list; load it if this session has
+  // not opened Payments yet.
+  if (!cachedPaymentRegs.some((r) => String(r.id) === String(regId))) await renderBackendPayments();
+  if (!cachedPaymentRegs.some((r) => String(r.id) === String(regId))) return showToast('Could not open the payment review.');
+  openReviewModal(regId);
+}
+async function deskOpenAbstract(id) {
+  if (!abstractsCache.some((a) => String(a.id) === String(id))) await renderBackendAbstracts();
+  openAbstractReview(id);
+}
+async function deskAllotAbstract(id, allocation) {
+  const data = await (await fetch(`/api/abstracts/${encodeURIComponent(id)}/allocation`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allocation }),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not allot.');
+  showToast(`Allotted ${allocation === 'ORAL' ? 'oral' : 'poster'}; the author has been emailed.`, 'success');
+  deskReload();
+}
+async function deskOpenFaculty(id) {
+  if (!guestData || !guestData.guests.some((g) => g.id === id)) {
+    const res = await fetch('/api/guests');
+    if (!res.ok) return showToast('Could not open the faculty record.');
+    guestData = await res.json();
+  }
+  openGuestEditor(id);
+}
+
+// --- scanning a desk pass or barcode ---
+// html5-qrcode reads QR codes and the common barcodes from the camera, on
+// iPhone and Android alike; loaded only when Scan is first pressed.
+const DESK_SCANNER_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js';
+let deskScanner = null;
+function loadScriptOnce(src) {
+  return new Promise((resolve, reject) => {
+    if (Array.from(document.scripts || []).some((s) => s.src === src)) return resolve();
+    const el = document.createElement('script');
+    el.src = src;
+    el.onload = resolve;
+    el.onerror = () => reject(new Error('Could not load the scanner.'));
+    document.head.appendChild(el);
+  });
+}
+// What a scanned code holds, as something the desk search understands: an ID
+// (NQOCN2026…), an email, or a mobile number -- from plain text or a link.
+function deskIdentifierFromScan(raw) {
+  let t = String(raw || '').trim();
+  if (!t) return '';
+  if (/^https?:\/\//i.test(t)) {
+    try {
+      const u = new URL(t);
+      t = u.searchParams.get('id') || u.searchParams.get('reg') || u.searchParams.get('q') || decodeURIComponent(u.pathname.split('/').filter(Boolean).pop() || '');
+    } catch (e) { /* not a link after all */ }
+  }
+  const id = /[A-Za-z]{2,10}\d{4,}/.exec(t);
+  if (id) return id[0].toUpperCase();
+  const email = /[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+/.exec(t);
+  if (email) return email[0];
+  const digits = t.replace(/\D/g, '');
+  if (digits.length >= 10) return digits.slice(-10);
+  return t.slice(0, 80);
+}
+async function openDeskScanner() {
+  const msg = document.getElementById('desk-scan-msg');
+  openModal('modal-desk-scan');
+  if (msg) msg.textContent = 'Starting the camera…';
+  try {
+    if (!window.Html5Qrcode) await loadScriptOnce(DESK_SCANNER_SRC);
+    deskScanner = new window.Html5Qrcode('desk-scan-reader');
+    await deskScanner.start({ facingMode: 'environment' },
+      { fps: 10, qrbox: (w, h) => { const side = Math.floor(Math.min(w, h) * 0.75); return { width: side, height: side }; } },
+      (text) => onDeskScan(text), () => {});
+    if (msg) msg.textContent = 'Point the camera at the desk pass or barcode.';
+  } catch (e) {
+    if (msg) msg.textContent = 'The camera could not start. Allow camera access for this site, or type the ID instead.';
+  }
+}
+async function closeDeskScanner() {
+  const scanner = deskScanner;
+  deskScanner = null;
+  if (scanner) {
+    try { await scanner.stop(); } catch (e) { /* already stopped */ }
+    try { scanner.clear(); } catch (e) { /* nothing to clear */ }
+  }
+  closeModal('modal-desk-scan');
+}
+async function onDeskScan(text) {
+  if (!deskScanner) return;   // one scan is enough
+  const id = deskIdentifierFromScan(text);
+  await closeDeskScanner();
+  if (!id) return showToast('That code holds nothing the desk can look up.');
+  document.getElementById('desk-search').value = id;
+  deskLookup();
 }
 
 async function deskMarkFaculty() {
