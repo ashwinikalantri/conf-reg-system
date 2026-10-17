@@ -29,6 +29,7 @@ const { renderReportPdf } = require('./report-pdf');
 
 const multer = require('multer');
 const XLSX = require('xlsx');
+const guestLib = require('./guests');
 // Shared with scripts/daily-digest.js -- see the note there about why the
 // email chrome is not just the app's own CSS.
 const { emailWrap: renderEmail, emailButton, STEEL: EMAIL_STEEL } = require('./email-template');
@@ -1152,6 +1153,11 @@ const GENERAL_LOG_ENTITY_TYPES = [
   // has to be readable somewhere -- and this list is what decides that.
   'user',
   'settings', // legacy: pre-rename NOTIFICATION_TOGGLE rows only
+  // A named delegate allowed to submit an abstract after the last date.
+  'abstract_extension',
+  // Guest coordination: faculty marked, travel and stay edited, vehicles,
+  // rooms, dropdown lists and settings changed.
+  'guest', 'guest_vehicle', 'guest_room', 'guest_list', 'guest_settings',
 ];
 
 // Login event -- entityId is the phone so the login log can be searched per
@@ -1755,6 +1761,51 @@ db.serialize(() => {
       text TEXT,
       word_count INTEGER,
       status TEXT DEFAULT 'UNDER_REVIEW'
+    )
+  `);
+
+  // Guest coordination (see GUEST COORDINATION below). One row per faculty
+  // guest, keyed by their account; the dropdown values, vehicles and rooms
+  // are small lists of their own.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS guests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phone_number TEXT NOT NULL UNIQUE,
+      arrival_date TEXT, arrival_time TEXT, arrival_mode TEXT, arrival_number TEXT, arrival_point TEXT,
+      pickup_vehicle TEXT, pickup_status TEXT,
+      departure_date TEXT, departure_time TEXT, departure_mode TEXT, departure_number TEXT, departure_point TEXT,
+      drop_vehicle TEXT, drop_status TEXT,
+      accommodation TEXT, room_no TEXT, checkin_date TEXT, checkout_date TEXT, room_type TEXT,
+      special_needs TEXT, transport_coordinator TEXT, accommodation_coordinator TEXT, overall_status TEXT, remarks TEXT,
+      created_at INTEGER NOT NULL, created_by TEXT, updated_at INTEGER, updated_by TEXT
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS guest_lists (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      list_key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS guest_vehicles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      label TEXT NOT NULL,
+      driver_phone TEXT,
+      seats INTEGER,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS guest_rooms (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      accommodation TEXT NOT NULL,
+      room_no TEXT NOT NULL,
+      room_type TEXT,
+      beds INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
     )
   `);
 
@@ -8913,6 +8964,8 @@ app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async 
       abstractSubmissionWindowFor(user.phone_number),
       dbGet('SELECT until, granted_by, granted_at FROM abstract_extensions WHERE phone_number = ?', [user.phone_number]),
     ]);
+    // Faculty: on the guest list (see GUEST COORDINATION).
+    const guest = await dbGet('SELECT id, overall_status FROM guests WHERE phone_number = ?', [user.phone_number]);
 
     res.json({
       success: true,
@@ -8923,6 +8976,7 @@ app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async 
       abstracts,
       abstractWindow,
       abstractExtension: abstractExtension || null,
+      guest: guest || null,
       // Arrival is a property of the registration, but the desk reads it as a
       // property of the person, so it is lifted out rather than left for the
       // client to dig for.
@@ -11950,6 +12004,480 @@ app.put('/api/abstracts/:id/allocation', requirePermission('abstracts.assign'), 
   }
 });
 
+// --- GUEST COORDINATION ---------------------------------------------------
+// Faculty guests: their travel, pickup, drop and stay, coordinated by a
+// Transport Coordinator and an Accommodation Coordinator. A guest is always a
+// delegate account marked as faculty; their name, designation and phone come
+// from that account. Everything worked out from the list -- flags,
+// schedules, room and vehicle tallies, the dashboard -- is in guests.js and
+// never stored. Permissions:
+//   guests.view    the Guests tab
+//   guests.edit    mark a delegate as faculty; Special Needs, Status, Remarks
+//   guests.travel  arrival/departure/pickup/drop, transport coordinator, vehicles
+//   guests.stay    accommodation, room, check-in/out, accommodation coordinator, rooms
+//   guests.manage  remove a guest, delete vehicles/rooms, dropdown lists, settings
+
+const GUEST_SETTING_KEYS = { alertDays: 'guests_alert_days', clashMinutes: 'guests_clash_minutes', slotBounds: 'guests_slot_bounds' };
+
+async function guestSettings() {
+  const rows = await dbAll("SELECT key, value FROM schema_meta WHERE key LIKE 'guests_%'");
+  const v = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  const d = guestLib.DEFAULT_SETTINGS;
+  const bounds = v[GUEST_SETTING_KEYS.slotBounds] ? v[GUEST_SETTING_KEYS.slotBounds].split(',').map(Number) : d.slotBounds;
+  return {
+    alertDays: v[GUEST_SETTING_KEYS.alertDays] != null ? Number(v[GUEST_SETTING_KEYS.alertDays]) : d.alertDays,
+    clashMinutes: v[GUEST_SETTING_KEYS.clashMinutes] != null ? Number(v[GUEST_SETTING_KEYS.clashMinutes]) : d.clashMinutes,
+    slotBounds: guestLib.validateSettings({ alertDays: 0, clashMinutes: 1, slotBounds: bounds }).errors.length ? d.slotBounds : bounds,
+  };
+}
+
+// The dropdown lists: every row, in order, for the admin editor; and the
+// switched-on values by list, for validation and the forms.
+async function guestListRows() {
+  return dbAll('SELECT id, list_key, value, sort_order, active FROM guest_lists ORDER BY list_key, sort_order, id');
+}
+const activeGuestLists = (rows) => {
+  const out = Object.fromEntries(Object.keys(guestLib.LIST_LABELS).map((k) => [k, []]));
+  for (const r of rows) if (r.active && out[r.list_key]) out[r.list_key].push(r.value);
+  return out;
+};
+
+// Staff who can be named coordinator: anyone whose role may edit that side.
+async function guestCoordinatorPool() {
+  const staff = await dbAll("SELECT phone_number, salutation, full_name, role FROM users WHERE role IS NOT NULL AND role != 'DELEGATE' ORDER BY full_name");
+  const pick = (perm) => staff.filter((u) => can(u.role, perm))
+    .map((u) => ({ phone: u.phone_number, name: [u.salutation, u.full_name].filter(Boolean).join(' ') || u.phone_number }));
+  return { transport: pick('guests.travel'), accommodation: pick('guests.stay') };
+}
+
+async function guestRowsJoined(where = '', params = []) {
+  const rows = await dbAll(
+    `SELECT g.*, u.salutation, u.full_name, u.designation, u.institution, u.phone, u.email,
+            COALESCE(r.registration_number, u.registration_number) AS registration_number, r.category_label,
+            (r.id IS NOT NULL AND COALESCE(r.bank_status, '') != 'REJECTED') AS registered,
+            tc.salutation AS tc_salutation, tc.full_name AS tc_name,
+            ac.salutation AS ac_salutation, ac.full_name AS ac_name
+       FROM guests g
+       LEFT JOIN users u ON u.phone_number = g.phone_number
+       LEFT JOIN registrations r ON r.phone_number = g.phone_number
+       LEFT JOIN users tc ON tc.phone_number = g.transport_coordinator
+       LEFT JOIN users ac ON ac.phone_number = g.accommodation_coordinator
+      ${where}
+      ORDER BY g.id`, params);
+  return rows.map((g) => ({
+    ...g,
+    name: [g.salutation, g.full_name].filter(Boolean).join(' ') || g.phone_number,
+    phone: displayPhone({ phone: g.phone, phone_number: g.phone_number }),
+    transport_coordinator_name: g.transport_coordinator ? ([g.tc_salutation, g.tc_name].filter(Boolean).join(' ') || g.transport_coordinator) : null,
+    accommodation_coordinator_name: g.accommodation_coordinator ? ([g.ac_salutation, g.ac_name].filter(Boolean).join(' ') || g.accommodation_coordinator) : null,
+  }));
+}
+
+async function guestBoard() {
+  const [guests, vehicles, rooms, listRows, settings] = await Promise.all([
+    guestRowsJoined(),
+    dbAll('SELECT id, label, driver_phone, seats FROM guest_vehicles ORDER BY label'),
+    dbAll('SELECT id, accommodation, room_no, room_type, beds FROM guest_rooms ORDER BY accommodation, room_no'),
+    guestListRows(),
+    guestSettings(),
+  ]);
+  const lists = activeGuestLists(listRows);
+  const board = guestLib.buildBoard({ guests, vehicles, rooms, lists, settings, today: istDateString() });
+  return { board, guests, vehicles, rooms, listRows, lists, settings };
+}
+
+// Seed each dropdown list once, the first time it is found empty.
+async function seedGuestListsOnBoot() {
+  for (const [key, values] of Object.entries(guestLib.DEFAULT_LISTS)) {
+    const has = await dbGet('SELECT COUNT(*) AS n FROM guest_lists WHERE list_key = ?', [key]);
+    if (has.n) continue;
+    for (let i = 0; i < values.length; i++) {
+      await dbRun('INSERT INTO guest_lists (list_key, value, sort_order, active) VALUES (?, ?, ?, 1)', [key, values[i], i + 1]);
+    }
+  }
+}
+
+app.get('/api/guests', requirePermission('guests.view'), async (req, res, next) => {
+  try {
+    const { board, listRows, lists, settings } = await guestBoard();
+    // How often each list value is in use, so the editor can say why one
+    // cannot be removed.
+    const inUse = (row) => {
+      const fields = Object.entries(guestLib.FIELD_LISTS).filter(([, k]) => k === row.list_key).map(([f]) => f);
+      const n = (s) => String(s || '').trim().toLowerCase();
+      let count = board.guests.filter((g) => fields.some((f) => n(g[f]) === n(row.value))).length;
+      if (row.list_key === 'accommodation') count += board.rooms.filter((r) => n(r.accommodation) === n(row.value)).length;
+      if (row.list_key === 'room_type') count += board.rooms.filter((r) => n(r.room_type) === n(row.value)).length;
+      return count;
+    };
+    res.json({
+      success: true,
+      ...board,
+      lists,
+      listRows: listRows.map((r) => ({ ...r, inUse: inUse(r),
+        protected: (guestLib.PROTECTED_VALUES[r.list_key] || []).includes(r.value) })),
+      listLabels: guestLib.LIST_LABELS,
+      settings,
+      coordinators: await guestCoordinatorPool(),
+      today: istDateString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/guests/export.csv', requirePermission('guests.view'), async (req, res, next) => {
+  try {
+    const { board } = await guestBoard();
+    res.set('Cache-Control', 'private, no-store');
+    res.set('Content-Type', 'text/csv; charset=utf-8');
+    res.set('Content-Disposition', `attachment; filename="${reportFilePrefix()}-guests-${istDateString()}.csv"`);
+    // The byte-order mark makes Excel read the file as UTF-8 (names, the ₹).
+    res.send('﻿' + guestLib.guestsCsv(board.guests));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Delegates who could be marked as faculty, for the Add Faculty search: two
+// characters minimum, at most 8, as the desk search.
+app.get('/api/guests/candidates', requirePermission('guests.edit'), async (req, res, next) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ success: true, results: [] });
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const rows = await dbAll(
+      `SELECT u.phone_number, u.salutation, u.full_name, u.designation, u.email, u.phone,
+              COALESCE(r.registration_number, u.registration_number) AS registration_number,
+              (r.id IS NOT NULL AND COALESCE(r.bank_status, '') != 'REJECTED') AS registered,
+              (SELECT id FROM guests g WHERE g.phone_number = u.phone_number) AS guest_id
+         FROM users u
+         LEFT JOIN registrations r ON r.phone_number = u.phone_number
+        WHERE u.role = 'DELEGATE'
+          AND (u.full_name LIKE ? ESCAPE '\\' OR u.phone_number LIKE ? ESCAPE '\\' OR u.phone LIKE ? ESCAPE '\\'
+               OR LOWER(u.email) LIKE LOWER(?) ESCAPE '\\' OR UPPER(u.registration_number) LIKE UPPER(?) ESCAPE '\\')
+        ORDER BY u.full_name
+        LIMIT 8`,
+      [like, like, like, like, like]);
+    res.json({ success: true, results: rows.map((u) => ({
+      phone_number: u.phone_number,
+      name: [u.salutation, u.full_name].filter(Boolean).join(' ') || u.phone_number,
+      designation: u.designation, email: u.email, registration_number: u.registration_number,
+      phone: displayPhone(u), registered: !!u.registered, guestId: u.guest_id || null,
+    })) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Mark a delegate as faculty: they join the guest list. Someone who has not
+// registered can be marked -- like an abstract, they still have to register,
+// and the list says so until they do.
+app.post('/api/guests', requirePermission('guests.edit'), async (req, res, next) => {
+  try {
+    const phone = String((req.body && req.body.phone) || '');
+    const u = await dbGet('SELECT phone_number, salutation, full_name, role FROM users WHERE phone_number = ?', [phone]);
+    if (!u || u.role !== 'DELEGATE') return res.status(404).json({ success: false, error: 'Delegate not found.' });
+    if (await dbGet('SELECT id FROM guests WHERE phone_number = ?', [phone])) {
+      return res.status(409).json({ success: false, error: 'They are already on the guest list.' });
+    }
+    const lists = activeGuestLists(await guestListRows());
+    const invited = lists.overall_status.find((v) => v === 'Invited') || null;
+    const now = Date.now();
+    const by = req.session.name || req.session.phone;
+    const r = await dbRun(
+      'INSERT INTO guests (phone_number, overall_status, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?)',
+      [phone, invited, now, by, now, by]);
+    const name = [u.salutation, u.full_name].filter(Boolean).join(' ');
+    await recordAudit({ req, entityType: 'guest', entityId: String(r.lastID), action: 'GUEST_ADDED', oldValue: null, newValue: `${name} marked as faculty` });
+    const registered = !!(await dbGet(`SELECT ${authorRegisteredSql('?')} AS yes`, [phone])).yes;
+    res.json({ success: true, id: r.lastID, registered });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/guests/settings', requirePermission('guests.manage'), async (req, res, next) => {
+  try {
+    const { values, errors } = guestLib.validateSettings(req.body || {});
+    if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
+    const before = await guestSettings();
+    const put = (k, v) => dbRun('INSERT INTO schema_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [k, String(v)]);
+    await put(GUEST_SETTING_KEYS.alertDays, values.alertDays);
+    await put(GUEST_SETTING_KEYS.clashMinutes, values.clashMinutes);
+    await put(GUEST_SETTING_KEYS.slotBounds, values.slotBounds.join(','));
+    const fmt = (s) => `alert ${s.alertDays} day(s), clash ${s.clashMinutes} min, slots ${s.slotBounds.join('/')}`;
+    await recordAudit({ req, entityType: 'guest_settings', entityId: 'guests', action: 'GUEST_SETTINGS_UPDATED', oldValue: fmt(before), newValue: fmt(values) });
+    res.json({ success: true, settings: values });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- vehicles ---
+app.post('/api/guests/vehicles', requirePermission('guests.travel'), async (req, res, next) => {
+  try {
+    const { values, errors } = guestLib.validateVehicle(req.body || {});
+    if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
+    if (await dbGet('SELECT id FROM guest_vehicles WHERE LOWER(TRIM(label)) = LOWER(?)', [values.label])) {
+      return res.status(409).json({ success: false, error: 'A vehicle with that label is already on the list.' });
+    }
+    const r = await dbRun('INSERT INTO guest_vehicles (label, driver_phone, seats, created_at) VALUES (?, ?, ?, ?)',
+      [values.label, values.driver_phone, values.seats, Date.now()]);
+    await recordAudit({ req, entityType: 'guest_vehicle', entityId: String(r.lastID), action: 'GUEST_VEHICLE_ADDED', oldValue: null, newValue: values.label });
+    res.json({ success: true, id: r.lastID });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Renaming a vehicle carries the new label onto the guests it was assigned
+// to, so their pickups and drops stay counted against it.
+app.put('/api/guests/vehicles/:id', requirePermission('guests.travel'), async (req, res, next) => {
+  try {
+    const existing = await dbGet('SELECT * FROM guest_vehicles WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ success: false, error: 'Vehicle not found.' });
+    const { values, errors } = guestLib.validateVehicle(req.body || {});
+    if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
+    if (await dbGet('SELECT id FROM guest_vehicles WHERE LOWER(TRIM(label)) = LOWER(?) AND id != ?', [values.label, existing.id])) {
+      return res.status(409).json({ success: false, error: 'A vehicle with that label is already on the list.' });
+    }
+    await dbRun('UPDATE guest_vehicles SET label = ?, driver_phone = ?, seats = ? WHERE id = ?',
+      [values.label, values.driver_phone, values.seats, existing.id]);
+    if (values.label !== existing.label) {
+      await dbRun('UPDATE guests SET pickup_vehicle = ? WHERE LOWER(TRIM(pickup_vehicle)) = LOWER(?)', [values.label, existing.label]);
+      await dbRun('UPDATE guests SET drop_vehicle = ? WHERE LOWER(TRIM(drop_vehicle)) = LOWER(?)', [values.label, existing.label]);
+    }
+    await recordAudit({ req, entityType: 'guest_vehicle', entityId: String(existing.id), action: 'GUEST_VEHICLE_UPDATED',
+      oldValue: `${existing.label} · ${existing.driver_phone || '—'} · ${existing.seats || '—'} seats`,
+      newValue: `${values.label} · ${values.driver_phone || '—'} · ${values.seats || '—'} seats` });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/guests/vehicles/:id', requirePermission('guests.manage'), async (req, res, next) => {
+  try {
+    const existing = await dbGet('SELECT * FROM guest_vehicles WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ success: false, error: 'Vehicle not found.' });
+    await dbRun('DELETE FROM guest_vehicles WHERE id = ?', [existing.id]);
+    await recordAudit({ req, entityType: 'guest_vehicle', entityId: String(existing.id), action: 'GUEST_VEHICLE_DELETED', oldValue: existing.label, newValue: null });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- rooms ---
+async function roomInput(req, existing) {
+  const lists = activeGuestLists(await guestListRows());
+  // A room's current accommodation or type stays acceptable after that value
+  // is switched off, so editing its beds does not fail on it.
+  if (existing) {
+    if (existing.accommodation && !lists.accommodation.includes(existing.accommodation)) lists.accommodation.push(existing.accommodation);
+    if (existing.room_type && !lists.room_type.includes(existing.room_type)) lists.room_type.push(existing.room_type);
+  }
+  return guestLib.validateRoom(req.body || {}, lists);
+}
+
+app.post('/api/guests/rooms', requirePermission('guests.stay'), async (req, res, next) => {
+  try {
+    const { values, errors } = await roomInput(req, null);
+    if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
+    if (await dbGet('SELECT id FROM guest_rooms WHERE LOWER(TRIM(accommodation)) = LOWER(?) AND LOWER(TRIM(room_no)) = LOWER(?)', [values.accommodation, values.room_no])) {
+      return res.status(409).json({ success: false, error: `${values.accommodation} room ${values.room_no} is already on the list.` });
+    }
+    const r = await dbRun('INSERT INTO guest_rooms (accommodation, room_no, room_type, beds, created_at) VALUES (?, ?, ?, ?, ?)',
+      [values.accommodation, values.room_no, values.room_type, values.beds, Date.now()]);
+    await recordAudit({ req, entityType: 'guest_room', entityId: String(r.lastID), action: 'GUEST_ROOM_ADDED', oldValue: null,
+      newValue: `${values.accommodation} ${values.room_no} · ${values.room_type || '—'} · ${values.beds} bed(s)` });
+    res.json({ success: true, id: r.lastID });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/guests/rooms/:id', requirePermission('guests.stay'), async (req, res, next) => {
+  try {
+    const existing = await dbGet('SELECT * FROM guest_rooms WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ success: false, error: 'Room not found.' });
+    const { values, errors } = await roomInput(req, existing);
+    if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
+    if (await dbGet('SELECT id FROM guest_rooms WHERE LOWER(TRIM(accommodation)) = LOWER(?) AND LOWER(TRIM(room_no)) = LOWER(?) AND id != ?', [values.accommodation, values.room_no, existing.id])) {
+      return res.status(409).json({ success: false, error: `${values.accommodation} room ${values.room_no} is already on the list.` });
+    }
+    await dbRun('UPDATE guest_rooms SET accommodation = ?, room_no = ?, room_type = ?, beds = ? WHERE id = ?',
+      [values.accommodation, values.room_no, values.room_type, values.beds, existing.id]);
+    await recordAudit({ req, entityType: 'guest_room', entityId: String(existing.id), action: 'GUEST_ROOM_UPDATED',
+      oldValue: `${existing.accommodation} ${existing.room_no} · ${existing.room_type || '—'} · ${existing.beds} bed(s)`,
+      newValue: `${values.accommodation} ${values.room_no} · ${values.room_type || '—'} · ${values.beds} bed(s)` });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/guests/rooms/:id', requirePermission('guests.manage'), async (req, res, next) => {
+  try {
+    const existing = await dbGet('SELECT * FROM guest_rooms WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ success: false, error: 'Room not found.' });
+    await dbRun('DELETE FROM guest_rooms WHERE id = ?', [existing.id]);
+    await recordAudit({ req, entityType: 'guest_room', entityId: String(existing.id), action: 'GUEST_ROOM_DELETED',
+      oldValue: `${existing.accommodation} ${existing.room_no}`, newValue: null });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- dropdown lists (admin) ---
+// Values are added, reordered, switched off and on, and removed when nothing
+// uses them. Not renamed: a guest keeps the text it was given, so renaming
+// would quietly split one value into two.
+app.post('/api/guests/lists', requirePermission('guests.manage'), async (req, res, next) => {
+  try {
+    const listKey = String((req.body && req.body.listKey) || '');
+    const value = String((req.body && req.body.value) || '').trim();
+    if (!guestLib.LIST_LABELS[listKey]) return res.status(400).json({ success: false, error: 'Unknown list.' });
+    if (!value || value.length > 80) return res.status(400).json({ success: false, error: 'Enter a value of up to 80 characters.' });
+    if (await dbGet('SELECT id FROM guest_lists WHERE list_key = ? AND LOWER(value) = LOWER(?)', [listKey, value])) {
+      return res.status(409).json({ success: false, error: `"${value}" is already on that list.` });
+    }
+    const last = await dbGet('SELECT COALESCE(MAX(sort_order), 0) AS n FROM guest_lists WHERE list_key = ?', [listKey]);
+    const r = await dbRun('INSERT INTO guest_lists (list_key, value, sort_order, active) VALUES (?, ?, ?, 1)', [listKey, value, last.n + 1]);
+    await recordAudit({ req, entityType: 'guest_list', entityId: listKey, action: 'GUEST_LIST_VALUE_ADDED', oldValue: null, newValue: value });
+    res.json({ success: true, id: r.lastID });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/guests/lists/:id', requirePermission('guests.manage'), async (req, res, next) => {
+  try {
+    const row = await dbGet('SELECT * FROM guest_lists WHERE id = ?', [req.params.id]);
+    if (!row) return res.status(404).json({ success: false, error: 'List value not found.' });
+    const body = req.body || {};
+    if (body.active !== undefined) {
+      const active = body.active ? 1 : 0;
+      if (!active && (guestLib.PROTECTED_VALUES[row.list_key] || []).includes(row.value)) {
+        return res.status(400).json({ success: false, error: `"${row.value}" is used by the app's own rules and cannot be switched off.` });
+      }
+      await dbRun('UPDATE guest_lists SET active = ? WHERE id = ?', [active, row.id]);
+      await recordAudit({ req, entityType: 'guest_list', entityId: row.list_key, action: active ? 'GUEST_LIST_VALUE_ON' : 'GUEST_LIST_VALUE_OFF', oldValue: row.value, newValue: null });
+    }
+    if (body.move === 'up' || body.move === 'down') {
+      const siblings = await dbAll('SELECT id, sort_order FROM guest_lists WHERE list_key = ? ORDER BY sort_order, id', [row.list_key]);
+      const i = siblings.findIndex((s) => s.id === row.id);
+      const j = body.move === 'up' ? i - 1 : i + 1;
+      if (j >= 0 && j < siblings.length) {
+        // Renumber the whole list in its new order, so ties cannot stick.
+        [siblings[i], siblings[j]] = [siblings[j], siblings[i]];
+        for (let k = 0; k < siblings.length; k++) await dbRun('UPDATE guest_lists SET sort_order = ? WHERE id = ?', [k + 1, siblings[k].id]);
+      }
+    }
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/guests/lists/:id', requirePermission('guests.manage'), async (req, res, next) => {
+  try {
+    const row = await dbGet('SELECT * FROM guest_lists WHERE id = ?', [req.params.id]);
+    if (!row) return res.status(404).json({ success: false, error: 'List value not found.' });
+    if ((guestLib.PROTECTED_VALUES[row.list_key] || []).includes(row.value)) {
+      return res.status(400).json({ success: false, error: `"${row.value}" is used by the app's own rules and cannot be removed.` });
+    }
+    const fields = Object.entries(guestLib.FIELD_LISTS).filter(([, k]) => k === row.list_key).map(([f]) => f);
+    let used = 0;
+    for (const f of fields) used += (await dbGet(`SELECT COUNT(*) AS n FROM guests WHERE LOWER(TRIM(${f})) = LOWER(?)`, [row.value])).n;
+    if (row.list_key === 'accommodation') used += (await dbGet('SELECT COUNT(*) AS n FROM guest_rooms WHERE LOWER(TRIM(accommodation)) = LOWER(?)', [row.value])).n;
+    if (row.list_key === 'room_type') used += (await dbGet('SELECT COUNT(*) AS n FROM guest_rooms WHERE LOWER(TRIM(room_type)) = LOWER(?)', [row.value])).n;
+    if (used) return res.status(409).json({ success: false, error: `"${row.value}" is in use (${used}). Switch it off instead, so it is no longer offered.` });
+    await dbRun('DELETE FROM guest_lists WHERE id = ?', [row.id]);
+    await recordAudit({ req, entityType: 'guest_list', entityId: row.list_key, action: 'GUEST_LIST_VALUE_DELETED', oldValue: row.value, newValue: null });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Edit a guest. Each field belongs to one permission (guests.js
+// FIELD_PERMISSION): travel to guests.travel, stay to guests.stay, the rest to
+// guests.edit. A request changing a field the role may not edit is refused
+// whole, naming the fields. Whoever is named coordinator for that side is
+// emailed when somebody else changes the guest's travel or stay details.
+app.put('/api/guests/:id', requirePermission('guests.edit'), async (req, res, next) => {
+  try {
+    const current = await dbGet('SELECT * FROM guests WHERE id = ?', [req.params.id]);
+    if (!current) return res.status(404).json({ success: false, error: 'Guest not found.' });
+    const pool = await guestCoordinatorPool();
+    const coordinators = { transport: new Set(pool.transport.map((p) => p.phone)), accommodation: new Set(pool.accommodation.map((p) => p.phone)) };
+    // The coordinator already named stays acceptable if their role changes.
+    if (current.transport_coordinator) coordinators.transport.add(current.transport_coordinator);
+    if (current.accommodation_coordinator) coordinators.accommodation.add(current.accommodation_coordinator);
+    const lists = activeGuestLists(await guestListRows());
+    const { values, errors } = guestLib.validateGuestFields((req.body && req.body.fields) || {}, current, lists, coordinators);
+    const forbidden = guestLib.forbiddenChanges(values, current, (perm) => can(req.session.role, perm));
+    if (forbidden.length) {
+      return res.status(403).json({ success: false, error: `You cannot change: ${forbidden.map((f) => guestLib.FIELD_LABELS[f]).join(', ')}.` });
+    }
+    if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
+    const changes = guestLib.changedFields(current, values);
+    if (!changes.length) return res.json({ success: true, changed: 0, notified: [] });
+
+    const sets = changes.map((c) => `${c.field} = ?`).join(', ');
+    await dbRun(`UPDATE guests SET ${sets}, updated_at = ?, updated_by = ? WHERE id = ?`,
+      [...changes.map((c) => c.to), Date.now(), req.session.name || req.session.phone, current.id]);
+
+    const [g] = await guestRowsJoined('WHERE g.id = ?', [current.id]);
+    const summary = changes.map((c) => `${c.label}: ${c.from || '—'} → ${c.to || '—'}`).join('; ');
+    await recordAudit({ req, entityType: 'guest', entityId: String(current.id), action: 'GUEST_UPDATED', oldValue: g.name, newValue: summary });
+
+    // Tell the coordinator for each side what changed -- unless they made the
+    // change themselves.
+    const notified = [];
+    const merged = { ...current, ...values };
+    for (const [side, fields, coordField] of [
+      ['Travel', guestLib.TRAVEL_NOTIFY_FIELDS, 'transport_coordinator'],
+      ['Stay', guestLib.STAY_NOTIFY_FIELDS, 'accommodation_coordinator'],
+    ]) {
+      const sideChanges = changes.filter((c) => fields.includes(c.field));
+      const coord = merged[coordField];
+      if (!sideChanges.length || !coord || coord === req.session.phone) continue;
+      const rowsHtml = sideChanges.map((c) => `<tr>
+          <td style="padding:.35rem .6rem;border-bottom:1px solid #eef3f6;color:#46708c">${escapeHtml(c.label)}</td>
+          <td style="padding:.35rem .6rem;border-bottom:1px solid #eef3f6;color:#64748b;text-decoration:line-through">${escapeHtml(c.from || '—')}</td>
+          <td style="padding:.35rem .6rem;border-bottom:1px solid #eef3f6;color:#1c3549;font-weight:700">${escapeHtml(c.to || '—')}</td></tr>`).join('');
+      notifyDelegate(coord, `${side} details changed: ${g.name}`,
+        emailWrap(`${side} details changed`, `<p><b>${escapeHtml(req.session.name || 'A colleague')}</b> changed ${side.toLowerCase()} details for <b>${escapeHtml(g.name)}</b>, a guest you coordinate.</p>
+          <table style="width:100%;border-collapse:collapse;font-size:.85rem;margin:.75rem 0">${rowsHtml}</table>
+          <p>See the Guests tab at <b>${escapeHtml(PORTAL_URL)}</b>.</p>`));
+      notified.push(side.toLowerCase());
+    }
+    res.json({ success: true, changed: changes.length, notified });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Remove a guest -- they are no longer faculty to coordinate. Admin only and
+// permanent; the activity log keeps what was removed. A guest who has
+// dropped out but may matter later is Cancelled instead.
+app.delete('/api/guests/:id', requirePermission('guests.manage'), async (req, res, next) => {
+  try {
+    const [g] = await guestRowsJoined('WHERE g.id = ?', [req.params.id]);
+    if (!g) return res.status(404).json({ success: false, error: 'Guest not found.' });
+    await dbRun('DELETE FROM guests WHERE id = ?', [g.id]);
+    const kept = guestLib.ALL_FIELDS.filter((f) => g[f]).map((f) => `${guestLib.FIELD_LABELS[f]}: ${g[f]}`).join('; ');
+    await recordAudit({ req, entityType: 'guest', entityId: String(g.id), action: 'GUEST_REMOVED', oldValue: `${g.name}${kept ? ` — ${kept}` : ''}`, newValue: null });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- ERROR HANDLER ------------------------------------------------------
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
@@ -11980,6 +12508,7 @@ registrationsMigrationReady.then(retitleNamesOnBoot)
   .then(() => migrateProgramGroupsOnBoot().catch((err) => console.error('Program-groups migration failed (continuing to start):', err.message)))
   .then(() => backfillPaymentTransactionsOnBoot().catch((err) => console.error('Payment-transaction backfill failed (continuing to start):', err.message)))
   .then(() => retireCodesOfRegisteredHoldersOnBoot().catch((err) => console.error('Code retirement sweep failed (continuing to start):', err.message)))
+  .then(() => seedGuestListsOnBoot().catch((err) => console.error('Guest list seed failed (continuing to start):', err.message)))
   .then(() => autoLinkTransactions().catch((err) => console.error('Bank-transaction auto-link failed (continuing to start):', err.message)))
   .then(() => loadNotificationToggles().catch((err) => console.error('Notification-toggle load failed (continuing to start):', err.message)))
   .then(() => loadMaintenanceMode().catch((err) => console.error('Maintenance-mode load failed (continuing to start):', err.message)))

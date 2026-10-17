@@ -1,0 +1,36 @@
+  <!-- MODAL: EDIT A GUEST. Name, designation and phone come from the
+       delegate's account and are not edited here. Each section is enabled
+       only for a role that may edit it (travel: guests.travel, stay:
+       guests.stay, other: guests.edit); the server enforces the same split
+       in PUT /api/guests/:id. See openGuestEditor(). -->
+  <div id="modal-guest-edit" class="hidden fixed inset-0 bg-slate-900/60 flex justify-center items-start sm:items-center p-4 z-50 overflow-y-auto">
+    <div class="bg-white max-w-3xl w-full rounded-2xl shadow-card relative flex flex-col max-h-[92vh]">
+      <div class="p-5 border-b border-slate-100 shrink-0">
+        <button type="button" onclick="closeModal('modal-guest-edit')" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold" aria-label="Close">✕</button>
+        <h3 id="guest-edit-name" class="text-lg font-bold text-slate-800 pr-8"></h3>
+        <p id="guest-edit-who" class="text-xs text-slate-500 mt-0.5"></p>
+        <div id="guest-edit-flags" class="flex flex-wrap gap-1.5 mt-2"></div>
+      </div>
+      <form id="guest-edit-form" onsubmit="saveGuest(event)" class="p-5 space-y-5 overflow-y-auto">
+        <div id="guest-edit-body"></div>
+      </form>
+      <div class="p-4 border-t border-slate-100 flex flex-wrap justify-end gap-2 shrink-0">
+        <button type="button" id="guest-remove-btn" onclick="removeGuest()" class="hidden px-4 py-2 bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-xl text-sm font-semibold mr-auto">Remove from guest list</button>
+        <button type="button" onclick="closeModal('modal-guest-edit')" class="px-4 py-2 border border-slate-300 text-slate-700 font-semibold text-sm rounded-xl">Cancel</button>
+        <button type="submit" form="guest-edit-form" id="guest-save-btn" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: MARK A DELEGATE AS FACULTY, from the Guests tab. Searches
+       delegate accounts (GET /api/guests/candidates). Someone who has not
+       registered can be marked; the list flags them until they register. -->
+  <div id="modal-guest-add" class="hidden fixed inset-0 bg-slate-900/60 flex justify-center items-start sm:items-center p-4 z-50">
+    <div class="bg-white max-w-md w-full rounded-2xl p-6 shadow-card relative">
+      <button type="button" onclick="closeModal('modal-guest-add')" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold" aria-label="Close">✕</button>
+      <h3 class="text-lg font-bold text-slate-800 mb-1">Mark Delegate as Faculty</h3>
+      <p class="text-xs text-slate-500 mb-4">They join the guest list, and their travel and stay can then be coordinated. Their name, designation and phone come from their account. Faculty must register, like anyone presenting.</p>
+      <input id="guest-add-search" autocomplete="off" oninput="searchFacultyCandidates(this.value)" placeholder="Name, mobile, email or ID" class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+      <div id="guest-add-results" class="mt-3 space-y-2 max-h-80 overflow-y-auto"></div>
+    </div>
+  </div>

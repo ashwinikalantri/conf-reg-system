@@ -121,6 +121,24 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'GET /api/admin/reminders/code-holders': 'The audience for reminding people of a personal code they have not used. comms.reminders_view, like every other reminder audience.',
     'POST /api/admin/reminders/code-holders/send': 'Sends that reminder, each person their own codes. comms.reminders_send -- the same key, cooldown and audit shape as the other bulk sends.',
     'POST /api/admin/reminders/code-holders/test-send': 'Sends it to the admin alone, filled in with a real example. comms.reminders_test, like the other test sends.',
+    // Guest coordination: a new module, under five new guests.* keys held by
+    // Super Admin and the two new coordinator roles; no existing role gains any.
+    'GET /api/guests': 'The Guests tab: every faculty guest with their travel and stay, flags, schedules, vehicles, rooms and dashboard. guests.view.',
+    'GET /api/guests/export.csv': 'The guest list as CSV. guests.view -- what the tab already shows.',
+    'GET /api/guests/candidates': 'Type-ahead for marking a delegate as faculty: delegates only, at most 8, two characters minimum. guests.edit.',
+    'POST /api/guests': 'Marks a delegate as faculty, adding them to the guest list. guests.edit, held by both coordinators.',
+    'PUT /api/guests/:id': 'Edits a guest. guests.edit to reach it at all; within it each field needs its own key -- travel guests.travel, stay guests.stay -- and a change to a field the role may not edit is refused.',
+    'DELETE /api/guests/:id': 'Removes a guest permanently. guests.manage, Super Admin only.',
+    'PUT /api/guests/settings': 'The alert window, time slots and vehicle clash window. guests.manage.',
+    'POST /api/guests/vehicles': 'Adds a vehicle. guests.travel.',
+    'PUT /api/guests/vehicles/:id': 'Edits a vehicle (a new label carries onto its guests). guests.travel.',
+    'DELETE /api/guests/vehicles/:id': 'Deletes a vehicle. guests.manage.',
+    'POST /api/guests/rooms': 'Adds a room. guests.stay.',
+    'PUT /api/guests/rooms/:id': 'Edits a room. guests.stay.',
+    'DELETE /api/guests/rooms/:id': 'Deletes a room. guests.manage.',
+    'POST /api/guests/lists': 'Adds a value to a dropdown list. guests.manage.',
+    'PUT /api/guests/lists/:id': 'Switches a dropdown value off or on, or moves it. guests.manage.',
+    'DELETE /api/guests/lists/:id': 'Removes an unused dropdown value. guests.manage.',
     'PUT /api/registrations/:id/unreject': 'Returns a rejected registration to pending review, silently -- the mirror of un-approve, and under the same key (payments.unapprove, Super Admin only), since both reverse a decision already made. No role gains anything it could not already do to a confirmed registration.',
     'PUT /api/abstracts/extensions/:phone': 'Allows one delegate to submit an abstract after the last date, until a date chosen for them (or changes it), optionally emailing them. Set from their Front Desk page. abstracts.extend_deadline, a new key held by Super Admin and the Front Desk (whose page it is on); no other role has it.',
     'DELETE /api/abstracts/extensions/:phone': 'Withdraws that permission. abstracts.extend_deadline.',
@@ -291,8 +309,12 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // masters.fees_view (to know which categories need a student ID) but that
   // grants no section -- 'fees' is the Fee Master screen, which is
   // masters.fees_view too, so it DOES appear; see the note in the role.
+  //
+  // 'guests' (Guest coordination) came later and is held by no role here but
+  // Super Admin; the two coordinator roles that open it are new, so they are
+  // not in the baseline this table is held against.
   const CLIENT_TODAY = {
-    SUPER_ADMIN: ['overview', 'desk', 'payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'general', 'activity'],
+    SUPER_ADMIN: ['overview', 'desk', 'payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'guests', 'general', 'activity'],
     FINANCE_ADMIN: ['overview', 'payments', 'statement', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
     ACADEMIC_REVIEWER: ['overview', 'abstracts', 'reports'],
     FINANCE_ACADEMIC: ['overview', 'payments', 'statement', 'abstracts', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],

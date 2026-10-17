@@ -26,6 +26,7 @@ const SECTIONS = [
   { key: 'payments', label: 'Payments' },
   { key: 'statement', label: 'Bank statement' },
   { key: 'abstracts', label: 'Abstracts' },
+  { key: 'guests', label: 'Guest coordination' },
   { key: 'reports', label: 'Reports' },
   { key: 'users', label: 'Users & roles' },
   { key: 'masters', label: 'Masters' },
@@ -103,6 +104,17 @@ const PERMISSIONS = [
   // rule everyone else is held to; set from that delegate's Front Desk page,
   // so held by Super Admin and the Front Desk.
   ['abstracts.extend_deadline', 'abstracts', 'Allow late submission', 'Let a named delegate submit an abstract after the last date, until a date chosen for them.'],
+
+  // --- Guest coordination ---
+  // Faculty guests' travel and stay. Split the way the work is: travel to the
+  // Transport Coordinator, stay to the Accommodation Coordinator, and the
+  // shared details -- and marking someone as faculty -- to both. Removing a
+  // guest and changing the lists the dropdowns draw from is Super Admin's.
+  ['guests.view', 'guests', 'View guests', 'Open the Guests tab: every faculty guest\'s travel and stay, the dashboard, the pickup and drop schedules, vehicles and rooms.'],
+  ['guests.edit', 'guests', 'Mark faculty, edit shared details', 'Mark a delegate as faculty (adding them to the guest list), and edit Special Needs, Overall Status and Remarks.'],
+  ['guests.travel', 'guests', 'Edit travel', 'Edit arrival, departure, pickup and drop details and the transport coordinator, and add or edit vehicles.'],
+  ['guests.stay', 'guests', 'Edit stay', 'Edit accommodation, room and check-in/out details and the accommodation coordinator, and add or edit rooms.'],
+  ['guests.manage', 'guests', 'Manage guest coordination', 'Remove a guest, delete vehicles and rooms, and change the dropdown lists and the alert, time-slot and clash settings.'],
 
   // --- Reports ---
   ['reports.delegates', 'reports', 'Delegates report', 'The full delegate list, on screen or as CSV.'],
@@ -237,6 +249,22 @@ const ROUTE_PERMISSIONS = {
   'PUT /api/abstracts/:id/allocation': 'abstracts.assign',
   'PUT /api/abstracts/extensions/:phone': 'abstracts.extend_deadline',
   'DELETE /api/abstracts/extensions/:phone': 'abstracts.extend_deadline',
+  'GET /api/guests': 'guests.view',
+  'GET /api/guests/export.csv': 'guests.view',
+  'GET /api/guests/candidates': 'guests.edit',
+  'POST /api/guests': 'guests.edit',
+  'PUT /api/guests/:id': 'guests.edit',
+  'DELETE /api/guests/:id': 'guests.manage',
+  'PUT /api/guests/settings': 'guests.manage',
+  'POST /api/guests/vehicles': 'guests.travel',
+  'PUT /api/guests/vehicles/:id': 'guests.travel',
+  'DELETE /api/guests/vehicles/:id': 'guests.manage',
+  'POST /api/guests/rooms': 'guests.stay',
+  'PUT /api/guests/rooms/:id': 'guests.stay',
+  'DELETE /api/guests/rooms/:id': 'guests.manage',
+  'POST /api/guests/lists': 'guests.manage',
+  'PUT /api/guests/lists/:id': 'guests.manage',
+  'DELETE /api/guests/lists/:id': 'guests.manage',
 
   // Users & roles
   'GET /api/users': 'users.view',
@@ -358,6 +386,7 @@ const SECTION_PERMISSIONS = {
   discount: { permission: 'discounts.view' },
   groupdiscount: { permission: 'discounts.group_view' },
   reminders: { permission: 'comms.reminders_view' },
+  guests: { permission: 'guests.view' },
   general: { permission: 'system.settings_view' },
   activity: { permission: 'system.activity_log' },
 };
@@ -471,6 +500,18 @@ const SYSTEM_ROLES = [
       'reports.delegates', 'reports.delegate_programs', 'reports.payments',
       'reports.programs', 'reports.abstracts', 'reports.users', 'reports.summary',
     ],
+  },
+  {
+    key: 'TRANSPORT_COORDINATOR',
+    label: 'Transport Coordinator',
+    description: 'Faculty guests\' travel: arrivals, departures, pickups, drops and the vehicles. Sees the whole guest list; can mark a delegate as faculty.',
+    permissions: ['guests.view', 'guests.edit', 'guests.travel'],
+  },
+  {
+    key: 'ACCOMMODATION_COORDINATOR',
+    label: 'Accommodation Coordinator',
+    description: 'Faculty guests\' stay: accommodation, rooms, check-in and check-out. Sees the whole guest list; can mark a delegate as faculty.',
+    permissions: ['guests.view', 'guests.edit', 'guests.stay'],
   },
 ];
 
