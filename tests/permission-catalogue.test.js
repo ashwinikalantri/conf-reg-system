@@ -124,9 +124,6 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
       + 'roles that already saw these figures on the Overview, so nobody gains a number they could not '
       + 'already see. It exists because the Overview used to SUM /api/registrations in the browser, which '
       + 'meant the totals were only as private as that list and the cards hid nothing.',
-    'GET /api/admin/reminders/code-holders': 'The audience for reminding people of a personal code they have not used. comms.reminders_view, like every other reminder audience.',
-    'POST /api/admin/reminders/code-holders/send': 'Sends that reminder, each person their own codes. comms.reminders_send -- the same key, cooldown and audit shape as the other bulk sends.',
-    'POST /api/admin/reminders/code-holders/test-send': 'Sends it to the admin alone, filled in with a real example. comms.reminders_test, like the other test sends.',
     // Guest coordination: a new module, under five new guests.* keys held by
     // Super Admin and the two new coordinator roles; no existing role gains any.
     'GET /api/guests': 'The Guests tab: every faculty guest with their travel and stay, flags, schedules, vehicles, rooms and dashboard. guests.view.',
@@ -151,11 +148,6 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'PUT /api/registrations/:id/unreject': 'Returns a rejected registration to pending review, silently -- the mirror of un-approve, and under the same key (payments.unapprove, Super Admin only), since both reverse a decision already made. No role gains anything it could not already do to a confirmed registration.',
     'PUT /api/abstracts/extensions/:phone': 'Allows one delegate to submit an abstract after the last date, until a date chosen for them (or changes it), optionally emailing them. Set from their Front Desk page. abstracts.extend_deadline, a new key held by Super Admin and the Front Desk (whose page it is on); no other role has it.',
     'DELETE /api/abstracts/extensions/:phone': 'Withdraws that permission. abstracts.extend_deadline.',
-    'GET /api/admin/reminders/abstract-unregistered': 'The audience for telling authors who submitted an abstract but have not registered that registration is mandatory for presentation. comms.reminders_view, like every other reminder audience.',
-    'POST /api/admin/reminders/abstract-unregistered/send': 'Sends that reminder, each with their own abstract title. comms.reminders_send -- the same key, cooldown and audit shape as the other bulk sends.',
-    'POST /api/admin/reminders/abstract-unregistered/test-send': 'Sends it to the admin alone, filled in with a real abstract title. comms.reminders_test, like the other test sends.',
-    'GET /api/admin/reminders/registered': 'The audience for an announcement to delegates who have registered (an abstract deadline moving, say) -- the existing cards only address people who never registered, or who owe a balance. comms.reminders_view, the same key as reading those audiences, so no role sees a recipient list it could not already see.',
-    'POST /api/admin/reminders/registered/send': 'Sends that announcement. comms.reminders_send -- the same key, cooldown and audit shape as the other bulk sends, so nobody gains the ability to email delegates who could not already do it.',
     'POST /api/admin/fees/categories/:id/realign': 'Brings registrations that stored an older label for a category up to the current one. Display name only -- no category or fee changes. masters.fees_manage, the same permission as renaming the category in the first place, so it widens nobody\'s access.',
 
     // --- The front desk ---------------------------------------------------
@@ -177,6 +169,19 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/desk/checkin': 'Records physical arrival. New capability -- nothing in the app did this before.',
     'GET /api/desk/staff': 'Who may be named as having collected cash.',
     'GET /api/desk/cash-in-hand': "The signed-in collector's own unbanked cash, for hand-over. The conference-wide equivalent is statement.cash_deposit, which the desk does not hold.",
+    // --- The Reminders composer ----------------------------------------------
+    // One set of routes for every audience replaces one set per card. Each is
+    // guarded by the key its predecessors held (comms.reminders_view / _test /
+    // _send, comms.custom_send for pasted addresses), so no role gains a way
+    // to see or email anyone it could not before.
+    'GET /api/admin/reminders/audiences': 'Every reminder audience with how many are in it now. comms.reminders_view, like each audience list it replaces.',
+    'GET /api/admin/reminders/audiences/:key/recipients': 'The people in one audience (four of them new: faculty not registered, an email domain, unverified emails, registered narrowed by category and status -- all people comms.reminders_view could already list, or read from the Users list). comms.reminders_view.',
+    'POST /api/admin/reminders/audiences/:key/preview': 'Draws the email as one recipient will see it, for the live preview. Sends nothing. comms.reminders_view -- it shows no one the list does not already show.',
+    'POST /api/admin/reminders/audiences/:key/test': 'Sends the email to the admin alone. comms.reminders_test, as every test send before it.',
+    'POST /api/admin/reminders/audiences/:key/send': 'The send, for every audience but pasted addresses. comms.reminders_send, as every audience send before it.',
+    'POST /api/admin/reminders/paste/send': 'The send to pasted addresses. comms.custom_send, as POST /api/admin/reminders/custom-send before it.',
+    'GET /api/admin/reminders/history': 'The Sent history: each send, its audience, subject, counts and sender. comms.reminders_view -- the same people could already see who each audience holds and when each was last reminded.',
+    'GET /api/admin/reminders/history/:id': 'One send: the email as written and each recipient with what happened. comms.reminders_view.',
     'POST /api/desk/collect-cash': 'The seventh, and the only one NOT guarded by a desk.* key: it '
       + 'carries payments.add_payment, so Finance Admin reaches it too. That widening is recorded '
       + 'per-role in WIDENED_SINCE_BASELINE below.',
@@ -189,6 +194,13 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // app altogether -- for every role, so not a narrowing of one. Each must
   // really be gone, must really have existed, and is named with its reason.
   const REMOVED_SINCE_BASELINE = {
+    'GET /api/admin/reminders/balance-due': "The \"Balance payment awaited\" card's list. Replaced by the composer's audience routes (balance), under the same comms.reminders_view.",
+    'GET /api/admin/reminders/pending-signups': "The \"Signed up but not registered\" card's list. Replaced by the composer's audience routes (signups), under the same comms.reminders_view.",
+    'POST /api/admin/reminders/balance-due/send': "That card's send. Replaced by POST /api/admin/reminders/audiences/:key/send, under the same comms.reminders_send.",
+    'POST /api/admin/reminders/balance-due/test-send': "That card's test send. Replaced by POST /api/admin/reminders/audiences/:key/test, under the same comms.reminders_test.",
+    'POST /api/admin/reminders/custom-send': "The \"Custom recipients\" send. Replaced by POST /api/admin/reminders/paste/send, under the same comms.custom_send.",
+    'POST /api/admin/reminders/send': "That card's send. Replaced by POST /api/admin/reminders/audiences/:key/send, under the same comms.reminders_send.",
+    'POST /api/admin/reminders/test-send': "The shared test send. Replaced by POST /api/admin/reminders/audiences/:key/test, under the same comms.reminders_test.",
     'DELETE /api/admin/discount-codes/:id': 'Deleting a discount code. Removed: a code is stopped by '
       + 'deactivating it, which keeps it traceable (the emails, vouchers and activity-log lines that '
       + 'name it) and reversible. Every role that could delete one can still deactivate it.',

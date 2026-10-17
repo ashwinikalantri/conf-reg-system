@@ -14,18 +14,14 @@ const fs = require('fs');
 
 const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
 
-console.log('\n== The three reminder bulk-send actions confirm through showConfirm() ==');
-const hasShowConfirmBeforeBtn = (btnId) => {
-  const btnLine = `const btn = document.getElementById('${btnId}');`;
-  const btnIdx = js.indexOf(btnLine);
-  if (btnIdx === -1) return false;
-  const before = js.slice(Math.max(0, btnIdx - 250), btnIdx);
-  return before.includes('await showConfirm(`Send this reminder to') && before.includes("This can't be undone.`)))");
-};
-check('sendRegistrationReminders uses showConfirm', hasShowConfirmBeforeBtn('reminder-send-btn'));
-check('sendBalanceDueReminders uses showConfirm', hasShowConfirmBeforeBtn('bdreminder-send-btn'));
-check('sendCustomReminders uses showConfirm',
-  js.includes("await showConfirm(`Send this reminder to ${emails.length} entered ${emails.length === 1 ? 'address' : 'addresses'}? This can't be undone.`)))"));
+console.log('\n== The reminder send confirms through showConfirm() ==');
+// Since the Reminders composer, one send serves every audience (pasted
+// addresses included), so there is one call site to hold to this.
+const sendFn = js.slice(js.indexOf('async function sendReminders()'), js.indexOf('\n}', js.indexOf('async function sendReminders()')));
+check('sendReminders asks first, through showConfirm', /await showConfirm\(`Send this reminder to \$\{who\}\? This can't be undone\.`\)/.test(sendFn));
+check('...before it disables the button and sends', sendFn.indexOf('await showConfirm(') > 0
+  && sendFn.indexOf('await showConfirm(') < sendFn.indexOf("const btn = document.getElementById('rem-send-btn');")
+  && sendFn.indexOf("const btn = document.getElementById('rem-send-btn');") < sendFn.indexOf('await fetch(url'));
 
 console.log('\n== No raw, suppressible confirm() calls remain as actual function calls ==');
 // A bare `if (!confirm(` or `if (!window.confirm(` -- the one legitimate

@@ -56,38 +56,41 @@ const base = { salutation: 'Dr', age: '38', gender: 'Female', designation: 'Cons
     await issue({ code: `HALL${N}`, discountType: 'PERCENT', discountValue: 5, scopeType: 'GLOBAL' });
 
     console.log('\n== Who is on the list ==');
-    const list = await call('GET', '/api/admin/reminders/code-holders', null, admin);
+    const list = await call('GET', '/api/admin/reminders/audiences/codes/recipients', null, admin);
     check('the list responds', list.status === 200, list.status);
     const people = list.body.recipients || [];
     const find = (mail) => people.find((p) => p.email === mail);
     const a = find(aMail);
     check('someone with unused codes is on it', !!a, people.map((p) => p.email));
     check('...once, though they hold two', people.filter((p) => p.email === aMail).length === 1);
-    check('...with both of the codes they can still use', !!a && JSON.stringify(a.codes.map((c) => c.code).sort()) === JSON.stringify([`HA1${N}`, `HA2${N}`].sort()), a && a.codes);
-    check('...but not their expired one', !!a && !a.codes.some((c) => c.code === `HA3${N}`));
-    check('...each code saying what it gives', !!a && a.codes.some((c) => c.discount === 'Pay the Early Bird fee') && a.codes.some((c) => c.discount === '20% off'), a && a.codes);
+    check('...with both of the codes they can still use', !!a && a.detail.includes(`HA1${N}`) && a.detail.includes(`HA2${N}`), a && a.detail);
+    check('...but not their expired one', !!a && !a.detail.includes(`HA3${N}`));
+    check('...each code saying what it gives', !!a && a.detail.includes('Pay the Early Bird fee') && a.detail.includes('20% off'), a && a.detail);
     check('...and greeted by name', !!a && a.name === `Dr Holder A ${N}`, a && a.name);
     const w = find(wMail);
-    check('someone not yet signed up is on it, at the address the code was issued to', !!w && w.waiting === true && w.name === null, w);
+    check('someone not yet signed up is on it, at the address the code was issued to', !!w && w.tags.includes('Waiting for sign-up') && w.name === null, w);
     check('a holder whose only code is deactivated is not', !find(bMail));
     check('nor one whose code has been used', !find(cMail));
     check('nor one who has already registered without it', !find(dMail));
-    check('a shared code is nobody\'s to be reminded of', !people.some((p) => p.codes.some((c) => c.code === `HALL${N}`)));
+    check('a shared code is nobody\'s to be reminded of', !people.some((p) => p.detail.includes(`HALL${N}`)));
+    const forAPreview = (await call('POST', '/api/admin/reminders/audiences/codes/preview', { subject: 'S', bodyHtml: '<p>Dear {{name}},</p>{{codes}}', recipientId: aMail }, admin)).body;
+    check('the preview shows THEIR codes, each in its own block', (forAPreview.html.match(/font-family:ui-monospace/g) || []).length === 2
+      && forAPreview.html.includes(`HA1${N}`) && forAPreview.html.includes(`HA2${N}`) && forAPreview.html.includes(`Dear Dr Holder A ${N},`));
 
     console.log('\n== Who may see and send ==');
     const desk = await loginPassword('9000000006', ADMIN_PW);
-    check('the front desk cannot see the list', (await call('GET', '/api/admin/reminders/code-holders', null, desk)).status === 403);
-    check('...nor send to it', (await call('POST', '/api/admin/reminders/code-holders/send', { subject: 's', bodyHtml: '{{codes}}', emails: [aMail] }, desk)).status === 403);
-    check('...nor anyone signed out', (await call('GET', '/api/admin/reminders/code-holders')).status === 401);
+    check('the front desk cannot see the list', (await call('GET', '/api/admin/reminders/audiences/codes/recipients', null, desk)).status === 403);
+    check('...nor send to it', (await call('POST', '/api/admin/reminders/audiences/codes/send', { subject: 's', bodyHtml: '{{codes}}', ids: [aMail] }, desk)).status === 403);
+    check('...nor anyone signed out', (await call('GET', '/api/admin/reminders/audiences/codes/recipients')).status === 401);
 
     console.log('\n== A send must carry each person\'s codes ==');
-    const noCodes = await call('POST', '/api/admin/reminders/code-holders/send', { subject: 'Hi', bodyHtml: '<p>Dear {{name}}</p>', emails: [aMail] }, admin);
+    const noCodes = await call('POST', '/api/admin/reminders/audiences/codes/send', { subject: 'Hi', bodyHtml: '<p>Dear {{name}}</p>', ids: [aMail] }, admin);
     check('an email without {{codes}} is refused -- nobody would learn their code', noCodes.status === 400 && /\{\{codes\}\}/.test(noCodes.body.error), noCodes.body);
-    const noTestCodes = await call('POST', '/api/admin/reminders/code-holders/test-send', { subject: 'Hi', bodyHtml: '<p>x</p>' }, admin);
+    const noTestCodes = await call('POST', '/api/admin/reminders/audiences/codes/test', { subject: 'Hi', bodyHtml: '<p>x</p>' }, admin);
     check('...the test send too', noTestCodes.status === 400 && /\{\{codes\}\}/.test(noTestCodes.body.error));
-    const noSubject = await call('POST', '/api/admin/reminders/code-holders/send', { bodyHtml: '{{codes}}', emails: [aMail] }, admin);
+    const noSubject = await call('POST', '/api/admin/reminders/audiences/codes/send', { bodyHtml: '{{codes}}', ids: [aMail] }, admin);
     check('no subject, no send', noSubject.status === 400 && /Subject/.test(noSubject.body.error));
-    const noEmail = await call('POST', '/api/admin/reminders/code-holders/send', { subject: 'Hi', bodyHtml: '{{codes}}', emails: [aMail] }, admin);
+    const noEmail = await call('POST', '/api/admin/reminders/audiences/codes/send', { subject: 'Hi', bodyHtml: '{{codes}}', ids: [aMail] }, admin);
     check('with email switched off it says so, rather than claiming to have sent', noEmail.status === 400 && /Email is not configured/.test(noEmail.body.error), noEmail.body);
 
     console.log('\n== What each person receives ==');
@@ -97,7 +100,11 @@ const base = { salutation: 'Dr', age: '38', gender: 'Female', designation: 'Cons
     const months = (src.match(/const LONG_MONTHS = \[[^\]]+\];/) || [])[0];
     const sb = {};
     vm.createContext(sb);
-    vm.runInContext(`${grab('escapeHtml')}\n${months}\n${grab('formatFullDayDate')}\n${grab('codeHolderCodesHtml')}\n${grab('renderCodeHolderEmail')}\nglobalThis.render = renderCodeHolderEmail;`, sb);
+    const R = require('../reminders');
+    vm.runInContext(`${grab('escapeHtml')}\n${months}\n${grab('formatFullDayDate')}\n${grab('codeHolderCodesHtml')}\nglobalThis.codesHtml = codeHolderCodesHtml; globalThis.escapeHtml = escapeHtml;`, sb);
+    // As audienceMembers() fills them in: the name escaped (or "Colleague"),
+    // the codes as their blocks.
+    sb.render = (text, p) => R.fillPlaceholders(text, { name: sb.escapeHtml(p.name || 'Colleague'), codes: sb.codesHtml(p.codes) });
     const body = '<p>Dear {{name}},</p>{{codes}}';
     const forA = sb.render(body, { name: 'Dr <b>Ada</b>', codes: [
       { code: 'HA1X', discount: 'Pay the Early Bird fee', validUntil: '2026-10-15', waiting: false },
@@ -115,10 +122,12 @@ const base = { salutation: 'Dr', age: '38', gender: 'Female', designation: 'Cons
     console.log('\n== The card ==');
     const view = fs.readFileSync(appFile('views', 'admin', 'sections', 'reminders.ejs'), 'utf8');
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
-    check('Reminders has an "Unused Personal Codes" card', view.includes('Unused Personal Codes') && view.includes('id="codeholders-list"'));
-    check('its ready-made email carries {{codes}}', /function codeHolderDefaultBody\(\)[\s\S]{0,400}\{\{codes\}\}/.test(js));
-    check('sending without {{codes}} is stopped before it reaches the server too', /if \(!bodyHtml\.includes\('\{\{codes\}\}'\)\)/.test(js));
-    check('...and asks before sending', /showConfirm\(`Send this reminder to \$\{emails\.length\}/.test(js));
+    check('"Unused personal codes" is an audience, which requires {{codes}}', R.AUDIENCE_BY_KEY.codes.label === 'Unused personal codes'
+      && JSON.stringify(R.AUDIENCE_BY_KEY.codes.required) === '["codes"]' && view.includes('id="rem-audiences"'));
+    check('its ready-made email carries {{codes}}, and is what it starts with', /async function buildCodeHolderBody\(\)[\s\S]{0,400}\{\{codes\}\}/.test(js) && /codes: 'code-holder'/.test(js));
+    check('sending without {{codes}} is stopped before it reaches the server too: the preview reports it and Send is held',
+      /remState\.problems\.missing\.map/.test(js) && /sendBtn\.disabled = !n \|\| !maySend \|\| !!blocked;/.test(js));
+    check('...and asks before sending', /showConfirm\(`Send this reminder to \$\{who\}\? This can't be undone\.`\)/.test(js));
   } finally {
     for (const phone of used) await db.run('DELETE FROM registrations WHERE phone_number = ?', [phone]);
     for (const code of made) await db.run('DELETE FROM discount_codes WHERE code = ?', [code]);

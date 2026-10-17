@@ -40,7 +40,7 @@ const PROBES = [
   { permission: 'masters.programs_view', url: '/api/admin/program-groups', route: 'GET /api/admin/program-groups' },
   { permission: 'discounts.view', url: '/api/admin/discount-codes', route: 'GET /api/admin/discount-codes' },
   { permission: 'discounts.group_view', url: '/api/admin/group-rules', route: 'GET /api/admin/group-rules' },
-  { permission: 'comms.reminders_view', url: '/api/admin/reminders/pending-signups', route: 'GET /api/admin/reminders/pending-signups' },
+  { permission: 'comms.reminders_view', url: '/api/admin/reminders/audiences', route: 'GET /api/admin/reminders/audiences' },
   { permission: 'system.settings_view', url: '/api/admin/general-settings', route: 'GET /api/admin/general-settings' },
   { permission: 'system.activity_log', url: '/api/admin/activity-log', route: 'GET /api/admin/activity-log' },
   { permission: 'system.backups', url: '/api/admin/backup/status', route: 'GET /api/admin/backup/status' },

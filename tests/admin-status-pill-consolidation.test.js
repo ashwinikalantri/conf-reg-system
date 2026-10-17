@@ -64,22 +64,15 @@ check('role editor\'s two "Built-in" badges are bordered',
   /bg-slate-100 text-slate-600 border border-slate-300 px-2 py-0\.5 rounded-full font-bold">Built-in</.test(js));
 check('both Faculty tags are bordered and no longer forced uppercase',
   (js.match(/bg-indigo-100 text-indigo-700 border border-indigo-300 px-2 py-0\.5 rounded-full font-bold align-middle">Faculty<\/span>/g) || []).length === 2);
-// One of each per reminder card, counted from the cards themselves rather
-// than written down: a third audience (All Registered Delegates) was added
-// later, and a hardcoded 2 fails for the right style instead of a wrong one
-// -- while a fourth card with unbordered tags would slip past a fixed number.
-const reminderCards = new Set([...js.matchAll(/class="([a-z]+-recipient-checkbox)/g)].map((m) => m[1])).size;
-check('each reminder card renders its own recipient list', reminderCards >= 3, reminderCards);
-// Not every card can have a "No email" tag -- the Unused Personal Codes card
-// lists addresses, so nobody on it lacks one. What must hold is that every
-// such tag, wherever it appears, is bordered.
+// The Reminders composer draws every audience's recipients with one list,
+// so each tag is written once -- and must be bordered there.
+check('one recipient list serves every audience', (js.match(/class="rem-recipient /g) || []).length === 1);
 const noEmailTags = (js.match(/">No email<\/span>/g) || []).length;
-check('every "No email" tag is bordered, on every card that has one',
-  noEmailTags >= 3 && (js.match(/bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0\.5 rounded-full font-bold shrink-0">No email<\/span>/g) || []).length === noEmailTags,
+check('every "No email" tag is bordered',
+  noEmailTags >= 1 && (js.match(/bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0\.5 rounded-full font-bold(?: shrink-0)?">No email<\/span>/g) || []).length === noEmailTags,
   noEmailTags);
-check('every card\'s "Sent within 24h" tag is bordered',
-  (js.match(/bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0\.5 rounded-full font-bold shrink-0">Sent within 24h<\/span>/g) || []).length === reminderCards,
-  (js.match(/bg-amber-100[^"]*">Sent within 24h<\/span>/g) || []).length);
+check('the "Sent within 24h" tag is bordered',
+  /bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0\.5 rounded-full font-bold">Sent within 24h<\/span>/.test(js));
 check('the payment-mode ledger tag is bordered and font-bold (was font-semibold, no border)',
   /bg-slate-100 text-slate-600 border border-slate-300 text-\[10px\] font-bold px-2 py-0\.5 rounded-full">\$\{esc\(PAYMENT_MODE_LABELS/.test(js));
 check('review-category-locked-badge (fixed during the icon pass) already matches the compact spec',

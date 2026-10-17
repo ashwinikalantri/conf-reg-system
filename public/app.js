@@ -3104,8 +3104,7 @@ async function initBackendPortal() {
   if (canSee('general')) await renderGeneralSettings();
   if (canSee('activity')) await renderBackendActivity();
   if (canSee('payments')) await loadReportWorkshopOptions();
-  if (canSee('reminders')) await renderBackendReminders();
-  if (canSee('reminders')) await renderBackendBalanceDueReminders();
+  if (canSee('reminders')) await renderReminders();
 }
 
 const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT / RTGS' };
@@ -7446,698 +7445,74 @@ function reportWorkshopQuery() {
   return select && select.value ? `&optionId=${encodeURIComponent(select.value)}` : '';
 }
 
-// --- REGISTRATION REMINDERS (admin) ---
+// --- REMINDERS (admin) ---
+// The email templates first; the composer that uses them follows the
+// registry (CUSTOM_REMINDER_TEMPLATES). Each builder reads the conference
+// details, and any date it quotes, live from the server, so an email cannot
+// announce something the admin-editable settings no longer agree with.
 
-// Built fresh (not a frozen const) so it always reflects the current
-// conference name/dates/location, same as the reminder-subject default.
-function reminderDefaultBody() {
+const steelButton = (href, label) => `<p style="text-align:center;margin:1.5rem 0">
+  <a href="${href}" style="background:#2f5673;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">${label}</a>
+</p>`;
+const reminderSignOff = () => `<p>Warm regards,<br><b>Organising Committee</b><br>${esc([conferenceInfo.acronym, conferenceInfo.location].filter(Boolean).join(', '))}</p>`;
+
+// Signed up, never registered.
+async function buildRegistrationReminderBody() {
   const c = conferenceInfo;
   const start = formatFullDate(c.startDate);
   const end = formatFullDate(c.endDate);
-  const dateRange = (start && end && c.startDate !== c.endDate) ? `${start} – ${end}` : (start || end);
-  const when = [dateRange, c.location].filter(Boolean).join(', ');
+  const dateRange = (start && end && c.startDate !== c.endDate) ? `${start} &ndash; ${end}` : (start || end);
+  const when = [dateRange, esc(c.location || '')].filter(Boolean).join(', ');
   return `<p>Dear {{name}},</p>
-<p>Thanks for signing up for the ${esc(c.name)}${when ? ` (${esc(when)})` : ''}. We noticed your registration isn't complete yet &mdash; your account is set up, but we haven't received your payment details.</p>
-<p>Completing your registration only takes a couple of minutes.</p>
-<p style="text-align:center;margin:1.5rem 0">
-  <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Complete My Registration</a>
-</p>
-<p>If you've already registered, please disregard this email.</p>`;
+<p>Thank you for signing up for the ${esc(c.name || 'conference')}${when ? ` (${when})` : ''}. Your registration is not complete yet &mdash; your account is set up, but we have not received your registration and payment.</p>
+<p>Completing it takes only a couple of minutes.</p>
+${steelButton(window.location.origin, 'Complete My Registration')}
+<p>If you have already registered, please ignore this email.</p>
+${reminderSignOff()}`;
 }
 
-let cachedReminderRecipients = [];
-// The pending-signups reminder card's own state.
-
-// A reminder sent within the last 24h to this person blocks another one
-// (server-enforced too -- this just keeps the UI honest about it upfront).
-const REMINDER_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-function reminderOnCooldown(u) {
-  return u.last_reminder_sent_at && (Date.now() - Number(u.last_reminder_sent_at)) < REMINDER_COOLDOWN_MS;
+// Registered, with a balance to pay. {{amount}} is each person's own.
+async function buildBalanceDueBody() {
+  const c = conferenceInfo;
+  return `<p>Dear {{name}},</p>
+<p>Thank you for registering for the ${esc(c.name || 'conference')}. Your registration has a balance of <b>{{amount}}</b> still due.</p>
+<p>Please log in and complete your payment at your earliest convenience to confirm your place.</p>
+${steelButton(window.location.origin, 'Pay My Balance')}
+<p>If you have already paid, please ignore this email.</p>
+${reminderSignOff()}`;
 }
 
-async function renderBackendReminders() {
-  const res = await fetch('/api/admin/reminders/pending-signups');
-  if (!res.ok) return;
-  const data = await res.json();
-  cachedReminderRecipients = data.users || [];
-
-  setText('badge-pending-signups', String(cachedReminderRecipients.length));
-  setText('reminders-count', String(cachedReminderRecipients.length));
-
-  const bodyBox = document.getElementById('reminder-body');
-  if (bodyBox && !bodyBox.value.trim()) bodyBox.value = reminderDefaultBody();
-
-  const list = document.getElementById('reminders-list');
-  if (list) {
-    list.innerHTML = cachedReminderRecipients.length
-      ? cachedReminderRecipients.map((u) => {
-        const onCooldown = reminderOnCooldown(u);
-        const disabled = !u.email || onCooldown;
-        return `
-        <div class="px-3 py-2 flex items-center gap-2">
-          <input type="checkbox" class="reminder-recipient-checkbox shrink-0" value="${esc(u.phone_number)}" ${disabled ? 'disabled' : ''} onchange="updateReminderSelectedCount()">
-          <div class="min-w-0 flex-1">
-            <p class="font-semibold text-slate-700 truncate">${esc([u.salutation, u.full_name].filter(Boolean).join(' '))}</p>
-            <p class="text-xs text-slate-400 truncate">${esc(u.email || 'No email on file')}${u.last_reminder_sent_at ? ` · last sent ${esc(fmtAuditTime(u.last_reminder_sent_at))}` : ''}</p>
-          </div>
-          ${!u.email ? '<span class="text-[10px] bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-full font-bold shrink-0">No email</span>' : ''}
-          ${onCooldown ? '<span class="text-[10px] bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">Sent within 24h</span>' : ''}
-        </div>`;
-      }).join('')
-      : `<div class="px-3 py-6 text-center text-slate-400 text-sm">Everyone who's signed up has also registered.</div>`;
-  }
-
-  const testBtn = document.getElementById('reminder-test-btn');
-  if (testBtn) {
-    testBtn.disabled = !can('comms.reminders_test');
-    testBtn.title = can('comms.reminders_test') ? '' : 'You do not have permission to send reminder emails.';
-  }
-  updateReminderSelectedCount();
-  renderRegisteredDelegateEmails();
-  renderAbstractUnregisteredEmails();
-  renderCodeHolderEmails();
-}
-
-// --- Unused personal codes ------------------------------------------------
-// People holding a personal code they could still use. Each email is filled
-// in server-side: {{name}}, and {{codes}} -- their own codes, what each gives
-// and its last date. One entry per address, so someone with two codes is
-// written to once.
-let cachedCodeHolders = [];
-
-function codeHolderDefaultSubject() {
-  const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
-  return `Your personal registration code${who} is waiting to be used`;
-}
-
-function codeHolderDefaultBody() {
+// Holding a personal code not yet used. {{codes}}: their own code(s), what
+// each gives and its last date, filled in by the server.
+async function buildCodeHolderBody() {
   const c = conferenceInfo;
   return `<p>Dear {{name}},</p>
 <p>A personal code was issued to you for <b>${esc(c.name || 'the conference')}</b>, and it has not been used yet.</p>
 {{codes}}
 <p>Register on the portal and, when you choose your category, your code is applied for you automatically. You can also enter it under <b>Apply promo code</b>. It is yours alone, and works through the end of its last date.</p>
-<p style="text-align:center;margin:1.5rem 0">
-  <a href="${window.location.origin}" style="background:#2f5673;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Register Now</a>
-</p>
-<p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
+${steelButton(window.location.origin, 'Register Now')}
+${reminderSignOff()}`;
 }
 
-async function renderCodeHolderEmails() {
-  const list = document.getElementById('codeholders-list');
-  if (!list) return;
-  const res = await fetch('/api/admin/reminders/code-holders');
-  if (!res.ok) return;
-  cachedCodeHolders = (await res.json()).recipients || [];
-  setText('codeholders-count', String(cachedCodeHolders.length));
-  const subject = document.getElementById('codeholder-subject');
-  const body = document.getElementById('codeholder-body');
-  if (subject && !subject.value.trim()) subject.value = codeHolderDefaultSubject();
-  if (body && !body.value.trim()) body.value = codeHolderDefaultBody();
-
-  list.innerHTML = cachedCodeHolders.length
-    ? cachedCodeHolders.map((p) => {
-      const onCooldown = reminderOnCooldown(p);
-      const codes = p.codes.map((c) => `${c.code} · ${c.discount}${c.validUntil ? ` · until ${formatFullDate(c.validUntil)}` : ''}`).join('; ');
-      return `
-      <div class="px-3 py-2 flex items-center gap-2">
-        <input type="checkbox" class="codeholder-recipient-checkbox shrink-0" value="${esc(p.email)}" ${onCooldown ? 'disabled' : ''} onchange="updateCodeHolderSelectedCount()">
-        <div class="min-w-0 flex-1">
-          <p class="font-semibold text-slate-700 truncate">${esc(p.name || p.email)}</p>
-          <p class="text-xs text-slate-400 truncate">${p.name ? esc(p.email) + ' · ' : ''}${esc(codes)}${p.last_reminder_sent_at ? ` · last sent ${esc(fmtAuditTime(p.last_reminder_sent_at))}` : ''}</p>
-        </div>
-        ${p.waiting ? '<span class="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">Waiting for signup</span>' : ''}
-        ${onCooldown ? '<span class="text-[10px] bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">Sent within 24h</span>' : ''}
-      </div>`;
-    }).join('')
-    : '<div class="px-3 py-6 text-center text-slate-400 text-sm">Nobody is holding an unused personal code.</div>';
-
-  const testBtn = document.getElementById('codeholder-test-btn');
-  if (testBtn) {
-    testBtn.disabled = !can('comms.reminders_test');
-    testBtn.title = can('comms.reminders_test') ? '' : 'You do not have permission to send reminder emails.';
-  }
-  updateCodeHolderSelectedCount();
-}
-
-function updateCodeHolderSelectedCount() {
-  const boxes = Array.from(document.querySelectorAll('.codeholder-recipient-checkbox'));
-  const selectable = boxes.filter((b) => !b.disabled);
-  const selected = boxes.filter((b) => b.checked);
-  setText('codeholder-selected-count', String(selected.length));
-  setText('codeholder-send-count', String(selected.length));
-  const selectAll = document.getElementById('codeholders-select-all');
-  if (selectAll) {
-    selectAll.checked = selectable.length > 0 && selected.length === selectable.length;
-    selectAll.disabled = selectable.length === 0;
-  }
-  const sendBtn = document.getElementById('codeholder-send-btn');
-  if (sendBtn) {
-    sendBtn.disabled = selected.length === 0 || !can('comms.reminders_send');
-    sendBtn.title = can('comms.reminders_send') ? '' : 'You do not have permission to send bulk reminder emails.';
-  }
-}
-
-function toggleAllCodeHolders(checked) {
-  document.querySelectorAll('.codeholder-recipient-checkbox').forEach((b) => { if (!b.disabled) b.checked = checked; });
-  updateCodeHolderSelectedCount();
-}
-
-async function sendCodeHolderTest() {
-  const subject = document.getElementById('codeholder-subject').value.trim();
-  const bodyHtml = document.getElementById('codeholder-body').value.trim();
-  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
-  const data = await (await fetch('/api/admin/reminders/code-holders/test-send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subject, bodyHtml }),
-  })).json();
-  if (!data.success) return showToast(data.error || 'Could not send the test.');
-  showToast(`Test sent to ${data.sentTo}, filled in with a real example.`, 'success');
-}
-
-async function sendCodeHolderEmails() {
-  const subject = document.getElementById('codeholder-subject').value.trim();
-  const bodyHtml = document.getElementById('codeholder-body').value.trim();
-  const emails = Array.from(document.querySelectorAll('.codeholder-recipient-checkbox:checked')).map((b) => b.value);
-  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
-  if (!emails.length) return showToast('Select at least one person.');
-  if (!bodyHtml.includes('{{codes}}')) return showToast('Keep {{codes}} in the email — it is where each person\'s own code goes.');
-  if (!(await showConfirm(`Send this reminder to ${emails.length} ${emails.length === 1 ? 'person' : 'people'}, each with their own code? This can't be undone.`))) return;
-
-  const btn = document.getElementById('codeholder-send-btn');
-  const resultEl = document.getElementById('codeholder-send-result');
-  if (btn) btn.disabled = true;
-  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending…'; }
-  const data = await (await fetch('/api/admin/reminders/code-holders/send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subject, bodyHtml, emails }),
-  })).json();
-  if (!data.success) {
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Send failed.'; }
-    showToast(data.error || 'Could not send.');
-  } else {
-    const notes = [
-      data.skippedSentRecently ? `${data.skippedSentRecently} already sent in the last 24h` : null,
-      data.noLongerDue ? `${data.noLongerDue} no longer holding an unused code` : null,
-    ].filter(Boolean).join(', ');
-    const msg = `Sent to ${data.sent} of ${data.total}${notes ? ` (${notes})` : ''}.`;
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
-    showToast(msg, 'success');
-  }
-  renderCodeHolderEmails();
-}
-
-// --- All Registered Delegates --------------------------------------------
-// The same card shape as the two audiences above, for people who HAVE
-// registered: announcements that concern delegates rather than prospects.
-let cachedRegisteredDelegates = [];
-
-async function renderRegisteredDelegateEmails() {
-  const list = document.getElementById('regdelegates-list');
-  if (!list) return;
-  const res = await fetch('/api/admin/reminders/registered');
-  if (!res.ok) return;
-  cachedRegisteredDelegates = (await res.json()).users || [];
-  setText('regdelegates-count', String(cachedRegisteredDelegates.length));
-
-  list.innerHTML = cachedRegisteredDelegates.length
-    ? cachedRegisteredDelegates.map((u) => {
-      const onCooldown = reminderOnCooldown(u);
-      const disabled = !u.email || onCooldown;
-      return `
-      <div class="px-3 py-2 flex items-center gap-2">
-        <input type="checkbox" class="regdelegate-recipient-checkbox shrink-0" value="${esc(u.phone_number)}" ${disabled ? 'disabled' : ''} onchange="updateRegisteredDelegateSelectedCount()">
-        <div class="min-w-0 flex-1">
-          <p class="font-semibold text-slate-700 truncate">${esc(u.delegate_name || '')}</p>
-          <p class="text-xs text-slate-400 truncate">${esc(u.email || 'No email on file')}${u.last_reminder_sent_at ? ` · last sent ${esc(fmtAuditTime(u.last_reminder_sent_at))}` : ''}</p>
-        </div>
-        ${!u.email ? '<span class="text-[10px] bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-full font-bold shrink-0">No email</span>' : ''}
-        ${onCooldown ? '<span class="text-[10px] bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">Sent within 24h</span>' : ''}
-      </div>`;
-    }).join('')
-    : '<div class="px-3 py-6 text-center text-slate-400 text-sm">Nobody has registered yet.</div>';
-
-  const testBtn = document.getElementById('regdelegate-test-btn');
-  if (testBtn) {
-    testBtn.disabled = !can('comms.reminders_test');
-    testBtn.title = can('comms.reminders_test') ? '' : 'You do not have permission to send reminder emails.';
-  }
-  updateRegisteredDelegateSelectedCount();
-}
-
-function updateRegisteredDelegateSelectedCount() {
-  const boxes = Array.from(document.querySelectorAll('.regdelegate-recipient-checkbox'));
-  const selectable = boxes.filter((b) => !b.disabled);
-  const selected = boxes.filter((b) => b.checked);
-
-  setText('regdelegate-selected-count', String(selected.length));
-  setText('regdelegate-send-count', String(selected.length));
-
-  const selectAll = document.getElementById('regdelegates-select-all');
-  if (selectAll) {
-    selectAll.checked = selectable.length > 0 && selected.length === selectable.length;
-    selectAll.disabled = selectable.length === 0;
-  }
-  const sendBtn = document.getElementById('regdelegate-send-btn');
-  if (sendBtn) {
-    sendBtn.disabled = selected.length === 0 || !can('comms.reminders_send');
-    sendBtn.title = can('comms.reminders_send') ? '' : 'You do not have permission to send bulk reminder emails.';
-  }
-}
-
-function toggleAllRegisteredDelegates(checked) {
-  document.querySelectorAll('.regdelegate-recipient-checkbox').forEach((b) => {
-    if (!b.disabled) b.checked = checked;
-  });
-  updateRegisteredDelegateSelectedCount();
-}
-
-// Test sends go through the audience-agnostic route, same as the card above.
-async function sendRegisteredDelegateTest() {
-  const subject = document.getElementById('regdelegate-subject').value.trim();
-  const bodyHtml = document.getElementById('regdelegate-body').value.trim();
-  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
-  const data = await (await fetch('/api/admin/reminders/test-send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ subject, bodyHtml }),
-  })).json();
-  if (!data.success) return showToast(data.error || 'Could not send the test.');
-  showToast(`Test sent to ${data.sentTo}.`, 'success');
-}
-
-async function sendRegisteredDelegateEmails() {
-  const subject = document.getElementById('regdelegate-subject').value.trim();
-  const bodyHtml = document.getElementById('regdelegate-body').value.trim();
-  const phones = Array.from(document.querySelectorAll('.regdelegate-recipient-checkbox:checked')).map((b) => b.value);
-  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
-  if (!phones.length) return showToast('Select at least one delegate.');
-  if (!(await showConfirm(`Send this announcement to ${phones.length} registered ${phones.length === 1 ? 'delegate' : 'delegates'}? This can't be undone.`))) return;
-
-  const btn = document.getElementById('regdelegate-send-btn');
-  const resultEl = document.getElementById('regdelegate-send-result');
-  if (btn) btn.disabled = true;
-  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending…'; }
-
-  const data = await (await fetch('/api/admin/reminders/registered/send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ subject, bodyHtml, phones }),
-  })).json();
-
-  if (!data.success) {
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Send failed.'; }
-    showToast(data.error || 'Could not send.');
-  } else {
-    const notes = [
-      data.skippedNoEmail ? `${data.skippedNoEmail} no email on file` : null,
-      data.skippedSentRecently ? `${data.skippedSentRecently} already sent in the last 24h` : null,
-    ].filter(Boolean).join(', ');
-    const msg = `Sent to ${data.sent} of ${data.total}${notes ? ` (${notes})` : ''}.`;
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
-    showToast(msg, 'success');
-  }
-  renderRegisteredDelegateEmails();
-}
-
-// --- Abstract Submitted, Not Registered -----------------------------------
-// Authors of an abstract still in play who have not registered: told that
-// registration is mandatory for presentation. Same card shape as above, plus
-// {{title}}, each person's own abstract title, filled in by the server.
-let cachedAbstractUnregistered = [];
-let abstractUnregisteredSeeded = false;
-
-const ABSTRACT_REVIEW_LABELS = { UNDER_REVIEW: 'Under review', ACCEPTED: 'Approved', REVISION_REQUESTED: 'Corrections asked' };
-
-async function renderAbstractUnregisteredEmails() {
-  const list = document.getElementById('absunreg-list');
-  if (!list) return;
-  const res = await fetch('/api/admin/reminders/abstract-unregistered');
-  if (!res.ok) return;
-  cachedAbstractUnregistered = (await res.json()).users || [];
-  setText('absunreg-count', String(cachedAbstractUnregistered.length));
-
-  list.innerHTML = cachedAbstractUnregistered.length
-    ? cachedAbstractUnregistered.map((u) => {
-      const onCooldown = reminderOnCooldown(u);
-      const disabled = !u.email || onCooldown;
-      const stage = u.allocation ? `Approved · ${u.allocation === 'ORAL' ? 'Oral' : 'Poster'}` : (ABSTRACT_REVIEW_LABELS[u.status] || u.status);
-      return `
-      <div class="px-3 py-2 flex items-center gap-2">
-        <input type="checkbox" class="absunreg-recipient-checkbox shrink-0" value="${esc(u.phone_number)}" ${disabled ? 'disabled' : ''} onchange="updateAbstractUnregisteredSelectedCount()">
-        <div class="min-w-0 flex-1">
-          <p class="font-semibold text-slate-700 truncate">${esc(u.name || '')}</p>
-          <p class="text-xs text-slate-500 truncate" title="${esc(u.title)}">${esc(stage)} · ${esc(u.title)}</p>
-          <p class="text-xs text-slate-400 truncate">${esc(u.email || 'No email on file')}${u.last_reminder_sent_at ? ` · last sent ${esc(fmtAuditTime(u.last_reminder_sent_at))}` : ''}</p>
-        </div>
-        ${!u.email ? '<span class="text-[10px] bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-full font-bold shrink-0">No email</span>' : ''}
-        ${onCooldown ? '<span class="text-[10px] bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">Sent within 24h</span>' : ''}
-      </div>`;
-    }).join('')
-    : '<div class="px-3 py-6 text-center text-slate-400 text-sm">Everyone who submitted an abstract has registered.</div>';
-
-  // Ready to send on first look: the card exists for one announcement.
-  if (!abstractUnregisteredSeeded) {
-    abstractUnregisteredSeeded = true;
-    const tpl = CUSTOM_REMINDER_TEMPLATES['abstract-registration-mandatory'];
-    const subjectInput = document.getElementById('absunreg-subject');
-    const bodyBox = document.getElementById('absunreg-body');
-    if (subjectInput && !subjectInput.value.trim()) subjectInput.value = await tpl.subject();
-    if (bodyBox && !bodyBox.value.trim()) bodyBox.value = await tpl.body();
-  }
-
-  const testBtn = document.getElementById('absunreg-test-btn');
-  if (testBtn) {
-    testBtn.disabled = !can('comms.reminders_test');
-    testBtn.title = can('comms.reminders_test') ? '' : 'You do not have permission to send reminder emails.';
-  }
-  updateAbstractUnregisteredSelectedCount();
-}
-
-function updateAbstractUnregisteredSelectedCount() {
-  const boxes = Array.from(document.querySelectorAll('.absunreg-recipient-checkbox'));
-  const selectable = boxes.filter((b) => !b.disabled);
-  const selected = boxes.filter((b) => b.checked);
-
-  setText('absunreg-selected-count', String(selected.length));
-  setText('absunreg-send-count', String(selected.length));
-
-  const selectAll = document.getElementById('absunreg-select-all');
-  if (selectAll) {
-    selectAll.checked = selectable.length > 0 && selected.length === selectable.length;
-    selectAll.disabled = selectable.length === 0;
-  }
-  const sendBtn = document.getElementById('absunreg-send-btn');
-  if (sendBtn) {
-    sendBtn.disabled = selected.length === 0 || !can('comms.reminders_send');
-    sendBtn.title = can('comms.reminders_send') ? '' : 'You do not have permission to send bulk reminder emails.';
-  }
-}
-
-function toggleAllAbstractUnregistered(checked) {
-  document.querySelectorAll('.absunreg-recipient-checkbox').forEach((b) => {
-    if (!b.disabled) b.checked = checked;
-  });
-  updateAbstractUnregisteredSelectedCount();
-}
-
-// Its own test route, so {{title}} arrives filled in as a recipient sees it.
-async function sendAbstractUnregisteredTest() {
-  const subject = document.getElementById('absunreg-subject').value.trim();
-  const bodyHtml = document.getElementById('absunreg-body').value.trim();
-  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
-  const data = await (await fetch('/api/admin/reminders/abstract-unregistered/test-send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ subject, bodyHtml }),
-  })).json();
-  if (!data.success) return showToast(data.error || 'Could not send the test.');
-  showToast(`Test sent to ${data.sentTo}.`, 'success');
-}
-
-async function sendAbstractUnregisteredEmails() {
-  const subject = document.getElementById('absunreg-subject').value.trim();
-  const bodyHtml = document.getElementById('absunreg-body').value.trim();
-  const phones = Array.from(document.querySelectorAll('.absunreg-recipient-checkbox:checked')).map((b) => b.value);
-  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
-  if (!phones.length) return showToast('Select at least one author.');
-  if (!(await showConfirm(`Send this reminder to ${phones.length} ${phones.length === 1 ? 'author' : 'authors'} who ${phones.length === 1 ? 'has' : 'have'} not registered? This can't be undone.`))) return;
-
-  const btn = document.getElementById('absunreg-send-btn');
-  const resultEl = document.getElementById('absunreg-send-result');
-  if (btn) btn.disabled = true;
-  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending…'; }
-
-  const data = await (await fetch('/api/admin/reminders/abstract-unregistered/send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ subject, bodyHtml, phones }),
-  })).json();
-
-  if (!data.success) {
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Send failed.'; }
-    showToast(data.error || 'Could not send.');
-  } else {
-    const notes = [
-      data.skippedNoEmail ? `${data.skippedNoEmail} no email on file` : null,
-      data.skippedSentRecently ? `${data.skippedSentRecently} already sent in the last 24h` : null,
-      data.noLongerDue ? `${data.noLongerDue} registered in the meantime` : null,
-    ].filter(Boolean).join(', ');
-    const msg = `Sent to ${data.sent} of ${data.total}${notes ? ` (${notes})` : ''}.`;
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
-    showToast(msg, 'success');
-  }
-  renderAbstractUnregisteredEmails();
-}
-
-// Keeps the "Select all" checkbox, the selected-count label, and the Send
-// button's enabled state / count in sync with whichever recipient
-// checkboxes are actually checked right now.
-function updateReminderSelectedCount() {
-  const boxes = Array.from(document.querySelectorAll('.reminder-recipient-checkbox'));
-  const selectable = boxes.filter((b) => !b.disabled);
-  const selected = boxes.filter((b) => b.checked);
-
-  setText('reminder-selected-count', String(selected.length));
-  setText('reminder-send-count', String(selected.length));
-
-  const selectAll = document.getElementById('reminders-select-all');
-  if (selectAll) {
-    selectAll.checked = selectable.length > 0 && selected.length === selectable.length;
-    selectAll.disabled = selectable.length === 0;
-  }
-
-  const sendBtn = document.getElementById('reminder-send-btn');
-  if (sendBtn) {
-    sendBtn.disabled = selected.length === 0 || !can('comms.reminders_send');
-    sendBtn.title = can('comms.reminders_send') ? '' : 'You do not have permission to send bulk reminder emails.';
-  }
-}
-
-function toggleAllReminderRecipients(checked) {
-  document.querySelectorAll('.reminder-recipient-checkbox').forEach((b) => {
-    if (!b.disabled) b.checked = checked;
-  });
-  updateReminderSelectedCount();
-}
-
-// Sends the reminder to the logged-in admin's own email only, so wording
-// and formatting can be checked before the irreversible bulk send.
-async function sendReminderTest() {
-  const subject = document.getElementById('reminder-subject').value.trim();
-  const bodyHtml = document.getElementById('reminder-body').value.trim();
-  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
-
-  const btn = document.getElementById('reminder-test-btn');
-  const resultEl = document.getElementById('reminder-send-result');
-  if (btn) btn.disabled = true;
-  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending test…'; }
-
-  const data = await (await fetch('/api/admin/reminders/test-send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ subject, bodyHtml }),
-  })).json();
-
-  if (!data.success) {
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Test send failed.'; }
-    showToast(data.error || 'Could not send test email.');
-  } else {
-    const msg = `Test sent to ${data.sentTo}.`;
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
-    showToast(msg, 'success');
-  }
-  if (btn) btn.disabled = false;
-}
-
-async function sendRegistrationReminders() {
-  const subject = document.getElementById('reminder-subject').value.trim();
-  const bodyHtml = document.getElementById('reminder-body').value.trim();
-  const phones = Array.from(document.querySelectorAll('.reminder-recipient-checkbox:checked')).map((b) => b.value);
-  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
-  if (!phones.length) return showToast('Select at least one recipient.');
-
-  if (!(await showConfirm(`Send this reminder to ${phones.length} selected ${phones.length === 1 ? 'person' : 'people'}? This can't be undone.`))) return;
-
-  const btn = document.getElementById('reminder-send-btn');
-  const resultEl = document.getElementById('reminder-send-result');
-  if (btn) btn.disabled = true;
-  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending…'; }
-
-  const data = await (await fetch('/api/admin/reminders/send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ subject, bodyHtml, phones }),
-  })).json();
-
-  if (!data.success) {
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Send failed.'; }
-    showToast(data.error || 'Could not send reminders.');
-  } else {
-    const skipNotes = [
-      data.skippedNoEmail ? `${data.skippedNoEmail} no email on file` : null,
-      data.skippedSentRecently ? `${data.skippedSentRecently} sent within the last 24h` : null,
-    ].filter(Boolean).join(', ');
-    const msg = `Sent to ${data.sent} of ${data.total}${skipNotes ? ` (${skipNotes})` : ''}.`;
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
-    showToast(msg, 'success');
-  }
-  // Refresh so last-sent times and cooldown badges reflect what just happened.
-  await renderBackendReminders();
-}
-
-// --- BALANCE-DUE PAYMENT REMINDERS (admin) ---
-// Mirrors REGISTRATION REMINDERS above one-for-one -- same cooldown/select-all/
-// test-then-send flow -- for the other worklist that benefits from a nudge:
-// PARTIAL_PAYMENT registrations (see isBalanceDue()). The one addition is
-// {{amount}}, each recipient's own outstanding balance.
-
-function balanceDueReminderDefaultBody() {
+// An account whose email address is not verified. Confirmations go to it,
+// and a code issued to the address -- or to its domain -- waits on it.
+async function buildVerifyEmailBody() {
   const c = conferenceInfo;
   return `<p>Dear {{name}},</p>
-<p>Thanks for registering for the ${esc(c.name)}. Your registration currently has a balance of <b>{{amount}}</b> still due.</p>
-<p>Please log in and complete your payment at your earliest convenience to confirm your spot.</p>
-<p style="text-align:center;margin:1.5rem 0">
-  <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Pay My Balance</a>
-</p>
-<p>If you've already paid, please disregard this email.</p>`;
+<p>You have an account for <b>${esc(c.name || 'the conference')}</b>, but your email address has not been verified yet.</p>
+<p>It takes a minute, and it matters: your registration confirmation and receipt are sent to this address, and a discount issued to your email address &mdash; or to your institution's email domain &mdash; is applied only once it is verified.</p>
+<p><b>To verify it</b></p>
+<ol style="padding-left:1.1rem;margin:.5rem 0">
+  <li>Log in to the registration portal.</li>
+  <li>On your dashboard, click <b>Verify Now</b>.</li>
+  <li>Enter the code we email you.</li>
+</ol>
+${steelButton(window.location.origin, 'Log In and Verify')}
+${reminderSignOff()}`;
 }
 
-let cachedBalanceDueRecipients = [];
-// The balance-due reminder card's own state.
-
-function balanceDueReminderOnCooldown(u) {
-  return u.last_reminder_sent_at && (Date.now() - Number(u.last_reminder_sent_at)) < REMINDER_COOLDOWN_MS;
-}
-
-async function renderBackendBalanceDueReminders() {
-  const res = await fetch('/api/admin/reminders/balance-due');
-  if (!res.ok) return;
-  const data = await res.json();
-  cachedBalanceDueRecipients = data.users || [];
-
-  setText('bdreminders-count', String(cachedBalanceDueRecipients.length));
-
-  const bodyBox = document.getElementById('bdreminder-body');
-  if (bodyBox && !bodyBox.value.trim()) bodyBox.value = balanceDueReminderDefaultBody();
-
-  const list = document.getElementById('bdreminders-list');
-  if (list) {
-    list.innerHTML = cachedBalanceDueRecipients.length
-      ? cachedBalanceDueRecipients.map((u) => {
-        const onCooldown = balanceDueReminderOnCooldown(u);
-        const disabled = !u.email || onCooldown;
-        return `
-        <div class="px-3 py-2 flex items-center gap-2">
-          <input type="checkbox" class="bdreminder-recipient-checkbox shrink-0" value="${esc(u.phone_number)}" ${disabled ? 'disabled' : ''} onchange="updateBalanceDueReminderSelectedCount()">
-          <div class="min-w-0 flex-1">
-            <p class="font-semibold text-slate-700 truncate">${esc(u.delegate_name)} <span class="font-normal text-slate-400">· ₹${inr(u.remaining)} due</span></p>
-            <p class="text-xs text-slate-400 truncate">${esc(u.email || 'No email on file')}${u.last_reminder_sent_at ? ` · last sent ${esc(fmtAuditTime(u.last_reminder_sent_at))}` : ''}</p>
-          </div>
-          ${!u.email ? '<span class="text-[10px] bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-full font-bold shrink-0">No email</span>' : ''}
-          ${onCooldown ? '<span class="text-[10px] bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full font-bold shrink-0">Sent within 24h</span>' : ''}
-        </div>`;
-      }).join('')
-      : `<div class="px-3 py-6 text-center text-slate-400 text-sm">No registrations have a balance due right now.</div>`;
-  }
-
-  const testBtn = document.getElementById('bdreminder-test-btn');
-  if (testBtn) {
-    testBtn.disabled = !can('comms.reminders_test');
-    testBtn.title = can('comms.reminders_test') ? '' : 'You do not have permission to send reminder emails.';
-  }
-  updateBalanceDueReminderSelectedCount();
-}
-
-function updateBalanceDueReminderSelectedCount() {
-  const boxes = Array.from(document.querySelectorAll('.bdreminder-recipient-checkbox'));
-  const selectable = boxes.filter((b) => !b.disabled);
-  const selected = boxes.filter((b) => b.checked);
-
-  setText('bdreminder-selected-count', String(selected.length));
-  setText('bdreminder-send-count', String(selected.length));
-
-  const selectAll = document.getElementById('bdreminders-select-all');
-  if (selectAll) {
-    selectAll.checked = selectable.length > 0 && selected.length === selectable.length;
-    selectAll.disabled = selectable.length === 0;
-  }
-
-  const sendBtn = document.getElementById('bdreminder-send-btn');
-  if (sendBtn) {
-    sendBtn.disabled = selected.length === 0 || !can('comms.reminders_send');
-    sendBtn.title = can('comms.reminders_send') ? '' : 'You do not have permission to send bulk reminder emails.';
-  }
-}
-
-function toggleAllBalanceDueRecipients(checked) {
-  document.querySelectorAll('.bdreminder-recipient-checkbox').forEach((b) => {
-    if (!b.disabled) b.checked = checked;
-  });
-  updateBalanceDueReminderSelectedCount();
-}
-
-async function sendBalanceDueReminderTest() {
-  const subject = document.getElementById('bdreminder-subject').value.trim();
-  const bodyHtml = document.getElementById('bdreminder-body').value.trim();
-  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
-
-  const btn = document.getElementById('bdreminder-test-btn');
-  const resultEl = document.getElementById('bdreminder-send-result');
-  if (btn) btn.disabled = true;
-  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending test…'; }
-
-  const data = await (await fetch('/api/admin/reminders/balance-due/test-send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ subject, bodyHtml }),
-  })).json();
-
-  if (!data.success) {
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Test send failed.'; }
-    showToast(data.error || 'Could not send test email.');
-  } else {
-    const msg = `Test sent to ${data.sentTo}.`;
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
-    showToast(msg, 'success');
-  }
-  if (btn) btn.disabled = false;
-}
-
-async function sendBalanceDueReminders() {
-  const subject = document.getElementById('bdreminder-subject').value.trim();
-  const bodyHtml = document.getElementById('bdreminder-body').value.trim();
-  const phones = Array.from(document.querySelectorAll('.bdreminder-recipient-checkbox:checked')).map((b) => b.value);
-  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
-  if (!phones.length) return showToast('Select at least one recipient.');
-
-  if (!(await showConfirm(`Send this reminder to ${phones.length} selected ${phones.length === 1 ? 'person' : 'people'}? This can't be undone.`))) return;
-
-  const btn = document.getElementById('bdreminder-send-btn');
-  const resultEl = document.getElementById('bdreminder-send-result');
-  if (btn) btn.disabled = true;
-  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending…'; }
-
-  const data = await (await fetch('/api/admin/reminders/balance-due/send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ subject, bodyHtml, phones }),
-  })).json();
-
-  if (!data.success) {
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Send failed.'; }
-    showToast(data.error || 'Could not send reminders.');
-  } else {
-    const skipNotes = [
-      data.skippedNoEmail ? `${data.skippedNoEmail} no email on file` : null,
-      data.skippedSentRecently ? `${data.skippedSentRecently} sent within the last 24h` : null,
-    ].filter(Boolean).join(', ');
-    const msg = `Sent to ${data.sent} of ${data.total}${skipNotes ? ` (${skipNotes})` : ''}.`;
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
-    showToast(msg, 'success');
-  }
-  // Refresh so last-sent times and cooldown badges reflect what just happened.
-  await renderBackendBalanceDueReminders();
-}
-
-// --- CUSTOM-RECIPIENT REMINDERS (admin) ---
-// Reaches addresses with no account in this system at all -- e.g. an
-// external mailing list -- so it's driven by a pasted list, not a picked-
-// from-a-table selection like the two reminder cards above.
-
-// Defaults to an "early bird ends today" push (fetching the actual cutoff
-// date from /api/fees so the copy doesn't drift from the real fee_config),
-// since that's the recurring reason this card gets used -- an admin can
-// still overwrite both fields for any other announcement.
+// "Early bird ends" -- fetching the actual cutoff date from /api/fees so the
+// copy doesn't drift from the real fee_config.
 // Pulls conference details, current fee-category pricing, and the
 // program-group lineup live from the server (rather than hardcoding any of
 // it into the template) so the email can't say something the admin-editable
@@ -8356,12 +7731,33 @@ ${offers.length ? `<table style="width:100%;border-collapse:collapse;margin:1.25
 <p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
 }
 
-// The announcements this card gets used for, in one place so the picker and
-// the initial seed can't drift apart. Subjects are async too, because the
-// "ending soon" one has to know whether the cutoff is actually today.
+// Every template, in one place. `audiences` is where the picker offers it:
+// only where everything it says is true of the audience, and every
+// placeholder it uses can be filled (an email to pasted addresses cannot say
+// {{name}}). Subjects are async too, because the "ending soon" one has to
+// know whether the cutoff is actually today.
+const NOT_REGISTERED = ['signups', 'faculty', 'domain', 'unverified'];
 const CUSTOM_REMINDER_TEMPLATES = {
+  'registration-reminder': {
+    label: 'Complete your registration',
+    audiences: NOT_REGISTERED,
+    async subject() {
+      return conferenceInfo.acronym ? `Complete your registration for ${conferenceInfo.acronym}` : 'Complete your registration';
+    },
+    body: buildRegistrationReminderBody,
+  },
+  'verify-email': {
+    label: 'Verify your email address',
+    audiences: ['unverified'],
+    async subject() {
+      const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
+      return `Please verify your email address${who}`;
+    },
+    body: buildVerifyEmailBody,
+  },
   'early-bird-ending': {
     label: 'Early bird — ending soon',
+    audiences: [...NOT_REGISTERED, 'paste'],
     async subject() {
       const until = await earlyBirdDeadline();
       const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
@@ -8376,6 +7772,7 @@ const CUSTOM_REMINDER_TEMPLATES = {
   },
   'early-bird-extended': {
     label: 'Early bird — deadline extended',
+    audiences: [...NOT_REGISTERED, 'paste'],
     async subject() {
       const until = await earlyBirdDeadline();
       const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
@@ -8385,8 +7782,36 @@ const CUSTOM_REMINDER_TEMPLATES = {
     },
     body: buildEarlyBirdExtensionBody,
   },
+  'mgims-register': {
+    label: 'MGIMS faculty — register now (Early Bird, personalised bottle)',
+    audiences: [...NOT_REGISTERED, 'paste'],
+    async subject() {
+      const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
+      return `MGIMS Faculty: Register${who} by ${formatFullDate(MGIMS_BOTTLE_DEADLINE)} — Early Bird Price and a Personalised Bottle`;
+    },
+    body: buildMgimsRegisterBody,
+  },
+  'group-discount': {
+    label: 'Group discount — register with colleagues',
+    audiences: NOT_REGISTERED,
+    async subject() {
+      const who = conferenceInfo.acronym ? ` at ${conferenceInfo.acronym}` : '';
+      return `Registering with colleagues${who}? Your group pays less`;
+    },
+    body: buildGroupDiscountBody,
+  },
+  'abstract-registration-mandatory': {
+    label: 'Abstracts — registration is mandatory to present',
+    audiences: ['abstract'],
+    async subject() {
+      const who = conferenceInfo.acronym ? ` at ${conferenceInfo.acronym}` : '';
+      return `Registration Is Mandatory to Present Your Abstract${who}`;
+    },
+    body: buildAbstractRegistrationMandatoryBody,
+  },
   'abstract-deadline-extended': {
     label: 'Abstracts — last date extended',
+    audiences: ['registered', 'signups'],
     async subject() {
       const until = conferenceInfo.abstractDeadline;
       const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
@@ -8396,165 +7821,477 @@ const CUSTOM_REMINDER_TEMPLATES = {
     },
     body: buildAbstractExtensionBody,
   },
-  'abstract-registration-mandatory': {
-    label: 'Abstracts — registration is mandatory to present',
-    async subject() {
-      const who = conferenceInfo.acronym ? ` at ${conferenceInfo.acronym}` : '';
-      return `Registration Is Mandatory to Present Your Abstract${who}`;
-    },
-    body: buildAbstractRegistrationMandatoryBody,
-  },
-  'mgims-register': {
-    label: 'MGIMS faculty — register now (Early Bird, personalised bottle)',
+  'code-holder': {
+    label: 'Your personal code is waiting',
+    audiences: ['codes'],
     async subject() {
       const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
-      return `MGIMS Faculty: Register${who} by ${formatFullDate(MGIMS_BOTTLE_DEADLINE)} — Early Bird Price and a Personalised Bottle`;
+      return `Your personal registration code${who} is waiting to be used`;
     },
-    body: buildMgimsRegisterBody,
+    body: buildCodeHolderBody,
   },
-  'group-discount': {
-    label: 'Group discount — register with colleagues',
+  'balance-due': {
+    label: 'Balance payment pending',
+    audiences: ['balance'],
     async subject() {
-      const who = conferenceInfo.acronym ? ` at ${conferenceInfo.acronym}` : '';
-      return `Registering with colleagues${who}? Your group pays less`;
+      return 'Balance payment pending for your registration';
     },
-    body: buildGroupDiscountBody,
+    body: buildBalanceDueBody,
   },
 };
 
-// Which card's fields a picker fills. The templates themselves are shared:
-// the same announcement can go to a pasted list or to a real audience.
-const REMINDER_TEMPLATE_FIELDS = {
-  signups: { picker: 'reminder-template', subject: 'reminder-subject', body: 'reminder-body' },
-  registered: { picker: 'regdelegate-template', subject: 'regdelegate-subject', body: 'regdelegate-body' },
-  abstractUnregistered: { picker: 'absunreg-template', subject: 'absunreg-subject', body: 'absunreg-body' },
+// What the composer starts with for an audience, while nothing has been
+// written yet. Registered delegates hear one-off announcements: no default.
+const REMINDER_DEFAULT_TEMPLATE = {
+  signups: 'registration-reminder', faculty: 'registration-reminder', domain: 'registration-reminder',
+  unverified: 'verify-email', abstract: 'abstract-registration-mandatory', codes: 'code-holder',
+  balance: 'balance-due', paste: 'early-bird-ending',
 };
 
-// Same behaviour as the Custom Recipients picker: anything already typed is
-// confirmed over first, since these are long fields.
-async function applyReminderTemplate(which, key) {
-  const fields = REMINDER_TEMPLATE_FIELDS[which];
-  if (!fields || !key) return;
-  const picker = document.getElementById(fields.picker);
-  const tpl = CUSTOM_REMINDER_TEMPLATES[key];
-  if (picker) picker.value = '';
-  if (!tpl) return;
-  const subjectInput = document.getElementById(fields.subject);
-  const bodyBox = document.getElementById(fields.body);
-  const hasContent = (subjectInput && subjectInput.value.trim()) || (bodyBox && bodyBox.value.trim());
-  if (hasContent && !(await showConfirm(`Replace the subject and body with the "${tpl.label}" template?`))) return;
-  if (subjectInput) subjectInput.value = await tpl.subject();
-  if (bodyBox) bodyBox.value = await tpl.body();
-  showToast(`Loaded the "${tpl.label}" template.`, 'success');
+// --- The composer ------------------------------------------------------------
+// 1 Who (an audience, and its filters) · 2 What (template, subject, body,
+// live preview) · 3 Send to (the people, chosen one by one or all at once).
+// The email is kept as the audience changes; the preview and the checks say
+// at once if it now uses a placeholder the new audience cannot fill.
+const remState = {
+  audiences: [], placeholders: {}, options: { categories: [], statuses: [] },
+  key: null, recipients: [], selected: new Set(), filters: { domain: '', category: '', status: '' },
+  autoFilled: null, problems: { unsupported: [], missing: [] }, previewTimer: null, previewSeq: 0,
+};
+const REMINDER_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const reminderOnCooldown = (r) => !!r.last_reminder_sent_at && (Date.now() - Number(r.last_reminder_sent_at)) < REMINDER_COOLDOWN_MS;
+const reminderSelectable = (r) => !!r.email && !reminderOnCooldown(r);
+const remAudience = () => remState.audiences.find((a) => a.key === remState.key) || null;
+
+async function renderReminders() {
+  const res = await fetch(`/api/admin/reminders/audiences?domain=${encodeURIComponent(remState.filters.domain)}`);
+  if (!res.ok) return;
+  const data = await res.json();
+  remState.audiences = data.audiences || [];
+  remState.placeholders = data.placeholders || {};
+  remState.options = data.options || remState.options;
+  const signups = remState.audiences.find((a) => a.key === 'signups');
+  setText('badge-pending-signups', String(signups ? signups.count : 0));
+  fillReminderFilterOptions();
+  renderReminderAudiences();
+  switchReminderView(storageGet('local', 'nqocn_rem_view') === 'sent' ? 'sent' : 'compose');
+  await selectReminderAudience(remState.key && remAudience() ? remState.key : 'signups', { refresh: true });
 }
 
-// Fill the subject and body from a template. Anything already typed is
-// confirmed over first -- these are long fields and losing a half-written
-// announcement to a stray click would be worse than an extra prompt.
-async function applyCustomReminderTemplate(key) {
-  const picker = document.getElementById('customreminder-template');
-  if (!key) return;
-  const tpl = CUSTOM_REMINDER_TEMPLATES[key];
-  if (picker) picker.value = '';
-  if (!tpl) return;
-  const subjectInput = document.getElementById('customreminder-subject');
-  const bodyBox = document.getElementById('customreminder-body');
-  const hasContent = (subjectInput && subjectInput.value.trim()) || (bodyBox && bodyBox.value.trim());
-  if (hasContent && !(await showConfirm(`Replace the subject and body with the "${tpl.label}" template?`))) return;
-  if (subjectInput) subjectInput.value = await tpl.subject();
-  if (bodyBox) bodyBox.value = await tpl.body();
-  showToast(`Loaded the "${tpl.label}" template.`, 'success');
+function renderReminderAudiences() {
+  const box = document.getElementById('rem-audiences');
+  if (!box) return;
+  const groups = [...new Set(remState.audiences.map((a) => a.group))];
+  box.innerHTML = groups.map((g) => `
+    <div>
+      <p class="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">${esc(g)}</p>
+      <div class="flex flex-wrap gap-2">
+        ${remState.audiences.filter((a) => a.group === g).map((a) => {
+          const on = a.key === remState.key;
+          return `<button type="button" data-rem-audience="${esc(a.key)}" onclick="selectReminderAudience('${esc(a.key)}')" aria-pressed="${on}"
+            class="px-3 py-1.5 rounded-lg border text-sm font-semibold flex items-center gap-2 ${on ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}">
+            ${esc(a.label)}${a.count != null ? `<span class="text-[11px] px-1.5 py-0.5 rounded-full font-bold ${on ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'}">${a.count}</span>` : ''}
+          </button>`;
+        }).join('')}
+      </div>
+    </div>`).join('');
 }
 
-let customReminderInitialized = false;
-async function initCustomReminderCard() {
-  updateCustomReminderCount();
-  if (customReminderInitialized) return;
-  customReminderInitialized = true;
-
-  // Seeded from the same registry the picker uses, so the card never starts
-  // on wording the picker would never produce.
-  const seed = CUSTOM_REMINDER_TEMPLATES['early-bird-ending'];
-  const subjectInput = document.getElementById('customreminder-subject');
-  const bodyBox = document.getElementById('customreminder-body');
-  if (subjectInput && !subjectInput.value.trim()) subjectInput.value = await seed.subject();
-  if (bodyBox && !bodyBox.value.trim()) bodyBox.value = await seed.body();
+function fillReminderFilterOptions() {
+  const cat = document.getElementById('rem-category');
+  const st = document.getElementById('rem-status');
+  if (cat) cat.innerHTML = '<option value="">Every category</option>' + remState.options.categories.map((c) => `<option value="${esc(c.value)}">${esc(c.label)}</option>`).join('');
+  if (st) st.innerHTML = '<option value="">Every status</option>' + remState.options.statuses.map((s) => `<option value="${esc(s.value)}">${esc(s.label)}</option>`).join('');
+  if (cat) cat.value = remState.filters.category;
+  if (st) st.value = remState.filters.status;
 }
 
-function parseCustomReminderEmails() {
-  const raw = document.getElementById('customreminder-emails').value;
-  return raw.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
-}
+// Choose an audience. The email stays as it is -- unless it is still the
+// last audience's untouched default, which is swapped for this one's.
+async function selectReminderAudience(key, { refresh = false } = {}) {
+  const changed = key !== remState.key;
+  remState.key = key;
+  const a = remAudience();
+  if (!a) return;
+  if (changed) { remState.selected = new Set(); remState.recipients = []; }
+  renderReminderAudiences();
+  setText('rem-audience-desc', a.description);
+  document.getElementById('rem-filter-domain').classList.toggle('hidden', !a.filters.includes('domain'));
+  document.getElementById('rem-filter-registered').classList.toggle('hidden', !a.filters.includes('category'));
+  document.getElementById('rem-recipients-wrap').classList.toggle('hidden', a.key === 'paste');
+  document.getElementById('rem-paste-wrap').classList.toggle('hidden', a.key !== 'paste');
+  const domainBox = document.getElementById('rem-domain');
+  if (domainBox && document.activeElement !== domainBox) domainBox.value = remState.filters.domain;
 
-function updateCustomReminderCount() {
-  setText('customreminder-send-count', String(parseCustomReminderEmails().length));
-  const sendBtn = document.getElementById('customreminder-send-btn');
-  if (sendBtn) sendBtn.disabled = !can('comms.custom_send');
-}
+  const picker = document.getElementById('rem-template');
+  const fits = Object.entries(CUSTOM_REMINDER_TEMPLATES).filter(([, t]) => t.audiences.includes(a.key));
+  picker.innerHTML = `<option value="">${fits.length ? '— Choose a template —' : '— No template for this audience —'}</option>`
+    + fits.map(([k, t]) => `<option value="${esc(k)}">${esc(t.label)}</option>`).join('');
+  picker.disabled = !fits.length;
 
-// Reuses the same test-send endpoint as the other two cards -- it only ever
-// emails the logged-in admin's own address, so it doesn't care which card
-// triggered it.
-async function sendCustomReminderTest() {
-  const subject = document.getElementById('customreminder-subject').value.trim();
-  const bodyHtml = document.getElementById('customreminder-body').value.trim();
-  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
+  document.getElementById('rem-placeholders').innerHTML = a.placeholders.length
+    ? a.placeholders.map((p) => `<button type="button" onclick="insertReminderPlaceholder('${esc(p)}')" title="${esc(remState.placeholders[p] || '')}"
+        class="px-2 py-0.5 rounded-md border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[11px] font-mono text-slate-700">{{${esc(p)}}}</button>`).join('')
+    : '<span class="text-[11px] text-slate-400">Nothing is filled in for this audience.</span>';
 
-  const btn = document.getElementById('customreminder-test-btn');
-  const resultEl = document.getElementById('customreminder-send-result');
-  if (btn) btn.disabled = true;
-  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending test…'; }
-
-  const data = await (await fetch('/api/admin/reminders/test-send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ subject, bodyHtml }),
-  })).json();
-
-  if (!data.success) {
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Test send failed.'; }
-    showToast(data.error || 'Could not send test email.');
-  } else {
-    const msg = `Test sent to ${data.sentTo}.`;
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
-    showToast(msg, 'success');
+  const subject = document.getElementById('rem-subject');
+  const body = document.getElementById('rem-body');
+  const untouched = !subject.value.trim() && !body.value.trim()
+    || (remState.autoFilled && subject.value === remState.autoFilled.subject && body.value === remState.autoFilled.body);
+  if ((changed || refresh) && untouched && REMINDER_DEFAULT_TEMPLATE[a.key]) {
+    await fillReminderTemplate(REMINDER_DEFAULT_TEMPLATE[a.key]);
   }
-  if (btn) btn.disabled = false;
+  if (a.key !== 'paste' && (a.key !== 'domain' || remState.filters.domain)) await loadReminderRecipients();
+  else { remState.recipients = []; renderReminderRecipients(); }
+  scheduleReminderPreview(0);
 }
 
-async function sendCustomReminders() {
-  const subject = document.getElementById('customreminder-subject').value.trim();
-  const bodyHtml = document.getElementById('customreminder-body').value.trim();
-  const emails = parseCustomReminderEmails();
-  if (!subject || !bodyHtml) return showToast('Subject and body are both required.');
-  if (!emails.length) return showToast('Enter at least one email address.');
-
-  if (!(await showConfirm(`Send this reminder to ${emails.length} entered ${emails.length === 1 ? 'address' : 'addresses'}? This can't be undone.`))) return;
-
-  const btn = document.getElementById('customreminder-send-btn');
-  const resultEl = document.getElementById('customreminder-send-result');
-  if (btn) btn.disabled = true;
-  if (resultEl) { resultEl.className = 'text-xs font-semibold block text-slate-500'; resultEl.textContent = 'Sending…'; }
-
-  const data = await (await fetch('/api/admin/reminders/custom-send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ subject, bodyHtml, emails }),
-  })).json();
-
-  if (!data.success) {
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-rose-600'; resultEl.textContent = data.error || 'Send failed.'; }
-    showToast(data.error || 'Could not send reminders.');
-  } else {
-    const skipNotes = [
-      data.skippedInvalid ? `${data.skippedInvalid} not a valid address` : null,
-      // Custom sends throttle per announcement, not per address -- a different
-      // subject to the same person goes through -- so name the message.
-      data.skippedSentRecently ? `${data.skippedSentRecently} already sent this message in the last 24h` : null,
-    ].filter(Boolean).join(', ');
-    const msg = `Sent to ${data.sent} of ${data.total}${skipNotes ? ` (${skipNotes})` : ''}.`;
-    if (resultEl) { resultEl.className = 'text-xs font-semibold block text-emerald-600'; resultEl.textContent = msg; }
-    showToast(msg, 'success');
+function applyReminderFilters() {
+  const a = remAudience();
+  if (!a) return;
+  if (a.filters.includes('domain')) {
+    remState.filters.domain = document.getElementById('rem-domain').value.trim().replace(/^@+/, '').toLowerCase();
+    // The count on the chip is for the domain asked about.
+    renderReminders();
+    return;
   }
-  if (btn) btn.disabled = false;
+  remState.filters.category = document.getElementById('rem-category').value;
+  remState.filters.status = document.getElementById('rem-status').value;
+  remState.selected = new Set();
+  loadReminderRecipients().then(() => scheduleReminderPreview(0));
+}
+
+function reminderFilterQuery() {
+  const a = remAudience();
+  const f = {};
+  if (a && a.filters.includes('domain')) f.domain = remState.filters.domain;
+  if (a && a.filters.includes('category')) { f.category = remState.filters.category; f.status = remState.filters.status; }
+  return f;
+}
+
+async function loadReminderRecipients() {
+  const a = remAudience();
+  const q = new URLSearchParams(reminderFilterQuery()).toString();
+  const res = await fetch(`/api/admin/reminders/audiences/${encodeURIComponent(a.key)}/recipients${q ? `?${q}` : ''}`);
+  const data = res.ok ? await res.json() : { recipients: [] };
+  if (remState.key !== a.key) return;
+  remState.recipients = data.recipients || [];
+  // A selection survives a reload only for people still in the audience.
+  const ids = new Set(remState.recipients.filter(reminderSelectable).map((r) => String(r.id)));
+  remState.selected = new Set([...remState.selected].filter((id) => ids.has(id)));
+  const previewAs = document.getElementById('rem-preview-as');
+  if (previewAs) {
+    const keep = previewAs.value;
+    previewAs.innerHTML = '<option value="">Preview as: first in the list</option>'
+      + remState.recipients.slice(0, 300).map((r) => `<option value="${esc(r.id)}">${esc(r.name || r.email || r.id)}</option>`).join('');
+    previewAs.value = remState.recipients.some((r) => String(r.id) === keep) ? keep : '';
+  }
+  renderReminderRecipients();
+}
+
+function renderReminderRecipients() {
+  const list = document.getElementById('rem-recipients');
+  if (!list) return;
+  const term = (document.getElementById('rem-recipient-search').value || '').trim().toLowerCase();
+  const shown = remState.recipients.filter((r) => !term
+    || [r.name, r.email, r.detail, ...(r.tags || [])].some((v) => String(v || '').toLowerCase().includes(term)));
+  const a = remAudience();
+  list.innerHTML = shown.length ? shown.map((r) => {
+    const ok = reminderSelectable(r);
+    const tags = [
+      ...(r.tags || []).map((t) => `<span class="text-[10px] bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full font-semibold">${esc(t)}</span>`),
+      !r.email ? '<span class="text-[10px] bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-full font-bold">No email</span>' : '',
+      reminderOnCooldown(r) ? '<span class="text-[10px] bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full font-bold">Sent within 24h</span>' : '',
+    ].join('');
+    return `<label class="px-3 py-2 flex items-start gap-2 ${ok ? 'cursor-pointer hover:bg-slate-50' : 'opacity-60'}">
+      <input type="checkbox" class="rem-recipient mt-1 shrink-0" value="${esc(r.id)}" ${ok ? '' : 'disabled'} ${remState.selected.has(String(r.id)) ? 'checked' : ''} onchange="toggleReminderRecipient(this.value, this.checked)">
+      <span class="min-w-0 flex-1">
+        <span class="flex flex-wrap items-center gap-1.5"><span class="font-semibold text-slate-700">${esc(r.name || r.email || r.id)}</span>${tags}</span>
+        <span class="block text-xs text-slate-400 truncate">${esc([r.name ? r.email : '', r.detail].filter(Boolean).join(' · ') || '')}${r.last_reminder_sent_at ? ` · last sent ${esc(fmtAuditTime(r.last_reminder_sent_at))}` : ''}</span>
+      </span>
+    </label>`;
+  }).join('')
+    : `<div class="px-3 py-6 text-center text-slate-400 text-sm">${a && a.key === 'domain' && !remState.filters.domain
+      ? 'Enter an email domain above, then Find.'
+      : remState.recipients.length ? 'Nobody matches the search.' : 'Nobody is in this audience right now.'}</div>`;
+  const selectAll = document.getElementById('rem-select-all');
+  const selectable = shown.filter(reminderSelectable);
+  if (selectAll) {
+    selectAll.disabled = !selectable.length;
+    selectAll.checked = selectable.length > 0 && selectable.every((r) => remState.selected.has(String(r.id)));
+  }
+  updateReminderSendState();
+}
+
+function toggleReminderRecipient(id, on) {
+  if (on) remState.selected.add(String(id)); else remState.selected.delete(String(id));
+  renderReminderRecipients();
+}
+
+// Select (or clear) everyone SHOWN who can be written to -- a search narrows
+// what "all" means, so a filtered list can be sent to on its own.
+function toggleAllReminderRecipients(on) {
+  const term = (document.getElementById('rem-recipient-search').value || '').trim().toLowerCase();
+  remState.recipients
+    .filter((r) => !term || [r.name, r.email, r.detail, ...(r.tags || [])].some((v) => String(v || '').toLowerCase().includes(term)))
+    .filter(reminderSelectable)
+    .forEach((r) => (on ? remState.selected.add(String(r.id)) : remState.selected.delete(String(r.id))));
+  renderReminderRecipients();
+}
+
+function parsePastedAddresses() {
+  return (document.getElementById('rem-paste').value || '').split(/[\n,;]/).map((s) => s.trim()).filter(Boolean);
+}
+
+function reminderTargets() {
+  const a = remAudience();
+  return a && a.key === 'paste' ? parsePastedAddresses() : [...remState.selected];
+}
+
+function updateReminderSendState() {
+  const a = remAudience();
+  if (!a) return;
+  const n = reminderTargets().length;
+  const mayTest = can('comms.reminders_test');
+  const maySend = a.key === 'paste' ? can('comms.custom_send') : can('comms.reminders_send');
+  const blocked = remState.problems.unsupported.length || remState.problems.missing.length;
+  setText('rem-send-count', `${n} ${a.key === 'paste' ? (n === 1 ? 'Address' : 'Addresses') : (n === 1 ? 'Person' : 'People')}`);
+  const sendBtn = document.getElementById('rem-send-btn');
+  sendBtn.disabled = !n || !maySend || !!blocked;
+  sendBtn.title = !maySend ? 'You do not have permission to send this.' : blocked ? 'Fix the placeholders first.' : '';
+  const testBtn = document.getElementById('rem-test-btn');
+  testBtn.disabled = !mayTest || !!blocked;
+  testBtn.title = !mayTest ? 'You do not have permission to send a test.' : '';
+  if (a.key === 'paste') {
+    setText('rem-recipient-summary', n ? `${n} address${n === 1 ? '' : 'es'} entered` : '');
+  } else {
+    const writable = remState.recipients.filter(reminderSelectable).length;
+    setText('rem-recipient-summary', `${remState.recipients.length} in this audience · ${writable} can be written to now · ${remState.selected.size} selected`);
+  }
+}
+
+function onReminderEdited() {
+  scheduleReminderPreview();
+}
+
+function insertReminderPlaceholder(p) {
+  const box = document.getElementById('rem-body');
+  const token = `{{${p}}}`;
+  const at = box.selectionStart != null ? box.selectionStart : box.value.length;
+  const to = box.selectionEnd != null ? box.selectionEnd : at;
+  box.value = box.value.slice(0, at) + token + box.value.slice(to);
+  box.focus();
+  box.selectionStart = box.selectionEnd = at + token.length;
+  scheduleReminderPreview(0);
+}
+
+async function fillReminderTemplate(key) {
+  const tpl = CUSTOM_REMINDER_TEMPLATES[key];
+  if (!tpl) return;
+  const subject = await tpl.subject();
+  const body = await tpl.body();
+  document.getElementById('rem-subject').value = subject;
+  document.getElementById('rem-body').value = body;
+  remState.autoFilled = { subject, body };
+}
+
+// Anything already typed is confirmed over first: these are long fields,
+// and losing a half-written announcement to a stray click would be worse
+// than an extra prompt.
+async function applyReminderTemplate(key) {
+  const picker = document.getElementById('rem-template');
+  if (picker) picker.value = '';
+  const tpl = CUSTOM_REMINDER_TEMPLATES[key];
+  if (!tpl) return;
+  const subject = document.getElementById('rem-subject');
+  const body = document.getElementById('rem-body');
+  const edited = (subject.value.trim() || body.value.trim())
+    && !(remState.autoFilled && subject.value === remState.autoFilled.subject && body.value === remState.autoFilled.body);
+  if (edited && !(await showConfirm(`Replace the subject and body with the "${tpl.label}" template?`))) return;
+  await fillReminderTemplate(key);
+  showToast(`Loaded the "${tpl.label}" template.`, 'success');
+  scheduleReminderPreview(0);
+}
+
+// The preview is drawn by the server -- the same filling-in and the same
+// email chrome a recipient gets -- a moment after typing stops.
+function scheduleReminderPreview(delay = 450) {
+  clearTimeout(remState.previewTimer);
+  remState.previewTimer = setTimeout(renderReminderPreview, delay);
+}
+
+async function renderReminderPreview() {
+  const a = remAudience();
+  if (!a) return;
+  const seq = ++remState.previewSeq;
+  const res = await fetch(`/api/admin/reminders/audiences/${encodeURIComponent(a.key)}/preview`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      subject: document.getElementById('rem-subject').value,
+      bodyHtml: document.getElementById('rem-body').value,
+      filters: reminderFilterQuery(),
+      recipientId: document.getElementById('rem-preview-as').value || null,
+    }),
+  });
+  if (!res.ok || seq !== remState.previewSeq) return;
+  const data = await res.json();
+  document.getElementById('rem-preview').srcdoc = data.html || '';
+  setText('rem-preview-subject', data.subject || '(no subject)');
+  setText('rem-preview-to', a.key === 'paste' ? 'To: each pasted address, exactly as written'
+    : data.recipient ? `As ${data.recipient.name || data.recipient.email}${data.recipient.email && data.recipient.name ? ` <${data.recipient.email}>` : ''} will see it`
+      : 'Filled in with an example -- nobody is in this audience yet');
+  remState.problems = data.problems || { unsupported: [], missing: [] };
+  const box = document.getElementById('rem-problems');
+  const lines = [
+    ...remState.problems.missing.map((p) => `Keep {{${p}}} in the email — it is where each person's own ${p === 'codes' ? 'code goes' : 'details go'}.`),
+    ...remState.problems.unsupported.map((p) => `{{${p}}} cannot be filled in for "${a.label}" — it would arrive as typed. Remove it, or choose another audience.`),
+  ];
+  box.classList.toggle('hidden', !lines.length);
+  box.innerHTML = lines.map(esc).join('<br>');
+  updateReminderSendState();
+}
+
+function reminderPayload() {
+  return {
+    subject: document.getElementById('rem-subject').value.trim(),
+    bodyHtml: document.getElementById('rem-body').value.trim(),
+    filters: reminderFilterQuery(),
+  };
+}
+
+function setReminderResult(cls, text) {
+  const el = document.getElementById('rem-send-result');
+  if (el) { el.className = `text-xs font-semibold ${cls}`; el.textContent = text; }
+}
+
+// To the admin's own address, marked [TEST], filled in from the person the
+// preview shows.
+async function sendReminderTest() {
+  const a = remAudience();
+  const body = { ...reminderPayload(), recipientId: document.getElementById('rem-preview-as').value || null };
+  if (!body.subject || !body.bodyHtml) return showToast('Subject and body are both required.');
+  const btn = document.getElementById('rem-test-btn');
+  btn.disabled = true;
+  setReminderResult('text-slate-500', 'Sending test…');
+  const data = await (await fetch(`/api/admin/reminders/audiences/${encodeURIComponent(a.key)}/test`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })).json();
+  if (!data.success) {
+    setReminderResult('text-rose-600', data.error || 'Test send failed.');
+    showToast(data.error || 'Could not send the test.');
+  } else {
+    setReminderResult('text-emerald-600', `Test sent to ${data.sentTo}.`);
+    showToast(`Test sent to ${data.sentTo}.`, 'success');
+  }
+  updateReminderSendState();
+}
+
+async function sendReminders() {
+  const a = remAudience();
+  const ids = reminderTargets();
+  const body = { ...reminderPayload(), ids };
+  if (!body.subject || !body.bodyHtml) return showToast('Subject and body are both required.');
+  if (!ids.length) return showToast(a.key === 'paste' ? 'Enter at least one email address.' : 'Select at least one person.');
+  const who = a.key === 'paste' ? `${ids.length} entered ${ids.length === 1 ? 'address' : 'addresses'}` : `${ids.length} ${ids.length === 1 ? 'person' : 'people'} in "${a.label}"`;
+  if (!(await showConfirm(`Send this reminder to ${who}? This can't be undone.`))) return;
+
+  const btn = document.getElementById('rem-send-btn');
+  btn.disabled = true;
+  setReminderResult('text-slate-500', 'Sending…');
+  const url = a.key === 'paste' ? '/api/admin/reminders/paste/send' : `/api/admin/reminders/audiences/${encodeURIComponent(a.key)}/send`;
+  const data = await (await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+  if (!data.success) {
+    setReminderResult('text-rose-600', data.error || 'Send failed.');
+    showToast(data.error || 'Could not send.');
+    updateReminderSendState();
+    return;
+  }
+  const notes = [
+    data.skippedNoEmail ? `${data.skippedNoEmail} no email on file` : null,
+    data.skippedSentRecently ? `${data.skippedSentRecently} already sent ${a.key === 'paste' ? 'this message' : 'one'} in the last 24h` : null,
+    data.skippedInvalid ? `${data.skippedInvalid} not a valid address` : null,
+    data.noLongerDue ? `${data.noLongerDue} no longer in this audience` : null,
+  ].filter(Boolean).join(', ');
+  const msg = `Sent to ${data.sent} of ${data.total}${notes ? ` (${notes})` : ''}.`;
+  setReminderResult('text-emerald-600', msg);
+  showToast(msg, 'success');
+  remState.selected = new Set();
+  if (a.key === 'paste') document.getElementById('rem-paste').value = '';
+  // Counts, "last sent" and the cooldown marks reflect what just happened.
+  await renderReminders();
+}
+
+// --- Sent ----------------------------------------------------------------------
+function switchReminderView(view) {
+  if (!['compose', 'sent'].includes(view)) view = 'compose';
+  storageSet('local', 'nqocn_rem_view', view);
+  document.querySelectorAll('.rem-subtab').forEach((b) => {
+    const on = b.dataset.remView === view;
+    b.classList.toggle('bg-indigo-600', on);
+    b.classList.toggle('text-white', on);
+    b.classList.toggle('text-slate-600', !on);
+    b.classList.toggle('hover:bg-slate-100', !on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  document.getElementById('rem-view-compose').classList.toggle('hidden', view !== 'compose');
+  document.getElementById('rem-view-sent').classList.toggle('hidden', view !== 'sent');
+  if (view === 'sent') renderReminderHistory();
+}
+
+function reminderFilterLabel(f) {
+  if (!f) return '';
+  const cat = f.category && (remState.options.categories.find((c) => c.value === f.category) || {}).label;
+  const st = f.status && (remState.options.statuses.find((s) => s.value === f.status) || {}).label;
+  return [f.domain ? `@${f.domain}` : '', cat || f.category || '', st || f.status || ''].filter(Boolean).join(' · ');
+}
+
+async function renderReminderHistory() {
+  const box = document.getElementById('rem-history');
+  if (!box) return;
+  const res = await fetch('/api/admin/reminders/history');
+  if (!res.ok) return;
+  const sends = (await res.json()).sends || [];
+  box.innerHTML = sends.length ? sends.map((s) => {
+    const skipped = s.skipped ? Object.values(s.skipped).reduce((t, n) => t + Number(n || 0), 0) : 0;
+    const filter = reminderFilterLabel(s.filters);
+    return `<button type="button" onclick="openReminderSend('${esc(s.id)}')" class="w-full text-left px-4 py-3 hover:bg-slate-50 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4">
+      <span class="min-w-0 flex-1">
+        <span class="block font-semibold text-slate-800 truncate">${esc(s.subject || '(no subject)')}</span>
+        <span class="block text-xs text-slate-500">${esc(s.audienceLabel)}${filter ? ` · ${esc(filter)}` : ''} · by ${esc(s.sentBy || '—')}${s.legacy ? ' · from the activity log' : ''}</span>
+      </span>
+      <span class="text-xs text-slate-500 shrink-0 tabular-nums">${esc(fmtAuditTime(s.createdAt))}</span>
+      <span class="text-xs font-bold shrink-0 tabular-nums ${s.sent ? 'text-emerald-700' : 'text-slate-500'}">${s.sent} sent${skipped ? `<span class="font-semibold text-amber-700"> · ${skipped} skipped</span>` : ''}</span>
+    </button>`;
+  }).join('') : '<p class="px-4 py-8 text-center text-sm text-slate-400">Nothing has been sent yet.</p>';
+}
+
+const REMINDER_OUTCOMES = {
+  sent: ['Sent', 'bg-emerald-50 text-emerald-700 border-emerald-200'],
+  cooldown: ['Skipped: sent within 24h', 'bg-amber-50 text-amber-700 border-amber-200'],
+  no_email: ['Skipped: no email', 'bg-rose-50 text-rose-700 border-rose-200'],
+  invalid: ['Skipped: not a valid address', 'bg-rose-50 text-rose-700 border-rose-200'],
+  no_longer_due: ['Skipped: no longer in the audience', 'bg-slate-100 text-slate-600 border-slate-200'],
+};
+
+async function openReminderSend(id) {
+  const res = await fetch(`/api/admin/reminders/history/${encodeURIComponent(id)}`);
+  const data = res.ok ? await res.json() : null;
+  if (!data || !data.success) return showToast('Could not open that send.');
+  const s = data.send;
+  setText('rem-send-title', s.subject || '(no subject)');
+  const filter = reminderFilterLabel(s.filters);
+  setText('rem-send-meta', `${s.audienceLabel}${filter ? ` · ${filter}` : ''} · ${fmtAuditTime(s.createdAt)} · by ${s.sentBy || '—'} · ${s.sent} sent`);
+  document.getElementById('rem-send-recipients').innerHTML = (s.recipients || []).map((r) => {
+    const [label, cls] = REMINDER_OUTCOMES[r.outcome] || [r.outcome, 'bg-slate-100 text-slate-600 border-slate-200'];
+    return `<div class="px-3 py-2 flex items-center gap-2">
+      <span class="min-w-0 flex-1"><span class="block font-semibold text-slate-700 truncate">${esc(r.name || r.email || r.recipient_id)}</span>
+      <span class="block text-xs text-slate-400 truncate">${esc(r.name ? (r.email || '') : (r.email && r.email !== r.recipient_id ? r.email : ''))}</span></span>
+      <span class="text-[10px] px-2 py-0.5 rounded-full border font-bold shrink-0 ${cls}">${esc(label)}</span>
+    </div>`;
+  }).join('') || '<p class="px-3 py-6 text-center text-sm text-slate-400">No recipients recorded.</p>';
+  document.getElementById('rem-send-preview').srcdoc = s.html
+    || '<p style="font-family:sans-serif;color:#64748b;padding:1rem">Sent before the Sent history existed: only the subject and the recipients were recorded.</p>';
+  openModal('modal-rem-send');
 }
 
 // Downloads a report file: CSV ("Excel") or a PDF the server draws (PDF is
@@ -11620,7 +11357,7 @@ function switchBackendTab(tab) {
   if (tab === 'activity') renderBackendActivity();
   if (tab === 'users') loadBackendUsers();
   if (tab === 'roles') loadBackendRoles();
-  if (tab === 'reminders') { renderBackendReminders(); renderBackendBalanceDueReminders(); initCustomReminderCard(); }
+  if (tab === 'reminders') renderReminders();
   [...MAIN_TABS, ...SETTINGS_TABS].forEach(t => {
     const section = document.getElementById(`section-${t}`);
     if (section) section.classList.toggle('hidden', t !== tab);

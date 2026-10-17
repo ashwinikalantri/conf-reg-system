@@ -73,8 +73,8 @@ const base = { salutation: 'Dr', age: '40', gender: 'Male', designation: 'Profes
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
     check('"Email domain" is a scope to choose', view.includes('<option value="DOMAIN">Email domain</option>') && view.includes('id="new-disc-scope-domain"'));
     check('the list says whose it is', js.includes("c.scope_type === 'DOMAIN' ? `Email domain: @${esc(c.scope_value)}"));
-    const reminders = fs.readFileSync(appFile('views', 'admin', 'sections', 'reminders.ejs'), 'utf8');
-    check('the MGIMS reminder is offered on the Custom Recipients card', reminders.includes('<option value="mgims-register">'));
+    check('the MGIMS reminder is offered for pasted addresses and for the email-domain audience',
+      /'mgims-register': \{\n\s*label: [^\n]+\n\s*audiences: \[\.\.\.NOT_REGISTERED, 'paste'\],/.test(js) && /const NOT_REGISTERED = \[[^\]]*'domain'/.test(js));
     const tpl = js.slice(js.indexOf('async function buildMgimsRegisterBody'), js.indexOf('\n}', js.indexOf('async function buildMgimsRegisterBody')));
     check('...addressed to a colleague, with no placeholder the custom send would leave in', /Dear Colleague/.test(tpl) && !/\{\{/.test(tpl));
     check('...with the bottle deadline, the @mgims.ac.in email and verifying it', /MGIMS_BOTTLE_DEADLINE/.test(tpl) && /@mgims\.ac\.in/.test(tpl) && /Verify your email/.test(tpl)

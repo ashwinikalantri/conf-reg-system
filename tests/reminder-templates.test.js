@@ -28,6 +28,10 @@ function build(earlyUntil, conf) {
     ${grab('earlyBirdDeadline')} ${grab('buildEarlyBirdReminderBody')} ${grab('buildEarlyBirdExtensionBody')}
     ${grab('buildAbstractExtensionBody')} ${grab('buildGroupDiscountBody')} ${grab('buildAbstractRegistrationMandatoryBody')}
     ${js.match(/const MGIMS_BOTTLE_DEADLINE = '[^']*';/)[0]} ${grab('buildMgimsRegisterBody')}
+    ${js.match(/const steelButton = [\s\S]*?<\/p>`;/)[0]}
+    ${js.match(/const reminderSignOff = [^\n]+/)[0]}
+    ${grab('buildRegistrationReminderBody')} ${grab('buildBalanceDueBody')} ${grab('buildCodeHolderBody')} ${grab('buildVerifyEmailBody')}
+    ${js.match(/const NOT_REGISTERED = [^\n]+/)[0]}
     ${js.slice(js.indexOf('const CUSTOM_REMINDER_TEMPLATES = {'), js.indexOf('\n};', js.indexOf('const CUSTOM_REMINDER_TEMPLATES = {'))+3)}
     CUSTOM_REMINDER_TEMPLATES;`;
   return vm.runInContext(src, sandbox);
@@ -160,30 +164,29 @@ const CONF={ name:'International Conference on Healthcare Quality & Patient Safe
    !/<table/.test(gNone) && !/undefined|null/.test(gNone));
 
  console.log('\n== Wired into the page ==');
- const html=(await call('GET','/admin',null,await (async()=>{
-   let r = { cookie: await adminLogin() };
-   return r.cookie; })())).raw;
- check('the picker is on the Custom Recipients card', html.includes('id="customreminder-template"'));
- check('it offers both templates',
-   html.includes('value="early-bird-ending"') && html.includes('value="early-bird-extended"'));
- check('it sits above the subject field',
-   html.indexOf('customreminder-template') < html.indexOf('customreminder-subject'));
- check('choosing one fills the fields', html.includes('applyCustomReminderTemplate(this.value)'));
-
- console.log('\n== ...and onto the two real audiences ==');
- check('the signed-up-but-not-registered card has a picker', html.includes('id="reminder-template"'));
- check('...offering the group discount', html.includes('value="group-discount"'));
- check('...filling that card\'s own fields', html.includes("applyReminderTemplate('signups', this.value)"));
- check('there is a card for delegates who HAVE registered', html.includes('All Registered Delegates')
-   && html.includes('id="regdelegates-list"'));
- check('...with its own picker offering the abstract extension',
-   html.includes('id="regdelegate-template"') && html.includes('value="abstract-deadline-extended"'));
- check('...filling that card\'s fields', html.includes("applyReminderTemplate('registered', this.value)"));
- check('...and its send button names the audience', html.includes('sendRegisteredDelegateEmails()'));
+ const html=(await call('GET','/admin',null,await adminLogin())).raw;
+ check('the composer has one template picker, above the subject', html.includes('id="rem-template"')
+   && html.indexOf('id="rem-template"') < html.indexOf('id="rem-subject"'));
+ check('choosing one fills the fields', html.includes('applyReminderTemplate(this.value)'));
  check('typed content is confirmed over, not silently replaced',
-   /applyCustomReminderTemplate[\s\S]{0,900}hasContent[\s\S]{0,200}showConfirm/.test(js));
- check('the card seeds from the same registry',
-   /const seed = CUSTOM_REMINDER_TEMPLATES\['early-bird-ending'\]/.test(js));
+   /async function applyReminderTemplate[\s\S]{0,900}edited[\s\S]{0,200}showConfirm/.test(js));
+
+ console.log('\n== Each template only where it fits ==');
+ const R=require('../reminders');
+ const TT=build('2026-09-05', CONF);
+ for (const [key, tpl] of Object.entries(TT)) {
+   const text=`${await tpl.subject()}\n${await tpl.body()}`;
+   const used=R.placeholdersIn(text);
+   const bad=tpl.audiences.filter((k)=>!R.AUDIENCE_BY_KEY[k] || used.some((p)=>!R.AUDIENCE_BY_KEY[k].placeholders.includes(p)));
+   check(`"${tpl.label}" is offered only to audiences that can fill all of ${used.map((p)=>`{{${p}}}`).join(', ') || 'its text'}`, tpl.audiences.length>0 && bad.length===0, bad);
+   const missing=tpl.audiences.filter((k)=>R.AUDIENCE_BY_KEY[k].required.some((p)=>!used.includes(p)));
+   check(`...and carries what each of them requires`, missing.length===0, missing);
+ }
+ const defaults=js.slice(js.indexOf('const REMINDER_DEFAULT_TEMPLATE = {'), js.indexOf('};', js.indexOf('const REMINDER_DEFAULT_TEMPLATE = {')));
+ const pairs=[...defaults.matchAll(/(\w+): '([\w-]+)'/g)].map((m)=>[m[1], m[2]]);
+ check('every audience but the registered starts from a template', pairs.length===R.AUDIENCES.length-1 && !pairs.some(([k])=>k==='registered'), pairs);
+ check('...one that is offered to it', pairs.every(([k, t])=>TT[t] && TT[t].audiences.includes(k)), pairs.filter(([k, t])=>!(TT[t] && TT[t].audiences.includes(k))));
+ check('the MGIMS email can go to pasted addresses and to the domain audience', TT['mgims-register'].audiences.includes('paste') && TT['mgims-register'].audiences.includes('domain'));
 
  report();
 })();

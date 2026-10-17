@@ -18,9 +18,9 @@ const vm = require('vm');
 
 const N = String(Date.now() % 100000000).padStart(8, '0');
 const phones = { unreg: `95${N}`, reg: `96${N}`, rejectedReg: `97${N}`, rejectedAbs: `98${N}` };
-const LIST = '/api/admin/reminders/abstract-unregistered';
-const SEND = `${LIST}/send`;
-const TEST = `${LIST}/test-send`;
+const LIST = '/api/admin/reminders/audiences/abstract/recipients';
+const SEND = '/api/admin/reminders/audiences/abstract/send';
+const TEST = '/api/admin/reminders/audiences/abstract/test';
 
 (async () => {
   const admin = await adminLogin();
@@ -107,52 +107,55 @@ const TEST = `${LIST}/test-send`;
     console.log('\n== The reminder audience: submitted, not registered ==');
     const res = await call('GET', LIST, null, admin);
     check('the list responds', res.status === 200, res.status);
-    const users = res.body.users || [];
-    const inList = (p) => users.some((u) => u.phone_number === p);
+    const users = res.body.recipients || [];
+    const inList = (p) => users.some((u) => u.id === p);
     check('the unregistered author is on it', inList(phones.unreg));
     check('...and so is one whose registration was rejected', inList(phones.rejectedReg));
     check('a registered author is not', !inList(phones.reg));
     check('nor an author whose abstract was not accepted', !inList(phones.rejectedAbs));
     check('nobody on it has registered', (await Promise.all(users.map((u) => db.get(
-      "SELECT COUNT(*) AS n FROM registrations WHERE phone_number = ? AND COALESCE(bank_status, '') != 'REJECTED'", [u.phone_number]))))
+      "SELECT COUNT(*) AS n FROM registrations WHERE phone_number = ? AND COALESCE(bank_status, '') != 'REJECTED'", [u.id]))))
       .every((r) => r.n === 0));
-    check('one row per person', new Set(users.map((u) => u.phone_number)).size === users.length);
-    const me = users.find((u) => u.phone_number === phones.unreg);
-    check('each row carries the abstract title, for {{title}}', me && me.title === `Provisional fixture unreg ${N}`, me && me.title);
+    check('one row per person', new Set(users.map((u) => u.id)).size === users.length);
+    const me = users.find((u) => u.id === phones.unreg);
+    check('each row shows the abstract title', me && me.detail === `Provisional fixture unreg ${N}`, me && me.detail);
     check('...a name and an address', me && me.name && /@/.test(me.email || ''), me);
-    check('...where it stands, for the card', me && me.status === 'ACCEPTED' && me.allocation === 'POSTER', me);
+    check('...and where it stands', me && me.tags.includes('Approved, provisional'), me);
+    const preview = (await call('POST', '/api/admin/reminders/audiences/abstract/preview',
+      { subject: 'S', bodyHtml: '<p>{{name}}: {{title}}</p>', recipientId: phones.unreg }, admin)).body;
+    check('{{title}} is filled with their own abstract\'s title', preview.html.includes(`: Provisional fixture unreg ${N}</p>`), preview.html.slice(0, 80));
     check('...and when they were last written to', users.every((u) => 'last_reminder_sent_at' in u));
 
     console.log('\n== Only the roles that could already email delegates ==');
     const desk = await loginPassword('9000000006', ADMIN_PW);       // FRONT_DESK
     check('the front desk cannot read the audience', (await call('GET', LIST, null, desk)).status === 403);
-    check('...nor send to it', (await call('POST', SEND, { subject: 's', bodyHtml: 'b', phones: [phones.unreg] }, desk)).status === 403);
+    check('...nor send to it', (await call('POST', SEND, { subject: 's', bodyHtml: 'b', ids: [phones.unreg] }, desk)).status === 403);
     check('...nor send a test', (await call('POST', TEST, { subject: 's', bodyHtml: 'b' }, desk)).status === 403);
     const reviewer = await loginPassword('9000000003', ADMIN_PW);   // ACADEMIC_REVIEWER
     check('nor an academic reviewer', (await call('GET', LIST, null, reviewer)).status === 403);
     check('nor an anonymous caller', (await call('GET', LIST)).status === 401);
 
     console.log('\n== A send is refused unless it is complete ==');
-    const noSubject = await call('POST', SEND, { bodyHtml: 'b', phones: [phones.unreg] }, admin);
+    const noSubject = await call('POST', SEND, { bodyHtml: 'b', ids: [phones.unreg] }, admin);
     check('no subject, no send', noSubject.status === 400 && /Subject/.test(noSubject.body.error), noSubject.body.error);
-    const noBody = await call('POST', SEND, { subject: 's', phones: [phones.unreg] }, admin);
+    const noBody = await call('POST', SEND, { subject: 's', ids: [phones.unreg] }, admin);
     check('no body, no send', noBody.status === 400 && /body/i.test(noBody.body.error), noBody.body.error);
-    const noEmail = await call('POST', SEND, { subject: 's', bodyHtml: 'b', phones: [phones.unreg] }, admin);
+    const noEmail = await call('POST', SEND, { subject: 's', bodyHtml: 'b', ids: [phones.unreg] }, admin);
     check('with email switched off it says so, rather than claiming to have sent',
       noEmail.status === 400 && /Email is not configured/.test(noEmail.body.error), [noEmail.status, noEmail.body.error]);
     const test = await call('POST', TEST, { subject: 's', bodyHtml: 'b' }, admin);
     check('the test send too', test.status === 400 && /Email is not configured/.test(test.body.error), test.body.error);
-    const sendRoute = routeOf(`app.post('${SEND}'`);
-    const order = ['Subject is required.', 'Email body is required.', 'Email is not configured on this server.', 'Select at least one delegate to send to.']
+    const sendRoute = routeOf('function reminderGuard(') + routeOf('async function sendReminder(');
+    const order = ['Subject is required.', 'Email body is required.', 'Email is not configured on this server.', 'Select at least one person to send to.']
       .map((m) => sendRoute.indexOf(m));
-    check('the same guards as the other bulk sends, in the same order', order.every((v, i) => v > 0 && (i === 0 || v > order[i - 1])), order);
+    check('the same guards as every other send, in the same order', order.every((v, i) => v > 0 && (i === 0 || v > order[i - 1])), order);
     check('its own 24-hour cooldown and one audit row per recipient',
-      /action = 'ABSTRACT_UNREGISTERED_REMINDER_SENT'/.test(src)
-      && /entityType: 'reminder_email', entityId: u\.phone_number,\s*\n\s*action: 'ABSTRACT_UNREGISTERED_REMINDER_SENT'/.test(sendRoute)
-      && /last_reminder_sent_at >= since/.test(sendRoute));
-    check('the list is worked out afresh at send time', /await abstractAuthorsNotRegistered\(\)\)\.filter/.test(sendRoute));
+      require('../reminders').AUDIENCE_BY_KEY.abstract.action === 'ABSTRACT_UNREGISTERED_REMINDER_SENT'
+      && /entityType: 'reminder_email', entityId: m\.id, action: a\.action/.test(sendRoute)
+      && /m\.last_reminder_sent_at >= since/.test(sendRoute));
+    check('the list is worked out afresh at send time', /await audienceRecipients\(a\.key, filters\)\)\.filter/.test(sendRoute));
     check('{{name}} and {{title}} are both filled in, escaped',
-      /split\('\{\{name\}\}'\)\.join\(escapeHtml\(/.test(src) && /split\('\{\{title\}\}'\)\.join\(escapeHtml\(/.test(src));
+      /values: \{ name: escapeHtml\(name \|\| 'Delegate'\), title: escapeHtml\(r\.title/.test(src));
     const sentAnyway = await db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'ABSTRACT_UNREGISTERED_REMINDER_SENT'");
     check('nothing was recorded as sent', sentAnyway.n === 0, sentAnyway.n);
 
@@ -161,7 +164,7 @@ const TEST = `${LIST}/test-send`;
     rows = await abstractsById();
     check('the desk now sees the author as registered', Number(rows.unreg.author_registered) === 1);
     check('...and they are off the reminder list',
-      !((await call('GET', LIST, null, admin)).body.users || []).some((u) => u.phone_number === phones.unreg));
+      !((await call('GET', LIST, null, admin)).body.recipients || []).some((u) => u.id === phones.unreg));
     check('...and the portal no longer says otherwise', (await call('GET', '/api/abstracts/me', null, unregCookie)).body.registered === true);
 
     console.log('\n== The review desk shows it ==');
@@ -195,11 +198,9 @@ const TEST = `${LIST}/test-send`;
     check('...and that approval stays provisional until they register', /provisional &mdash; pending registration/.test(body));
     check('...with a way to register', /href="https:\/\/portal\.example"[^>]*>Register Now</.test(body));
     check('in the house palette, not the old indigo', !/#4f46e5|#4338ca|#c7d2fe|#eef2ff/i.test(body));
-    check('the template is registered and offered on its card',
-      /'abstract-registration-mandatory': \{/.test(js)
-      && /abstractUnregistered: \{ picker: 'absunreg-template', subject: 'absunreg-subject', body: 'absunreg-body' \}/.test(js)
-      && fs.readFileSync(appFile('views', 'admin', 'sections', 'reminders.ejs'), 'utf8').includes('<option value="abstract-registration-mandatory">'));
-    check('the card loads with the Reminders tab', /renderRegisteredDelegateEmails\(\);\n\s*renderAbstractUnregisteredEmails\(\);/.test(js));
+    check('the template is offered for this audience, and is what it starts with',
+      /'abstract-registration-mandatory': \{\n\s*label: [^\n]+\n\s*audiences: \['abstract'\],/.test(js)
+      && /abstract: 'abstract-registration-mandatory'/.test(js));
   } finally {
     // Leave the shared fixture as it was found.
     for (const p of Object.values(phones)) {

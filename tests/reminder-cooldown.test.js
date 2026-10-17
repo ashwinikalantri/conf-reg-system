@@ -8,24 +8,27 @@ const all=(s,p=[])=>new Promise((r,j)=>db.all(s,p,(e,x)=>e?j(e):r(x)));
 // The exact query the endpoint runs, lifted from server.js so the test cannot
 // drift from the implementation.
 const src=fs.readFileSync(appFile('server.js'),'utf8');
-// Specifically the CUSTOM_REMINDER_SENT lookup -- there is a similarly shaped
-// one for the pending-signup card, whose cooldown is per person and
-// deliberately unchanged. Sliced to the end of the template literal so the
-// whole WHERE clause comes along, not just its first placeholder.
-const _i=src.indexOf("WHERE entity_type = 'reminder_email' AND action = 'CUSTOM_REMINDER_SENT'");
-const SQL=src.slice(src.lastIndexOf('SELECT DISTINCT entity_id FROM audit_log', _i), src.indexOf('`', _i));
+// Specifically the pasted-addresses lookup in sendReminder() -- every other
+// audience's cooldown is per person and deliberately unchanged. Sliced to the
+// end of the template literal so the whole WHERE clause comes along. The
+// action is a parameter there (each audience has its own); here it is the
+// pasted addresses' own, CUSTOM_REMINDER_SENT.
+const _i=src.indexOf('SELECT DISTINCT LOWER(entity_id) AS e FROM audit_log');
+const SQL=src.slice(_i, src.indexOf('`', _i));
 
 const ENDS='Early Bird Registration for FIXCON 2099 Ends Today';
 const EXT ='Early Bird Registration for FIXCON 2099 Extended to 5 September 2026';
 const A='cooldown-a@example.com', B='cooldown-b@example.com';
 const since=()=>Date.now()-24*60*60*1000;
-const blockedFor=async(subject)=>(await all(SQL,[since(), subject.trim().toLowerCase()])).map(r=>r.entity_id);
+const blockedFor=async(subject)=>(await all(SQL,['CUSTOM_REMINDER_SENT', since(), subject.trim().toLowerCase()])).map(r=>r.e);
 const record=(addr,subject,when)=>run(
   `insert into audit_log (entity_type,entity_id,action,old_value,new_value,actor_phone,actor_name,actor_role,created_at)
    values ('reminder_email',?,'CUSTOM_REMINDER_SENT',null,?,'t35','t35','SUPER_ADMIN',?)`,[addr,subject,when]);
 
 (async()=>{
  check('the endpoint scopes the lookup by subject', /LOWER\(TRIM\(COALESCE\(new_value/.test(SQL), SQL);
+ check('...under the pasted addresses\' own action', require('../reminders').AUDIENCE_BY_KEY.paste.action === 'CUSTOM_REMINDER_SENT'
+   && require('../reminders').AUDIENCE_BY_KEY.paste.cooldown === 'message');
 
  await run(`delete from audit_log where actor_phone='t35'`);
  await record(A, ENDS, Date.now()-2*3600*1000);   // A got "ends today" 2h ago

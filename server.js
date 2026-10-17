@@ -30,6 +30,7 @@ const { renderReportPdf } = require('./report-pdf');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const guestLib = require('./guests');
+const reminderLib = require('./reminders');
 const https = require('https');
 const QRCode = require('qrcode');
 // Shared with scripts/daily-digest.js -- see the note there about why the
@@ -1800,6 +1801,36 @@ db.serialize(() => {
       fetched_at INTEGER NOT NULL,
       http_status INTEGER NOT NULL,
       body TEXT
+    )
+  `);
+
+  // The Sent history on the Reminders tab: one row per send from the
+  // composer, and one per person chosen in it with what happened for them
+  // (sent, cooldown, no_email, invalid, no_longer_due). The activity log
+  // still gets one REMINDER row per email sent, as before.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS reminder_sends (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      audience TEXT NOT NULL,
+      filters TEXT,
+      subject TEXT NOT NULL,
+      body_html TEXT NOT NULL,
+      requested INTEGER NOT NULL,
+      sent INTEGER NOT NULL,
+      skipped TEXT,
+      sent_by_phone TEXT,
+      sent_by_name TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS reminder_send_recipients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      send_id INTEGER NOT NULL,
+      recipient_id TEXT NOT NULL,
+      name TEXT,
+      email TEXT,
+      outcome TEXT NOT NULL
     )
   `);
 
@@ -8055,370 +8086,20 @@ app.put('/api/users/:phone/roles', requirePermission('users.assign_role'), async
   }
 });
 
-// --- REGISTRATION REMINDERS ----------------------------------------------
-// "Signed up" (has a users row, created their account / OTP-verified) but
-// never "registered" (no row in registrations at all -- they never
-// submitted payment details, as distinct from a submitted-but-unverified
-// PENDING registration).
-const PENDING_SIGNUP_QUERY =
-  `SELECT u.phone_number, u.salutation, u.full_name, u.email,
-     (SELECT MAX(created_at) FROM audit_log a
-        WHERE a.entity_type = 'reminder_email' AND a.action = 'REGISTRATION_REMINDER_SENT' AND a.entity_id = u.phone_number
-     ) AS last_reminder_sent_at
-     FROM users u
-     WHERE NOT EXISTS (SELECT 1 FROM registrations r WHERE r.phone_number = u.phone_number)
-     ORDER BY u.full_name`;
+// --- REMINDERS --------------------------------------------------------------
+// One composer sends to any audience in reminders.js (AUDIENCES). Who is in
+// an audience today is worked out here, afresh each time it is listed,
+// previewed or sent, so anyone who registers (or uses their code, or pays)
+// in between is not written to. Every recipient comes back in one shape:
+//
+//   { id, name, email, detail, tags, last_reminder_sent_at, values }
+//
+// id is what the admin's selection names (a phone number, or an email
+// address for people known only by one), and also the audit row's entity_id
+// -- so "last reminded" and the 24-hour cooldown read the same rows the old
+// cards wrote. values holds each placeholder the audience fills, as HTML.
 
-app.get('/api/admin/reminders/pending-signups', requirePermission('comms.reminders_view'), async (req, res, next) => {
-  try {
-    const rows = await dbAll(PENDING_SIGNUP_QUERY);
-    res.json({ users: rows || [] });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Sends the reminder to the caller's own email only, so wording/formatting
-// can be checked before the irreversible bulk send below. {{name}} is
-// substituted with the admin's own name, same as a real recipient would see.
-app.post('/api/admin/reminders/test-send', requirePermission('comms.reminders_test'), async (req, res, next) => {
-  try {
-    const { subject, bodyHtml } = req.body;
-    if (!subject || !String(subject).trim()) {
-      return res.status(400).json({ success: false, error: 'Subject is required.' });
-    }
-    if (!bodyHtml || !String(bodyHtml).trim()) {
-      return res.status(400).json({ success: false, error: 'Email body is required.' });
-    }
-    if (!emailEnabled()) {
-      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
-    }
-
-    const me = await dbGet('SELECT salutation, full_name, email FROM users WHERE phone_number = ?', [req.session.phone]);
-    if (!me || !me.email) {
-      return res.status(400).json({ success: false, error: 'No email on file for your own account.' });
-    }
-
-    const name = [me.salutation, me.full_name].filter(Boolean).join(' ') || 'Delegate';
-    const personalizedBody = String(bodyHtml).split('{{name}}').join(escapeHtml(name));
-    await sendEmail(me.email, `[TEST] ${subject}`, emailWrap(subject, personalizedBody));
-
-    res.json({ success: true, sentTo: me.email });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Sends a reminder email to everyone who's signed up but never registered.
-// {{name}} in the body is replaced per-recipient with "Salutation Full Name".
-// Deliberately SUPER_ADMIN only (unlike the read above) since this is a
-// one-way bulk email blast to real delegates -- nothing to undo if wrong.
-app.post('/api/admin/reminders/send', requirePermission('comms.reminders_send'), async (req, res, next) => {
-  try {
-    const { subject, bodyHtml, phones } = req.body;
-    if (!subject || !String(subject).trim()) {
-      return res.status(400).json({ success: false, error: 'Subject is required.' });
-    }
-    if (!bodyHtml || !String(bodyHtml).trim()) {
-      return res.status(400).json({ success: false, error: 'Email body is required.' });
-    }
-    if (!emailEnabled()) {
-      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
-    }
-    // phones: an explicit list of who to send to (the admin's selection in
-    // the UI). Required -- there's no implicit "everyone" fallback, so a
-    // stale/empty selection can't silently turn into a full blast.
-    if (!Array.isArray(phones) || !phones.length) {
-      return res.status(400).json({ success: false, error: 'Select at least one delegate to send to.' });
-    }
-    const phoneSet = new Set(phones.map(String));
-
-    // A reminder already sent to this phone number in the last 24 hours
-    // (any admin, any wording) blocks sending another -- rolling window,
-    // not calendar-day, so 11pm and 1am the next day still count as inside
-    // the same 24h. One audit row per successful send (entity_id =
-    // phone_number) is what makes this queryable.
-    const since = Date.now() - 24 * 60 * 60 * 1000;
-    const sentRecentlyRows = await dbAll(
-      `SELECT DISTINCT entity_id FROM audit_log
-        WHERE entity_type = 'reminder_email' AND action = 'REGISTRATION_REMINDER_SENT' AND created_at >= ?`,
-      [since]
-    );
-    const sentRecentlySet = new Set(sentRecentlyRows.map((r) => r.entity_id));
-
-    const recipients = (await dbAll(PENDING_SIGNUP_QUERY)).filter((u) => phoneSet.has(u.phone_number));
-    let sent = 0;
-    let skippedNoEmail = 0;
-    let skippedSentRecently = 0;
-    for (const u of recipients) {
-      if (sentRecentlySet.has(u.phone_number)) { skippedSentRecently++; continue; }
-      if (!u.email) { skippedNoEmail++; continue; }
-      const name = [u.salutation, u.full_name].filter(Boolean).join(' ') || 'Delegate';
-      const personalizedBody = String(bodyHtml).split('{{name}}').join(escapeHtml(name));
-      await sendEmail(u.email, subject, emailWrap(subject, personalizedBody));
-      await recordAudit({
-        req, entityType: 'reminder_email', entityId: u.phone_number,
-        action: 'REGISTRATION_REMINDER_SENT', oldValue: null, newValue: subject,
-      });
-      sent++;
-    }
-
-    res.json({ success: true, sent, skippedNoEmail, skippedSentRecently, total: recipients.length });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Everyone who HAS registered -- the audience for an announcement that
-// concerns delegates rather than prospects (an abstract deadline moving, a
-// programme change). Deliberately every registration whatever its payment
-// status: a delegate whose payment is still pending has registered and needs
-// to hear it just as much as a confirmed one.
-const REGISTERED_DELEGATE_QUERY =
-  `SELECT registrations.id, registrations.phone_number, registrations.registration_number,
-     delegate_name, ${DELEGATE_SALUTATION_COLUMN}, category_label, registrations.bank_status, u.email,
-     (SELECT MAX(created_at) FROM audit_log a
-        WHERE a.entity_type = 'reminder_email' AND a.action = 'REGISTERED_DELEGATE_REMINDER_SENT' AND a.entity_id = registrations.phone_number
-     ) AS last_reminder_sent_at
-     FROM registrations
-     LEFT JOIN users u ON u.phone_number = registrations.phone_number
-     ORDER BY delegate_name`;
-
-app.get('/api/admin/reminders/registered', requirePermission('comms.reminders_view'), async (req, res, next) => {
-  try {
-    const rows = (await dbAll(REGISTERED_DELEGATE_QUERY)).map(withDelegateSalutation);
-    res.json({ users: rows });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// The bulk send. Same shape as POST /api/admin/reminders/send (its own 24h
-// cooldown, its own audit action, {{name}} per recipient), so an admin who
-// knows one card knows this one. Testing the wording still goes through
-// POST /api/admin/reminders/test-send, which is audience-agnostic.
-app.post('/api/admin/reminders/registered/send', requirePermission('comms.reminders_send'), async (req, res, next) => {
-  try {
-    const { subject, bodyHtml, phones } = req.body;
-    if (!subject || !String(subject).trim()) {
-      return res.status(400).json({ success: false, error: 'Subject is required.' });
-    }
-    if (!bodyHtml || !String(bodyHtml).trim()) {
-      return res.status(400).json({ success: false, error: 'Email body is required.' });
-    }
-    if (!emailEnabled()) {
-      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
-    }
-    if (!Array.isArray(phones) || !phones.length) {
-      return res.status(400).json({ success: false, error: 'Select at least one delegate to send to.' });
-    }
-    const phoneSet = new Set(phones.map(String));
-
-    const since = Date.now() - 24 * 60 * 60 * 1000;
-    const sentRecentlyRows = await dbAll(
-      `SELECT DISTINCT entity_id FROM audit_log
-        WHERE entity_type = 'reminder_email' AND action = 'REGISTERED_DELEGATE_REMINDER_SENT' AND created_at >= ?`,
-      [since]
-    );
-    const sentRecentlySet = new Set(sentRecentlyRows.map((r) => r.entity_id));
-
-    // One email per person, not per registration, so a delegate who somehow
-    // has two rows is not written to twice.
-    const recipients = [];
-    const seen = new Set();
-    for (const r of (await dbAll(REGISTERED_DELEGATE_QUERY)).map(withDelegateSalutation)) {
-      if (!phoneSet.has(r.phone_number) || seen.has(r.phone_number)) continue;
-      seen.add(r.phone_number);
-      recipients.push(r);
-    }
-
-    let sent = 0;
-    let skippedNoEmail = 0;
-    let skippedSentRecently = 0;
-    for (const u of recipients) {
-      if (sentRecentlySet.has(u.phone_number)) { skippedSentRecently++; continue; }
-      if (!u.email) { skippedNoEmail++; continue; }
-      // withDelegateSalutation() has already folded the salutation into the
-      // name ("Dr Priya Sharma") and dropped the separate column.
-      const name = u.delegate_name || 'Delegate';
-      const personalizedBody = String(bodyHtml).split('{{name}}').join(escapeHtml(name));
-      await sendEmail(u.email, subject, emailWrap(subject, personalizedBody));
-      await recordAudit({
-        req, entityType: 'reminder_email', entityId: u.phone_number,
-        action: 'REGISTERED_DELEGATE_REMINDER_SENT', oldValue: null, newValue: subject,
-      });
-      sent++;
-    }
-
-    res.json({ success: true, sent, skippedNoEmail, skippedSentRecently, total: recipients.length });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// --- ABSTRACT SUBMITTED, NOT REGISTERED -----------------------------------
-// Everyone whose abstract is still in play (anything but not accepted) and
-// who has not registered (see authorRegisteredSql) -- the people to tell that
-// registration is mandatory for presentation. One row per person; {{name}}
-// and {{title}} (their abstract's title) are filled in per recipient. Worked
-// out afresh when sending, so anyone who registers in between is not written to.
-async function abstractAuthorsNotRegistered() {
-  const rows = await dbAll(
-    `SELECT a.phone_number, a.title, COALESCE(a.status, 'UNDER_REVIEW') AS status, a.allocation, a.author_name,
-       u.salutation, u.full_name, u.email,
-       (SELECT MAX(created_at) FROM audit_log l
-          WHERE l.entity_type = 'reminder_email' AND l.action = 'ABSTRACT_UNREGISTERED_REMINDER_SENT' AND l.entity_id = a.phone_number
-       ) AS last_reminder_sent_at
-       FROM abstracts a
-       LEFT JOIN users u ON u.phone_number = a.phone_number
-      WHERE COALESCE(a.status, 'UNDER_REVIEW') != 'REJECTED'
-        AND NOT ${authorRegisteredSql('a.phone_number')}
-      ORDER BY COALESCE(u.full_name, a.author_name), a.id`);
-  const seen = new Set();
-  return rows.filter((r) => !seen.has(r.phone_number) && seen.add(r.phone_number)).map((r) => ({
-    phone_number: r.phone_number,
-    name: [r.salutation, r.full_name || r.author_name].filter(Boolean).join(' ') || 'Delegate',
-    email: r.email || null,
-    title: r.title || '',
-    status: r.status,
-    allocation: r.allocation || null,
-    last_reminder_sent_at: r.last_reminder_sent_at || null,
-  }));
-}
-
-function renderAbstractAuthorEmail(bodyHtml, recipient) {
-  return String(bodyHtml)
-    .split('{{name}}').join(escapeHtml(recipient.name || 'Delegate'))
-    .split('{{title}}').join(escapeHtml(recipient.title || 'your abstract'));
-}
-
-app.get('/api/admin/reminders/abstract-unregistered', requirePermission('comms.reminders_view'), async (req, res, next) => {
-  try {
-    res.json({ users: await abstractAuthorsNotRegistered() });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// To the admin alone, with {{title}} filled from a real abstract on the list
-// (or an example), so the wording can be read as a recipient will see it.
-app.post('/api/admin/reminders/abstract-unregistered/test-send', requirePermission('comms.reminders_test'), async (req, res, next) => {
-  try {
-    const { subject, bodyHtml } = req.body;
-    if (!subject || !String(subject).trim()) {
-      return res.status(400).json({ success: false, error: 'Subject is required.' });
-    }
-    if (!bodyHtml || !String(bodyHtml).trim()) {
-      return res.status(400).json({ success: false, error: 'Email body is required.' });
-    }
-    if (!emailEnabled()) {
-      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
-    }
-    const me = await dbGet('SELECT salutation, full_name, email FROM users WHERE phone_number = ?', [req.session.phone]);
-    if (!me || !me.email) {
-      return res.status(400).json({ success: false, error: 'No email on file for your own account.' });
-    }
-    const first = (await abstractAuthorsNotRegistered())[0];
-    const sample = {
-      name: [me.salutation, me.full_name].filter(Boolean).join(' ') || 'Delegate',
-      title: first ? first.title : 'An example abstract title',
-    };
-    await sendEmail(me.email, `[TEST] ${subject}`, emailWrap(subject, renderAbstractAuthorEmail(bodyHtml, sample)));
-    res.json({ success: true, sentTo: me.email });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// The bulk send: the same guards, in the same order, the same 24-hour
-// cooldown under its own action, and one audit row per recipient, as the
-// other bulk sends.
-app.post('/api/admin/reminders/abstract-unregistered/send', requirePermission('comms.reminders_send'), async (req, res, next) => {
-  try {
-    const { subject, bodyHtml, phones } = req.body;
-    if (!subject || !String(subject).trim()) {
-      return res.status(400).json({ success: false, error: 'Subject is required.' });
-    }
-    if (!bodyHtml || !String(bodyHtml).trim()) {
-      return res.status(400).json({ success: false, error: 'Email body is required.' });
-    }
-    if (!emailEnabled()) {
-      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
-    }
-    if (!Array.isArray(phones) || !phones.length) {
-      return res.status(400).json({ success: false, error: 'Select at least one delegate to send to.' });
-    }
-    const phoneSet = new Set(phones.map(String));
-    const since = Date.now() - 24 * 60 * 60 * 1000;
-    const recipients = (await abstractAuthorsNotRegistered()).filter((u) => phoneSet.has(u.phone_number));
-
-    let sent = 0;
-    let skippedNoEmail = 0;
-    let skippedSentRecently = 0;
-    for (const u of recipients) {
-      if (u.last_reminder_sent_at && u.last_reminder_sent_at >= since) { skippedSentRecently++; continue; }
-      if (!u.email) { skippedNoEmail++; continue; }
-      await sendEmail(u.email, subject, emailWrap(subject, renderAbstractAuthorEmail(bodyHtml, u)));
-      await recordAudit({
-        req, entityType: 'reminder_email', entityId: u.phone_number,
-        action: 'ABSTRACT_UNREGISTERED_REMINDER_SENT', oldValue: u.title, newValue: subject,
-      });
-      sent++;
-    }
-    // Chosen, but registered (or no longer on the list) by the time this ran.
-    const noLongerDue = phoneSet.size - recipients.length;
-    res.json({ success: true, sent, skippedNoEmail, skippedSentRecently, noLongerDue, total: phoneSet.size });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// --- UNUSED PERSONAL CODES ----------------------------------------------
-// Everyone holding a personal code they could still use: active, not used,
-// in date, and not already registered (a registration made without the code
-// cannot take it afterwards, so reminding them would only confuse). A code
-// still waiting on an address nobody has signed up with is included, written
-// to at that address. Grouped by address, so a person with two codes gets one
-// email naming both. Worked out afresh when sending, so a code used or
-// expired since the list was loaded is not mentioned.
-async function unusedPersonalCodeHolders() {
-  const rows = await dbAll(
-    `SELECT d.code, d.discount_type, d.discount_value, d.fee_tier, d.expires_at, d.pending_email,
-            u.email AS account_email, u.salutation, u.full_name
-       FROM discount_codes d
-       LEFT JOIN users u ON u.phone_number = d.scope_value
-      WHERE d.scope_type = 'INDIVIDUAL' AND d.active = 1
-        AND (d.expires_at IS NULL OR d.expires_at >= ?)
-        AND NOT EXISTS (SELECT 1 FROM registrations r WHERE UPPER(r.discount_code) = d.code AND r.bank_status != 'REJECTED')
-        AND NOT EXISTS (SELECT 1 FROM registrations r WHERE r.phone_number = d.scope_value AND r.bank_status != 'REJECTED')
-      ORDER BY d.created_at`, [istDateString()]);
-  const byAddress = new Map();
-  for (const r of rows) {
-    const address = r.pending_email || r.account_email;
-    if (!address) continue;
-    const key = normalizeEmail(address);
-    if (!byAddress.has(key)) {
-      byAddress.set(key, {
-        email: key,
-        name: r.pending_email ? null : ([r.salutation, r.full_name].filter(Boolean).join(' ') || null),
-        waiting: !!r.pending_email,
-        codes: [],
-      });
-    }
-    byAddress.get(key).codes.push({
-      code: r.code, discount: describeDiscount(r.discount_type, r.discount_value, r.fee_tier),
-      validUntil: r.expires_at, waiting: !!r.pending_email,
-    });
-  }
-  const recipients = [...byAddress.values()];
-  for (const p of recipients) {
-    const last = await dbGet(
-      "SELECT MAX(created_at) AS t FROM audit_log WHERE entity_type = 'reminder_email' AND action = 'CODE_HOLDER_REMINDER_SENT' AND entity_id = ?",
-      [p.email]);
-    p.last_reminder_sent_at = last && last.t ? last.t : null;
-  }
-  return recipients;
-}
+const reminderName = (salutation, name) => [salutation, name].filter(Boolean).join(' ') || null;
 
 // "Thursday, 15 October 2026" -- the weekday, on a deadline, tells the
 // reader how long they actually have.
@@ -8442,282 +8123,446 @@ function codeHolderCodesHtml(codes) {
 </div>`).join('');
 }
 
-function renderCodeHolderEmail(bodyHtml, recipient) {
-  return String(bodyHtml)
-    .split('{{name}}').join(escapeHtml(recipient.name || 'Colleague'))
-    .split('{{codes}}').join(codeHolderCodesHtml(recipient.codes));
+// Everyone holding a personal code they could still use: active, not used,
+// in date, and not already registered (a registration made without the code
+// cannot take it afterwards). A code still waiting on an address nobody has
+// signed up with is included, written to at that address. Grouped by
+// address, so a person with two codes gets one email naming both.
+async function unusedPersonalCodeHolders() {
+  const rows = await dbAll(
+    `SELECT d.code, d.discount_type, d.discount_value, d.fee_tier, d.expires_at, d.pending_email,
+            u.email AS account_email, u.salutation, u.full_name
+       FROM discount_codes d
+       LEFT JOIN users u ON u.phone_number = d.scope_value
+      WHERE d.scope_type = 'INDIVIDUAL' AND d.active = 1
+        AND (d.expires_at IS NULL OR d.expires_at >= ?)
+        AND NOT EXISTS (SELECT 1 FROM registrations r WHERE UPPER(r.discount_code) = d.code AND r.bank_status != 'REJECTED')
+        AND NOT EXISTS (SELECT 1 FROM registrations r WHERE r.phone_number = d.scope_value AND r.bank_status != 'REJECTED')
+      ORDER BY d.created_at`, [istDateString()]);
+  const byAddress = new Map();
+  for (const r of rows) {
+    const address = r.pending_email || r.account_email;
+    if (!address) continue;
+    const key = normalizeEmail(address);
+    if (!byAddress.has(key)) {
+      byAddress.set(key, { email: key, name: r.pending_email ? null : reminderName(r.salutation, r.full_name), waiting: !!r.pending_email, codes: [] });
+    }
+    byAddress.get(key).codes.push({
+      code: r.code, discount: describeDiscount(r.discount_type, r.discount_value, r.fee_tier),
+      validUntil: r.expires_at, waiting: !!r.pending_email,
+    });
+  }
+  return [...byAddress.values()];
 }
 
-// The same guards, in the same order, as the other bulk sends -- plus one of
-// its own: without {{codes}} everyone would be sent an email that does not
-// say which code is theirs.
-function checkCodeHolderEmail(req, res) {
-  const { subject, bodyHtml } = req.body || {};
+// Not registered: no registration, or only a rejected one -- the same test
+// an abstract's author is held to (authorRegisteredSql).
+const notRegisteredSql = (col) =>
+  `NOT EXISTS (SELECT 1 FROM registrations r WHERE r.phone_number = ${col} AND COALESCE(r.bank_status, '') != 'REJECTED')`;
+
+// The people in an audience today, before "last reminded" is added.
+// filters: { domain, category, status } -- each audience reads only its own.
+async function audienceMembers(key, filters = {}) {
+  const person = (id, name, email, extra = {}) => ({
+    id, name: name || null, email: email || null, detail: '', tags: [],
+    values: { name: escapeHtml(name || 'Delegate') }, ...extra,
+  });
+
+  if (key === 'signups') {
+    const rows = await dbAll(
+      `SELECT u.phone_number, u.salutation, u.full_name, u.email FROM users u
+        WHERE NOT EXISTS (SELECT 1 FROM registrations r WHERE r.phone_number = u.phone_number)
+        ORDER BY u.full_name`);
+    return rows.map((u) => person(u.phone_number, reminderName(u.salutation, u.full_name), u.email));
+  }
+
+  if (key === 'domain' || key === 'unverified') {
+    const domain = key === 'domain' ? reminderLib.normaliseDomain(filters.domain) : null;
+    if (key === 'domain' && !domain) return [];
+    const rows = await dbAll(
+      `SELECT u.phone_number, u.salutation, u.full_name, u.email, u.email_verified FROM users u
+        WHERE COALESCE(u.email, '') != ''
+          AND ${notRegisteredSql('u.phone_number')}
+          ${key === 'unverified' ? 'AND COALESCE(u.email_verified, 0) = 0' : ''}
+        ORDER BY u.full_name`);
+    return rows
+      .filter((u) => key !== 'domain' || normalizeEmail(u.email).split('@')[1] === domain)
+      .map((u) => person(u.phone_number, reminderName(u.salutation, u.full_name), u.email, {
+        tags: key === 'domain' && !u.email_verified ? ['Email not verified'] : [],
+      }));
+  }
+
+  if (key === 'faculty') {
+    // Linked faculty are written to at their account's address; faculty not
+    // signed up yet, at the address on their faculty record.
+    const rows = await dbAll(
+      `SELECT g.id, g.phone_number, g.guest_name, g.guest_email, g.guest_designation,
+              u.salutation, u.full_name, u.email AS account_email
+         FROM guests g LEFT JOIN users u ON u.phone_number = g.phone_number
+        WHERE COALESCE(g.overall_status, '') != ?
+          AND (g.phone_number IS NULL OR ${notRegisteredSql('g.phone_number')})
+        ORDER BY COALESCE(u.full_name, g.guest_name)`, [guestLib.CANCELLED]);
+    return rows.map((g) => {
+      const email = g.account_email || g.guest_email || null;
+      const name = g.phone_number ? reminderName(g.salutation, g.full_name) || g.guest_name : g.guest_name;
+      return person(g.phone_number || (email ? normalizeEmail(email) : `faculty-${g.id}`), name, email, {
+        detail: g.guest_designation || '',
+        tags: g.phone_number ? [] : ['Not signed up'],
+      });
+    });
+  }
+
+  if (key === 'abstract') {
+    const rows = await dbAll(
+      `SELECT a.phone_number, a.title, COALESCE(a.status, 'UNDER_REVIEW') AS status, a.author_name,
+              u.salutation, u.full_name, u.email
+         FROM abstracts a LEFT JOIN users u ON u.phone_number = a.phone_number
+        WHERE COALESCE(a.status, 'UNDER_REVIEW') != 'REJECTED'
+          AND NOT ${authorRegisteredSql('a.phone_number')}
+        ORDER BY COALESCE(u.full_name, a.author_name), a.id`);
+    const seen = new Set();
+    return rows.filter((r) => !seen.has(r.phone_number) && seen.add(r.phone_number)).map((r) => {
+      const name = reminderName(r.salutation, r.full_name || r.author_name);
+      return person(r.phone_number, name, r.email, {
+        detail: r.title || '',
+        tags: [r.status === 'ACCEPTED' ? 'Approved, provisional' : 'Under review'],
+        values: { name: escapeHtml(name || 'Delegate'), title: escapeHtml(r.title || 'your abstract') },
+      });
+    });
+  }
+
+  if (key === 'codes') {
+    return (await unusedPersonalCodeHolders()).map((p) => person(p.email, p.name, p.email, {
+      detail: p.codes.map((c) => `${c.code} · ${c.discount}${c.validUntil ? ` · until ${c.validUntil}` : ''}`).join('; '),
+      tags: p.waiting ? ['Waiting for sign-up'] : [],
+      values: { name: escapeHtml(p.name || 'Colleague'), codes: codeHolderCodesHtml(p.codes) },
+    }));
+  }
+
+  if (key === 'registered' || key === 'balance') {
+    const where = [];
+    const params = [];
+    if (key === 'balance') where.push("registrations.bank_status = 'PARTIAL_PAYMENT'");
+    if (key === 'registered' && filters.category) { where.push('registrations.category_key = ?'); params.push(String(filters.category)); }
+    if (key === 'registered' && filters.status) { where.push('registrations.bank_status = ?'); params.push(String(filters.status)); }
+    // registrations is not aliased: DELEGATE_SALUTATION_COLUMN's subquery
+    // names that table.
+    const rows = (await dbAll(
+      `SELECT registrations.id, registrations.phone_number, registrations.registration_number, delegate_name,
+              ${DELEGATE_SALUTATION_COLUMN}, category_label, registrations.bank_status, expected_amount, u.email
+         FROM registrations LEFT JOIN users u ON u.phone_number = registrations.phone_number
+        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+        ORDER BY delegate_name`, params)).map(withDelegateSalutation);
+    // One email per person, even if they somehow have two registrations.
+    const seen = new Set();
+    const out = [];
+    for (const r of rows) {
+      if (seen.has(r.phone_number)) continue;
+      seen.add(r.phone_number);
+      const m = person(r.phone_number, r.delegate_name, r.email, {
+        detail: [r.registration_number, r.category_label].filter(Boolean).join(' · '),
+        tags: [BANK_STATUS_LABELS[r.bank_status] || r.bank_status].filter(Boolean),
+      });
+      if (key === 'balance') {
+        const summary = await getPaymentSummary(r.id, r.expected_amount);
+        m.values.amount = `₹${inr(summary.remaining)}`;
+        m.detail = `${m.detail} · ₹${inr(summary.remaining)} due`;
+        m.remaining = summary.remaining;
+      }
+      out.push(m);
+    }
+    return out;
+  }
+  return [];
+}
+
+// The audience, with when each person was last sent THIS audience's
+// reminder (its own audit action), newest first per person.
+async function audienceRecipients(key, filters) {
+  const audience = reminderLib.AUDIENCE_BY_KEY[key];
+  const members = await audienceMembers(key, filters);
+  const last = new Map((await dbAll(
+    `SELECT entity_id, MAX(created_at) AS t FROM audit_log
+      WHERE entity_type = 'reminder_email' AND action = ? GROUP BY entity_id`, [audience.action]))
+    .map((r) => [String(r.entity_id), r.t]));
+  for (const m of members) m.last_reminder_sent_at = last.get(String(m.id)) || null;
+  return members;
+}
+
+// What the composer may filter by: every category, and every payment status.
+async function reminderFilterOptions() {
+  const categories = await dbAll('SELECT category_key AS value, label FROM fee_categories ORDER BY sort_order, id');
+  const statuses = Object.entries(BANK_STATUS_LABELS).map(([value, label]) => ({ value, label }));
+  return { categories, statuses };
+}
+
+const REMINDER_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const reminderFilters = (src) => ({
+  domain: src && src.domain ? String(src.domain) : '',
+  category: src && src.category ? String(src.category) : '',
+  status: src && src.status ? String(src.status) : '',
+});
+const audienceOr404 = (req, res) => {
+  const a = reminderLib.AUDIENCE_BY_KEY[req.params.key];
+  if (!a) res.status(404).json({ success: false, error: 'No such audience.' });
+  return a || null;
+};
+
+// Every audience, with how many people are in it now. Pasted addresses have
+// no count; a domain has one only once a domain is given.
+app.get('/api/admin/reminders/audiences', requirePermission('comms.reminders_view'), async (req, res, next) => {
+  try {
+    const filters = reminderFilters(req.query);
+    const audiences = [];
+    for (const a of reminderLib.AUDIENCES) {
+      let count = null;
+      if (a.key !== 'paste' && (a.key !== 'domain' || reminderLib.normaliseDomain(filters.domain))) {
+        count = (await audienceMembers(a.key, filters)).length;
+      }
+      audiences.push({
+        key: a.key, label: a.label, group: a.group, description: a.description,
+        placeholders: a.placeholders, required: a.required, filters: a.filters, cooldown: a.cooldown, count,
+      });
+    }
+    res.json({ audiences, placeholders: reminderLib.PLACEHOLDERS, options: await reminderFilterOptions() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/admin/reminders/audiences/:key/recipients', requirePermission('comms.reminders_view'), async (req, res, next) => {
+  try {
+    const a = audienceOr404(req, res);
+    if (!a) return;
+    if (a.key === 'paste') return res.status(400).json({ success: false, error: 'Pasted addresses have no list -- paste them into the composer.' });
+    const recipients = (await audienceRecipients(a.key, reminderFilters(req.query)))
+      .map(({ values, remaining, ...r }) => r);
+    res.json({ success: true, recipients });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The values a preview or a test is filled in with: the chosen recipient,
+// else the first in the audience, else an example -- so a {{codes}} block or
+// a {{title}} can be seen as it will arrive.
+async function reminderSample(a, filters, recipientId) {
+  if (a.key === 'paste') return { recipient: null, values: {} };
+  const members = await audienceMembers(a.key, filters);
+  const pick = (recipientId && members.find((m) => String(m.id) === String(recipientId))) || members[0];
+  if (pick) return { recipient: { id: pick.id, name: pick.name, email: pick.email }, values: pick.values };
+  const example = {
+    name: 'Dr Example Delegate', title: 'An example abstract title', amount: '₹1,500',
+    codes: codeHolderCodesHtml([{ code: 'EXAMPLE2026', discount: 'Pay the Early Bird fee', validUntil: null, waiting: false }]),
+  };
+  return { recipient: null, values: Object.fromEntries(a.placeholders.map((p) => [p, p === 'codes' ? example.codes : escapeHtml(example[p])])) };
+}
+
+// The email as one recipient will receive it, chrome and all, for the
+// composer's live preview. Nothing is sent.
+app.post('/api/admin/reminders/audiences/:key/preview', requirePermission('comms.reminders_view'), async (req, res, next) => {
+  try {
+    const a = audienceOr404(req, res);
+    if (!a) return;
+    const subject = String(req.body.subject || '');
+    const bodyHtml = String(req.body.bodyHtml || '');
+    const { recipient, values } = await reminderSample(a, reminderFilters(req.body.filters), req.body.recipientId);
+    res.json({
+      success: true, recipient,
+      subject: reminderLib.fillPlaceholders(subject, values),
+      html: emailWrap(reminderLib.fillPlaceholders(subject, values) || '(no subject)', reminderLib.fillPlaceholders(bodyHtml, values)),
+      problems: reminderLib.placeholderProblems(a, subject, bodyHtml),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The same guards, in the same order, for a test and a send: subject, body,
+// the audience's placeholders, then whether email can go out at all.
+function reminderGuard(a, body, res) {
+  const { subject, bodyHtml } = body || {};
   if (!subject || !String(subject).trim()) { res.status(400).json({ success: false, error: 'Subject is required.' }); return false; }
   if (!bodyHtml || !String(bodyHtml).trim()) { res.status(400).json({ success: false, error: 'Email body is required.' }); return false; }
-  if (!String(bodyHtml).includes('{{codes}}')) {
-    res.status(400).json({ success: false, error: 'Keep {{codes}} in the email -- it is where each person’s own code goes.' });
-    return false;
-  }
+  const problem = reminderLib.placeholderError(a, subject, bodyHtml);
+  if (problem) { res.status(400).json({ success: false, error: problem }); return false; }
   if (!emailEnabled()) { res.status(400).json({ success: false, error: 'Email is not configured on this server.' }); return false; }
   return true;
 }
 
-app.get('/api/admin/reminders/code-holders', requirePermission('comms.reminders_view'), async (req, res, next) => {
+// To the admin alone, marked [TEST], greeted by their own name and otherwise
+// filled in from a real recipient, so it reads as a recipient will see it.
+app.post('/api/admin/reminders/audiences/:key/test', requirePermission('comms.reminders_test'), async (req, res, next) => {
   try {
-    res.json({ recipients: await unusedPersonalCodeHolders() });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// To the admin alone, filled in with a real person's codes (or an example if
-// there is nobody to write to), so the code block can be seen as it will be.
-app.post('/api/admin/reminders/code-holders/test-send', requirePermission('comms.reminders_test'), async (req, res, next) => {
-  try {
-    if (!checkCodeHolderEmail(req, res)) return;
+    const a = audienceOr404(req, res);
+    if (!a || !reminderGuard(a, req.body, res)) return;
     const me = await dbGet('SELECT salutation, full_name, email FROM users WHERE phone_number = ?', [req.session.phone]);
     if (!me || !me.email) return res.status(400).json({ success: false, error: 'No email on file for your own account.' });
-    const first = (await unusedPersonalCodeHolders())[0];
-    const sample = {
-      name: [me.salutation, me.full_name].filter(Boolean).join(' ') || 'Colleague',
-      codes: first ? first.codes : [{ code: 'EXAMPLE2026', discount: 'Pay the Early Bird fee', validUntil: null, waiting: false }],
-    };
-    await sendEmail(me.email, `[TEST] ${req.body.subject}`, emailWrap(req.body.subject, renderCodeHolderEmail(req.body.bodyHtml, sample)));
+    const { values } = await reminderSample(a, reminderFilters(req.body.filters), req.body.recipientId);
+    const mine = { ...values, ...(a.placeholders.includes('name') ? { name: escapeHtml(reminderName(me.salutation, me.full_name) || 'Delegate') } : {}) };
+    const subject = reminderLib.fillPlaceholders(req.body.subject, mine);
+    await sendEmail(me.email, `[TEST] ${subject}`, emailWrap(subject, reminderLib.fillPlaceholders(req.body.bodyHtml, mine)));
     res.json({ success: true, sentTo: me.email });
   } catch (err) {
     next(err);
   }
 });
 
-app.post('/api/admin/reminders/code-holders/send', requirePermission('comms.reminders_send'), async (req, res, next) => {
-  try {
-    if (!checkCodeHolderEmail(req, res)) return;
-    const { subject, bodyHtml, emails } = req.body;
-    if (!Array.isArray(emails) || !emails.length) {
-      return res.status(400).json({ success: false, error: 'Select at least one person to send to.' });
-    }
-    const chosen = new Set(emails.map((e) => normalizeEmail(String(e || ''))));
-    const since = Date.now() - 24 * 60 * 60 * 1000;
-    const recipients = (await unusedPersonalCodeHolders()).filter((p) => chosen.has(p.email));
-    let sent = 0;
-    let skippedSentRecently = 0;
-    for (const p of recipients) {
-      if (p.last_reminder_sent_at && p.last_reminder_sent_at >= since) { skippedSentRecently++; continue; }
-      await sendEmail(p.email, subject, emailWrap(subject, renderCodeHolderEmail(bodyHtml, p)));
-      await recordAudit({
-        req, entityType: 'reminder_email', entityId: p.email,
-        action: 'CODE_HOLDER_REMINDER_SENT', oldValue: p.codes.map((c) => c.code).join(', '), newValue: subject,
-      });
-      sent++;
-    }
-    // Chosen, but no longer holding an unused code by the time this ran.
-    const noLongerDue = chosen.size - recipients.length;
-    res.json({ success: true, sent, skippedSentRecently, noLongerDue, total: chosen.size });
-  } catch (err) {
-    next(err);
+// Records a send for the Sent history: what went, to whom, what was skipped.
+async function recordReminderSend(req, a, filters, subject, bodyHtml, outcomes) {
+  const counts = (o) => outcomes.filter((x) => x.outcome === o).length;
+  const r = await dbRun(
+    `INSERT INTO reminder_sends (audience, filters, subject, body_html, requested, sent, skipped, sent_by_phone, sent_by_name, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [a.key, JSON.stringify(filters), subject, bodyHtml, outcomes.length, counts('sent'),
+      JSON.stringify({ cooldown: counts('cooldown'), noEmail: counts('no_email'), invalid: counts('invalid'), noLongerDue: counts('no_longer_due') }),
+      req.session.phone, req.session.name || null, Date.now()]);
+  for (const o of outcomes) {
+    await dbRun('INSERT INTO reminder_send_recipients (send_id, recipient_id, name, email, outcome) VALUES (?, ?, ?, ?, ?)',
+      [r.lastID, String(o.id), o.name || null, o.email || null, o.outcome]);
   }
-});
+  return r.lastID;
+}
 
-// Same shape as the pending-signup reminders above, for the other worklist
-// that benefits from a nudge: PARTIAL_PAYMENT registrations, where the admin
-// has revised the payment after a fee change and the delegate owes a
-// balance (see isBalanceDue() client-side / the Awaiting Balance Payment
-// section). registrations.phone_number is not aliased here because
-// DELEGATE_SALUTATION_COLUMN's subquery hardcodes that table name.
-const BALANCE_DUE_QUERY =
-  `SELECT registrations.id, registrations.phone_number, registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN},
-     category_label, expected_amount, u.email,
-     (SELECT MAX(created_at) FROM audit_log a
-        WHERE a.entity_type = 'reminder_email' AND a.action = 'BALANCE_DUE_REMINDER_SENT' AND a.entity_id = registrations.phone_number
-     ) AS last_reminder_sent_at
-     FROM registrations
-     LEFT JOIN users u ON u.phone_number = registrations.phone_number
-     WHERE registrations.bank_status = 'PARTIAL_PAYMENT'
-     ORDER BY delegate_name`;
-
-app.get('/api/admin/reminders/balance-due', requirePermission('comms.reminders_view'), async (req, res, next) => {
-  try {
-    const regs = (await dbAll(BALANCE_DUE_QUERY)).map(withDelegateSalutation);
-    const rows = [];
-    for (const r of regs) {
-      const summary = await getPaymentSummary(r.id, r.expected_amount);
-      rows.push({ ...r, paid: summary.verifiedTotal, remaining: summary.remaining });
-    }
-    res.json({ users: rows });
-  } catch (err) {
-    next(err);
+// The send. ids: the admin's selection -- required, so a stale or empty
+// selection can never turn into everyone. Each person is checked against the
+// audience as it is NOW (registered since, code used since: not written to),
+// against the cooldown, and for an address; then one email and one audit row
+// each. Nothing here can be undone.
+async function sendReminder(req, res, a) {
+  if (!reminderGuard(a, req.body, res)) return;
+  const { subject, bodyHtml } = req.body;
+  const filters = reminderFilters(req.body.filters);
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.map((x) => String(x || '').trim()).filter(Boolean) : [];
+  if (!ids.length) {
+    return res.status(400).json({ success: false, error: a.key === 'paste' ? 'Enter at least one email address.' : 'Select at least one person to send to.' });
   }
-});
+  const since = Date.now() - REMINDER_COOLDOWN_MS;
+  const outcomes = [];
 
-// {{name}} -> "Salutation Full Name", {{amount}} -> the caller's own last
-// PARTIAL_PAYMENT balance if they have one (else ₹0, just so the preview
-// shows something plausible rather than a literal placeholder).
-app.post('/api/admin/reminders/balance-due/test-send', requirePermission('comms.reminders_test'), async (req, res, next) => {
-  try {
-    const { subject, bodyHtml } = req.body;
-    if (!subject || !String(subject).trim()) {
-      return res.status(400).json({ success: false, error: 'Subject is required.' });
-    }
-    if (!bodyHtml || !String(bodyHtml).trim()) {
-      return res.status(400).json({ success: false, error: 'Email body is required.' });
-    }
-    if (!emailEnabled()) {
-      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
-    }
-
-    const me = await dbGet('SELECT salutation, full_name, email FROM users WHERE phone_number = ?', [req.session.phone]);
-    if (!me || !me.email) {
-      return res.status(400).json({ success: false, error: 'No email on file for your own account.' });
-    }
-
-    const myReg = await dbGet(
-      `SELECT id, expected_amount FROM registrations WHERE phone_number = ? AND bank_status = 'PARTIAL_PAYMENT'`,
-      [req.session.phone]);
-    const remaining = myReg ? (await getPaymentSummary(myReg.id, myReg.expected_amount)).remaining : 0;
-
-    const name = [me.salutation, me.full_name].filter(Boolean).join(' ') || 'Delegate';
-    const personalizedBody = String(bodyHtml).split('{{name}}').join(escapeHtml(name)).split('{{amount}}').join(`₹${inr(remaining)}`);
-    await sendEmail(me.email, `[TEST] ${subject}`, emailWrap(subject, personalizedBody));
-
-    res.json({ success: true, sentTo: me.email });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Deliberately SUPER_ADMIN only, same reasoning as /reminders/send: a
-// one-way bulk email blast to real delegates, nothing to undo if wrong.
-app.post('/api/admin/reminders/balance-due/send', requirePermission('comms.reminders_send'), async (req, res, next) => {
-  try {
-    const { subject, bodyHtml, phones } = req.body;
-    if (!subject || !String(subject).trim()) {
-      return res.status(400).json({ success: false, error: 'Subject is required.' });
-    }
-    if (!bodyHtml || !String(bodyHtml).trim()) {
-      return res.status(400).json({ success: false, error: 'Email body is required.' });
-    }
-    if (!emailEnabled()) {
-      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
-    }
-    if (!Array.isArray(phones) || !phones.length) {
-      return res.status(400).json({ success: false, error: 'Select at least one delegate to send to.' });
-    }
-    const phoneSet = new Set(phones.map(String));
-
-    // Same rolling 24h dedupe as the registration reminders, keyed to this
-    // reminder's own action name so the two reminder types never suppress
-    // each other.
-    const since = Date.now() - 24 * 60 * 60 * 1000;
-    const sentRecentlyRows = await dbAll(
-      `SELECT DISTINCT entity_id FROM audit_log
-        WHERE entity_type = 'reminder_email' AND action = 'BALANCE_DUE_REMINDER_SENT' AND created_at >= ?`,
-      [since]
-    );
-    const sentRecentlySet = new Set(sentRecentlyRows.map((r) => r.entity_id));
-
-    const regs = (await dbAll(BALANCE_DUE_QUERY)).map(withDelegateSalutation).filter((r) => phoneSet.has(r.phone_number));
-    let sent = 0;
-    let skippedNoEmail = 0;
-    let skippedSentRecently = 0;
-    for (const r of regs) {
-      if (sentRecentlySet.has(r.phone_number)) { skippedSentRecently++; continue; }
-      if (!r.email) { skippedNoEmail++; continue; }
-      const summary = await getPaymentSummary(r.id, r.expected_amount);
-      // r.delegate_name already has its salutation folded in by
-      // withDelegateSalutation() above, unlike PENDING_SIGNUP_QUERY's
-      // separate salutation/full_name fields.
-      const name = r.delegate_name || 'Delegate';
-      const personalizedBody = String(bodyHtml).split('{{name}}').join(escapeHtml(name)).split('{{amount}}').join(`₹${inr(summary.remaining)}`);
-      await sendEmail(r.email, subject, emailWrap(subject, personalizedBody));
-      await recordAudit({
-        req, entityType: 'reminder_email', entityId: r.phone_number,
-        action: 'BALANCE_DUE_REMINDER_SENT', oldValue: null, newValue: `${subject} (₹${inr(summary.remaining)} due)`,
-      });
-      sent++;
-    }
-
-    res.json({ success: true, sent, skippedNoEmail, skippedSentRecently, total: regs.length });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Send a reminder to an admin-supplied list of raw email addresses, not tied
-// to any existing account -- for reaching people who haven't signed up yet
-// at all (e.g. an external mailing list, "early bird ends today"), which the
-// two reminder tools above can't do since they only ever address existing
-// users/registrations. No {{name}}/{{amount}} substitution: there's no
-// record behind these addresses to personalize from. Deliberately
-// SUPER_ADMIN only and rolling-24h-deduped per address, same reasoning as
-// the other two: a one-way bulk blast, nothing to undo if wrong.
-app.post('/api/admin/reminders/custom-send', requirePermission('comms.custom_send'), async (req, res, next) => {
-  try {
-    const { subject, bodyHtml, emails } = req.body;
-    if (!subject || !String(subject).trim()) {
-      return res.status(400).json({ success: false, error: 'Subject is required.' });
-    }
-    if (!bodyHtml || !String(bodyHtml).trim()) {
-      return res.status(400).json({ success: false, error: 'Email body is required.' });
-    }
-    if (!emailEnabled()) {
-      return res.status(400).json({ success: false, error: 'Email is not configured on this server.' });
-    }
-    if (!Array.isArray(emails) || !emails.length) {
-      return res.status(400).json({ success: false, error: 'Enter at least one email address.' });
-    }
-
-    // Dedupe (case-insensitive) and split valid-looking addresses from junk,
-    // rather than hard-failing the whole pasted list over one typo.
+  if (a.key === 'paste') {
+    // Pasted: deduped case-insensitively; a typo is skipped, not fatal. The
+    // cooldown is per message (the subject is its identity), so a person
+    // can hear two different announcements in a day, but not one twice.
     const seen = new Set();
-    const valid = [];
-    let skippedInvalid = 0;
-    for (const raw of emails) {
-      const addr = String(raw || '').trim();
-      if (!addr) continue;
-      const key = addr.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      if (EMAIL_RE.test(addr)) valid.push(addr); else skippedInvalid++;
-    }
-    if (!valid.length) {
-      return res.status(400).json({ success: false, error: 'None of the entered addresses look valid.' });
-    }
-
-    // The 24h cooldown is PER ANNOUNCEMENT, not per address: it exists to stop
-    // the same message going out twice to someone, not to stop a person
-    // hearing two different things in one day. Scoping it to the address alone
-    // meant an "early bird extended" notice was silently dropped for everyone
-    // who had been sent "early bird ends today" the day before -- exactly the
-    // people who most needed the correction.
-    //
-    // The subject is the identity of the announcement here: it is what the
-    // audit trail records, and the templates put the deadline in it, so a
-    // genuinely different message is a genuinely different subject. Matched
-    // case-insensitively and trimmed, since that is how it is deduped
-    // elsewhere.
-    const since = Date.now() - 24 * 60 * 60 * 1000;
-    const sentRecentlyRows = await dbAll(
-      `SELECT DISTINCT entity_id FROM audit_log
-        WHERE entity_type = 'reminder_email' AND action = 'CUSTOM_REMINDER_SENT' AND created_at >= ?
-          AND LOWER(TRIM(COALESCE(new_value, ''))) = ?`,
-      [since, String(subject).trim().toLowerCase()]
-    );
-    const sentRecentlySet = new Set(sentRecentlyRows.map((r) => (r.entity_id || '').toLowerCase()));
-
-    let sent = 0;
-    let skippedSentRecently = 0;
-    for (const addr of valid) {
-      if (sentRecentlySet.has(addr.toLowerCase())) { skippedSentRecently++; continue; }
+    const recent = new Set((await dbAll(
+      `SELECT DISTINCT LOWER(entity_id) AS e FROM audit_log
+        WHERE entity_type = 'reminder_email' AND action = ? AND created_at >= ? AND LOWER(TRIM(COALESCE(new_value, ''))) = ?`,
+      [a.action, since, String(subject).trim().toLowerCase()])).map((r) => r.e));
+    for (const raw of ids) {
+      const addr = normalizeEmail(raw);
+      if (seen.has(addr)) continue;
+      seen.add(addr);
+      if (!EMAIL_RE.test(addr)) { outcomes.push({ id: raw, email: raw, outcome: 'invalid' }); continue; }
+      if (recent.has(addr)) { outcomes.push({ id: addr, email: addr, outcome: 'cooldown' }); continue; }
       await sendEmail(addr, subject, emailWrap(subject, bodyHtml));
-      await recordAudit({
-        req, entityType: 'reminder_email', entityId: addr,
-        action: 'CUSTOM_REMINDER_SENT', oldValue: null, newValue: subject,
-      });
-      sent++;
+      await recordAudit({ req, entityType: 'reminder_email', entityId: addr, action: a.action, oldValue: null, newValue: subject });
+      outcomes.push({ id: addr, email: addr, outcome: 'sent' });
     }
+  } else {
+    const chosen = new Set(ids);
+    const members = (await audienceRecipients(a.key, filters)).filter((m) => chosen.has(String(m.id)));
+    for (const m of members) {
+      if (m.last_reminder_sent_at && m.last_reminder_sent_at >= since) { outcomes.push({ ...m, outcome: 'cooldown' }); continue; }
+      if (!m.email) { outcomes.push({ ...m, outcome: 'no_email' }); continue; }
+      const personalSubject = reminderLib.fillPlaceholders(subject, m.values);
+      await sendEmail(m.email, personalSubject, emailWrap(personalSubject, reminderLib.fillPlaceholders(bodyHtml, m.values)));
+      await recordAudit({
+        req, entityType: 'reminder_email', entityId: m.id, action: a.action,
+        oldValue: a.key === 'codes' || a.key === 'abstract' ? m.detail : null,
+        newValue: a.key === 'balance' ? `${subject} (₹${inr(m.remaining)} due)` : subject,
+      });
+      outcomes.push({ ...m, outcome: 'sent' });
+    }
+    // Chosen, but no longer in the audience by the time this ran.
+    const found = new Set(members.map((m) => String(m.id)));
+    for (const id of chosen) if (!found.has(id)) outcomes.push({ id, outcome: 'no_longer_due' });
+  }
 
-    res.json({ success: true, sent, skippedInvalid, skippedSentRecently, total: emails.length });
+  const sendId = await recordReminderSend(req, a, filters, subject, bodyHtml, outcomes);
+  const n = (o) => outcomes.filter((x) => x.outcome === o).length;
+  res.json({
+    success: true, sendId, total: outcomes.length, sent: n('sent'),
+    skippedSentRecently: n('cooldown'), skippedNoEmail: n('no_email'), skippedInvalid: n('invalid'), noLongerDue: n('no_longer_due'),
+  });
+}
+
+app.post('/api/admin/reminders/audiences/:key/send', requirePermission('comms.reminders_send'), async (req, res, next) => {
+  try {
+    const a = audienceOr404(req, res);
+    if (!a) return;
+    // Pasted addresses have their own permission, and their own route.
+    if (a.key === 'paste') return res.status(400).json({ success: false, error: 'Send to pasted addresses from their own route.' });
+    await sendReminder(req, res, a);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Pasted addresses: comms.custom_send, which a role may hold without being
+// trusted to email the delegates on file.
+app.post('/api/admin/reminders/paste/send', requirePermission('comms.custom_send'), async (req, res, next) => {
+  try {
+    await sendReminder(req, res, reminderLib.AUDIENCE_BY_KEY.paste);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The Sent history: every send made from the composer, and -- grouped back
+// together from the activity log -- every send made before it existed.
+app.get('/api/admin/reminders/history', requirePermission('comms.reminders_view'), async (req, res, next) => {
+  try {
+    const rows = await dbAll('SELECT id, audience, filters, subject, requested, sent, skipped, sent_by_name, sent_by_phone, created_at FROM reminder_sends ORDER BY created_at DESC, id DESC');
+    const sends = rows.map((r) => {
+      const a = reminderLib.AUDIENCE_BY_KEY[r.audience];
+      return {
+        id: r.id, legacy: false, audience: r.audience, audienceLabel: a ? a.label : r.audience,
+        filters: JSON.parse(r.filters || '{}'), subject: r.subject, requested: r.requested, sent: r.sent,
+        skipped: JSON.parse(r.skipped || '{}'), sentBy: r.sent_by_name || r.sent_by_phone, createdAt: r.created_at,
+      };
+    });
+    // Older sends: the activity log before the first composer send.
+    const first = rows.length ? rows[rows.length - 1].created_at : Infinity;
+    const actions = reminderLib.AUDIENCES.map((a) => a.action);
+    const legacyRows = await dbAll(
+      `SELECT id, action, entity_id, new_value, actor_phone, actor_name, created_at FROM audit_log
+        WHERE entity_type = 'reminder_email' AND action IN (${actions.map(() => '?').join(',')}) AND created_at < ?
+        ORDER BY created_at, id`, [...actions, Number.isFinite(first) ? first : Number.MAX_SAFE_INTEGER]);
+    const legacy = reminderLib.groupLegacySends(legacyRows).reverse().map(({ recipients, lastAt, count, ...s }) => ({ ...s, sent: count, requested: count }));
+    res.json({ sends: [...sends, ...legacy] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// One send: the email as it went (with placeholders, as typed), and every
+// person chosen with what happened for them.
+app.get('/api/admin/reminders/history/:id', requirePermission('comms.reminders_view'), async (req, res, next) => {
+  try {
+    const legacy = /^legacy-(\d+)$/.exec(req.params.id);
+    if (legacy) {
+      const seed = await dbGet("SELECT id, action, new_value, actor_phone, created_at FROM audit_log WHERE id = ? AND entity_type = 'reminder_email'", [legacy[1]]);
+      if (!seed) return res.status(404).json({ success: false, error: 'Not found.' });
+      const rows = await dbAll(
+        `SELECT id, action, entity_id, new_value, actor_phone, actor_name, created_at FROM audit_log
+          WHERE entity_type = 'reminder_email' AND action = ? AND actor_phone = ? AND created_at >= ? ORDER BY created_at, id`,
+        [seed.action, seed.actor_phone, seed.created_at]);
+      const group = reminderLib.groupLegacySends(rows).find((s) => s.id === `legacy-${seed.id}`);
+      return res.json({ success: true, send: { ...group, body: null, recipients: group.recipients.map((id) => ({ recipient_id: id, outcome: 'sent' })) } });
+    }
+    const s = await dbGet('SELECT * FROM reminder_sends WHERE id = ?', [req.params.id]);
+    if (!s) return res.status(404).json({ success: false, error: 'Not found.' });
+    const a = reminderLib.AUDIENCE_BY_KEY[s.audience];
+    const recipients = await dbAll('SELECT recipient_id, name, email, outcome FROM reminder_send_recipients WHERE send_id = ? ORDER BY id', [s.id]);
+    res.json({
+      success: true,
+      send: {
+        id: s.id, audience: s.audience, audienceLabel: a ? a.label : s.audience, filters: JSON.parse(s.filters || '{}'),
+        subject: s.subject, body: s.body_html, html: emailWrap(s.subject, s.body_html), requested: s.requested, sent: s.sent,
+        skipped: JSON.parse(s.skipped || '{}'), sentBy: s.sent_by_name || s.sent_by_phone, createdAt: s.created_at, recipients,
+      },
+    });
   } catch (err) {
     next(err);
   }
