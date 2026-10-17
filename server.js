@@ -1403,6 +1403,19 @@ async function validateDiscountCode(rawCode, phone, categoryKey) {
   if (row.scope_type === 'CATEGORY' && row.scope_value !== categoryKey) {
     return { ok: false, error: 'This promo code does not apply to your delegate category.' };
   }
+  // An email domain (mgims.ac.in): for anyone whose VERIFIED email address is
+  // at it. Holding the address proves nothing -- anyone can type one onto an
+  // account; verifying it does.
+  if (row.scope_type === 'DOMAIN') {
+    const me = await dbGet('SELECT email, email_verified FROM users WHERE phone_number = ?', [phone]);
+    const at = me && me.email ? normalizeEmail(me.email).split('@')[1] : null;
+    if (at !== row.scope_value) {
+      return { ok: false, error: `This promo code is for @${row.scope_value} email addresses only.` };
+    }
+    if (!me.email_verified) {
+      return { ok: false, error: `This code is for @${row.scope_value} email addresses. Verify your email address to use it.` };
+    }
+  }
   if (row.scope_type === 'INDIVIDUAL') {
     // A code still waiting on an address has no account yet; any other
     // personal code belongs to one account and nobody else.
@@ -1454,7 +1467,8 @@ async function validateDiscountCode(rawCode, phone, categoryKey) {
 // The best personal code a delegate holds for a category, so it can be
 // applied without their typing it: every active INDIVIDUAL code that is
 // theirs -- bound to their account, or still waiting on their email address
-// -- run through validateDiscountCode (expiry, scope, and the verified-email
+// -- and every active DOMAIN code for their email's domain, run through
+// validateDiscountCode (expiry, scope, and the verified-email
 // rule), keeping the one that takes the most off. A code that takes nothing
 // off for this category (a set fee above it) is not "applied". Also reports
 // whether a code was held back only because their email is not verified yet,
@@ -1464,11 +1478,13 @@ async function bestPersonalCode(accountKey, categoryKey) {
   if (!feeInfo || !accountKey) return { feeInfo, best: null, needsVerification: false };
   const me = await dbGet('SELECT email FROM users WHERE phone_number = ?', [accountKey]);
   const addr = me && me.email ? normalizeEmail(me.email) : null;
+  const domain = addr ? addr.split('@')[1] : null;
   const rows = await dbAll(
     `SELECT code FROM discount_codes
-      WHERE active = 1 AND scope_type = 'INDIVIDUAL'
-        AND (scope_value = ? OR (? IS NOT NULL AND pending_email = ?))`,
-    [accountKey, addr, addr]);
+      WHERE active = 1 AND (
+        (scope_type = 'INDIVIDUAL' AND (scope_value = ? OR (? IS NOT NULL AND pending_email = ?)))
+        OR (scope_type = 'DOMAIN' AND ? IS NOT NULL AND scope_value = ?))`,
+    [accountKey, addr, addr, domain, domain]);
   let best = null;
   let needsVerification = false;
   for (const r of rows) {
@@ -1479,7 +1495,8 @@ async function bestPersonalCode(accountKey, categoryKey) {
     }
     const amount = computeDiscountAmount(v.code, feeInfo.amount);
     if (amount > 0 && (!best || amount > best.discountAmount)) {
-      best = { code: v.code.code, discountType: v.code.discount_type, discountValue: v.code.discount_value, feeTier: v.code.fee_tier || null, discountAmount: amount };
+      best = { code: v.code.code, discountType: v.code.discount_type, discountValue: v.code.discount_value, feeTier: v.code.fee_tier || null, discountAmount: amount,
+        scopeType: v.code.scope_type, domain: v.code.scope_type === 'DOMAIN' ? v.code.scope_value : null };
     }
   }
   return { feeInfo, best, needsVerification: !best && needsVerification };
@@ -9897,8 +9914,11 @@ function parseDiscountBody(body) {
     : (['PERCENT', 'FLAT', 'FEE_TIER'].includes(body.discountType) ? body.discountType : null);
   const feeTier = discountType === 'FEE_TIER' ? String(body.feeTier || '').trim().toLowerCase() : null;
   const discountValue = Number(body.discountValue);
-  const scopeType = ['GLOBAL', 'CATEGORY', 'INDIVIDUAL'].includes(body.scopeType) ? body.scopeType : 'GLOBAL';
+  const scopeType = ['GLOBAL', 'CATEGORY', 'INDIVIDUAL', 'DOMAIN'].includes(body.scopeType) ? body.scopeType : 'GLOBAL';
   let scopeValue = scopeType === 'GLOBAL' ? null : String(body.scopeValue || '').trim();
+  // DOMAIN: an email domain, stored bare and lower-case ("mgims.ac.in"),
+  // whether typed as that, "@mgims.ac.in" or "MGIMS.ac.in".
+  if (scopeType === 'DOMAIN') scopeValue = scopeValue.replace(/^@+/, '').toLowerCase();
   // INDIVIDUAL: a mobile number OR an email address identifying the
   // delegate. Digits-only stripping would destroy an email, so only a value
   // that already looks like a phone is normalised that way; the POST handler
@@ -9926,6 +9946,9 @@ function validateDiscountFields(f) {
   } else if (!Number.isFinite(f.discountValue) || f.discountValue <= 0) return 'Discount value must be greater than zero.';
   if (f.discountType === 'PERCENT' && f.discountValue > 100) return 'A percentage discount cannot exceed 100.';
   if (f.scopeType === 'CATEGORY' && !f.scopeValue) return 'Choose a category for a category-scoped code.';
+  if (f.scopeType === 'DOMAIN' && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(f.scopeValue || '')) {
+    return 'Enter the email domain, e.g. mgims.ac.in.';
+  }
   // A mobile number, an email address, or an account key from the picker --
   // the route works out which.
   if (f.scopeType === 'INDIVIDUAL' && !f.scopeValue) {
@@ -10065,7 +10088,9 @@ app.put('/api/admin/discount-codes/:id', requirePermission('discounts.manage'), 
 // place computing what a discount code's scope/discount/expiry actually say.
 async function discountCodeLines(code) {
   let scopeLine = 'Valid for any delegate.';
-  if (code.scope_type === 'CATEGORY') {
+  if (code.scope_type === 'DOMAIN') {
+    scopeLine = `For delegates with a verified @${escapeHtml(code.scope_value)} email address; applied automatically.`;
+  } else if (code.scope_type === 'CATEGORY') {
     const cat = await dbGet('SELECT label FROM fee_categories WHERE category_key = ?', [code.scope_value]);
     scopeLine = `Valid for the "${escapeHtml(cat ? cat.label : code.scope_value)}" category only.`;
   } else if (code.scope_type === 'INDIVIDUAL' && code.pending_email) {

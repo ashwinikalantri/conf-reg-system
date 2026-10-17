@@ -1361,7 +1361,11 @@ async function autoApplyPersonalCode(catKey) {
     const inputRow = document.getElementById('promo-input-row');
     if (inputRow) inputRow.classList.add('hidden');
     if (msg) {
-      msg.textContent = data.code.discountType === 'FEE_TIER'
+      // An email-domain code is not "personal": it comes with their address.
+      const whose = data.code.scopeType === 'DOMAIN' ? `Your @${data.code.domain} email address gets code ${data.code.code}` : `Your personal code ${data.code.code} has been applied`;
+      msg.textContent = data.code.scopeType === 'DOMAIN' && data.code.discountType === 'FEE_TIER'
+        ? `${whose} — you pay the ${FEE_TIER_LABELS[data.code.feeTier] || ''} fee of ₹${inr(data.code.finalFee)}.`
+        : data.code.discountType === 'FEE_TIER'
         ? `Your personal code ${data.code.code} has been applied — you pay the ${FEE_TIER_LABELS[data.code.feeTier] || ''} fee of ₹${inr(data.code.finalFee)}.`
         : data.code.discountType === 'FIXED_FEE'
           ? `Your personal code ${data.code.code} has been applied — your fee is now ₹${inr(data.code.finalFee)}.`
@@ -1370,7 +1374,8 @@ async function autoApplyPersonalCode(catKey) {
     }
     calculateFee();
   } else if (data.needsVerification && msg) {
-    msg.textContent = 'A personal discount code was issued to your email address. Verify your email address to use it.';
+    // A personal code issued to their address, or one for their email domain.
+    msg.textContent = 'A discount is waiting for your email address. Verify your email address to use it.';
     msg.className = 'text-xs mt-1 text-amber-700 font-semibold';
     const field = document.getElementById('promo-field');
     if (field && field.classList.contains('hidden')) togglePromoField();
@@ -6365,6 +6370,8 @@ function openShareDiscountModal(id) {
     scopeLine = `\nThis code is reserved for ${u ? u.full_name : 'you'} only.`;
   } else if (c.scope_type === 'CATEGORY') {
     scopeLine = '\nApplies to a specific delegate category — check on the registration page.';
+  } else if (c.scope_type === 'DOMAIN') {
+    scopeLine = `\nFor anyone with a verified @${c.scope_value} email address — applied automatically at payment.`;
   }
   const expiryLine = c.expires_at ? `\nValid through ${formatDMY(c.expires_at)}.` : '';
   const portalUrl = window.location.origin;
@@ -6485,6 +6492,8 @@ function updateDiscScopeHints() {
   const maxWrap = document.getElementById('new-disc-max-wrap');
   if (catWrap) catWrap.classList.toggle('hidden', scope !== 'CATEGORY');
   if (phoneWrap) phoneWrap.classList.toggle('hidden', scope !== 'INDIVIDUAL');
+  const domainWrap = document.getElementById('new-disc-scope-domain-wrap');
+  if (domainWrap) domainWrap.classList.toggle('hidden', scope !== 'DOMAIN');
   // An individual code is single-delegate by nature, so a usage cap is
   // meaningless -- hide and clear it for that scope.
   const isIndividual = scope === 'INDIVIDUAL';
@@ -6664,6 +6673,7 @@ function discountCodeRowHtml(c, catLabel, group, open) {
   const indivName = c.scope_type === 'INDIVIDUAL'
     ? ((cachedUsers || []).find((u) => u.phone_number === c.scope_value) || {}).full_name : null;
   const scope = c.scope_type === 'GLOBAL' ? 'All delegates'
+    : c.scope_type === 'DOMAIN' ? `Email domain: @${esc(c.scope_value)} <span class="text-[11px] text-slate-400">· verified emails, applied automatically</span>`
     : c.scope_type === 'CATEGORY' ? `Category: ${esc(catLabel(c.scope_value))}`
     : c.pending_email ? `${esc(c.pending_email)} <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-100 text-amber-800 border-amber-300">Waiting for signup</span>`
     : `Delegate: ${esc(indivName ? indivName + ' (' + c.scope_value + ')' : c.scope_value || '')}`
@@ -6697,7 +6707,8 @@ async function handleAddDiscountCode(e) {
     feeTier: document.getElementById('new-disc-type').value === 'FEE_TIER' ? document.getElementById('new-disc-tier').value : undefined,
     scopeType,
     scopeValue: scopeType === 'CATEGORY' ? document.getElementById('new-disc-scope-cat').value
-      : scopeType === 'INDIVIDUAL' ? document.getElementById('new-disc-scope-phone').value : '',
+      : scopeType === 'INDIVIDUAL' ? document.getElementById('new-disc-scope-phone').value
+      : scopeType === 'DOMAIN' ? document.getElementById('new-disc-scope-domain').value : '',
     maxUses: document.getElementById('new-disc-max').value,
     expiresAt: document.getElementById('new-disc-expires').value,
   };
@@ -8218,6 +8229,40 @@ ${programLine ? `<p>Alongside the main conference, there are ${programLine}</p>`
 // from the app itself (Settings -> General -> Conference, surfaced on
 // /api/conference), so this email cannot announce a date the portal would
 // refuse a submission on.
+// For MGIMS faculty, sent to addresses pasted into Custom Recipients (no
+// names there, so "Dear Colleague"). Personalised bottles must be ordered
+// ahead, so the last date is in the email; and anyone signing up with their
+// @mgims.ac.in address, once verified, is charged the Early Bird fee by the
+// email-domain code -- nothing to type.
+const MGIMS_BOTTLE_DEADLINE = '2026-10-20';
+async function buildMgimsRegisterBody() {
+  const c = conferenceInfo;
+  const start = formatFullDate(c.startDate);
+  const end = formatFullDate(c.endDate);
+  const dateRange = (start && end && c.startDate !== c.endDate) ? `${start} &ndash; ${end}` : (start || end);
+  return `<p>Dear Colleague,</p>
+<p>This is a reminder to register for <b>${esc(c.name || 'the conference')}</b>${dateRange ? `, on ${dateRange}` : ''}${c.location ? ` at ${esc(c.location)}` : ''}.</p>
+<div style="background:#eef3f6;border:1px solid #b9cedb;border-radius:10px;padding:1rem 1.25rem;margin:1.25rem 0">
+  <div style="font-size:.7rem;letter-spacing:.09em;text-transform:uppercase;color:#2f5673;font-weight:700">A personalised bottle in your kit</div>
+  <div style="font-size:.9rem;color:#1c3549;margin-top:.4rem">Every delegate kit includes a <b>bottle personalised with your name</b>. The bottles are made to order, so we can personalise one only for those who register by <b>${esc(formatFullDateWithDay(MGIMS_BOTTLE_DEADLINE))}</b>. If your registration comes later, it will not be possible to customise your bottle.</div>
+</div>
+<div style="background:#eef3f6;border:1px solid #b9cedb;border-radius:10px;padding:1rem 1.25rem;margin:1.25rem 0">
+  <div style="font-size:.7rem;letter-spacing:.09em;text-transform:uppercase;color:#2f5673;font-weight:700">The Early Bird price, for MGIMS</div>
+  <div style="font-size:.9rem;color:#1c3549;margin-top:.4rem">Register with your <b>@mgims.ac.in</b> email address and you will be charged the <b>Early Bird fee</b>, whatever the date. There is no code to enter: once your @mgims.ac.in address is verified, the Early Bird fee is applied at payment by itself.</div>
+</div>
+<p><b>How to register</b></p>
+<ol style="padding-left:1.1rem;margin:.5rem 0">
+  <li>Open the registration portal and sign up (or log in) using your <b>@mgims.ac.in</b> email address.</li>
+  <li>Verify your email address when asked &mdash; this is what unlocks the Early Bird price.</li>
+  <li>Complete your registration and payment. The Early Bird fee is shown at payment.</li>
+</ol>
+<p style="text-align:center;margin:1.5rem 0">
+  <a href="${window.location.origin}" style="background:#2f5673;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Register Now</a>
+</p>
+<p>If you have already registered, thank you &mdash; please ignore this message.</p>
+<p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
+}
+
 // For authors who submitted an abstract but have not registered. {{title}}
 // is filled in per recipient by the server, so it only makes sense on the
 // Abstract Submitted, Not Registered card.
@@ -8358,6 +8403,14 @@ const CUSTOM_REMINDER_TEMPLATES = {
       return `Registration Is Mandatory to Present Your Abstract${who}`;
     },
     body: buildAbstractRegistrationMandatoryBody,
+  },
+  'mgims-register': {
+    label: 'MGIMS faculty — register now (Early Bird, personalised bottle)',
+    async subject() {
+      const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
+      return `MGIMS Faculty: Register${who} by ${formatFullDate(MGIMS_BOTTLE_DEADLINE)} — Early Bird Price and a Personalised Bottle`;
+    },
+    body: buildMgimsRegisterBody,
   },
   'group-discount': {
     label: 'Group discount — register with colleagues',

@@ -27,6 +27,7 @@ function build(earlyUntil, conf) {
     ${grab('esc')} ${grab('inr')} ${grab('formatFullDate')} ${grab('formatFullDateWithDay')} ${grab('istDateString')}
     ${grab('earlyBirdDeadline')} ${grab('buildEarlyBirdReminderBody')} ${grab('buildEarlyBirdExtensionBody')}
     ${grab('buildAbstractExtensionBody')} ${grab('buildGroupDiscountBody')} ${grab('buildAbstractRegistrationMandatoryBody')}
+    ${js.match(/const MGIMS_BOTTLE_DEADLINE = '[^']*';/)[0]} ${grab('buildMgimsRegisterBody')}
     ${js.slice(js.indexOf('const CUSTOM_REMINDER_TEMPLATES = {'), js.indexOf('\n};', js.indexOf('const CUSTOM_REMINDER_TEMPLATES = {'))+3)}
     CUSTOM_REMINDER_TEMPLATES;`;
   return vm.runInContext(src, sandbox);
@@ -37,6 +38,20 @@ const CONF={ name:'International Conference on Healthcare Quality & Patient Safe
   startDate:'2026-11-21', endDate:'2026-11-22', location:'Fixture Hall, Testville', abstractDeadline:'2026-09-30' };
 
 (async()=>{
+ console.log('\n== The MGIMS faculty template ==');
+ const M=build('2026-09-05', CONF)['mgims-register'];
+ check('it is registered under the picker', !!M);
+ const mSubj=await M.subject();
+ const mBody=await M.body();
+ check('the subject names the date to register by', mSubj==='MGIMS Faculty: Register for FIXCON 2099 by 20 October 2026 — Early Bird Price and a Personalised Bottle', mSubj);
+ check('it opens "Dear Colleague" -- the custom send fills in no names', /^<p>Dear Colleague,<\/p>/.test(mBody) && !/\{\{/.test(mBody));
+ check('the bottle deadline, with its weekday', mBody.includes('Tuesday, 20 October 2026') && /personalised with your name/.test(mBody));
+ check('...and that a later registration cannot have one customised', /not be possible to customise your bottle/.test(mBody));
+ check('an @mgims.ac.in address, once verified, gets the Early Bird fee with no code', /@mgims\.ac\.in/.test(mBody) && /Early Bird fee/.test(mBody) && /no code to enter/i.test(mBody) && /Verify your email/.test(mBody));
+ check('it carries the conference dates and venue, and a Register button',
+   mBody.includes('21 November 2026') && mBody.includes('Fixture Hall, Testville') && mBody.includes('href="https://registration.mgims.ac.in"'));
+ check('in the steel palette, not indigo', mBody.includes('#2f5673') && !/#4f46e5|#6366f1|indigo/i.test(mBody));
+
  console.log('\n== The extension template ==');
  const T=build('2026-09-05', CONF);
  check('it is registered under the picker', !!T['early-bird-extended']);
