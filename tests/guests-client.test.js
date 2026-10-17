@@ -59,7 +59,7 @@ const rows = [
   g('Bravo Homeless', { arrival_date: '2026-11-25', overall_status: 'Invited', pickup_vehicle: 'Car A', arrival_time: '08:00' }),
   g('Charlie Cancelled', { overall_status: 'Cancelled' }),
   g('Delta Roommate', { accommodation: 'Yatri Nivas', room_no: '1', overall_status: 'Arrived', registered: 0, departure_date: '2026-11-22', departure_time: '18:30', drop_vehicle: 'Car A' }),
-  g('Echo Typed', { linked: false, registered: 0, guest_name: 'Echo Typed', guest_phone: '+91 0712 000', overall_status: 'Invited', accommodation: 'MGIMS Guesthouse',
+  g('Echo Typed', { linked: false, registered: 0, guest_name: 'Echo Typed', guest_phone: '+910712000', overall_status: 'Invited', accommodation: 'MGIMS Guesthouse',
     possible_account: { phone_number: '9811111111', name: 'Echo Account', taken: false } }),
 ];
 const settings = { alertDays: 2, slotBounds: [6, 12, 18], clashMinutes: 60 };
@@ -131,7 +131,7 @@ adminView.sb.__g.openGuestEditor(rows[0].id);
 check('an admin can remove', !adminView.el('guest-remove-btn').classList.contains('hidden'));
 sb.__g.openGuestEditor(rows[4].id);
 const uform = el('guest-edit-body').innerHTML;
-check('a guest without an account: who they are is editable', /name="guest_name" type="text" value="Echo Typed"(?![^>]*\sdisabled(?=[\s>]))/.test(uform) && /name="guest_phone" type="text" value="\+91 0712 000"/.test(uform));
+check('a guest without an account: who they are is editable', /name="guest_name" type="text" value="Echo Typed"(?![^>]*\sdisabled(?=[\s>]))/.test(uform) && /name="guest_phone" type="text" value="\+910712000"/.test(uform));
 check('...with the matching account offered to link', /Link to Echo Account</.test(uform) && /linkGuest\(\d+, '9811111111'\)/.test(uform));
 check('...and a search to find another', /id="guest-link-search"/.test(uform));
 check('...and the header says they are not signed up', /Not signed up yet/.test(el('guest-edit-who').textContent));

@@ -44,7 +44,7 @@ const P = { tc: `86${N}`, existing: `87${N}` };
     const b1 = await board(tc);
     const g = b1.guests.find((x) => x.id === a.body.id);
     check('they are listed by the name typed in', g.name === 'Nalini New' && g.designation === 'Professor of Medicine');
-    check('...with the phone exactly as typed', g.phone === typedPhone, g.phone);
+    check('...with the phone as typed, spaces taken out', g.phone === typedPhone.replace(/\s+/g, ''), g.phone);
     check('...flagged as not signed up', g.flags.notSignedUp === true && g.linked === false);
     check('...and as Invited, like anyone marked', g.overall_status === 'Invited');
     check('no account matches yet', g.possible_account === null);

@@ -160,7 +160,9 @@ check('a value that would run as a formula is neutralised', G.guestsCsv([{ ...b.
 check('warnings are spelled out', /No accommodation/.test(csv[4]));
 
 console.log('\n== Guests without an account ==');
-check('a typed phone keeps its + and leading zero', v({ guest_phone: '+91 0712 230 0000' }).values.guest_phone === '+91 0712 230 0000');
+check('a typed phone keeps its + and leading zero, and loses its spaces', v({ guest_phone: '+91 0712 230 0000' }).values.guest_phone === '+9107122300000');
+check('...a phone too long once its spaces are gone is still refused', v({ guest_phone: '1'.repeat(21) }).errors.length === 1);
+check('a driver\'s phone loses its spaces too', G.validateVehicle({ label: 'Car', driverPhone: '+91 98220 00000' }).values.driver_phone === '+919822000000');
 check('...and must look like a phone', v({ guest_phone: 'call me' }).errors.length === 1 && v({ guest_phone: '12' }).errors.length === 1);
 check('a typed-in designation can be a whole affiliation, up to 300 characters', v({ guest_designation: 'x'.repeat(300) }).errors.length === 0
   && v({ guest_designation: 'x'.repeat(301) }).errors.length === 1 && v({ arrival_number: 'x'.repeat(121) }).errors.length === 1);

@@ -138,9 +138,14 @@ function validateGuestFields(input, current = {}, lists = {}, coordinators = {})
     }
     if (v != null && DATE_FIELDS.has(field) && !validDate(v)) { errors.push(`${label} is not a valid date.`); continue; }
     if (v != null && TIME_FIELDS.has(field) && !validTime(v)) { errors.push(`${label} must be 24-hour HH:MM, e.g. 14:30.`); continue; }
-    // Kept exactly as typed (a leading + or 0 included); only its shape is checked.
-    if (v != null && field === 'guest_phone' && !(/^\+?[0-9][0-9 ()-]*$/.test(v) && v.replace(/\D/g, '').length >= 6 && v.length <= 20)) {
-      errors.push('Phone should be digits, with an optional leading +.'); continue;
+    // Saved without spaces; otherwise as typed (a leading + or 0 included).
+    if (field === 'guest_phone' && v != null) {
+      const compact = v.replace(/\s+/g, '');
+      if (!(/^\+?[0-9][0-9()-]*$/.test(compact) && compact.replace(/\D/g, '').length >= 6 && compact.length <= 20)) {
+        errors.push('Phone should be digits, with an optional leading +.'); continue;
+      }
+      values[field] = compact;
+      continue;
     }
     if (v != null && field === 'guest_email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) { errors.push('Email is not a valid address.'); continue; }
     if (v != null && FIELD_LISTS[field]) {
@@ -188,8 +193,9 @@ function validateVehicle(body) {
   const label = blank(body.label) ? '' : String(body.label).trim();
   if (!label) errors.push('Enter the vehicle or driver label.');
   else if (label.length > 120) errors.push('The label is too long.');
-  const driverPhone = blank(body.driverPhone) ? null : String(body.driverPhone).trim();
-  if (driverPhone && !/^\+?[0-9][0-9 -]{3,19}$/.test(driverPhone)) errors.push('Driver Phone should be digits, with an optional leading +.');
+  // Saved without spaces, like a guest's phone.
+  const driverPhone = blank(body.driverPhone) ? null : String(body.driverPhone).replace(/\s+/g, '');
+  if (driverPhone && !/^\+?[0-9][0-9-]{3,19}$/.test(driverPhone)) errors.push('Driver Phone should be digits, with an optional leading +.');
   let seats = null;
   if (!blank(body.seats)) {
     seats = Number(body.seats);
