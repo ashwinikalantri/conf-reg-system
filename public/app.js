@@ -10442,15 +10442,17 @@ function fillGuestFilters() {
       + '<option value="__none">No accommodation</option>';
     acc.value = was;
   }
-  const legend = document.getElementById('guests-legend');
-  if (legend) {
-    legend.innerHTML = [
-      ...guestData.lists.overall_status.map((v) => guestStatusBadge(v)),
-      guestPill(GUEST_FLAG_STYLES.pickupAlert, `Orange: arriving within ${guestData.settings.alertDays} day(s), no pickup vehicle`),
-      guestPill(GUEST_FLAG_STYLES.noAccommodation, 'Red: no accommodation'),
-      guestPill(GUEST_FLAG_STYLES.sharedRoom, 'Purple: shares a room (check it is intended)'),
-      guestPill(GUEST_FLAG_STYLES.vehicleClash, `Vehicle used twice within ${guestData.settings.clashMinutes} min`),
-    ].join(' ');
+  const legendHtml = [
+    ...guestData.lists.overall_status.map((v) => guestStatusBadge(v)),
+    guestPill(GUEST_FLAG_STYLES.pickupAlert, `Orange: arriving within ${guestData.settings.alertDays} day(s), no pickup vehicle`),
+    guestPill(GUEST_FLAG_STYLES.noAccommodation, 'Red: no accommodation'),
+    guestPill(GUEST_FLAG_STYLES.sharedRoom, 'Purple: shares a room (check it is intended)'),
+    guestPill(GUEST_FLAG_STYLES.vehicleClash, `Vehicle used twice within ${guestData.settings.clashMinutes} min`),
+  ].join(' ');
+  // Shown on desktop; folded under "Colour key" on a phone.
+  for (const id of ['guests-legend', 'guests-legend-mobile']) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = legendHtml;
   }
 }
 
@@ -10463,6 +10465,17 @@ const GUEST_SORTS = {
 function sortGuests(key) {
   guestSort = guestSort.key === key ? { key, dir: -guestSort.dir } : { key, dir: 1 };
   renderGuestList();
+}
+// The phone's Sort select: always ascending, as a header's first tap is.
+function setGuestSort(key) {
+  guestSort = { key: GUEST_SORTS[key] ? key : 'sr_no', dir: 1 };
+  renderGuestList();
+}
+// A phone number as a tap-to-call link (keeps the + and digits only).
+function telLink(phone, cls = 'text-indigo-700 hover:underline') {
+  if (!phone) return '';
+  const href = String(phone).replace(/[^\d+]/g, '');
+  return href.replace(/\D/g, '').length >= 6 ? `<a href="tel:${esc(href)}" class="${cls}">${esc(phone)}</a>` : esc(phone);
 }
 
 function filteredGuests() {
@@ -10550,6 +10563,46 @@ function renderGuestList() {
       <td class="p-3 text-right"><button type="button" onclick="openGuestEditor(${esc(g.id)})" class="px-3 py-1.5 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold rounded-lg">${can('guests.edit') || guestVolunteerOf(g).mineT || guestVolunteerOf(g).mineS ? 'Edit' : 'View'}</button></td>
     </tr>`).join('')
     : `<tr><td colspan="9" class="p-8 text-center text-slate-400 text-sm">${guestData.guests.length ? 'No one matches these filters.' : 'No faculty yet. Mark a delegate as faculty to start.'}</td></tr>`;
+  // A card per person, for a phone (the table is hidden there).
+  const cards = document.getElementById('guests-cards');
+  if (cards) {
+    const sortSel = document.getElementById('guests-sort-mobile');
+    if (sortSel && sortSel.value !== guestSort.key && Array.from(sortSel.options || []).some((o) => o.value === guestSort.key)) sortSel.value = guestSort.key;
+    const edge = (g) => (g.cancelled ? 'border-l-slate-300' : g.flags.noAccommodation ? 'border-l-rose-400' : g.flags.pickupAlert ? 'border-l-orange-400' : 'border-l-slate-200');
+    const legLine = (label, date, time, mode, number, point, vehicle, status) => `<div class="flex gap-2 text-sm">
+        <span class="w-16 shrink-0 text-[11px] font-semibold text-slate-400 uppercase pt-0.5">${label}</span>
+        <div class="min-w-0">${date ? `<p class="font-semibold text-slate-800">${esc(guestWhen(date, time))}</p>
+          <p class="text-xs text-slate-500">${line([mode, number, point]) || ''}</p>
+          <p class="text-xs">${vehicle ? esc(vehicle) : '<span class="text-slate-400">No vehicle</span>'}${status ? ` · ${esc(status)}` : ''}</p>` : '<p class="text-xs text-slate-400 pt-0.5">Not set</p>'}</div>
+      </div>`;
+    cards.innerHTML = rows.length ? rows.map((g) => `
+      <article class="bg-white rounded-2xl border border-slate-200 border-l-4 ${edge(g)} shadow-sm p-4 ${g.cancelled ? 'opacity-70' : ''}">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="font-bold ${g.cancelled ? 'line-through text-slate-500' : 'text-slate-800'}">${esc(g.name)}</p>
+            ${g.designation ? `<p class="text-xs text-slate-500 line-clamp-2">${esc(g.designation)}</p>` : ''}
+            ${g.phone ? `<p class="text-xs font-mono mt-0.5">${telLink(g.phone)}</p>` : ''}
+          </div>
+          <div class="shrink-0">${guestStatusBadge(g.overall_status)}</div>
+        </div>
+        ${guestFlagChips(g) ? `<div class="flex flex-wrap gap-1 mt-2">${guestFlagChips(g)}</div>` : ''}
+        <div class="mt-3 space-y-2 border-t border-slate-100 pt-3">
+          ${legLine('Arrival', g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status)}
+          ${legLine('Departure', g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status)}
+          <div class="flex gap-2 text-sm">
+            <span class="w-16 shrink-0 text-[11px] font-semibold text-slate-400 uppercase pt-0.5">Stay</span>
+            <div class="min-w-0">${g.flags.ownStay ? '<p class="text-xs text-slate-500 pt-0.5">Arranging their own</p>'
+              : g.accommodation ? `<p class="font-semibold text-slate-800">${esc(g.accommodation)}${g.room_no ? ` · ${esc(g.room_no)}` : ''}</p>
+                <p class="text-xs text-slate-500">${line([g.room_type, g.checkin_date && g.checkout_date ? `${formatFullDate(g.checkin_date)} → ${formatFullDate(g.checkout_date)}` : '', nightsLabel(g.nights)])}</p>`
+              : '<p class="text-xs text-slate-400 pt-0.5">Not set</p>'}</div>
+          </div>
+          ${g.transport_coordinator_name || g.accommodation_coordinator_name ? `<p class="text-xs text-slate-500">Volunteers: ${esc([g.transport_coordinator_name && `Transport ${g.transport_coordinator_name}`, g.accommodation_coordinator_name && `Stay ${g.accommodation_coordinator_name}`].filter(Boolean).join(' · '))}</p>` : ''}
+          ${g.special_needs ? `<p class="text-xs text-slate-600"><b>Needs:</b> ${esc(g.special_needs)}</p>` : ''}
+        </div>
+        <button type="button" onclick="openGuestEditor(${esc(g.id)})" class="mt-3 w-full h-10 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-sm font-semibold rounded-xl">${can('guests.edit') || guestVolunteerOf(g).mineT || guestVolunteerOf(g).mineS ? 'Edit' : 'View'}</button>
+      </article>`).join('')
+      : `<p class="p-8 text-center text-slate-400 text-sm bg-white rounded-2xl border border-slate-200">${guestData.guests.length ? 'No one matches these filters.' : 'No faculty yet. Mark a delegate as faculty to start.'}</p>`;
+  }
   const live = guestData.guests.filter((g) => !g.cancelled).length;
   setText('guests-count', `Showing ${rows.length} of ${guestData.guests.length} faculty (${live} not cancelled).`);
 }
@@ -10728,14 +10781,14 @@ function openGuestEditor(id) {
         <button type="button" onclick="openFlightCheck('${leg}', 'google')" class="font-semibold text-indigo-700 hover:text-indigo-900 underline">Google</button> ·
         <button type="button" onclick="openFlightCheck('${leg}', 'fr24')" class="font-semibold text-indigo-700 hover:text-indigo-900 underline">Flightradar24</button></span>
     </span>`;
-  const flightPanel = (leg) => (canFetch ? `<div id="guest-flight-${leg}" class="hidden col-span-2 sm:col-span-4"></div>` : '');
+  const flightPanel = (leg) => (canFetch ? `<div id="guest-flight-${leg}" class="hidden col-span-full"></div>` : '');
   // The flight or train number, named after the mode (see syncGuestModeFields).
   const numberField = (leg) => `<label class="block min-w-0" data-number-for="${leg}"><span data-number-label class="block text-[11px] font-semibold text-slate-600 mb-1">Flight/Train No</span>${input(`${leg}_number`, 'text', travel)}${fetchBtn(leg)}</label>`;
   const modeSelect = (leg) => select(`${leg}_mode`, 'mode', travel, `onchange="syncGuestModeFields('${leg}')"`);
   const group = (title, enabled, note, body) => `<fieldset class="border border-slate-200 rounded-xl p-4">
       <legend class="px-1.5 text-xs font-bold text-slate-700 uppercase tracking-wide">${esc(title)}</legend>
       ${enabled ? '' : `<p class="text-[11px] text-slate-400 -mt-1 mb-2">${esc(note)}</p>`}
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">${body}</div></fieldset>`;
+      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">${body}</div></fieldset>`;
   document.getElementById('guest-edit-name').textContent = g.name;
   document.getElementById('guest-edit-who').textContent = g.linked
     ? [g.designation, g.phone, g.registration_number].filter(Boolean).join(' · ')
@@ -10777,16 +10830,16 @@ function openGuestEditor(id) {
       + field('drop_status', 'Drop Status', select('drop_status', 'transfer_status', pickupOk))
       + flightPanel('departure')),
     group('Stay', stay, mineS ? 'As their accommodation volunteer you can update the stay details.' : 'Only an accommodation coordinator can change the stay.',
-      `<label class="col-span-2 sm:col-span-4 flex items-center gap-2 text-sm text-slate-700 ${stay ? 'cursor-pointer' : 'opacity-60'}">
+      `<label class="col-span-full flex items-center gap-2 text-sm text-slate-700 ${stay ? 'cursor-pointer' : 'opacity-60'}">
         <input type="checkbox" name="stay_not_needed" ${Number(g.stay_not_needed) ? 'checked' : ''} ${stay ? '' : 'disabled'} onchange="syncGuestStayFields()"> Accommodation not needed — they arrange their own stay</label>
-      <p id="guest-stay-note" class="${Number(g.stay_not_needed) ? '' : 'hidden'} col-span-2 sm:col-span-4 text-[11px] text-slate-500 -mt-1">No stay details needed.${g.accommodation ? ' Those entered earlier are kept, unused, and return if you untick this.' : ''}</p>
-      <div id="guest-stay-fields" class="${Number(g.stay_not_needed) ? 'hidden ' : ''}col-span-2 sm:col-span-4 grid grid-cols-2 sm:grid-cols-4 gap-3">`
+      <p id="guest-stay-note" class="${Number(g.stay_not_needed) ? '' : 'hidden'} col-span-full text-[11px] text-slate-500 -mt-1">No stay details needed.${g.accommodation ? ' Those entered earlier are kept, unused, and return if you untick this.' : ''}</p>
+      <div id="guest-stay-fields" class="${Number(g.stay_not_needed) ? 'hidden ' : ''}col-span-full grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">`
       + field('accommodation', 'Accommodation', select('accommodation', 'accommodation', stayOk))
       + field('room_no', 'Room No', input('room_no', 'text', stayOk))
       + field('checkin_date', 'Check-in Date', input('checkin_date', 'date', stayOk, 'onchange="syncGuestNights()"'))
       + field('checkout_date', 'Check-out Date', input('checkout_date', 'date', stayOk, 'onchange="syncGuestNights()"'))
       + field('room_type', 'Room Type', select('room_type', 'room_type', stayOk))
-      + '<p id="guest-nights" class="col-span-2 sm:col-span-4 text-xs font-semibold text-slate-600 -mt-1"></p>'
+      + '<p id="guest-nights" class="col-span-full text-xs font-semibold text-slate-600 -mt-1"></p>'
       + '</div>'),
     group('Other', shared, '',
       field('overall_status', 'Overall Status', select('overall_status', 'overall_status', shared))
@@ -10796,7 +10849,7 @@ function openGuestEditor(id) {
         + (guestData.coordinators.transport.length ? '' : '<span class="block text-[11px] text-slate-400 mt-1">No transport volunteers yet: give someone the Volunteer – Transport role.</span>'))
       + field('accommodation_coordinator', 'Accommodation Volunteer', people('accommodation_coordinator', guestData.coordinators.accommodation, stay)
         + (guestData.coordinators.accommodation.length ? '' : '<span class="block text-[11px] text-slate-400 mt-1">No accommodation volunteers yet: give someone the Volunteer – Accommodation role.</span>'))
-      + `<div class="col-span-2 sm:col-span-4 grid sm:grid-cols-2 gap-3">`
+      + `<div class="col-span-full grid sm:grid-cols-2 gap-3">`
       + field('special_needs', 'Special Needs', `<textarea name="special_needs" rows="2" ${shared ? '' : 'disabled'} class="${cls} h-auto py-2">${esc(g.special_needs || '')}</textarea>`)
       + field('remarks', 'Remarks', `<textarea name="remarks" rows="2" ${shared ? '' : 'disabled'} class="${cls} h-auto py-2">${esc(g.remarks || '')}</textarea>`)
       + '</div>'),
@@ -10853,7 +10906,7 @@ async function fetchGuestFlight(leg) {
   const number = form.querySelector(`[name="${leg}_number"]`).value.trim();
   const date = form.querySelector(`[name="${leg}_date"]`).value;
   const show = (html, tone = 'bg-slate-50 border-slate-200 text-slate-700') => {
-    panel.className = `col-span-2 sm:col-span-4 text-xs rounded-lg border px-3 py-2 ${tone}`;
+    panel.className = `col-span-full text-xs rounded-lg border px-3 py-2 ${tone}`;
     panel.innerHTML = html;
   };
   if (!number || !date) return show(`Enter the ${leg} date and the flight number first.`, 'bg-amber-50 border-amber-200 text-amber-900');
@@ -11070,8 +11123,22 @@ function renderGuestSchedule(kind) {
   const rows = guestData[kind];
   const isPickup = kind === 'pickups';
   const clashes = rows.filter((r) => r.clash.length).length;
+  const driverLine = (r) => (r.vehicle ? `${esc(r.vehicle)}${r.driverPhone ? ` · ${telLink(r.driverPhone)}` : ''}`
+    : `<span class="${r.alert ? 'text-orange-700 font-semibold' : 'text-slate-400'}">No vehicle</span>`);
   box.innerHTML = `${clashes ? `<p class="mb-3 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">${clashes} ${isPickup ? 'pickup' : 'drop'}(s) use a vehicle within ${esc(guestData.settings.clashMinutes)} minutes of another trip. Check each is intended — guests on the same flight can share.</p>` : ''}
-    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+    <div class="md:hidden space-y-2">${rows.length ? rows.map((r) => `
+      <article class="bg-white rounded-2xl border border-slate-200 ${r.alert ? 'border-l-4 border-l-orange-400' : ''} shadow-sm p-3.5">
+        <div class="flex items-baseline justify-between gap-2">
+          <p class="font-bold ${r.at ? 'text-slate-800' : 'text-slate-400'}">${esc(r.at ? guestWhen(r.at.slice(0, 10), r.at.slice(11)) : 'Not set')}</p>
+          ${r.status ? guestPill('bg-white text-slate-600 border-slate-300', r.status) : ''}
+        </div>
+        <button type="button" onclick="openGuestEditor(${esc(r.id)})" class="mt-1 font-semibold text-indigo-700 text-left">${esc(r.name)}</button>
+        ${r.phone ? `<p class="text-xs font-mono">${telLink(r.phone)}</p>` : ''}
+        <p class="text-xs text-slate-600 mt-1">${[esc(r.mode || ''), r.number ? flightNumberLink(r.number, r.at ? r.at.slice(0, 10) : '') : '', esc(r.point || '')].filter(Boolean).join(' · ') || '—'}</p>
+        <p class="text-xs mt-1">${driverLine(r)}</p>
+        ${r.clash.map((c) => `<p class="text-[11px] text-amber-800 mt-1">${esc(c)}</p>`).join('')}
+      </article>`).join('') : '<p class="p-8 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">No one to schedule yet.</p>'}</div>
+    <div class="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
       <table class="w-full text-sm min-w-[56rem]">
         <thead class="bg-slate-50 text-[11px] text-slate-500 uppercase tracking-wide"><tr>
           <th class="p-3 text-left">${isPickup ? 'Arrival' : 'Departure'}</th><th class="p-3 text-left">Name</th><th class="p-3 text-left">Phone</th>
@@ -11082,9 +11149,9 @@ function renderGuestSchedule(kind) {
           <tr class="${r.alert ? 'bg-orange-50' : ''} align-top">
             <td class="p-3 whitespace-nowrap font-semibold ${r.at ? 'text-slate-800' : 'text-slate-400'}">${esc(r.at ? guestWhen(r.at.slice(0, 10), r.at.slice(11)) : 'Not set')}</td>
             <td class="p-3"><button type="button" onclick="openGuestEditor(${esc(r.id)})" class="font-semibold text-indigo-700 hover:underline text-left">${esc(r.name)}</button></td>
-            <td class="p-3 font-mono text-xs">${esc(r.phone || '')}</td>
+            <td class="p-3 font-mono text-xs">${telLink(r.phone)}</td>
             <td class="p-3">${esc(r.mode || '—')}</td><td class="p-3">${flightNumberLink(r.number, r.at ? r.at.slice(0, 10) : '')}</td><td class="p-3">${esc(r.point || '—')}</td>
-            <td class="p-3">${r.vehicle ? `<p>${esc(r.vehicle)}</p>${r.driverPhone ? `<p class="text-xs text-slate-500 font-mono">${esc(r.driverPhone)}</p>` : ''}` : `<span class="${r.alert ? 'text-orange-700 font-semibold' : 'text-slate-400'}">None</span>`}
+            <td class="p-3">${r.vehicle ? `<p>${esc(r.vehicle)}</p>${r.driverPhone ? `<p class="text-xs text-slate-500 font-mono">${telLink(r.driverPhone, 'text-slate-500 hover:underline')}</p>` : ''}` : `<span class="${r.alert ? 'text-orange-700 font-semibold' : 'text-slate-400'}">None</span>`}
               ${r.clash.map((c) => `<p class="text-[11px] text-amber-800 mt-1">${esc(c)}</p>`).join('')}</td>
             <td class="p-3">${r.status ? guestPill('bg-white text-slate-600 border-slate-300', r.status) : '<span class="text-xs text-slate-400">Not set</span>'}</td>
           </tr>`).join('') : '<tr><td colspan="8" class="p-8 text-center text-slate-400">No one to schedule yet.</td></tr>'}
@@ -11106,12 +11173,19 @@ function renderGuestVehicles() {
       <button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Save vehicle</button>
       <button type="button" onclick="this.form.reset()" class="h-9 px-3 border border-slate-300 text-slate-600 text-sm rounded-lg">Clear</button>
     </form>` : ''}
-    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+    <div class="md:hidden space-y-2">${guestData.vehicles.length ? guestData.vehicles.map((v) => `
+      <article class="bg-white rounded-2xl border border-slate-200 shadow-sm p-3.5">
+        <p class="font-semibold text-slate-800">${esc(v.label)}</p>
+        <p class="text-xs text-slate-500">${[v.driver_phone ? telLink(v.driver_phone) : '', v.seats ? `${esc(v.seats)} seats` : ''].filter(Boolean).join(' · ') || '—'}</p>
+        <p class="text-xs mt-1"><b>${esc(v.pickups)}</b> pickups · <b>${esc(v.drops)}</b> drops</p>
+        ${edit || can('guests.manage') ? `<div class="flex gap-2 mt-2">${edit ? `<button type="button" onclick="editGuestVehicle(${esc(v.id)})" class="flex-1 h-9 border border-indigo-300 text-indigo-700 text-xs font-semibold rounded-lg">Edit</button>` : ''}${can('guests.manage') ? `<button type="button" onclick="deleteGuestVehicle(${esc(v.id)})" class="flex-1 h-9 border border-rose-300 text-rose-700 text-xs font-semibold rounded-lg">Delete</button>` : ''}</div>` : ''}
+      </article>`).join('') : '<p class="p-6 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">No vehicles yet.</p>'}</div>
+    <div class="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
       <table class="w-full text-sm"><thead class="bg-slate-50 text-[11px] text-slate-500 uppercase tracking-wide"><tr>
         <th class="p-3 text-left">Vehicle / Driver</th><th class="p-3 text-left">Driver Phone</th><th class="p-3 text-right">Seats</th>
         <th class="p-3 text-right">Pickups</th><th class="p-3 text-right">Drops</th><th class="p-3"></th></tr></thead>
       <tbody class="divide-y divide-slate-100">${guestData.vehicles.length ? guestData.vehicles.map((v) => `<tr>
-        <td class="p-3 font-semibold text-slate-800">${esc(v.label)}</td><td class="p-3 font-mono text-xs">${esc(v.driver_phone || '—')}</td>
+        <td class="p-3 font-semibold text-slate-800">${esc(v.label)}</td><td class="p-3 font-mono text-xs">${v.driver_phone ? telLink(v.driver_phone) : '—'}</td>
         <td class="p-3 text-right tabular-nums">${esc(v.seats || '—')}</td><td class="p-3 text-right tabular-nums font-semibold">${esc(v.pickups)}</td>
         <td class="p-3 text-right tabular-nums font-semibold">${esc(v.drops)}</td>
         <td class="p-3 text-right whitespace-nowrap">${edit ? `<button type="button" onclick="editGuestVehicle(${esc(v.id)})" class="px-3 py-1.5 border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold rounded-lg">Edit</button>` : ''}
@@ -11166,7 +11240,17 @@ function renderGuestRooms() {
       <button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Save room</button>
       <button type="button" onclick="this.form.reset()" class="h-9 px-3 border border-slate-300 text-slate-600 text-sm rounded-lg">Clear</button>
     </form>` : ''}
-    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+    <div class="md:hidden space-y-2">${guestData.rooms.length ? guestData.rooms.map((r) => `
+      <article class="bg-white rounded-2xl border border-slate-200 shadow-sm p-3.5">
+        <div class="flex items-baseline justify-between gap-2">
+          <p class="font-semibold text-slate-800">${esc(r.accommodation)} · ${esc(r.room_no)}</p>
+          ${guestPill(GUEST_ROOM_STATUS[r.status] || '', r.status)}
+        </div>
+        <p class="text-xs text-slate-500">${[r.room_type, `${r.occupied} of ${r.beds} bed${r.beds === 1 ? '' : 's'}`].filter(Boolean).map(esc).join(' · ')}</p>
+        ${r.guests.length ? `<p class="text-xs text-slate-600 mt-1">${esc(r.guests.join(', '))}</p>` : ''}
+        ${edit || can('guests.manage') ? `<div class="flex gap-2 mt-2">${edit ? `<button type="button" onclick="editGuestRoom(${esc(r.id)})" class="flex-1 h-9 border border-indigo-300 text-indigo-700 text-xs font-semibold rounded-lg">Edit</button>` : ''}${can('guests.manage') ? `<button type="button" onclick="deleteGuestRoom(${esc(r.id)})" class="flex-1 h-9 border border-rose-300 text-rose-700 text-xs font-semibold rounded-lg">Delete</button>` : ''}</div>` : ''}
+      </article>`).join('') : '<p class="p-6 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">No rooms yet.</p>'}</div>
+    <div class="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
       <table class="w-full text-sm min-w-[44rem]"><thead class="bg-slate-50 text-[11px] text-slate-500 uppercase tracking-wide"><tr>
         <th class="p-3 text-left">Accommodation</th><th class="p-3 text-left">Room No</th><th class="p-3 text-left">Type</th>
         <th class="p-3 text-right">Beds</th><th class="p-3 text-right">Occupied</th><th class="p-3 text-left">Status</th><th class="p-3 text-left">Faculty</th><th class="p-3"></th></tr></thead>

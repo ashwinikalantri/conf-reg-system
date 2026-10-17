@@ -203,11 +203,11 @@ stay.sb.__set(data);
 stay.sb.__g.openGuestEditor(stayRow.id);
 const sh = stay.el('guest-edit-body').innerHTML;
 check('ticked: the stay details are hidden', /id="guest-stay-fields" class="hidden /.test(sh));
-check('...kept, with a note saying unticking brings them back', /id="guest-stay-note" class=" col-span-2/.test(sh) && /return if you untick this/.test(sh));
+check('...kept, with a note saying unticking brings them back', /id="guest-stay-note" class=" col-span-full/.test(sh) && /return if you untick this/.test(sh));
 check('ticking or unticking shows or hides them at once', /name="stay_not_needed"[^>]*onchange="syncGuestStayFields\(\)"/.test(sh));
 stayRow.stay_not_needed = 0;
 stay.sb.__g.openGuestEditor(stayRow.id);
-check('unticked: the stay details are asked for', /id="guest-stay-fields" class="col-span-2/.test(stay.el('guest-edit-body').innerHTML));
+check('unticked: the stay details are asked for', /id="guest-stay-fields" class="col-span-full/.test(stay.el('guest-edit-body').innerHTML));
 
 console.log('\n== Checking a flight by hand ==');
 const fsb = { String, encodeURIComponent };
@@ -244,6 +244,33 @@ check('the Front Desk shows a faculty member\'s travel and stay', /Faculty — t
   && /20 November 2026, 9:30 PM · Flight · 6E 123/.test(dcard) && /Yatri Nivas · Room 7/.test(dcard) && /2 nights/.test(dcard) && /Tara/.test(dcard));
 check('...and nothing when there is nothing to show', dsb.card({ id: 1 }) === '' && dsb.card(null) === '');
 check('...placed after the delegate card', /deskWhoCard\(user, reg, checkedIn, guest\),\n\s*deskFacultyCard\(guest\),/.test(js));
+
+console.log('\n== On a phone ==');
+el('guests-filter-flag').value = ''; el('guests-filter-status').value = ''; el('guests-search').value = '';
+sb.__g.renderGuestList();
+const cardsHtml = el('guests-cards').innerHTML;
+check('the list is also drawn as cards, one per person', ['Alpha Arriving', 'Bravo Homeless', 'Charlie Cancelled', 'Delta Roommate', 'Echo Typed'].every((n) => cardsHtml.includes(`>${n}<`))
+  && (cardsHtml.match(/<article /g) || []).length === 5);
+check('...red and orange as a coloured edge', /border-l-rose-400[^>]*>[\s\S]*?Bravo Homeless/.test(cardsHtml) && /border-l-orange-400[^>]*>[\s\S]*?Alpha Arriving/.test(cardsHtml));
+check('...with a phone to tap and call', /<a href="tel:\+919800000001"/.test(cardsHtml));
+check('...and a full-width Edit button', /class="mt-3 w-full h-10[^"]*"[^>]*>Edit</.test(cardsHtml) || /onclick="openGuestEditor\(\d+\)" class="mt-3 w-full h-10/.test(cardsHtml));
+const ejsAll = ejs;
+check('cards on a phone, the table from tablet up', /id="guests-cards" class="md:hidden/.test(ejsAll) && /class="hidden md:block bg-white rounded-2xl[^"]*overflow-x-auto">\s*<table class="w-full text-sm min-w-\[72rem\]">/.test(ejsAll));
+check('a Sort select stands in for the column headers', /id="guests-sort-mobile" onchange="setGuestSort\(this\.value\)"/.test(ejsAll));
+check('the tabs are one row that swipes', /id="guests-subnav" role="tablist" class="flex gap-1\.5 overflow-x-auto sm:flex-wrap/.test(ejsAll) && /guest-subtab shrink-0 whitespace-nowrap/.test(ejsAll));
+check('the colour key folds away on a phone', /<details class="md:hidden mb-3">\s*<summary[^>]*>Colour key<\/summary>\s*<div id="guests-legend-mobile"/.test(ejsAll)
+  && el('guests-legend-mobile').innerHTML.includes('Red: no accommodation'));
+sb.__g.renderGuestSchedule('pickups');
+check('pickups as cards too, phones to tap', /<article [^>]*>[\s\S]*?Alpha Arriving/.test(el('guests-view-pickups').innerHTML) && /href="tel:\+919800000001"/.test(el('guests-view-pickups').innerHTML));
+sb.__g.renderGuestRooms();
+check('rooms as cards: beds used of beds', /Yatri Nivas · 1<\/p>/.test(el('guests-view-rooms').innerHTML) && /2 of 2 beds/.test(el('guests-view-rooms').innerHTML));
+sb.__g.renderGuestVehicles();
+check('vehicles as cards', /<article [^>]*>\s*<p class="font-semibold text-slate-800">Car A<\/p>/.test(el('guests-view-vehicles').innerHTML));
+const modal = fs.readFileSync(appFile('views', 'admin', 'modals', 'guest-edit.ejs'), 'utf8');
+check('the editor is full-screen on a phone, Save always in view', /id="modal-guest-edit" class="hidden fixed inset-0[^"]*items-stretch sm:items-center p-0 sm:p-4/.test(modal)
+  && /h-full sm:h-auto/.test(modal) && /overflow-y-auto flex-1 min-h-0/.test(modal));
+sb.__g.openGuestEditor(rows[0].id);
+check('...its fields in one column on a phone', /grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3/.test(el('guest-edit-body').innerHTML) && !/col-span-2 sm:col-span-4/.test(el('guest-edit-body').innerHTML));
 
 console.log('\n== Wiring ==');
 check('Lists & Settings is hidden until shown to an admin', /id="guests-settings-tab" class="guest-subtab hidden/.test(ejs));
