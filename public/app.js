@@ -9760,7 +9760,7 @@ function deskWhoCard(user, reg, checkedIn, guest) {
       ? deskBtn('Reset password', `resetUserPassword('${esc(user.phone_number)}', '${esc(user.full_name || '')}')`)
       : '',
     // Faculty are on the guest list (Guests tab); marking them puts them there.
-    can('guests.edit') && !guest && user.role === 'DELEGATE' ? deskBtn('Mark as faculty', 'deskMarkFaculty()') : '',
+    can('guests.edit') && !guest ? deskBtn('Mark as faculty', 'deskMarkFaculty()') : '',
   ].filter(Boolean).join('');
   const faculty = guest
     ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-indigo-100 text-indigo-800 border-indigo-300" title="On the faculty list${guest.overall_status ? ` · ${esc(guest.overall_status)}` : ''}">Faculty</span>` : '';
@@ -10876,7 +10876,7 @@ async function searchFacultyCandidates(q) {
       <div class="min-w-0">
         <p class="font-semibold text-sm text-slate-800 truncate">${esc(u.name)}</p>
         <p class="text-[11px] text-slate-500 truncate">${esc([u.designation, u.phone, u.registration_number].filter(Boolean).join(' · '))}</p>
-        <p class="mt-1">${u.registered ? guestPill('bg-emerald-100 text-emerald-800 border-emerald-300', 'Registered') : guestPill(GUEST_FLAG_STYLES.notRegistered, 'Not registered yet')}</p>
+        <p class="mt-1">${u.staff ? guestPill('bg-slate-100 text-slate-700 border-slate-300', 'Staff') + ' ' : ''}${u.registered ? guestPill('bg-emerald-100 text-emerald-800 border-emerald-300', 'Registered') : guestPill(GUEST_FLAG_STYLES.notRegistered, 'Not registered yet')}</p>
       </div>
       ${u.guestId ? '<span class="text-xs font-semibold text-slate-400 shrink-0">Already faculty</span>'
         : `<button type="button" onclick="markFaculty(${i})" class="shrink-0 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Mark as faculty</button>`}
@@ -10931,10 +10931,10 @@ async function searchGuestLink(q) {
   if (seq !== guestLinkSeq || !res.ok) return;
   const results = (await res.json()).results || [];
   box.innerHTML = results.length ? results.map((u) => `<div class="flex items-center justify-between gap-2 bg-white border border-sky-100 rounded-lg px-2.5 py-1.5">
-      <span class="min-w-0 text-xs"><b class="text-slate-800">${esc(u.name)}</b> <span class="text-slate-500">${esc([u.phone, u.email].filter(Boolean).join(' · '))}</span></span>
+      <span class="min-w-0 text-xs"><b class="text-slate-800">${esc(u.name)}</b>${u.staff ? ' <span class="text-[10px] font-bold text-slate-500">STAFF</span>' : ''} <span class="text-slate-500">${esc([u.phone, u.email].filter(Boolean).join(' · '))}</span></span>
       ${u.guestId ? '<span class="text-[11px] text-slate-400 shrink-0">Already faculty</span>'
         : `<button type="button" onclick="linkGuest(${esc(id)}, '${esc(u.phone_number)}')" class="shrink-0 px-2.5 py-1 bg-sky-700 hover:bg-sky-800 text-white text-[11px] font-semibold rounded-md">Link</button>`}
-    </div>`).join('') : '<p class="text-xs text-sky-900/70">No delegate account matches.</p>';
+    </div>`).join('') : '<p class="text-xs text-sky-900/70">No account matches.</p>';
 }
 
 async function linkGuest(id, phone) {

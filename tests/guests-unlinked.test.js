@@ -75,7 +75,16 @@ const P = { tc: `86${N}`, existing: `87${N}` };
 
     console.log('\n== Linking ==');
     check('the front desk cannot link', (await call('PUT', `/api/guests/${a.body.id}/link`, { phone: accountPhone }, await loginPassword('9000000006', ADMIN_PW))).status === 403);
-    check('staff accounts cannot be linked', (await call('PUT', `/api/guests/${a.body.id}/link`, { phone: P.tc }, tc)).status === 404);
+    // A staff member added by name is linked to their staff account.
+    const staffByEmail = await add({ name: 'Tara T', email: `gu-${P.tc}@example.test` }, tc);
+    check('adding by name someone whose email is a staff account offers that account instead',
+      staffByEmail.status === 409 && staffByEmail.body.code === 'ACCOUNT_EXISTS' && staffByEmail.body.account.phone_number === P.tc, staffByEmail.body);
+    const staffGuest = await add({ name: 'Staff Speaker' }, tc);
+    made.push(staffGuest.body.id);
+    const staffLink = await call('PUT', `/api/guests/${staffGuest.body.id}/link`, { phone: P.tc }, tc);
+    check('a faculty member can be linked to a staff account', staffLink.body.success === true, staffLink.body);
+    check('...and then shows that account\'s name', (await board(tc)).guests.find((x) => x.id === staffGuest.body.id).name === 'Tara Transport');
+    check('an account that does not exist cannot be linked', (await call('PUT', `/api/guests/${a.body.id}/link`, { phone: `00${N}` }, tc)).status === 404);
     const linked = await call('PUT', `/api/guests/${a.body.id}/link`, { phone: accountPhone }, tc);
     check('a coordinator links them', linked.body.success === true && linked.body.registered === false, linked.body);
     const g3 = (await board(tc)).guests.find((x) => x.id === a.body.id);

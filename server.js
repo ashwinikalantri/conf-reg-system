@@ -12207,7 +12207,8 @@ async function guestRowsJoined(where = '', params = []) {
   return out;
 }
 
-// The delegate account at this phone or email, if there is exactly one.
+// The account (delegate or staff) at this phone or email, if there is
+// exactly one. Faculty include staff -- an organiser who also speaks.
 async function accountMatchingGuest(phone, email) {
   const params = phone ? phoneMatchParams(phone) : null;
   const clauses = [];
@@ -12217,7 +12218,7 @@ async function accountMatchingGuest(phone, email) {
   if (!clauses.length) return null;
   const rows = await dbAll(
     `SELECT phone_number, salutation, full_name, (SELECT id FROM guests g WHERE g.phone_number = users.phone_number) AS guest_id
-       FROM users WHERE role = 'DELEGATE' AND (${clauses.join(' OR ')}) LIMIT 2`, args);
+       FROM users WHERE role IS NOT NULL AND (${clauses.join(' OR ')}) LIMIT 2`, args);
   return rows.length === 1 ? rows[0] : null;
 }
 
@@ -12297,7 +12298,8 @@ app.get('/api/guests/export.csv', requirePermission('guests.view'), async (req, 
   }
 });
 
-// Delegates who could be marked as faculty, for the Add Faculty search: two
+// Accounts that could be marked as faculty, for the Add Faculty search and
+// for linking: delegates and staff alike (staff are labelled), two
 // characters minimum, at most 8, as the desk search.
 app.get('/api/guests/candidates', requirePermission('guests.edit'), async (req, res, next) => {
   try {
@@ -12305,13 +12307,13 @@ app.get('/api/guests/candidates', requirePermission('guests.edit'), async (req, 
     if (q.length < 2) return res.json({ success: true, results: [] });
     const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
     const rows = await dbAll(
-      `SELECT u.phone_number, u.salutation, u.full_name, u.designation, u.email, u.phone,
+      `SELECT u.phone_number, u.salutation, u.full_name, u.designation, u.email, u.phone, u.role,
               COALESCE(r.registration_number, u.registration_number) AS registration_number,
               (r.id IS NOT NULL AND COALESCE(r.bank_status, '') != 'REJECTED') AS registered,
               (SELECT id FROM guests g WHERE g.phone_number = u.phone_number) AS guest_id
          FROM users u
          LEFT JOIN registrations r ON r.phone_number = u.phone_number
-        WHERE u.role = 'DELEGATE'
+        WHERE u.role IS NOT NULL
           AND (u.full_name LIKE ? ESCAPE '\\' OR u.phone_number LIKE ? ESCAPE '\\' OR u.phone LIKE ? ESCAPE '\\'
                OR LOWER(u.email) LIKE LOWER(?) ESCAPE '\\' OR UPPER(u.registration_number) LIKE UPPER(?) ESCAPE '\\')
         ORDER BY u.full_name
@@ -12321,7 +12323,7 @@ app.get('/api/guests/candidates', requirePermission('guests.edit'), async (req, 
       phone_number: u.phone_number,
       name: [u.salutation, u.full_name].filter(Boolean).join(' ') || u.phone_number,
       designation: u.designation, email: u.email, registration_number: u.registration_number,
-      phone: displayPhone(u), registered: !!u.registered, guestId: u.guest_id || null,
+      phone: displayPhone(u), registered: !!u.registered, guestId: u.guest_id || null, staff: u.role !== 'DELEGATE',
     })) });
   } catch (err) {
     next(err);
@@ -12374,7 +12376,7 @@ app.post('/api/guests', requirePermission('guests.edit'), async (req, res, next)
 
     const phone = String(body.phone || '');
     const u = await dbGet('SELECT phone_number, salutation, full_name, role, phone, email FROM users WHERE phone_number = ?', [phone]);
-    if (!u || u.role !== 'DELEGATE') return res.status(404).json({ success: false, error: 'Delegate not found.' });
+    if (!u || !u.role) return res.status(404).json({ success: false, error: 'Account not found.' });
     if (await dbGet('SELECT id FROM guests WHERE phone_number = ?', [phone])) {
       return res.status(409).json({ success: false, error: 'They are already on the faculty list.' });
     }
@@ -12405,7 +12407,7 @@ app.put('/api/guests/:id/link', requirePermission('guests.edit'), async (req, re
     if (g.phone_number) return res.status(409).json({ success: false, error: 'They are already linked to an account.' });
     const phone = String((req.body && req.body.phone) || '');
     const u = await dbGet('SELECT phone_number, salutation, full_name, role FROM users WHERE phone_number = ?', [phone]);
-    if (!u || u.role !== 'DELEGATE') return res.status(404).json({ success: false, error: 'Delegate not found.' });
+    if (!u || !u.role) return res.status(404).json({ success: false, error: 'Account not found.' });
     if (await dbGet('SELECT id FROM guests WHERE phone_number = ?', [phone])) {
       return res.status(409).json({ success: false, error: 'That account is already on the faculty list as someone else.' });
     }

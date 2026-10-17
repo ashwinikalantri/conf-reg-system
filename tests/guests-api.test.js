@@ -62,7 +62,7 @@ const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `
       [P.reg, cat.category_key, cat.label]);
     const found = (await call('GET', `/api/guests/candidates?q=${encodeURIComponent('Rekha Registered')}`, null, tc)).body.results || [];
     check('a coordinator can search delegates', found.some((r) => r.phone_number === P.reg && r.registered === true), found);
-    check('...staff are not offered', !((await call('GET', `/api/guests/candidates?q=Tara`, null, tc)).body.results || []).some((r) => r.phone_number === P.tc));
+    check('...staff are offered too, labelled as staff', ((await call('GET', `/api/guests/candidates?q=Tara`, null, tc)).body.results || []).some((r) => r.phone_number === P.tc && r.staff === true));
     const m1 = await call('POST', '/api/guests', { phone: P.reg }, tc);
     check('the transport coordinator marks a registered delegate', m1.body.success === true && m1.body.registered === true, m1.body);
     const m2 = await call('POST', '/api/guests', { phone: P.unreg }, ac);
@@ -70,7 +70,10 @@ const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `
     ids.reg = m1.body.id; ids.unreg = m2.body.id;
     check('a new guest starts as Invited', (await guestRow(ids.reg)).overall_status === 'Invited');
     check('marking twice is refused', (await call('POST', '/api/guests', { phone: P.reg }, tc)).status === 409);
-    check('staff cannot be marked', (await call('POST', '/api/guests', { phone: P.ac }, tc)).status === 404);
+    // An organiser who also speaks: a staff account can be faculty.
+    const staffMark = await call('POST', '/api/guests', { phone: P.ac }, tc);
+    check('a staff account can be marked as faculty', staffMark.body.success === true, staffMark.body);
+    check('...an account that does not exist cannot', (await call('POST', '/api/guests', { phone: `00${N}` }, tc)).status === 404);
     check('the front desk cannot mark', (await call('POST', '/api/guests', { phone: P.other }, desk)).status === 403);
     const board = (await call('GET', '/api/guests', null, tc)).body;
     const g = (id) => board.guests.find((x) => x.id === id);
