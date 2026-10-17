@@ -6101,6 +6101,55 @@ app.put('/api/registrations/:id/unapprove', requirePermission('payments.unapprov
   }
 });
 
+// Un-reject: return a rejected registration to pending review. The mirror of
+// un-approve, under the same permission (payments.unapprove, Super Admin
+// only) and, like it, silent -- no email goes to the delegate. The payments
+// the rejection turned down (those rejected in that one decision, which all
+// share its reviewed_at) go back to pending, so the reviewer sees exactly
+// what was in front of them before; older rejections stay rejected. The
+// reason is cleared, so the delegate's dashboard stops asking them to fix
+// something. Keeps any registration number already given out.
+app.put('/api/registrations/:id/unreject', requirePermission('payments.unapprove'), async (req, res, next) => {
+  try {
+    const existing = await dbGet('SELECT id, bank_status, rejection_reason, expected_amount FROM registrations WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ success: false, error: 'Registration not found.' });
+    if (existing.bank_status !== 'REJECTED') {
+      return res.status(400).json({ success: false, error: 'Only a rejected registration can be un-rejected.' });
+    }
+
+    const restored = await dbRun(
+      `UPDATE payment_transactions
+          SET txn_status = 'PENDING', rejection_reason = NULL, rejection_note = NULL, reviewed_by = NULL, reviewed_at = NULL
+        WHERE registration_id = ? AND txn_status = 'REJECTED'
+          AND COALESCE(reviewed_at, 0) = (SELECT COALESCE(MAX(reviewed_at), 0) FROM payment_transactions
+                                           WHERE registration_id = ? AND txn_status = 'REJECTED')`,
+      [req.params.id, req.params.id]);
+
+    // Pending review if there is a payment to review; otherwise what the
+    // money already accepted says -- a balance still due, or nothing yet.
+    const pending = await dbGet("SELECT COUNT(*) AS n FROM payment_transactions WHERE registration_id = ? AND txn_status = 'PENDING'", [req.params.id]);
+    let status = 'PENDING';
+    if (!pending.n) {
+      const summary = await getPaymentSummary(req.params.id, existing.expected_amount);
+      if (summary.verifiedTotal > 0 && summary.verifiedTotal + 0.5 < (Number(existing.expected_amount) || 0)) status = 'PARTIAL_PAYMENT';
+    }
+    await dbRun('UPDATE registrations SET bank_status = ?, rejection_reason = NULL, rejection_note = NULL WHERE id = ?', [status, req.params.id]);
+
+    await recordAudit({
+      req,
+      entityType: 'registration',
+      entityId: req.params.id,
+      action: 'BANK_STATUS_CHANGE',
+      oldValue: `REJECTED (${existing.rejection_reason || 'no reason'})`,
+      newValue: `${status} (un-rejected)`,
+    });
+
+    res.json({ success: true, status, paymentsRestored: restored.changes || 0 });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Lock a delegate into the correct category (Finance/Super Admin). Used when a
 // delegate picked the wrong category: the admin sets the right one, the fee is
 // recalculated from the fee master, and the delegate can no longer change it on

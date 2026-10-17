@@ -3932,6 +3932,9 @@ function openReviewModal(id) {
   const unapproveBtn = document.getElementById('review-unapprove-btn');
   const acceptBtn = document.getElementById('review-accept-btn');
   if (unapproveBtn) unapproveBtn.classList.toggle('hidden', !(can('payments.unapprove') && isVerified));
+  // Un-reject: the same reversal for a rejected registration, same key.
+  const unrejectBtn = document.getElementById('review-unreject-btn');
+  if (unrejectBtn) unrejectBtn.classList.toggle('hidden', !(can('payments.unapprove') && p.bank_status === 'REJECTED'));
   if (isVerified) {
     if (acceptBtn) acceptBtn.classList.add('hidden');
     if (rejectBtn) rejectBtn.classList.add('hidden');
@@ -4738,6 +4741,21 @@ async function reviewUnapprove() {
   })).json();
   if (!data.success) return showToast(data.error || 'Could not un-approve.');
   showToast('Registration un-approved and moved back to pending.', 'info');
+  closeModal('modal-review');
+  renderBackendPayments();
+}
+
+// Return a rejected registration to pending review (super admin only; the
+// server re-checks). Silent: the delegate is not emailed.
+async function reviewUnreject() {
+  if (!(await showConfirm('Un-reject this registration and send it back to pending review? The delegate is not emailed.'))) return;
+  const data = await (await fetch(`/api/registrations/${encodeURIComponent(reviewTargetId)}/unreject`, {
+    method: 'PUT',
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not un-reject.');
+  showToast(data.status === 'PARTIAL_PAYMENT'
+    ? 'Registration un-rejected. It is back to awaiting its balance.'
+    : 'Registration un-rejected and moved back to pending review.', 'info');
   closeModal('modal-review');
   renderBackendPayments();
 }

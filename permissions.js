@@ -61,7 +61,7 @@ const PERMISSIONS = [
   // --- Payments ---
   ['payments.view', 'payments', 'View payments', 'Open the Payments tab and read every registration, its ledger and its audit trail.'],
   ['payments.decide', 'payments', 'Approve or reject', 'Settle a pending payment. Approving and rejecting are one action here — they are the same endpoint.'],
-  ['payments.unapprove', 'payments', 'Reverse a decision', 'Return an already-approved registration to pending.'],
+  ['payments.unapprove', 'payments', 'Reverse a decision', 'Return an already-approved or rejected registration to pending. No email is sent.'],
   ['payments.revise', 'payments', 'Revise what is owed', 'Change a delegate’s category or fee, and ask them for a balance.'],
   ['payments.unlock_category', 'payments', 'Unlock a category', 'Undo a category lock, letting the delegate change category again.'],
   ['payments.link', 'payments', 'Link a payment to a credit', 'Match a payment against a bank credit, or unlink one.'],
@@ -202,6 +202,7 @@ const ROUTE_PERMISSIONS = {
   'GET /api/admin/delegate-locations': 'payments.view',
   'PUT /api/registrations/:id/status': 'payments.decide',
   'PUT /api/registrations/:id/unapprove': 'payments.unapprove',
+  'PUT /api/registrations/:id/unreject': 'payments.unapprove',
   'PUT /api/registrations/:id/lock-category': 'payments.revise',
   'POST /api/registrations/:id/revise-payment': 'payments.revise',
   'POST /api/registrations/:id/fee-adjustment': 'payments.adjust_fee',
