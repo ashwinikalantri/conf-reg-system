@@ -48,6 +48,19 @@ function addDays(iso, n) {
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const shortDate = (iso) => { const [, m, d] = iso.split('-'); return `${Number(d)} ${SHORT_MONTHS[Number(m) - 1]}`; };
 
+// "21 - 22 Nov 2026", "30 Nov - 2 Dec 2026", "30 Dec 2026 - 2 Jan 2027",
+// "21 Nov 2026" -- as the Faculty page writes a range (shortDateRange there).
+function dateRange(from, to) {
+  const part = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); return m ? { y: m[1], mon: SHORT_MONTHS[Number(m[2]) - 1], d: String(Number(m[3])) } : null; };
+  const a = part(from);
+  const b = part(to) || a;
+  if (!a) return '';
+  if (!to || from === to) return `${a.d} ${a.mon} ${a.y}`;
+  if (a.y !== b.y) return `${a.d} ${a.mon} ${a.y} - ${b.d} ${b.mon} ${b.y}`;
+  if (a.mon !== b.mon) return `${a.d} ${a.mon} - ${b.d} ${b.mon} ${b.y}`;
+  return `${a.d} - ${b.d} ${b.mon} ${b.y}`;
+}
+
 // The conference days, from its first date to its last (at most 7).
 function conferenceDays(startDate, endDate) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate || '')) return [];
@@ -154,5 +167,5 @@ function completion(rows, events) {
 module.exports = {
   DEFAULT_HOURS, TOKEN_STEP_MS, TOKEN_LIFETIME_STEPS, IST_OFFSET_MS,
   toMinutes, fromMinutes, istParts, conferenceDays, buildEvents, windowStatus, to12,
-  makeToken, readToken, completion, shortDate,
+  makeToken, readToken, completion, shortDate, dateRange,
 };

@@ -27,7 +27,8 @@ const SECTIONS = [
   { key: 'statement', label: 'Bank statement' },
   { key: 'abstracts', label: 'Abstracts' },
   { key: 'guests', label: 'Faculty coordination' },
-  { key: 'attendance', label: 'Attendance & certificates' },
+  { key: 'attendance', label: 'Attendance' },
+  { key: 'certificates', label: 'Certificates' },
   { key: 'reports', label: 'Reports' },
   { key: 'users', label: 'Users & roles' },
   { key: 'masters', label: 'Masters' },
@@ -114,6 +115,9 @@ const PERMISSIONS = [
   // --- Attendance (for the certificates) ---
   ['attendance.mark', 'attendance', 'Take attendance', 'Scan desk passes at a hall or workshop door, and show the self sign-in code on a screen at the venue.'],
   ['attendance.view', 'attendance', 'View attendance', 'See who has signed in and out of each conference day and workshop.'],
+  ['certificates.view', 'certificates', 'View certificates', 'See who qualifies for which certificate, those issued, and download them.'],
+  ['certificates.issue', 'certificates', 'Issue certificates', 'Issue certificates, include or exclude someone with a reason, correct the name on one, and withdraw one.'],
+  ['certificates.manage', 'certificates', 'Certificate settings', 'Set the MMC details, which categories earn MMC points, the attendance hours, the wording of each certificate, the signatories and the design.'],
   ['attendance.manage', 'attendance', 'Correct attendance', 'Record or remove a sign-in or sign-out at any time, outside its window, with a reason that is kept.'],
   ['guests.view', 'guests', 'View faculty', 'Open the Faculty tab: every faculty member\'s travel and stay, the dashboard, the pickup and drop schedules, vehicles and rooms.'],
   ['guests.edit', 'guests', 'Mark faculty, edit shared details', 'Mark a delegate as faculty (adding them to the faculty list), and edit Special Needs, Overall Status and Remarks.'],
@@ -215,6 +219,20 @@ const ROUTE_PERMISSIONS = {
   'GET /api/attendance/roster': 'attendance.view',
   'POST /api/attendance/manual': 'attendance.manage',
   'DELETE /api/attendance/:id': 'attendance.manage',
+  'GET /api/admin/certificates/settings': 'certificates.manage',
+  'PUT /api/admin/certificates/settings': 'certificates.manage',
+  'POST /api/admin/certificates/signatories': 'certificates.manage',
+  'PUT /api/admin/certificates/signatories/:id': 'certificates.manage',
+  'GET /api/admin/certificates/signatories/:id/signature': 'certificates.manage',
+  'PUT /api/admin/certificates/background': 'certificates.manage',
+  'GET /api/admin/certificates/preview.pdf': 'certificates.view',
+  'GET /api/admin/certificates/candidates': 'certificates.view',
+  'POST /api/admin/certificates/override': 'certificates.issue',
+  'POST /api/admin/certificates/issue': 'certificates.issue',
+  'GET /api/admin/certificates/issued': 'certificates.view',
+  'GET /api/admin/certificates/:id.pdf': 'certificates.view',
+  'PUT /api/admin/certificates/:id': 'certificates.issue',
+  'POST /api/admin/certificates/:id/revoke': 'certificates.issue',
   // Guarded by the existing "add a payment on the delegate's behalf" key
   // rather than a new one -- taking cash at the counter is that idea, not a
   // different one. The desk-specific part is the route, not the permission.
@@ -402,7 +420,7 @@ const SECTION_PERMISSIONS = {
   // original guests.* names.
   faculty: { permission: 'guests.view' },
   // Taking attendance at a door, or watching the counts.
-  attendance: { anyOf: ['attendance.mark', 'attendance.view'] },
+  attendance: { anyOf: ['attendance.mark', 'attendance.view', 'certificates.view'] },
   general: { permission: 'system.settings_view' },
   activity: { permission: 'system.activity_log' },
 };

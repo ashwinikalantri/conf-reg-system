@@ -182,6 +182,26 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/attendance/manual': 'Records a sign-in at any time, with a reason kept in the activity log. attendance.manage, Super Admin only.',
     'DELETE /api/attendance/:id': 'Removes one (the row is kept, marked, with the reason). attendance.manage, Super Admin only.',
 
+    // --- E-certificates ---------------------------------------------------------
+    // Three new keys, all Super Admin only: certificates.view (who qualifies,
+    // those issued, downloads), certificates.issue (issue, include/exclude
+    // with a reason, correct a name, withdraw) and certificates.manage (the
+    // MMC details, hours, wording, signatories and design).
+    'GET /api/admin/certificates/settings': 'Certificate settings, signatories and wording. certificates.manage.',
+    'PUT /api/admin/certificates/settings': 'Saves the MMC details, MMC-eligible categories, attendance hours and wording. certificates.manage.',
+    'POST /api/admin/certificates/signatories': 'Adds a signatory, with a signature image. certificates.manage.',
+    'PUT /api/admin/certificates/signatories/:id': 'Edits one, replaces their signature, or turns them off. certificates.manage.',
+    'GET /api/admin/certificates/signatories/:id/signature': 'Shows a signature in settings. certificates.manage.',
+    'PUT /api/admin/certificates/background': 'The designer\'s artwork, or back to the generated design. certificates.manage.',
+    'GET /api/admin/certificates/preview.pdf': 'A specimen of each kind, made-up details. certificates.view.',
+    'GET /api/admin/certificates/candidates': 'Who qualifies for which certificate and why not. Names, numbers, categories and council numbers. certificates.view.',
+    'POST /api/admin/certificates/override': 'Includes or excludes someone, with a reason kept. certificates.issue.',
+    'POST /api/admin/certificates/issue': 'Issues every certificate due. certificates.issue.',
+    'GET /api/admin/certificates/issued': 'Every certificate issued. certificates.view.',
+    'GET /api/admin/certificates/:id.pdf': 'Downloads one. certificates.view.',
+    'PUT /api/admin/certificates/:id': 'Corrects the name (or council number) on one; the number stays. certificates.issue.',
+    'POST /api/admin/certificates/:id/revoke': 'Withdraws one, with a reason; it stays on record. certificates.issue.',
+
     // --- The Reminders composer ----------------------------------------------
     // One set of routes for every audience replaces one set per card. Each is
     // guarded by the key its predecessors held (comms.reminders_view / _test /

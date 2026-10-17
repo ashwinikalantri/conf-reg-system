@@ -5,6 +5,13 @@
          delegates to scan themselves. The events and their windows are in
          attendance.js; the routes under /api/attendance in server.js. -->
     <section id="section-attendance" class="hidden space-y-5">
+      <div role="tablist" class="flex gap-1.5 overflow-x-auto border-b border-slate-200 pb-2 -mx-1 px-1">
+        <button type="button" data-att-view="attendance" onclick="switchAttendanceView('attendance')" class="att-subtab shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Attendance</button>
+        <button type="button" data-att-view="certificates" onclick="switchAttendanceView('certificates')" class="att-subtab hidden shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Certificates</button>
+        <button type="button" data-att-view="settings" onclick="switchAttendanceView('settings')" class="att-subtab hidden shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Certificate settings</button>
+      </div>
+
+      <div id="att-view-attendance" class="att-view space-y-5">
       <div class="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 class="text-lg font-bold text-slate-800">Attendance</h2>
@@ -57,6 +64,88 @@
         </div>
         <p id="att-roster-count" class="text-xs text-slate-500 mb-2"></p>
         <div id="att-roster" class="border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-[32rem] overflow-y-auto text-sm"></div>
+      </div>
+      </div>
+
+      <!-- CERTIFICATES: who qualifies for which, issuing, and those issued. -->
+      <div id="att-view-certificates" class="att-view hidden space-y-5">
+        <div class="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-bold text-slate-800">Certificates</h2>
+            <p class="text-xs text-slate-500">The conference: signed in on every day and out on the last, and paid. With MMC points for doctors and medical postgraduates who have given a council number. A workshop: signed in at it.</p>
+          </div>
+          <div id="cert-issue-btns" class="hidden flex flex-wrap gap-2 w-full sm:w-auto">
+            <button type="button" onclick="issueCertificates('conference')" id="cert-issue-conf" class="flex-1 sm:flex-none px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Issue conference certificates</button>
+            <button type="button" onclick="issueCertificates('workshops')" id="cert-issue-ws" class="flex-1 sm:flex-none px-4 py-2 bg-slate-700 hover:bg-slate-800 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Issue workshop certificates</button>
+          </div>
+        </div>
+        <div id="cert-stats" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div>
+        <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
+            <select id="cert-filter" onchange="renderCertificateList()" aria-label="Show" class="h-10 px-2 border border-slate-300 rounded-lg text-sm bg-white">
+              <option value="">Everyone registered</option>
+              <option value="due">Due, not yet issued</option>
+              <option value="MMC">Qualifies: MMC points</option>
+              <option value="CONF">Qualifies: participation</option>
+              <option value="not">Does not qualify yet</option>
+              <option value="nocouncil">Doctor or PG without a council number</option>
+              <option value="issued">Issued</option>
+            </select>
+            <input id="cert-search" type="search" oninput="renderCertificateList()" placeholder="Search name or ID" class="sm:col-span-2 h-10 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+          </div>
+          <p id="cert-count" class="text-xs text-slate-500 mb-2"></p>
+          <div id="cert-list" class="border border-slate-200 rounded-xl divide-y divide-slate-100 text-sm"></div>
+        </div>
+      </div>
+
+      <!-- CERTIFICATE SETTINGS: the MMC details, who earns points, the hours,
+           the signatories, each certificate's wording, the design. -->
+      <div id="att-view-settings" class="att-view hidden space-y-5">
+        <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm space-y-3">
+          <h3 class="text-sm font-bold text-slate-800">MMC credit points</h3>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div><label for="cs-mmc-no" class="block text-xs font-semibold text-slate-600 mb-1">Accreditation number</label>
+              <input id="cs-mmc-no" maxlength="80" class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none"></div>
+            <div><label for="cs-mmc-points" class="block text-xs font-semibold text-slate-600 mb-1">Credit points</label>
+              <input id="cs-mmc-points" maxlength="20" class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none"></div>
+          </div>
+          <div>
+            <p class="text-xs font-semibold text-slate-600 mb-1">Categories that earn MMC points (with a council number given)</p>
+            <div id="cs-categories" class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm"></div>
+          </div>
+          <h3 class="text-sm font-bold text-slate-800 pt-2">Attendance hours</h3>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div><label for="cs-day-start" class="block text-xs font-semibold text-slate-600 mb-1">Day starts</label><input id="cs-day-start" type="time" class="w-full h-10 px-2 border border-slate-300 rounded-lg text-sm"></div>
+            <div><label for="cs-day-end" class="block text-xs font-semibold text-slate-600 mb-1">Day ends</label><input id="cs-day-end" type="time" class="w-full h-10 px-2 border border-slate-300 rounded-lg text-sm"></div>
+            <div><label for="cs-out-from" class="block text-xs font-semibold text-slate-600 mb-1">Sign-out from</label><input id="cs-out-from" type="time" class="w-full h-10 px-2 border border-slate-300 rounded-lg text-sm"></div>
+            <div><label for="cs-out-until" class="block text-xs font-semibold text-slate-600 mb-1">Sign-out until</label><input id="cs-out-until" type="time" class="w-full h-10 px-2 border border-slate-300 rounded-lg text-sm"></div>
+          </div>
+          <p class="text-[11px] text-slate-500">Sign-in opens an hour before the day starts. Workshops open half an hour before they start.</p>
+          <button type="button" onclick="saveCertificateSettings()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Save</button>
+        </div>
+
+        <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
+          <h3 class="text-sm font-bold text-slate-800">Signatories</h3>
+          <p class="text-xs text-slate-500 mb-3">A signature is a PNG (transparent background is best) or JPEG, about 600 × 200 pixels.</p>
+          <div id="cs-signatories" class="space-y-3"></div>
+          <form onsubmit="addSignatory(event)" class="mt-4 pt-4 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <input id="cs-new-sig-name" placeholder="Name, e.g. Dr A. B. Sharma" maxlength="120" class="h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+            <input id="cs-new-sig-designation" placeholder="Designation" maxlength="160" class="h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+            <button type="submit" class="h-10 px-4 bg-slate-700 hover:bg-slate-800 text-white font-semibold text-sm rounded-lg">Add signatory</button>
+          </form>
+        </div>
+
+        <div id="cs-templates" class="space-y-5"></div>
+
+        <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
+          <h3 class="text-sm font-bold text-slate-800">Design</h3>
+          <p id="cs-background-state" class="text-xs text-slate-500 mt-1"></p>
+          <div class="flex flex-wrap items-center gap-2 mt-3">
+            <label class="px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white font-semibold text-sm rounded-lg cursor-pointer">Upload the designer's background
+              <input type="file" accept="image/png,image/jpeg" class="hidden" onchange="uploadCertificateBackground(this)"></label>
+            <button type="button" id="cs-background-remove" onclick="removeCertificateBackground()" class="hidden px-4 py-2 border border-slate-300 text-slate-700 font-semibold text-sm rounded-lg">Use the generated design</button>
+          </div>
+        </div>
       </div>
     </section>
 

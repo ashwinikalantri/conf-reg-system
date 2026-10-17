@@ -970,7 +970,15 @@ async function loadAttendanceCard() {
   const status = document.getElementById('attendance-status');
   status.className = `text-xs font-bold px-2.5 py-1 rounded-full border ${data.completion.complete ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-600 border-slate-200'}`;
   status.textContent = data.completion.complete ? 'Conference completed' : 'Attendance in progress';
+  // Issued certificates, to download; once issued, the details are fixed.
+  let mine = [];
+  try { mine = (await (await fetch('/api/certificates/mine')).json()).certificates || []; } catch (e) { mine = []; }
+  document.getElementById('cert-downloads').classList.toggle('hidden', !mine.length);
+  document.getElementById('cert-download-list').innerHTML = mine.map((m) => `
+    <a href="/api/certificates/mine/${encodeURIComponent(m.id)}.pdf" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-lg text-center">Download: ${esc(m.label)}</a>`).join('');
   const c = data.certificate;
+  document.getElementById('cert-locked-note').classList.toggle('hidden', !c.locked);
+  document.querySelectorAll('#cert-details-form input, #cert-details-form button').forEach((el) => { el.disabled = !!c.locked; });
   certificateDefaultName = c.defaultName || '';
   document.getElementById('cert-name').value = c.name || c.defaultName || '';
   document.getElementById('cert-council-wrap').classList.toggle('hidden', !c.asksCouncilNumber);
@@ -2327,13 +2335,13 @@ function showConfirm(message, okText = 'Confirm', cancelText = 'Cancel') {
 
 // Ask for a short answer (a reason) in the same modal. Resolves to the
 // trimmed text, or null if cancelled or left empty.
-function showPrompt(message, placeholder = '') {
+function showPrompt(message, placeholder = '', value = '') {
   return new Promise((resolve) => {
     const modal = document.getElementById('modal-confirm');
     const input = document.getElementById('confirm-input');
     if (!modal || !input) { const v = window.prompt(message); return resolve(v && v.trim() ? v.trim() : null); }
     document.getElementById('confirm-message').textContent = message;
-    input.value = '';
+    input.value = value;
     input.placeholder = placeholder;
     input.classList.remove('hidden');
     const ok = document.getElementById('confirm-ok');
@@ -7636,6 +7644,23 @@ ${steelButton(window.location.origin, 'Register Now')}
 ${reminderSignOff()}`;
 }
 
+// Certificates issued: where to download them. Each one carries a QR code
+// that verifies it, so it can be shared as it is.
+async function buildCertificateReadyBody() {
+  const c = conferenceInfo;
+  return `<p>Dear {{name}},</p>
+<p>Thank you for attending the <b>${esc(c.name || 'conference')}</b>. Your e-certificate is ready.</p>
+<p><b>To download it</b></p>
+<ol style="padding-left:1.1rem;margin:.5rem 0">
+  <li>Log in to the registration portal.</li>
+  <li>On your dashboard, find <b>Attendance &amp; Certificate</b>.</li>
+  <li>Click <b>Download</b> for each certificate.</li>
+</ol>
+<p>Each certificate carries a QR code and a certificate number, which anyone can use to check it is genuine.</p>
+${steelButton(window.location.origin, 'Download My Certificate')}
+${reminderSignOff()}`;
+}
+
 // An account whose email address is not verified. Confirmations go to it,
 // and a code issued to the address -- or to its domain -- waits on it.
 async function buildVerifyEmailBody() {
@@ -7972,6 +7997,15 @@ const CUSTOM_REMINDER_TEMPLATES = {
     },
     body: buildCodeHolderBody,
   },
+  'certificate-ready': {
+    label: 'Your certificate is ready',
+    audiences: ['certificates'],
+    async subject() {
+      const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
+      return `Your certificate${who} is ready to download`;
+    },
+    body: buildCertificateReadyBody,
+  },
   'balance-due': {
     label: 'Balance payment pending',
     audiences: ['balance'],
@@ -7987,7 +8021,7 @@ const CUSTOM_REMINDER_TEMPLATES = {
 const REMINDER_DEFAULT_TEMPLATE = {
   signups: 'registration-reminder', faculty: 'registration-reminder', domain: 'registration-reminder',
   unverified: 'verify-email', abstract: 'abstract-registration-mandatory', codes: 'code-holder',
-  balance: 'balance-due', paste: 'early-bird-ending',
+  balance: 'balance-due', paste: 'early-bird-ending', certificates: 'certificate-ready',
 };
 
 // --- The composer ------------------------------------------------------------
@@ -11552,7 +11586,7 @@ window.addEventListener('hashchange', () => {
 const attState = { events: [], summary: null, roster: null, scanner: null, lastScan: { text: '', at: 0 }, screenTimer: null, pending: null };
 const ATT_METHODS = { SCAN: 'Scanned', SELF: 'Self sign-in', DESK: 'At the desk', MANUAL: 'Recorded by hand' };
 
-async function renderAttendance() {
+async function renderAttendanceView() {
   const mayMark = can('attendance.mark');
   const mayView = can('attendance.view');
   document.getElementById('att-take').classList.toggle('hidden', !mayMark);
@@ -11695,7 +11729,7 @@ async function closeAttendanceScanner() {
     try { scanner.clear(); } catch (e) { /* nothing to clear */ }
   }
   closeModal('modal-att-scan');
-  if (can('attendance.view')) renderAttendance();
+  if (can('attendance.view')) renderAttendanceView();
 }
 
 // The screen at the venue. A fresh code every 20 seconds (each is good for a
@@ -11787,7 +11821,7 @@ async function markAttendanceByHand(phone) {
   })).json();
   if (!data.success) return showToast(data.error || 'Could not record it.');
   showToast(data.already ? 'Already recorded.' : 'Recorded.', 'success');
-  renderAttendance();
+  renderAttendanceView();
 }
 
 async function removeAttendance(id) {
@@ -11798,7 +11832,341 @@ async function removeAttendance(id) {
   })).json();
   if (!data.success) return showToast(data.error || 'Could not remove it.');
   showToast('Removed.', 'success');
-  renderAttendance();
+  renderAttendanceView();
+}
+
+// --- The tab's three views ---
+const ATT_VIEWS = ['attendance', 'certificates', 'settings'];
+function attendanceViewAllowed(view) {
+  if (view === 'attendance') return can('attendance.mark') || can('attendance.view');
+  if (view === 'certificates') return can('certificates.view');
+  if (view === 'settings') return can('certificates.manage');
+  return false;
+}
+
+async function renderAttendance() {
+  document.querySelectorAll('.att-subtab').forEach((b) => b.classList.toggle('hidden', !attendanceViewAllowed(b.dataset.attView)));
+  const saved = storageGet('local', 'nqocn_att_view');
+  const view = attendanceViewAllowed(saved) ? saved : ATT_VIEWS.find(attendanceViewAllowed) || 'attendance';
+  await switchAttendanceView(view);
+}
+
+async function switchAttendanceView(view) {
+  if (!attendanceViewAllowed(view)) view = ATT_VIEWS.find(attendanceViewAllowed) || 'attendance';
+  storageSet('local', 'nqocn_att_view', view);
+  document.querySelectorAll('.att-subtab').forEach((b) => {
+    const on = b.dataset.attView === view;
+    b.classList.toggle('bg-indigo-600', on);
+    b.classList.toggle('text-white', on);
+    b.classList.toggle('text-slate-600', !on);
+    b.classList.toggle('hover:bg-slate-100', !on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  ATT_VIEWS.forEach((v) => { const el = document.getElementById(`att-view-${v}`); if (el) el.classList.toggle('hidden', v !== view); });
+  if (view === 'attendance') await renderAttendanceView();
+  if (view === 'certificates') await renderCertificates();
+  if (view === 'settings') await renderCertificateSettings();
+}
+
+// --- CERTIFICATES (admin) ---
+const certState = { people: [], issued: {}, kinds: {}, settings: null };
+const CERT_BADGE = {
+  MMC: 'bg-indigo-100 text-indigo-800 border-indigo-300', CONF: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+  WORKSHOP: 'bg-sky-100 text-sky-800 border-sky-300',
+};
+
+async function renderCertificates() {
+  const res = await fetch('/api/admin/certificates/candidates');
+  if (!res.ok) return;
+  const data = await res.json();
+  certState.people = data.people || [];
+  certState.issued = data.issued || {};
+  certState.kinds = data.kinds || {};
+  const p = certState.people;
+  const dueConf = p.filter((x) => x.conference.kind && !x.conference.issued).length;
+  const dueWs = p.reduce((n, x) => n + x.workshops.filter((w) => w.eligible && !w.issued).length, 0);
+  const stat = (label, value, note) => `<div class="bg-white rounded-xl border border-slate-200 p-3"><p class="text-[11px] font-bold text-slate-500 uppercase tracking-wide">${esc(label)}</p>
+    <p class="text-2xl font-extrabold text-slate-800 tabular-nums">${value}</p><p class="text-[11px] text-slate-500">${esc(note)}</p></div>`;
+  document.getElementById('cert-stats').innerHTML = [
+    stat('MMC points', p.filter((x) => x.conference.kind === 'MMC').length, `${certState.issued.MMC || 0} issued`),
+    stat('Participation', p.filter((x) => x.conference.kind === 'CONF').length, `${certState.issued.CONF || 0} issued`),
+    stat('Workshops', p.reduce((n, x) => n + x.workshops.filter((w) => w.eligible).length, 0), `${certState.issued.WORKSHOP || 0} issued`),
+    stat('Not yet', p.filter((x) => !x.conference.kind).length, 'for the conference'),
+  ].join('');
+  const mayIssue = can('certificates.issue');
+  document.getElementById('cert-issue-btns').classList.toggle('hidden', !mayIssue);
+  const confBtn = document.getElementById('cert-issue-conf');
+  const wsBtn = document.getElementById('cert-issue-ws');
+  confBtn.textContent = `Issue conference certificates (${dueConf} due)`;
+  confBtn.disabled = !dueConf;
+  wsBtn.textContent = `Issue workshop certificates (${dueWs} due)`;
+  wsBtn.disabled = !dueWs;
+  renderCertificateList();
+}
+
+function renderCertificateList() {
+  const filter = document.getElementById('cert-filter').value;
+  const term = document.getElementById('cert-search').value.trim().toLowerCase();
+  const mayIssue = can('certificates.issue');
+  const shown = certState.people.filter((x) => {
+    if (term && ![x.name, x.registrationNumber].some((v) => String(v || '').toLowerCase().includes(term))) return false;
+    if (filter === 'due') return (x.conference.kind && !x.conference.issued) || x.workshops.some((w) => w.eligible && !w.issued);
+    if (filter === 'MMC' || filter === 'CONF') return x.conference.kind === filter;
+    if (filter === 'not') return !x.conference.kind;
+    if (filter === 'nocouncil') return x.mmcCategory && !x.councilRegNo;
+    if (filter === 'issued') return !!x.conference.issued || x.workshops.some((w) => w.issued);
+    return true;
+  });
+  setText('cert-count', `Showing ${shown.length} of ${certState.people.length}`);
+  const badge = (kind, text) => `<span class="text-[10px] px-2 py-0.5 rounded-full border font-bold ${CERT_BADGE[kind]}">${esc(text)}</span>`;
+  const issuedLink = (c) => `<a href="/api/admin/certificates/${encodeURIComponent(c.id)}.pdf" target="_blank" rel="noopener" class="text-indigo-700 hover:underline font-semibold">${esc(c.cert_no)}</a>`
+    + (mayIssue ? ` <button type="button" onclick="correctCertificate(${Number(c.id)})" class="text-xs text-slate-500 hover:underline">Correct name</button>`
+      + ` <button type="button" onclick="revokeCertificate(${Number(c.id)})" class="text-xs text-rose-600 hover:underline">Withdraw</button>` : '');
+  document.getElementById('cert-list').innerHTML = shown.map((x) => {
+    const c = x.conference;
+    const conf = c.issued ? `${badge(c.issued.kind, c.issued.kind === 'MMC' ? 'MMC points' : 'Participation')} ${issuedLink(c.issued)}`
+      : c.kind ? `${badge(c.kind, c.kind === 'MMC' ? 'MMC points · due' : 'Participation · due')}`
+        : `<span class="text-xs text-slate-500">${esc(c.whyNot || '')}</span>`;
+    const confOv = mayIssue && !c.issued ? (c.override
+      ? ` <button type="button" onclick="setCertificateOverride('${esc(x.phone)}', 'CONF', null)" class="text-xs text-amber-700 hover:underline">${c.override.decision === 'INCLUDE' ? 'Included' : 'Excluded'} by hand — undo</button>`
+      : ` <button type="button" onclick="setCertificateOverride('${esc(x.phone)}', 'CONF', '${c.kind ? 'EXCLUDE' : 'INCLUDE'}')" class="text-xs text-slate-500 hover:underline">${c.kind ? 'Exclude' : 'Include anyway'}</button>`) : '';
+    const ws = x.workshops.map((w) => `<div class="text-xs mt-1">
+        <span class="font-semibold text-slate-700">${esc(w.name)}</span>:
+        ${w.issued ? `${badge('WORKSHOP', 'Issued')} ${issuedLink(w.issued)}` : w.eligible ? badge('WORKSHOP', 'Due') : `<span class="text-slate-500">${esc(w.whyNot || '')}</span>`}
+        ${mayIssue && !w.issued ? (w.override
+          ? ` <button type="button" onclick="setCertificateOverride('${esc(x.phone)}', '${esc(w.e)}', null)" class="text-amber-700 hover:underline">${w.override.decision === 'INCLUDE' ? 'Included' : 'Excluded'} by hand — undo</button>`
+          : ` <button type="button" onclick="setCertificateOverride('${esc(x.phone)}', '${esc(w.e)}', '${w.eligible ? 'EXCLUDE' : 'INCLUDE'}')" class="text-slate-500 hover:underline">${w.eligible ? 'Exclude' : 'Include anyway'}</button>`) : ''}
+      </div>`).join('');
+    return `<div class="px-3 py-2.5">
+      <div class="flex flex-wrap items-baseline gap-x-2">
+        <span class="font-semibold text-slate-800">${esc(x.name)}</span>
+        <span class="text-xs text-slate-400">${esc([x.registrationNumber, x.category, x.councilRegNo ? `${x.councilName || 'Council'} ${x.councilRegNo}` : (x.mmcCategory ? 'no council number' : '')].filter(Boolean).join(' · '))}</span>
+      </div>
+      <div class="text-xs mt-1">Conference: ${conf}${confOv}</div>
+      ${ws}
+    </div>`;
+  }).join('') || '<p class="px-3 py-6 text-center text-sm text-slate-400">Nobody to show.</p>';
+}
+
+async function setCertificateOverride(phone, scope, decision) {
+  let reason = '';
+  if (decision) {
+    reason = await showPrompt(decision === 'INCLUDE'
+      ? 'Why should they receive this certificate anyway? The reason is kept.'
+      : 'Why should they not receive this certificate? The reason is kept.');
+    if (!reason) return;
+  }
+  const data = await (await fetch('/api/admin/certificates/override', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone, scope, decision, reason }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not save.');
+  renderCertificates();
+}
+
+async function issueCertificates(scope) {
+  const what = scope === 'conference' ? 'conference certificates' : 'workshop certificates';
+  if (!(await showConfirm(`Issue every ${what} now due? Each gets its number, and the delegate can download it from the portal.`, 'Issue'))) return;
+  const data = await (await fetch('/api/admin/certificates/issue', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not issue.');
+  const i = data.issued;
+  showToast(scope === 'conference' ? `Issued ${i.MMC} with MMC points and ${i.CONF} participation certificates.` : `Issued ${i.WORKSHOP} workshop certificates.`, 'success');
+  renderCertificates();
+}
+
+// An issued certificate on the list, by id.
+function issuedCertificate(id) {
+  for (const x of certState.people) {
+    if (x.conference.issued && x.conference.issued.id === id) return x.conference.issued;
+    const w = x.workshops.find((y) => y.issued && y.issued.id === id);
+    if (w) return w.issued;
+  }
+  return null;
+}
+
+async function correctCertificate(id) {
+  const c = issuedCertificate(id);
+  if (!c) return;
+  const name = await showPrompt(`The name as it should be printed on ${c.cert_no}. The number stays the same.`, '', c.name);
+  if (!name) return;
+  const data = await (await fetch(`/api/admin/certificates/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not correct it.');
+  showToast('Corrected.', 'success');
+  renderCertificates();
+}
+
+async function revokeCertificate(id) {
+  const c = issuedCertificate(id);
+  if (!c) return;
+  const reason = await showPrompt(`Withdraw ${c.cert_no}? It stays on record, and its verify page will say it was withdrawn. Give the reason.`);
+  if (!reason) return;
+  const data = await (await fetch(`/api/admin/certificates/${encodeURIComponent(id)}/revoke`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not withdraw it.');
+  showToast('Withdrawn.', 'success');
+  renderCertificates();
+}
+
+// --- CERTIFICATE SETTINGS (admin) ---
+async function renderCertificateSettings() {
+  const res = await fetch('/api/admin/certificates/settings');
+  if (!res.ok) return;
+  const d = await res.json();
+  certState.settings = d;
+  document.getElementById('cs-mmc-no').value = d.settings.mmc.accreditationNo || '';
+  document.getElementById('cs-mmc-points').value = d.settings.mmc.points || '';
+  document.getElementById('cs-categories').innerHTML = d.categories.map((c) => `<label class="flex items-center gap-1.5">
+    <input type="checkbox" class="cs-category" value="${esc(c.value)}" ${d.settings.eligibleCategories.includes(c.value) ? 'checked' : ''}> ${esc(c.label)}</label>`).join('');
+  const h = d.settings.hours;
+  document.getElementById('cs-day-start').value = h.dayStart;
+  document.getElementById('cs-day-end').value = h.dayEnd;
+  document.getElementById('cs-out-from').value = h.signOutFrom;
+  document.getElementById('cs-out-until').value = h.signOutUntil;
+  setText('cs-background-state', d.settings.hasBackground
+    ? "Certificates are printed over the designer's background. The text sits in the same places as on the generated design."
+    : 'Certificates use the generated design: a navy frame with a gold rule. Upload the designer\'s artwork (A4 landscape, 297 × 210 mm) to print over it instead.');
+  document.getElementById('cs-background-remove').classList.toggle('hidden', !d.settings.hasBackground);
+
+  document.getElementById('cs-signatories').innerHTML = d.signatories.map((s) => `
+    <div class="flex flex-col sm:flex-row sm:items-center gap-2 p-3 border border-slate-200 rounded-xl ${s.active ? '' : 'opacity-60'}">
+      <div class="w-full sm:w-40 h-14 border border-dashed border-slate-300 rounded-lg flex items-center justify-center bg-slate-50 shrink-0">
+        ${Number(s.has_signature) ? `<img src="/api/admin/certificates/signatories/${encodeURIComponent(s.id)}/signature?t=${Date.now()}" alt="Signature" class="max-h-12 max-w-full">` : '<span class="text-[11px] text-slate-400">No signature yet</span>'}
+      </div>
+      <div class="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <input value="${esc(s.name)}" data-sig="${esc(s.id)}" data-field="name" aria-label="Name" class="cs-sig-field h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+        <input value="${esc(s.designation)}" data-sig="${esc(s.id)}" data-field="designation" aria-label="Designation" class="cs-sig-field h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+      </div>
+      <div class="flex flex-wrap gap-1.5">
+        <label class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer">Signature
+          <input type="file" accept="image/png,image/jpeg" class="hidden" onchange="uploadSignature(${Number(s.id)}, this)"></label>
+        <button type="button" onclick="saveSignatory(${Number(s.id)})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save</button>
+        <button type="button" onclick="toggleSignatory(${Number(s.id)}, ${s.active ? 0 : 1})" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">${s.active ? 'Turn off' : 'Turn on'}</button>
+      </div>
+    </div>`).join('');
+
+  const chips = Object.keys(d.placeholders).map((k) => `<code class="text-[11px] bg-slate-100 px-1 py-0.5 rounded" title="${esc(d.placeholders[k])}">{{${esc(k)}}}</code>`).join(' ');
+  document.getElementById('cs-templates').innerHTML = Object.entries(d.templates).map(([kind, t]) => `
+    <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm space-y-2" data-kind="${esc(kind)}">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h3 class="text-sm font-bold text-slate-800">${esc(d.kinds[kind])}</h3>
+        <a href="/api/admin/certificates/preview.pdf?kind=${encodeURIComponent(kind)}" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50">Preview specimen</a>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <input value="${esc(t.title)}" data-tfield="title" aria-label="Title" placeholder="Title" class="h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+        <input value="${esc(t.subtitle)}" data-tfield="subtitle" aria-label="Subtitle" placeholder="Subtitle" class="sm:col-span-2 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+        <input value="${esc(t.lead)}" data-tfield="lead" aria-label="Line above the name" placeholder="This is to certify that" class="sm:col-span-3 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+      </div>
+      <textarea data-tfield="body" rows="4" aria-label="Wording after the name" class="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none">${esc(t.body)}</textarea>
+      <p class="text-[11px] text-slate-500">After the name. <b>**bold**</b> for bold; a new line for a new paragraph. ${chips}</p>
+      <div>
+        <p class="text-xs font-semibold text-slate-600 mb-1">Signed by (up to four, in this order)</p>
+        <div class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">${d.signatories.filter((s) => s.active).map((s) => `<label class="flex items-center gap-1.5">
+          <input type="checkbox" class="cs-tsig" value="${esc(s.id)}" ${t.signatories.includes(Number(s.id)) ? 'checked' : ''}> ${esc(s.designation)}</label>`).join('')}</div>
+      </div>
+      <button type="button" onclick="saveCertificateTemplate('${esc(kind)}')" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Save wording</button>
+    </div>`).join('');
+}
+
+async function putCertificateSettings(body, okText = 'Saved.') {
+  const data = await (await fetch('/api/admin/certificates/settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })).json();
+  if (!data.success) { showToast(data.error || 'Could not save.'); return false; }
+  showToast(okText, 'success');
+  return true;
+}
+
+async function saveCertificateSettings() {
+  const ok = await putCertificateSettings({
+    mmc: { accreditationNo: document.getElementById('cs-mmc-no').value, points: document.getElementById('cs-mmc-points').value },
+    eligibleCategories: Array.from(document.querySelectorAll('.cs-category')).filter((b) => b.checked).map((b) => b.value),
+    hours: {
+      dayStart: document.getElementById('cs-day-start').value, dayEnd: document.getElementById('cs-day-end').value,
+      signOutFrom: document.getElementById('cs-out-from').value, signOutUntil: document.getElementById('cs-out-until').value,
+    },
+  });
+  if (ok) renderCertificateSettings();
+}
+
+async function saveCertificateTemplate(kind) {
+  const box = document.querySelector(`#cs-templates [data-kind="${kind}"]`);
+  if (!box) return;
+  const t = {};
+  box.querySelectorAll('[data-tfield]').forEach((el) => { t[el.dataset.tfield] = el.value; });
+  t.signatories = Array.from(box.querySelectorAll('.cs-tsig')).filter((b) => b.checked).map((b) => Number(b.value));
+  if (t.signatories.length > 4) return showToast('Up to four signatories fit on a certificate.');
+  if (await putCertificateSettings({ templates: { [kind]: t } }, 'Wording saved. It applies to certificates already issued too.')) renderCertificateSettings();
+}
+
+function readImageFile(input, maxBytes) {
+  return new Promise((resolve) => {
+    const file = input.files && input.files[0];
+    input.value = '';
+    if (!file) return resolve(null);
+    if (!/^image\/(png|jpeg)$/.test(file.type)) { showToast('Choose a PNG or JPEG image.'); return resolve(null); }
+    if (file.size > maxBytes) { showToast(`The image must be under ${Math.round(maxBytes / 1048576)} MB.`); return resolve(null); }
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function putSignatory(id, body) {
+  const data = await (await fetch(`/api/admin/certificates/signatories/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })).json();
+  if (!data.success) { showToast(data.error || 'Could not save.'); return; }
+  showToast('Saved.', 'success');
+  renderCertificateSettings();
+}
+
+function saveSignatory(id) {
+  const field = (f) => document.querySelector(`.cs-sig-field[data-sig="${id}"][data-field="${f}"]`).value;
+  putSignatory(id, { name: field('name'), designation: field('designation') });
+}
+function toggleSignatory(id, active) { putSignatory(id, { active: !!active }); }
+async function uploadSignature(id, input) {
+  const dataUrl = await readImageFile(input, 2 * 1048576);
+  if (dataUrl) putSignatory(id, { signature: dataUrl });
+}
+
+async function addSignatory(e) {
+  e.preventDefault();
+  const name = document.getElementById('cs-new-sig-name').value.trim();
+  const designation = document.getElementById('cs-new-sig-designation').value.trim();
+  const data = await (await fetch('/api/admin/certificates/signatories', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, designation }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not add.');
+  document.getElementById('cs-new-sig-name').value = '';
+  document.getElementById('cs-new-sig-designation').value = '';
+  showToast('Added. Upload their signature, and tick them on the certificates they sign.', 'success');
+  renderCertificateSettings();
+}
+
+async function uploadCertificateBackground(input) {
+  const dataUrl = await readImageFile(input, 8 * 1048576);
+  if (!dataUrl) return;
+  const data = await (await fetch('/api/admin/certificates/background', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not upload.');
+  showToast('Background uploaded. Preview a specimen to check the placement.', 'success');
+  renderCertificateSettings();
+}
+
+async function removeCertificateBackground() {
+  if (!(await showConfirm('Go back to the generated design?'))) return;
+  const data = await (await fetch('/api/admin/certificates/background', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: null }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not change it.');
+  renderCertificateSettings();
 }
 
 // --- BANK STATEMENT RECONCILIATION (admin) ---

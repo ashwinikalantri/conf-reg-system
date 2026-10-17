@@ -48,7 +48,7 @@ function page(cookie, perms) {
     myPermissions = new Set(${JSON.stringify(perms)});
     conferenceInfo = { name: 'Fixture Conference', acronym: 'FIXCON', location: 'Sevagram', startDate: '2026-11-21', endDate: '2026-11-22' };
     showToast = (m, t) => globalThis.__toasts.push([m, t]);
-    globalThis.__f = { renderAttendance, attendanceSignIn, renderBackendPrograms, loadAttendanceCard, saveCertificateDetails };`, sandbox);
+    globalThis.__f = { renderAttendance, attendanceSignIn, renderBackendPrograms, loadAttendanceCard, saveCertificateDetails, switchAttendanceView };`, sandbox);
   return { el, f: sandbox.__f, toasts };
 }
 
@@ -77,6 +77,17 @@ function page(cookie, perms) {
     const viewer = page(admin, ['attendance.view']);
     await viewer.f.renderAttendance();
     check('a role that only watches gets the counts, not the scanner', viewer.el('att-take').classList.contains('hidden') && !viewer.el('att-summary-card').classList.contains('hidden'));
+
+    console.log('\n== Certificates and their settings ==');
+    const C = page(admin, ['certificates.view', 'certificates.issue', 'certificates.manage']);
+    await C.f.switchAttendanceView('certificates');
+    check('the certificates view: the counts, the list, the issue buttons', /MMC points/.test(C.el('cert-stats').innerHTML)
+      && /Showing \d+ of \d+/.test(C.el('cert-count').textContent) && /Issue conference certificates \(\d+ due\)/.test(C.el('cert-issue-conf').textContent));
+    await C.f.switchAttendanceView('settings');
+    check('the settings view: MMC details, categories, signatories and each kind\'s wording', /X/.test(C.el('cs-mmc-no').value)
+      && /class="cs-category" value="faculty_mo" checked/.test(C.el('cs-categories').innerHTML)
+      && /MMC Observer/.test(C.el('cs-signatories').innerHTML) && (C.el('cs-templates').innerHTML.match(/Preview specimen/g) || []).length === 3);
+    check('...and the attendance hours', C.el('cs-day-start').value === '08:00' && C.el('cs-out-until').value === '18:00');
 
     console.log('\n== Programs: when each workshop runs ==');
     await A.f.renderBackendPrograms();
