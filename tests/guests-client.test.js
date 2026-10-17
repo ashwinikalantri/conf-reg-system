@@ -107,6 +107,7 @@ el('guests-search').value = '';
 sb.__g.sortGuests('name');
 sb.__g.sortGuests('name');
 const order = [...el('guests-tbody').innerHTML.matchAll(/font-semibold[^>]*>([A-Z][a-z]+ [A-Za-z]+)</g)].map((m) => m[1]);
+check('sorting by stay puts room 2 before room 10', /accommodation: \(g\) => [^\n]*\.replace\(\/\\d\+\/g, \(d\) => d\.padStart\(10, '0'\)\)/.test(js));
 check('sorting by name, then reversed', order[0] === 'Echo Typed' && order[order.length - 1] === 'Alpha Arriving', order);
 check('the header shows the sort', /Faculty ▼/.test(el('guests-thead').innerHTML));
 

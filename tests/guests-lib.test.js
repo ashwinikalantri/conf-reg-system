@@ -187,6 +187,12 @@ check('everyone is on the pickup schedule again', own.pickups.length === 3);
 check('the CSV says who needs accommodation', /,Accommodation needed,/.test(G.guestsCsv(own.guests).split('\r\n')[0])
   && !/Local transport needed/.test(G.guestsCsv(own.guests)));
 
+console.log('\n== Room order ==');
+const ro = G.buildBoard({ guests: [], lists, settings, today, rooms: ['10', '2', '13', '1', '9', '11'].map((n, i) => ({ id: i + 1, accommodation: 'MGIMS Guesthouse', room_no: n, beds: 1 }))
+  .concat([{ id: 20, accommodation: 'Annexe', room_no: 'A10', beds: 1 }, { id: 21, accommodation: 'Annexe', room_no: 'A2', beds: 1 }]) });
+check('rooms by accommodation, then by number: 1, 2, 9, 10, 11, 13', ro.rooms.map((r) => r.room_no).join(',') === 'A2,A10,1,2,9,10,11,13', ro.rooms.map((r) => r.room_no));
+check('...whatever case the accommodation is in', G.naturalCompare('mgims guesthouse', 'MGIMS Guesthouse') === 0);
+
 console.log('\n== Nights ==');
 check('nights from check-in to check-out', G.nightsBetween('2026-11-20', '2026-11-23') === 3 && G.nightsBetween('2026-11-20', '2026-11-21') === 1);
 check('...a same-day stay is 0, a backwards or missing one nothing', G.nightsBetween('2026-11-20', '2026-11-20') === 0

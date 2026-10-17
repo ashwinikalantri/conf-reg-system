@@ -93,6 +93,9 @@ const TIME_FIELDS = new Set(['arrival_time', 'departure_time']);
 const COORDINATOR_FIELDS = new Set(['transport_coordinator', 'accommodation_coordinator']);
 
 const norm = (s) => String(s == null ? '' : s).trim().toLowerCase();
+// Sort key that orders numbers by value: "2" before "10", "A2" before "A10".
+const naturalKey = (s) => norm(s).replace(/\d+/g, (d) => d.padStart(10, '0'));
+const naturalCompare = (a, b) => (naturalKey(a) < naturalKey(b) ? -1 : naturalKey(a) > naturalKey(b) ? 1 : 0);
 const blank = (v) => v == null || String(v).trim() === '';
 
 // A real calendar date, not merely date-shaped: 2026-02-30 is refused.
@@ -432,8 +435,9 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
     };
   };
 
-  // Rooms: who is in each, and how full it is.
-  const roomRows = rooms.map((r) => {
+  // Rooms: who is in each, and how full it is -- by accommodation, then
+  // room number by value (1, 2 … 10, not 1, 10, 2).
+  const roomRows = [...rooms].sort((x, y) => naturalCompare(x.accommodation, y.accommodation) || naturalCompare(x.room_no, y.room_no)).map((r) => {
     const occupants = byRoom.get(roomKey(r.accommodation, r.room_no)) || [];
     const n = occupants.length;
     const status = n === 0 ? 'Vacant' : n < r.beds ? 'Partly filled' : n === r.beds ? 'Full' : 'Over capacity';
@@ -441,7 +445,8 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
   });
   const listedRoomKeys = new Set(rooms.map((r) => roomKey(r.accommodation, r.room_no)));
   const unlistedRooms = [...byRoom.entries()].filter(([k]) => !listedRoomKeys.has(k))
-    .map(([, gs]) => ({ accommodation: gs[0].accommodation, room_no: gs[0].room_no, guests: gs.map((g) => g.name) }));
+    .map(([, gs]) => ({ accommodation: gs[0].accommodation, room_no: gs[0].room_no, guests: gs.map((g) => g.name) }))
+    .sort((x, y) => naturalCompare(x.accommodation, y.accommodation) || naturalCompare(x.room_no, y.room_no));
 
   const vehicleRows = vehicles.map((v) => ({
     ...v,
@@ -651,6 +656,7 @@ module.exports = {
   TRAVEL_FIELDS, STAY_FIELDS, GENERAL_FIELDS, ALL_FIELDS, FIELD_PERMISSION, FIELD_LABELS, FIELD_LISTS,
   TRAVEL_NOTIFY_FIELDS, STAY_NOTIFY_FIELDS,
   LIST_LABELS, DEFAULT_LISTS, PROTECTED_VALUES, CANCELLED, DEFAULT_SETTINGS, SLOT_NAMES,
+  naturalCompare,
   validDate, validTime, addDays, joinDateTime, to12h, dateTime12, slotOf, slotLabels,
   validateGuestFields, forbiddenChanges, changedFields, validateVehicle, validateRoom, validateSettings,
   nightsBetween, parseRoomNumbers, MAX_BULK_ROOMS,

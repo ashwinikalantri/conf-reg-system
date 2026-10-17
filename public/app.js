@@ -10431,7 +10431,8 @@ function fillGuestFilters() {
 
 const GUEST_SORTS = {
   sr_no: (g) => g.sr_no, name: (g) => (g.name || '').toLowerCase(), arrival_at: (g) => g.arrival_at || '￿',
-  departure_at: (g) => g.departure_at || '￿', accommodation: (g) => `${(g.accommodation || '￿').toLowerCase()} ${(g.room_no || '').toLowerCase()}`,
+  // Room numbers by value: room 2 before room 10.
+  departure_at: (g) => g.departure_at || '￿', accommodation: (g) => `${(g.accommodation || '￿').toLowerCase()} ${(g.room_no || '').toLowerCase().replace(/\d+/g, (d) => d.padStart(10, '0'))}`,
   overall_status: (g) => (g.overall_status || '￿').toLowerCase(),
 };
 function sortGuests(key) {
