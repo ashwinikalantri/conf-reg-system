@@ -28,6 +28,7 @@ const SECTIONS = [
   { key: 'abstracts', label: 'Abstracts' },
   { key: 'guests', label: 'Faculty coordination' },
   { key: 'attendance', label: 'Attendance' },
+  { key: 'programme', label: 'Programme' },
   { key: 'certificates', label: 'Certificates' },
   { key: 'reports', label: 'Reports' },
   { key: 'users', label: 'Users & roles' },
@@ -113,12 +114,13 @@ const PERMISSIONS = [
   // shared details -- and marking someone as faculty -- to both. Removing a
   // guest and changing the lists the dropdowns draw from is Super Admin's.
   // --- Attendance (for the certificates) ---
-  ['attendance.mark', 'attendance', 'Take attendance', 'Scan desk passes at a hall or workshop door, and show the self sign-in code on a screen at the venue.'],
-  ['attendance.view', 'attendance', 'View attendance', 'See who has signed in and out of each conference day and workshop.'],
+  ['attendance.mark', 'attendance', 'Take attendance', 'At a hall door: pick the hall and scan delegates\' badges, marking them present at the session on there now.'],
+  ['attendance.view', 'attendance', 'View attendance', 'See how many were present at each session, and who.'],
   ['certificates.view', 'certificates', 'View certificates', 'See who qualifies for which certificate, those issued, and download them.'],
   ['certificates.issue', 'certificates', 'Issue certificates', 'Issue certificates, include or exclude someone with a reason, correct the name on one, and withdraw one.'],
   ['certificates.manage', 'certificates', 'Certificate settings', 'Set the MMC details, which categories earn MMC points, the attendance hours, the wording of each certificate, the signatories and the design.'],
-  ['attendance.manage', 'attendance', 'Correct attendance', 'Record or remove a sign-in or sign-out at any time, outside its window, with a reason that is kept.'],
+  ['attendance.manage', 'attendance', 'Correct attendance', 'Mark someone present at any session at any time, or remove a mark, with a reason that is kept.'],
+  ['programme.manage', 'programme', 'Edit the programme', 'Add and edit halls and sessions -- times, titles, speakers, which take attendance -- and print the hall QR posters.'],
   ['guests.view', 'guests', 'View faculty', 'Open the Faculty tab: every faculty member\'s travel and stay, the dashboard, the pickup and drop schedules, vehicles and rooms.'],
   ['guests.edit', 'guests', 'Mark faculty, edit shared details', 'Mark a delegate as faculty (adding them to the faculty list), and edit Special Needs, Overall Status and Remarks.'],
   ['guests.travel', 'guests', 'Edit travel', 'Edit arrival, departure, pickup and drop details, whether local transport is needed and the transport coordinator, and add or edit vehicles.'],
@@ -212,9 +214,15 @@ const ROUTE_PERMISSIONS = {
   'GET /api/desk/cash-in-hand': 'desk.view',
   'POST /api/desk/enroll': 'desk.enroll',
   'POST /api/desk/checkin': 'desk.checkin',
-  'GET /api/attendance/events': 'attendance.mark',
+  'GET /api/attendance/halls': 'attendance.mark',
   'POST /api/attendance/scan': 'attendance.mark',
-  'GET /api/attendance/screen-qr.png': 'attendance.mark',
+  'GET /api/admin/programme': 'programme.manage',
+  'POST /api/admin/programme/halls': 'programme.manage',
+  'PUT /api/admin/programme/halls/:id': 'programme.manage',
+  'POST /api/admin/programme/sessions': 'programme.manage',
+  'PUT /api/admin/programme/sessions/:id': 'programme.manage',
+  'DELETE /api/admin/programme/sessions/:id': 'programme.manage',
+  'GET /api/admin/programme/posters.pdf': 'programme.manage',
   'GET /api/attendance/summary': 'attendance.view',
   'GET /api/attendance/roster': 'attendance.view',
   'POST /api/attendance/manual': 'attendance.manage',
@@ -420,7 +428,7 @@ const SECTION_PERMISSIONS = {
   // original guests.* names.
   faculty: { permission: 'guests.view' },
   // Taking attendance at a door, or watching the counts.
-  attendance: { anyOf: ['attendance.mark', 'attendance.view', 'certificates.view'] },
+  attendance: { anyOf: ['attendance.mark', 'attendance.view', 'certificates.view', 'programme.manage'] },
   general: { permission: 'system.settings_view' },
   activity: { permission: 'system.activity_log' },
 };

@@ -35,6 +35,7 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     return p;
   };
   const addedSignatories = [];
+  const madeHalls = [];
   try {
     console.log('\n== Settings ==');
     const s0 = (await call('GET', '/api/admin/certificates/settings', null, admin)).body;
@@ -48,8 +49,11 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     check('each kind has its wording', /\{\{council_reg_no\}\}/.test(s0.templates.MMC.body) && /\{\{mmc_points\}\}/.test(s0.templates.MMC.body)
       && /\{\{workshop\}\}/.test(s0.templates.WORKSHOP.body));
     const put = (b, who = admin) => call('PUT', '/api/admin/certificates/settings', b, who);
-    check('hours must be times', (await put({ hours: { dayStart: '8am' } })).status === 400);
-    check('...and an end after its start', (await put({ hours: { dayStart: '17:00', dayEnd: '08:00' } })).status === 400);
+    check('lunch must be a time', (await put({ attendance: { lunchSplit: '1pm' } })).status === 400);
+    check('...and the minutes before a session, 0 to 60', (await put({ attendance: { earlyMinutes: 90 } })).status === 400);
+    check('...both are saved', (await put({ attendance: { lunchSplit: '13:30', earlyMinutes: 10 } })).body.success
+      && (await call('GET', '/api/admin/certificates/settings', null, admin)).body.settings.attendance.lunchSplit === '13:30');
+    await put({ attendance: { lunchSplit: '13:00', earlyMinutes: 15 } });
     const saved = await put({ mmc: { accreditationNo: `MMC/TEST/${N}`, points: '4' } });
     const s1 = (await call('GET', '/api/admin/certificates/settings', null, admin)).body;
     check('the MMC details are saved', saved.body.success === true && s1.settings.mmc.accreditationNo === `MMC/TEST/${N}` && s1.settings.mmc.points === '4');
@@ -77,15 +81,24 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     const partial = await signUp('part', 'chw', `CP${N}`);
     const nocouncil = await signUp('nocn', 'faculty_mo', `CN${N}`);
     await db.run("UPDATE users SET council_name = 'Maharashtra Medical Council', council_reg_no = ? WHERE phone_number = ?", [`2010/01/${N}`, doctor.phone]);
-    const events = (await call('GET', '/api/attendance/events', null, admin)).body.events;
-    const dayKeys = events.filter((e) => e.scope === 'day').map((e) => e.e);
-    const ws = events.find((e) => e.scope === 'workshop');
-    check('fixture: two days, a sign-out, a workshop', dayKeys.length === 3 && !!ws, dayKeys);
+    // A programme of the test's own: a morning and an afternoon session, and
+    // a workshop's.
+    const hall = (await call('POST', '/api/admin/programme/halls', { name: `Cert Hall ${N}` }, admin)).body.id;
+    madeHalls.push(hall);
+    const wsOpt = await db.get("SELECT o.id, o.name FROM program_options o JOIN program_groups g ON g.id = o.group_id WHERE g.name = 'Workshops' AND o.active = 1 LIMIT 1");
+    const day = '2099-03-02';
+    const sess = async (b) => (await call('POST', '/api/admin/programme/sessions', { hallId: hall, date: day, counts: true, ...b }, admin)).body.id;
+    const am = await sess({ start: '09:30', end: '10:00', title: `Morning ${N}` });
+    const pm = await sess({ start: '14:30', end: '15:00', title: `Afternoon ${N}` });
+    const wsSession = await sess({ date: '2099-03-01', start: '09:00', end: '16:30', title: `Workshop ${N}`, optionId: wsOpt.id });
+    const dayKeys = [`s:${am}`, `s:${pm}`];
+    const ws = { e: `ws:${wsOpt.id}`, optionId: wsOpt.id, key: `s:${wsSession}` };
+    check('fixture: a morning, an afternoon and a workshop', !!(am && pm && wsSession));
     const attend = async (p, keys) => { for (const k of keys) await db.run("INSERT INTO attendance (phone_number, event_key, at, method) VALUES (?, ?, ?, 'MANUAL')", [p.phone, k, Date.now()]); };
-    await attend(doctor, [...dayKeys, ws.e]);
+    await attend(doctor, [...dayKeys, ws.key]);
     await attend(worker, dayKeys);
     await attend(nocouncil, dayKeys);
-    await attend(partial, dayKeys.slice(0, 2));
+    await attend(partial, dayKeys.slice(0, 1));
     await db.run('INSERT INTO registration_options (registration_id, group_id, option_id, is_faculty) VALUES (?, (SELECT group_id FROM program_options WHERE id = ?), ?, 0)', [worker.regId, ws.optionId, ws.optionId]);
 
     const cand = async () => (await call('GET', '/api/admin/certificates/candidates', null, admin)).body.people;
@@ -94,9 +107,9 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     check('a doctor who completed, with a council number: MMC', of(doctor).conference.kind === 'MMC');
     check('a health worker who completed: participation', of(worker).conference.kind === 'CONF');
     check('a doctor without a council number: participation, flagged', of(nocouncil).conference.kind === 'CONF' && of(nocouncil).mmcCategory && !of(nocouncil).councilRegNo);
-    check('no sign-out: not yet, saying what is missing', of(partial).conference.kind === null && /Sign out/.test(of(partial).conference.whyNot));
+    check('only a morning: not yet, saying what is missing', of(partial).conference.kind === null && /after lunch/.test(of(partial).conference.whyNot), of(partial).conference.whyNot);
     check('the workshop: due for the one who signed in', of(doctor).workshops.some((w) => w.e === ws.e && w.eligible));
-    check('...not for one enrolled who did not', of(worker).workshops.some((w) => w.e === ws.e && !w.eligible && /Did not sign in/.test(w.whyNot)));
+    check('...not for one enrolled who was not there', of(worker).workshops.some((w) => w.e === ws.e && !w.eligible && /Not marked present/.test(w.whyNot)));
     await db.run("UPDATE registrations SET bank_status = 'PARTIAL_PAYMENT' WHERE id = ?", [worker.regId]);
     list = await cand();
     check('a balance still due: not yet', of(worker).conference.kind === null && /Payment/.test(of(worker).conference.whyNot));
@@ -182,6 +195,10 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
       await db.run(`DELETE FROM registrations WHERE phone_number IN (${q})`, phones);
     }
     for (const id of addedSignatories) await db.run('DELETE FROM certificate_signatories WHERE id = ?', [id]);
+    for (const id of madeHalls) {
+      await db.run('DELETE FROM programme_sessions WHERE hall_id = ?', [id]);
+      await db.run('DELETE FROM halls WHERE id = ?', [id]);
+    }
     if (savedSettings) await db.run("UPDATE schema_meta SET value = ? WHERE key = 'certificate_settings'", [savedSettings.value]);
     else await db.run("DELETE FROM schema_meta WHERE key = 'certificate_settings'");
   }

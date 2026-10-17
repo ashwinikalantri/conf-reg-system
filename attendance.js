@@ -1,31 +1,26 @@
-// Attendance: what can be signed into, when, and what counts as completing.
+// Attendance: session by session, hall by hall.
 //
-// An "event" is one thing a person signs into, named by a short key:
-//   day1:IN, day2:IN, ...  -- signing in on a conference day;
-//   dayN:OUT               -- signing out at the close of the LAST day;
-//   ws:<optionId>:IN       -- signing in at a workshop (a programme option in
-//                             a group that takes attendance, with a date set).
-// Completing the conference = signed in on every day AND signed out on the
-// last. A workshop certificate needs that workshop's sign-in.
+// The programme is a set of halls and the sessions in them (see the
+// programme_sessions table). Every hall has a QR code at its door; scanning
+// it marks the delegate present at the session on in that hall at that
+// moment -- or a volunteer at the door picks the hall and scans the
+// delegate's badge. A session can be marked from a little before it starts
+// (earlyMinutes) until it ends. Breaks, meals and registration do not take
+// attendance (counts = 0).
 //
-// Each event has a window (IST, on its own date) inside which it can be
-// recorded by a scan or by self sign-in; an attendance manager can still
-// record one outside it, with a reason. Self sign-in reads a short-lived,
-// signed token from a QR code shown on a screen at the venue, so a photo of
-// the code passed around stops working within minutes.
+// Certificates:
+//   the conference -- on every main day (a day with conference sessions
+//     that take attendance), present at a session before lunch and at one
+//     after, where that day has sessions on both sides of lunch;
+//   a workshop -- present at any of its sessions.
+// A workshop session is one linked to a programme option in a group that
+// takes attendance (the Workshops group); every other session that takes
+// attendance is a conference session.
 //
 // Pure: no database, no clock of its own -- everything takes `now` (ms).
-const crypto = require('crypto');
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-const DEFAULT_HOURS = {
-  dayStart: '08:00', dayEnd: '17:00',
-  signInEarlyMinutes: 60,              // sign-in opens an hour before the day starts
-  signOutFrom: '15:00', signOutUntil: '18:00',
-  workshopEarlyMinutes: 30,            // a workshop opens half an hour before it starts
-};
-const TOKEN_STEP_MS = 30 * 1000;       // the screen's QR changes every 30 seconds
-const TOKEN_LIFETIME_STEPS = 10;       // a code is accepted for 5 minutes
+const DEFAULTS = { earlyMinutes: 15, lunchSplit: '13:00' };
 
 const toMinutes = (hhmm) => {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ''));
@@ -39,14 +34,15 @@ function istParts(now) {
   return { date: d.toISOString().slice(0, 10), minutes: d.getUTCHours() * 60 + d.getUTCMinutes() };
 }
 
-function addDays(iso, n) {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
+function to12(hhmm) {
+  const n = toMinutes(hhmm);
+  if (n == null) return hhmm || '';
+  const h = Math.floor(n / 60);
+  return `${((h + 11) % 12) + 1}:${String(n % 60).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
 }
 
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const shortDate = (iso) => { const [, m, d] = iso.split('-'); return `${Number(d)} ${SHORT_MONTHS[Number(m) - 1]}`; };
+const shortDate = (iso) => { const [, m, d] = String(iso || '').split('-'); return m ? `${Number(d)} ${SHORT_MONTHS[Number(m) - 1]}` : ''; };
 
 // "21 - 22 Nov 2026", "30 Nov - 2 Dec 2026", "30 Dec 2026 - 2 Jan 2027",
 // "21 Nov 2026" -- as the Faculty page writes a range (shortDateRange there).
@@ -61,111 +57,70 @@ function dateRange(from, to) {
   return `${a.d} - ${b.d} ${b.mon} ${b.y}`;
 }
 
-// The conference days, from its first date to its last (at most 7).
-function conferenceDays(startDate, endDate) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate || '')) return [];
-  const last = /^\d{4}-\d{2}-\d{2}$/.test(endDate || '') && endDate >= startDate ? endDate : startDate;
-  const days = [];
-  for (let d = startDate, i = 1; d <= last && i <= 7; d = addDays(d, 1), i++) days.push({ key: `day${i}`, n: i, date: d });
-  return days;
-}
+const takesAttendance = (s) => Number(s.counts) === 1;
 
-// Every event, in order: each day's sign-in, the last day's sign-out, then
-// each workshop that has a date. workshops: [{ id, name, session_date,
-// start_time, end_time }].
-function buildEvents({ startDate, endDate, workshops = [], hours = {} }) {
-  const h = { ...DEFAULT_HOURS, ...hours };
-  const days = conferenceDays(startDate, endDate);
-  const events = [];
-  for (const d of days) {
-    events.push({
-      e: `${d.key}:IN`, kind: 'IN', scope: 'day', day: d.key, date: d.date,
-      label: `Day ${d.n} · Sign in`, longLabel: `Day ${d.n} (${shortDate(d.date)}) · Sign in`,
-      from: fromMinutes(Math.max(0, toMinutes(h.dayStart) - Number(h.signInEarlyMinutes || 0))), until: h.dayEnd,
-    });
-  }
-  if (days.length) {
-    const d = days[days.length - 1];
-    events.push({
-      e: `${d.key}:OUT`, kind: 'OUT', scope: 'day', day: d.key, date: d.date,
-      label: `Day ${d.n} · Sign out`, longLabel: `Day ${d.n} (${shortDate(d.date)}) · Sign out at the close`,
-      from: h.signOutFrom, until: h.signOutUntil,
-    });
-  }
-  for (const w of workshops) {
-    const start = toMinutes(w.start_time);
-    const end = toMinutes(w.end_time);
-    const dated = /^\d{4}-\d{2}-\d{2}$/.test(w.session_date || '');
-    events.push({
-      e: `ws:${w.id}:IN`, kind: 'IN', scope: 'workshop', optionId: Number(w.id), name: w.name,
-      date: dated ? w.session_date : null,
-      label: w.name, longLabel: `${w.name}${dated ? ` (${shortDate(w.session_date)})` : ''} · Sign in`,
-      from: dated && start != null ? fromMinutes(Math.max(0, start - Number(h.workshopEarlyMinutes || 0))) : null,
-      until: dated && end != null ? w.end_time : null,
-    });
-  }
-  return events;
-}
-
-// Whether an event can be recorded now by a scan or a self sign-in.
-// { open: true } or { open: false, reason }.
-function windowStatus(event, now) {
-  if (!event) return { open: false, reason: 'Nothing to sign into.' };
-  if (!event.date) return { open: false, reason: `"${event.name || event.label}" has no date yet -- set it in Programs.` };
+// Whether a session can be marked now: { open: true } or { open: false, reason }.
+function sessionWindow(session, now, earlyMinutes = DEFAULTS.earlyMinutes) {
+  if (!session) return { open: false, reason: 'No such session.' };
+  if (!takesAttendance(session)) return { open: false, reason: `${session.title} does not take attendance.` };
   const { date, minutes } = istParts(now);
-  if (date !== event.date) {
-    return { open: false, reason: `${event.longLabel} is on ${shortDate(event.date)}${date < event.date ? '' : ', which has passed'}.` };
+  const label = `${session.title} (${shortDate(session.session_date)}, ${to12(session.start_time)})`;
+  if (date !== session.session_date) {
+    return { open: false, reason: `${label} is ${date < session.session_date ? 'on another day' : 'over'}.` };
   }
-  const from = toMinutes(event.from);
-  const until = toMinutes(event.until);
-  if (from != null && minutes < from) return { open: false, reason: `${event.longLabel} opens at ${to12(event.from)}.` };
-  if (until != null && minutes > until) return { open: false, reason: `${event.longLabel} closed at ${to12(event.until)}.` };
+  const start = toMinutes(session.start_time);
+  const end = toMinutes(session.end_time);
+  if (minutes < start - earlyMinutes) return { open: false, reason: `${label} opens for attendance at ${to12(fromMinutes(start - earlyMinutes))}.` };
+  if (minutes > end) return { open: false, reason: `${label} is over.` };
   return { open: true };
 }
 
-function to12(hhmm) {
-  const n = toMinutes(hhmm);
-  if (n == null) return hhmm || '';
-  const h = Math.floor(n / 60);
-  const m = n % 60;
-  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+// The session to mark in a hall now: one running (started, not ended), else
+// one about to start (within earlyMinutes) -- only sessions that take
+// attendance. Also the next one, to say when there is nothing now.
+// sessions: that hall's, any day.
+function currentSession(sessions, now, earlyMinutes = DEFAULTS.earlyMinutes) {
+  const { date, minutes } = istParts(now);
+  const today = sessions.filter((s) => s.session_date === date && takesAttendance(s))
+    .sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time));
+  const running = today.filter((s) => toMinutes(s.start_time) <= minutes && minutes <= toMinutes(s.end_time));
+  // Of two running (a session ending as the next begins), the later start.
+  const session = running.length ? running[running.length - 1]
+    : today.find((s) => toMinutes(s.start_time) - earlyMinutes <= minutes && minutes < toMinutes(s.start_time)) || null;
+  const next = today.find((s) => toMinutes(s.start_time) > minutes && s !== session)
+    || sessions.filter((s) => s.session_date > date && takesAttendance(s))
+      .sort((a, b) => (a.session_date + a.start_time).localeCompare(b.session_date + b.start_time))[0] || null;
+  return { session, next };
 }
 
-// --- Self sign-in tokens ----------------------------------------------------
-// "<event>.<step>.<signature>": the event it signs into, the 30-second step it
-// was made in, and an HMAC of both. Accepted for TOKEN_LIFETIME_STEPS steps.
-const sign = (secret, payload) => crypto.createHmac('sha256', secret).update(payload).digest('base64url').slice(0, 22);
-
-function makeToken(secret, e, now) {
-  const step = Math.floor(now / TOKEN_STEP_MS);
-  const payload = `${e}.${step}`;
-  return `${payload}.${sign(secret, payload)}`;
+// Which sessions count towards the conference certificate: those that take
+// attendance and are not a workshop's. isWorkshop(session) says which are.
+function conferenceSessions(sessions, isWorkshop) {
+  return sessions.filter((s) => takesAttendance(s) && !isWorkshop(s));
 }
 
-// The event a token signs into, or { error } -- tampered, or too old.
-function readToken(secret, token, now) {
-  const m = /^((?:day\d+:(?:IN|OUT))|(?:ws:\d+:IN))\.(\d+)\.([A-Za-z0-9_-]{22})$/.exec(String(token || ''));
-  if (!m) return { error: 'That sign-in code is not one of ours.' };
-  const [, e, stepStr, sig] = m;
-  const expected = sign(secret, `${e}.${stepStr}`);
-  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return { error: 'That sign-in code is not one of ours.' };
-  const age = Math.floor(now / TOKEN_STEP_MS) - Number(stepStr);
-  if (age < 0 || age >= TOKEN_LIFETIME_STEPS) return { error: 'That sign-in code has expired. Scan the code on the screen again.' };
-  return { e };
-}
-
-// --- Completion -------------------------------------------------------------
-// rows: one person's attendance [{ event_key }]. Completed = in on every day
-// and out on the last; `missing` names what is not there.
-function completion(rows, events) {
-  const have = new Set(rows.map((r) => r.event_key));
-  const needed = events.filter((ev) => ev.scope === 'day');
-  const missing = needed.filter((ev) => !have.has(ev.e)).map((ev) => ev.label);
-  return { complete: needed.length > 0 && missing.length === 0, missing };
+// Completing the conference. attended: the sessions the person was marked
+// present at; sessions: every conference session (conferenceSessions()).
+// For each day with conference sessions: present before lunch if that day
+// has a session before lunch, and after lunch if it has one after.
+function completion(attended, sessions, lunchSplit = DEFAULTS.lunchSplit) {
+  const lunch = toMinutes(lunchSplit);
+  const half = (s) => (toMinutes(s.start_time) < lunch ? 'before' : 'after');
+  const ids = new Set(attended.map((s) => Number(s.id)));
+  const days = [...new Set(sessions.map((s) => s.session_date))].sort();
+  const parts = [];
+  for (const date of days) {
+    for (const h of ['before', 'after']) {
+      const there = sessions.filter((s) => s.session_date === date && half(s) === h);
+      if (!there.length) continue;
+      const hit = there.find((s) => ids.has(Number(s.id))) || null;
+      parts.push({ date, half: h, label: `${shortDate(date)}, ${h} lunch`, done: !!hit, session: hit });
+    }
+  }
+  return { complete: parts.length > 0 && parts.every((p) => p.done), parts, missing: parts.filter((p) => !p.done).map((p) => p.label) };
 }
 
 module.exports = {
-  DEFAULT_HOURS, TOKEN_STEP_MS, TOKEN_LIFETIME_STEPS, IST_OFFSET_MS,
-  toMinutes, fromMinutes, istParts, conferenceDays, buildEvents, windowStatus, to12,
-  makeToken, readToken, completion, shortDate, dateRange,
+  IST_OFFSET_MS, DEFAULTS, toMinutes, fromMinutes, istParts, to12, shortDate, dateRange,
+  takesAttendance, sessionWindow, currentSession, conferenceSessions, completion,
 };

@@ -169,18 +169,24 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/desk/checkin': 'Records physical arrival. New capability -- nothing in the app did this before.',
     'GET /api/desk/staff': 'Who may be named as having collected cash.',
     'GET /api/desk/cash-in-hand': "The signed-in collector's own unbanked cash, for hand-over. The conference-wide equivalent is statement.cash_deposit, which the desk does not hold.",
-    // --- Attendance, for the e-certificates ---------------------------------
-    // Three new keys: attendance.mark (Front Desk and Volunteer --
-    // Registration, besides Super Admin), attendance.view (Front Desk) and
-    // attendance.manage (Super Admin only). New capability: nothing recorded
+    // --- Attendance, session by session -------------------------------------
+    // attendance.mark (Front Desk and Volunteer -- Registration, besides
+    // Super Admin), attendance.view (Front Desk), attendance.manage and
+    // programme.manage (Super Admin only). New capability: nothing recorded
     // attendance before, beyond the one desk check-in.
-    'GET /api/attendance/events': 'What can be signed into, and whether each is open now, for the scanner. attendance.mark.',
-    'POST /api/attendance/scan': 'Signs a delegate in or out by their desk pass, inside the event\'s window; a workshop takes its enrolled, others only with a recorded reason. attendance.mark.',
-    'GET /api/attendance/screen-qr.png': 'The self sign-in QR for a screen at the venue: a portal link with a signed code good for five minutes. attendance.mark -- whoever runs the door runs the screen.',
-    'GET /api/attendance/summary': 'Counts per day and workshop, and how many have completed. attendance.view.',
-    'GET /api/attendance/roster': 'Who is expected at one event and who is in. Names and registration numbers only. attendance.view.',
-    'POST /api/attendance/manual': 'Records a sign-in at any time, with a reason kept in the activity log. attendance.manage, Super Admin only.',
-    'DELETE /api/attendance/:id': 'Removes one (the row is kept, marked, with the reason). attendance.manage, Super Admin only.',
+    'GET /api/attendance/halls': 'Each hall and the session on there now, for the volunteer at its door. attendance.mark.',
+    'POST /api/attendance/scan': 'Marks a delegate present, by their badge, at the session on in the chosen hall; a workshop takes its enrolled, others only with a recorded reason. attendance.mark.',
+    'GET /api/attendance/summary': 'How many were present at each session, and how many have completed. attendance.view.',
+    'GET /api/attendance/roster': 'Who was present at one session (and, for a workshop, who enrolled was not). Names and registration numbers only. attendance.view.',
+    'POST /api/attendance/manual': 'Marks someone present at any session, any time, with a reason kept in the activity log. attendance.manage, Super Admin only.',
+    'DELETE /api/attendance/:id': 'Removes a mark (the row is kept, marked, with the reason). attendance.manage, Super Admin only.',
+    'GET /api/admin/programme': 'The halls (with their QR codes) and sessions, for editing. programme.manage, Super Admin only.',
+    'POST /api/admin/programme/halls': 'Adds a hall. programme.manage.',
+    'PUT /api/admin/programme/halls/:id': 'Renames a hall, turns it off, or gives it a new QR code. programme.manage.',
+    'POST /api/admin/programme/sessions': 'Adds a session. programme.manage.',
+    'PUT /api/admin/programme/sessions/:id': 'Edits a session. programme.manage.',
+    'DELETE /api/admin/programme/sessions/:id': 'Deletes a session nobody was marked present at. programme.manage.',
+    'GET /api/admin/programme/posters.pdf': 'The hall door QR posters to print. programme.manage.',
 
     // --- E-certificates ---------------------------------------------------------
     // Three new keys, all Super Admin only: certificates.view (who qualifies,

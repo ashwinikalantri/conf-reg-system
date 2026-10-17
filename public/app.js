@@ -145,14 +145,14 @@ function readStoredDelegate() {
 }
 let currentDelegate = readStoredDelegate();
 
-// A self sign-in code from the screen at the venue (/?attend=...): kept until
-// the delegate is logged in (see signInFromVenueCode), and taken out of the
-// address so a refresh or a shared link does not carry it.
-(function captureVenueCode() {
+// A hall's door QR (/?hall=CODE): kept until the delegate is logged in (see
+// markFromHallCode), and taken out of the address so a refresh or a shared
+// link does not carry it.
+(function captureHallCode() {
   try {
-    const code = new URLSearchParams(window.location.search).get('attend');
+    const code = new URLSearchParams(window.location.search).get('hall');
     if (!code) return;
-    storageSet('session', 'nqocn_attend', code);
+    storageSet('session', 'nqocn_hall', code);
     window.history.replaceState(null, '', window.location.pathname + window.location.hash);
   } catch (e) { /* no address to read */ }
 }());
@@ -922,31 +922,69 @@ async function loadDashboard() {
     })(),
     loadAbstractStatus(),
     renderGroupSection(),
-    signInFromVenueCode().then(loadAttendanceCard),
+    markFromHallCode().then(() => Promise.all([loadAttendanceCard(), loadProgrammeCard()])),
   ]);
   // Every section has had its turn, including the ones that failed -- see
   // settleSkeletons on why a shimmer must not outlive the attempt.
   settleSkeletons();
 }
 
+// --- The virtual badge (portal) ---
+// Shown once the registration is verified: the conference, the delegate's
+// role (FACULTY for anyone on the faculty list), name, designation and
+// institution, and their desk pass QR -- the registration number, which the
+// desk and the hall-door volunteers scan.
+function renderBadge(reg) {
+  const pass = document.getElementById('desk-pass');
+  if (!pass || !/^[A-Za-z0-9-]{3,32}$/.test(reg.registration_number || '')) return;
+  const c = conferenceInfo;
+  const d = currentDelegate || {};
+  const role = reg.is_faculty_member ? 'FACULTY' : 'DELEGATE';
+  setText('badge-acronym', (c.acronym || '').toUpperCase());
+  setText('badge-conference', c.name || '');
+  setText('badge-when', [shortDateRange(c.startDate, c.endDate), c.location].filter(Boolean).join(' · '));
+  const ribbon = document.getElementById('badge-role');
+  ribbon.textContent = role;
+  ribbon.classList.toggle('bg-[#b08d3c]', role === 'FACULTY');
+  ribbon.classList.toggle('bg-[#2f5673]', role !== 'FACULTY');
+  setText('badge-name', reg.delegate_name || [d.salutation, d.full_name || d.name].filter(Boolean).join(' '));
+  setText('badge-designation', d.designation || '');
+  setText('badge-institution', d.institution || d.institute || '');
+  document.getElementById('desk-pass-qr').src = `/api/qr/${encodeURIComponent(reg.registration_number)}.png`;
+  setText('badge-reg', reg.registration_number);
+  setText('badge-category', reg.category_label || '');
+  pass.classList.remove('hidden');
+}
+
+function openBadgeFullScreen() {
+  setText('badge-full-role', document.getElementById('badge-role').textContent);
+  setText('badge-full-name', document.getElementById('badge-name').textContent);
+  setText('badge-full-reg', document.getElementById('badge-reg').textContent);
+  document.getElementById('badge-full-qr').src = document.getElementById('desk-pass-qr').src;
+  document.getElementById('badge-full').classList.remove('hidden');
+}
+function closeBadgeFullScreen() {
+  document.getElementById('badge-full').classList.add('hidden');
+}
+
 // --- Attendance & certificate (portal) ---
-// Signing in from the venue's screen: the code came in the address before
-// login; now that they are logged in, use it once.
-async function signInFromVenueCode() {
-  const code = storageGet('session', 'nqocn_attend');
+// Scanned a hall's door QR: now that they are logged in, mark them present
+// at the session on there.
+async function markFromHallCode() {
+  const code = storageGet('session', 'nqocn_hall');
   if (!code) return;
-  storageSet('session', 'nqocn_attend', '');
+  storageSet('session', 'nqocn_hall', '');
   try {
-    const data = await (await fetch('/api/attendance/self', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: code }),
+    const data = await (await fetch('/api/attendance/hall', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }),
     })).json();
     if (data.success) {
-      showToast(data.already ? `Already signed in: ${data.event}.` : `Signed in: ${data.event}. Thank you!`, 'success');
+      showToast(data.already ? `Already marked present: ${data.session.title}.` : `Marked present: ${data.session.title} (${data.hall}). Thank you!`, 'success');
     } else {
-      showToast(data.error || 'Could not sign you in. Please see a volunteer.');
+      showToast(data.error || 'Could not mark you present. Please see the volunteer at the door.');
     }
   } catch (e) {
-    showToast('Could not sign you in. Please see a volunteer.');
+    showToast('Could not mark you present. Please see the volunteer at the door.');
   }
 }
 
@@ -960,13 +998,19 @@ async function loadAttendanceCard() {
   try { data = await (await fetch('/api/attendance/me')).json(); } catch (e) { return; }
   card.classList.toggle('hidden', !data.registered);
   if (!data.registered) return;
-  const time = (ms) => new Date(ms).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
-  document.getElementById('attendance-list').innerHTML = data.events.map((ev) => `
+  const time = (ms) => new Date(ms).toLocaleString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+  const tick = (done, label, sub) => `
     <li class="flex items-start gap-2">
-      <span class="w-5 text-center font-bold ${ev.at ? 'text-emerald-600' : 'text-slate-300'}">${ev.at ? '✓' : '○'}</span>
-      <span class="flex-1"><span class="${ev.at ? 'text-slate-800 font-semibold' : 'text-slate-600'}">${esc(ev.label)}</span>
-        <span class="block text-xs text-slate-500">${ev.at ? `Signed at ${esc(time(ev.at))}` : (ev.date && ev.from && ev.until ? `${esc(formatFullDate(ev.date))}, ${esc(guestTime12(ev.from))} – ${esc(guestTime12(ev.until))}` : '')}</span></span>
-    </li>`).join('') || '<li class="text-slate-500">The conference dates are not set yet.</li>';
+      <span class="w-5 text-center font-bold ${done ? 'text-emerald-600' : 'text-slate-300'}">${done ? '✓' : '○'}</span>
+      <span class="flex-1"><span class="${done ? 'text-slate-800 font-semibold' : 'text-slate-600'}">${esc(label)}</span>
+        ${sub ? `<span class="block text-xs text-slate-500">${esc(sub)}</span>` : ''}</span>
+    </li>`;
+  document.getElementById('attendance-list').innerHTML = [
+    ...data.completion.parts.map((p) => tick(p.done, `Conference: ${p.label}`, p.session ? `${p.session.title}, ${p.session.hall}` : '')),
+    ...data.workshops.map((w) => tick(w.present, `Workshop: ${w.name}`, w.present ? '' : formatFullDate(w.date))),
+  ].join('') || '<li class="text-slate-500">The programme is not out yet.</li>';
+  document.getElementById('attendance-sessions').classList.toggle('hidden', !data.attended.length);
+  document.getElementById('attendance-session-list').innerHTML = data.attended.map((s) => `<li>${esc(shortDateRange(s.date, s.date))}, ${esc(time(s.at))} · ${esc(s.hall)} · ${esc(s.title)}</li>`).join('');
   const status = document.getElementById('attendance-status');
   status.className = `text-xs font-bold px-2.5 py-1 rounded-full border ${data.completion.complete ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-600 border-slate-200'}`;
   status.textContent = data.completion.complete ? 'Conference completed' : 'Attendance in progress';
@@ -984,6 +1028,48 @@ async function loadAttendanceCard() {
   document.getElementById('cert-council-wrap').classList.toggle('hidden', !c.asksCouncilNumber);
   document.getElementById('cert-council').value = c.councilName || '';
   document.getElementById('cert-council-no').value = c.councilRegNo || '';
+}
+
+// The programme, for the delegate: one day at a time (today's, during the
+// conference), each session with its hall; what is on now marked, and what
+// they were present at ticked.
+let programmeData = null;
+let programmeDay = null;
+async function loadProgrammeCard() {
+  const card = document.getElementById('programme-card');
+  if (!card) return;
+  try { programmeData = await (await fetch('/api/programme')).json(); } catch (e) { return; }
+  const days = [...new Set((programmeData.sessions || []).map((s) => s.date))].sort();
+  card.classList.toggle('hidden', !days.length);
+  if (!days.length) return;
+  if (!days.includes(programmeDay)) programmeDay = days.includes(programmeData.now.date) ? programmeData.now.date : days[0];
+  renderProgrammeCard();
+}
+
+function renderProgrammeCard() {
+  const days = [...new Set(programmeData.sessions.map((s) => s.date))].sort();
+  document.getElementById('programme-days').innerHTML = days.map((d, i) => `
+    <button type="button" onclick="programmeDay='${esc(d)}'; renderProgrammeCard()" class="px-3 py-1.5 rounded-lg text-sm font-semibold ${d === programmeDay ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}">Day ${i + 1} · ${esc(shortDateRange(d, d).replace(/ \d{4}$/, ''))}</button>`).join('');
+  const mine = new Set(programmeData.mine || []);
+  const nowMin = programmeData.now.minutes;
+  const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+  const isNow = (s) => s.date === programmeData.now.date && toMin(s.start) <= nowMin && nowMin <= toMin(s.end);
+  const list = programmeData.sessions.filter((s) => s.date === programmeDay);
+  const slots = [...new Set(list.map((s) => `${s.start}-${s.end}`))];
+  document.getElementById('programme-list').innerHTML = slots.map((slot) => {
+    const items = list.filter((s) => `${s.start}-${s.end}` === slot);
+    const on = items.some(isNow);
+    return `<div class="py-2.5 flex gap-3 ${on ? 'bg-emerald-50 -mx-3 px-3 rounded-lg' : ''}">
+      <div class="w-24 shrink-0 text-xs text-slate-500 tabular-nums pt-0.5">${esc(guestTime12(items[0].start))}<br>${esc(guestTime12(items[0].end))}${on ? '<span class="block mt-1 text-[10px] font-bold text-emerald-700 uppercase">On now</span>' : ''}</div>
+      <div class="flex-1 min-w-0 space-y-1.5">${items.map((s) => `
+        <div class="${s.counts ? '' : 'text-slate-500'}">
+          <span class="text-[10px] bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full font-bold mr-1">${esc(s.hall)}</span>
+          ${mine.has(s.id) ? '<span class="text-emerald-600 font-bold" title="You were marked present">✓</span> ' : ''}<span class="${s.counts ? 'font-semibold text-slate-800' : ''}">${esc(s.label ? `${s.label}: ` : '')}${esc(s.title)}</span>
+          ${s.speakers ? `<span class="block text-xs text-slate-500">${esc(s.speakers)}</span>` : ''}
+          ${s.chairs ? `<span class="block text-[11px] text-slate-400">Chair: ${esc(s.chairs)}</span>` : ''}
+        </div>`).join('')}</div>
+    </div>`;
+  }).join('');
 }
 
 async function saveCertificateDetails(e) {
@@ -1068,11 +1154,7 @@ function applyRegistrationState(reg) {
   }
   if (verified) {
     document.getElementById('reg-number-display').innerText = reg.registration_number || '—';
-    const pass = document.getElementById('desk-pass');
-    if (pass && /^[A-Za-z0-9-]{3,32}$/.test(reg.registration_number || '')) {
-      document.getElementById('desk-pass-qr').src = `/api/qr/${encodeURIComponent(reg.registration_number)}.png`;
-      pass.classList.remove('hidden');
-    }
+    renderBadge(reg);
     const selBox = document.getElementById('conf-selections');
     if (selBox) {
       const selections = reg.selections || [];
@@ -1277,6 +1359,16 @@ async function leaveGroup() {
 
 // Reflect the delegate's abstract status on the dashboard. The abstract is
 // locked once submitted (no updates).
+// The abstract card only while it has something to offer: submission open,
+// or an abstract of their own to follow. Without it the registration card
+// takes the full width.
+function showAbstractCard(show) {
+  const card = document.getElementById('abstract-card');
+  const reg = document.getElementById('registration-card');
+  if (card) card.classList.toggle('hidden', !show);
+  if (reg) reg.classList.toggle('md:col-span-2', !show);
+}
+
 async function loadAbstractStatus() {
   const tag = document.getElementById('abstract-status-tag');
   const btn = document.getElementById('abstract-action-btn');
@@ -1300,6 +1392,7 @@ async function loadAbstractStatus() {
     const registered = mine.registered !== false;
     cachedOwnAbstract = abs;
     cachedAbstractSubmission = mine.submission || { open: true, deadline: '' };
+    showAbstractCard(!!abs || cachedAbstractSubmission.open !== false);
     if (abs) {
       let [label, cls] = STYLES[abs.status] || ['Submitted', 'bg-slate-100 text-slate-600'];
       if (abs.status === 'ACCEPTED' && abs.allocation) {
@@ -2909,13 +3002,7 @@ function setupAdminDelegation() {
       if (save) {
         const capInput = programsBox.querySelector(`.prog-capacity[data-id="${save.dataset.id}"]`);
         const feeInput = programsBox.querySelector(`.prog-fee[data-id="${save.dataset.id}"]`);
-        const dateInput = programsBox.querySelector(`.prog-date[data-id="${save.dataset.id}"]`);
-        const when = dateInput ? {
-          sessionDate: dateInput.value,
-          startTime: programsBox.querySelector(`.prog-start[data-id="${save.dataset.id}"]`).value,
-          endTime: programsBox.querySelector(`.prog-end[data-id="${save.dataset.id}"]`).value,
-        } : null;
-        return saveProgramOption(save.dataset.id, parseInt(capInput.value, 10), parseFloat(feeInput.value) || 0, when);
+        return saveProgramOption(save.dataset.id, parseInt(capInput.value, 10), parseFloat(feeInput.value) || 0);
       }
       const toggle = e.target.closest('.prog-toggle');
       if (toggle) return toggleProgram(toggle.dataset.id, toggle.dataset.active === '1' ? 0 : 1);
@@ -5869,26 +5956,15 @@ async function renderBackendPrograms() {
   const groups = (await res.json()).groups || [];
   setText('badge-program-count', groups.reduce((n, g) => n + g.options.length, 0));
 
-  // In a group that takes attendance, each option also has when it runs:
-  // its date and times set its sign-in window (and the certificate's date).
-  const optionRow = (o, g) => {
+  const optionRow = (o) => {
     const remaining = Math.max(0, o.capacity - o.enrolled);
     const facultyCount = Number(o.faculty_count) || 0;
-    const when = o.session_date
-      ? `${shortDateRange(o.session_date, o.session_date)}${o.start_time ? `, ${guestTime12(o.start_time)}${o.end_time ? ` – ${guestTime12(o.end_time)}` : ''}` : ''}`
-      : 'No date set';
     return `
     <div class="flex flex-wrap items-center gap-3 py-3 border-b border-slate-100 ${o.active ? '' : 'opacity-60'}">
       <div class="flex-1 min-w-[180px]">
         <p class="font-semibold text-sm text-slate-800">${esc(o.name)}${Number(o.fee) > 0 ? ` <span class="text-[11px] font-normal text-indigo-600">+₹${inr(o.fee)}</span>` : ''}</p>
-        <p class="text-[11px] text-slate-500">Enrolled ${Number(o.enrolled)} / ${Number(o.capacity)} · ${remaining} left${facultyCount ? ` · ${facultyCount} faculty` : ''}${o.active ? '' : ' · inactive'}${Number(g.takes_attendance) ? ` · <span class="${o.session_date ? 'text-slate-600' : 'text-amber-700 font-semibold'}">${esc(when)}</span>` : ''}</p>
+        <p class="text-[11px] text-slate-500">Enrolled ${Number(o.enrolled)} / ${Number(o.capacity)} · ${remaining} left${facultyCount ? ` · ${facultyCount} faculty` : ''}${o.active ? '' : ' · inactive'}</p>
       </div>
-      ${Number(g.takes_attendance) ? `<div class="flex flex-wrap items-center gap-1.5">
-        <input type="date" value="${esc(o.session_date || '')}" title="Date" aria-label="Date" class="prog-date p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
-        <input type="time" value="${esc(o.start_time || '')}" title="Starts" aria-label="Starts" class="prog-start p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
-        <span class="text-xs text-slate-400">to</span>
-        <input type="time" value="${esc(o.end_time || '')}" title="Ends" aria-label="Ends" class="prog-end p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
-      </div>` : ''}
       <input type="number" min="0" value="${esc(o.capacity)}" title="Capacity" class="prog-capacity w-20 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
       <input type="number" min="0" step="0.01" value="${esc(o.fee)}" title="Fee (₹)" class="prog-fee w-24 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
       <button class="prog-save px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Save</button>
@@ -5906,7 +5982,7 @@ async function renderBackendPrograms() {
           <p class="text-[11px] text-slate-500">${g.required ? 'Required' : 'Optional'} · choose up to ${Number(g.max_select)}</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <label class="flex items-center gap-1.5 text-xs font-semibold text-slate-600 mr-1 select-none" title="Its options take attendance, and a delegate who signs in gets a certificate">
+          <label class="flex items-center gap-1.5 text-xs font-semibold text-slate-600 mr-1 select-none" title="Its options are workshops: their sessions in the programme earn a workshop certificate">
             <input type="checkbox" class="group-attendance" data-id="${esc(g.id)}" ${Number(g.takes_attendance) ? 'checked' : ''}> Attendance &amp; certificates
           </label>
           <button class="group-toggle px-2.5 py-1.5 ${g.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(g.id)}" data-active="${g.active ? 1 : 0}">${g.active ? 'Deactivate' : 'Activate'}</button>
@@ -5928,7 +6004,7 @@ async function renderBackendPrograms() {
         </div>
         <button type="submit" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">+ Add</button>
       </form>
-      ${g.options.map((o) => optionRow(o, g)).join('') || '<p class="text-sm text-slate-400 py-2">No options yet.</p>'}
+      ${g.options.map(optionRow).join('') || '<p class="text-sm text-slate-400 py-2">No options yet.</p>'}
     </div>
   `).join('') || '<p class="text-sm text-slate-400 p-4">No program groups yet. Add one above.</p>';
 }
@@ -5983,9 +6059,9 @@ async function handleAddProgramOption(e, form) {
   renderBackendPrograms();
 }
 
-async function saveProgramOption(id, capacity, fee, when) {
+async function saveProgramOption(id, capacity, fee) {
   const data = await (await fetch(`/api/admin/program-options/${encodeURIComponent(id)}`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ capacity, fee, ...(when || {}) }),
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ capacity, fee }),
   })).json();
   if (!data.success) showToast(data.error || 'Update failed.');
   renderBackendPrograms();
@@ -11581,63 +11657,65 @@ window.addEventListener('hashchange', () => {
 });
 
 // --- ATTENDANCE (admin) ---
-// Signing people in at the doors, the screen delegates sign themselves in
-// from, and the counts and rosters. See views/admin/sections/attendance.ejs.
-const attState = { events: [], summary: null, roster: null, scanner: null, lastScan: { text: '', at: 0 }, screenTimer: null, pending: null };
-const ATT_METHODS = { SCAN: 'Scanned', SELF: 'Self sign-in', DESK: 'At the desk', MANUAL: 'Recorded by hand' };
+// At a hall door: the hall, what is on there now, and marking people present
+// by badge. Then the counts, session by session, and who was present.
+const attState = { halls: [], summary: null, roster: null, scanner: null, lastScan: { text: '', at: 0 }, pending: null, programme: null };
+const ATT_METHODS = { SCAN: 'Scanned at the door', SELF: 'Scanned the hall QR', MANUAL: 'Marked by hand', DESK: 'At the desk' };
+const sessionTimes = (s) => `${guestTime12(s.start)} – ${guestTime12(s.end)}`;
 
 async function renderAttendanceView() {
   const mayMark = can('attendance.mark');
   const mayView = can('attendance.view');
   document.getElementById('att-take').classList.toggle('hidden', !mayMark);
-  document.getElementById('att-screen-btn').classList.toggle('hidden', !mayMark);
   document.getElementById('att-summary-card').classList.toggle('hidden', !mayView);
   document.getElementById('att-roster-card').classList.toggle('hidden', !mayView);
+  document.getElementById('att-manual').classList.toggle('hidden', !can('attendance.manage'));
   if (mayMark) {
-    const res = await fetch('/api/attendance/events');
-    if (res.ok) attState.events = (await res.json()).events || [];
+    const res = await fetch('/api/attendance/halls');
+    if (res.ok) attState.halls = (await res.json()).halls || [];
+    const picker = document.getElementById('att-hall');
+    const keep = picker.value || storageGet('local', 'nqocn_att_hall');
+    picker.innerHTML = attState.halls.map((h) => `<option value="${esc(h.id)}">${esc(h.name)}${h.now ? ' — on now' : ''}</option>`).join('')
+      || '<option value="">No halls yet -- add them under Programme</option>';
+    if (attState.halls.some((h) => String(h.id) === String(keep))) picker.value = keep;
+    onAttendanceHallChange();
   }
   if (mayView) {
     const res = await fetch('/api/attendance/summary');
-    if (res.ok) {
-      attState.summary = await res.json();
-      if (!attState.events.length) attState.events = attState.summary.events;
-    }
-  }
-  const options = attState.events.map((ev) => `<option value="${esc(ev.e)}">${esc(ev.longLabel)}${ev.window && ev.window.open ? ' — open now' : ''}</option>`).join('');
-  const picker = document.getElementById('att-event');
-  const keep = picker.value || storageGet('local', 'nqocn_att_event');
-  picker.innerHTML = options || '<option value="">Nothing to sign into yet</option>';
-  // Start on what is open now, else what was chosen last.
-  const open = attState.events.find((ev) => ev.window && ev.window.open);
-  picker.value = attState.events.some((ev) => ev.e === keep) && !(open && keep !== open.e && !attState.events.find((ev) => ev.e === keep).window.open)
-    ? keep : (open ? open.e : (attState.events[0] ? attState.events[0].e : ''));
-  onAttendanceEventChange();
-  const rosterPicker = document.getElementById('att-roster-event');
-  const keepRoster = rosterPicker.value;
-  rosterPicker.innerHTML = options;
-  if (attState.events.some((ev) => ev.e === keepRoster)) rosterPicker.value = keepRoster;
-  else if (picker.value) rosterPicker.value = picker.value;
-  if (attState.summary) {
-    const h = attState.summary.hours || {};
-    setText('att-hours', `Conference hours ${guestTime12(h.dayStart)} – ${guestTime12(h.dayEnd)}. Sign in each day from ${guestTime12(attState.events.find((ev) => ev.kind === 'IN' && ev.scope === 'day')?.from || h.dayStart)}; sign out on the last day ${guestTime12(h.signOutFrom)} – ${guestTime12(h.signOutUntil)}.`);
+    if (res.ok) attState.summary = await res.json();
+    const s = attState.summary;
+    if (!s) return;
+    setText('att-completed', `${s.completed} of ${s.registered} have completed the conference`);
+    const days = [...new Set(s.sessions.map((x) => x.date))].sort();
+    const daySel = document.getElementById('att-day');
+    const keepDay = daySel.value;
+    const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+    daySel.innerHTML = days.map((d) => `<option value="${esc(d)}">${esc(formatFullDate(d))}</option>`).join('') || '<option value="">No sessions yet</option>';
+    daySel.value = days.includes(keepDay) ? keepDay : (days.includes(today) ? today : (days[0] || ''));
     renderAttendanceSummary();
-    if (rosterPicker.value) await loadAttendanceRoster();
+    const rosterSel = document.getElementById('att-roster-session');
+    const keepSession = rosterSel.value;
+    rosterSel.innerHTML = s.sessions.map((x) => `<option value="${esc(x.id)}">${esc(shortDateRange(x.date, x.date))} · ${esc(guestTime12(x.start))} · ${esc(x.hall)} · ${esc(x.title)}</option>`).join('')
+      || '<option value="">No sessions take attendance yet</option>';
+    const hallNow = attState.halls.find((h) => String(h.id) === document.getElementById('att-hall').value);
+    if (s.sessions.some((x) => String(x.id) === keepSession)) rosterSel.value = keepSession;
+    else if (hallNow && hallNow.now) rosterSel.value = String(hallNow.now.id);
+    if (rosterSel.value) await loadAttendanceRoster();
   }
 }
 
-function attEvent(e) {
-  return attState.events.find((ev) => ev.e === e) || null;
-}
-
-function onAttendanceEventChange() {
-  const ev = attEvent(document.getElementById('att-event').value);
-  storageSet('local', 'nqocn_att_event', ev ? ev.e : '');
-  const note = document.getElementById('att-window');
-  if (!ev) { note.textContent = ''; return; }
-  const span = ev.from && ev.until ? `${guestTime12(ev.from)} – ${guestTime12(ev.until)}` : '';
-  note.className = `text-xs mt-1.5 font-semibold ${ev.window && ev.window.open ? 'text-emerald-700' : 'text-amber-700'}`;
-  note.textContent = ev.window && ev.window.open ? `Open now${span ? ` (${span})` : ''}.` : (ev.window ? ev.window.reason : '');
+function onAttendanceHallChange() {
+  const id = document.getElementById('att-hall').value;
+  storageSet('local', 'nqocn_att_hall', id);
+  const h = attState.halls.find((x) => String(x.id) === String(id));
+  const box = document.getElementById('att-now');
+  if (!h) { box.innerHTML = ''; return; }
+  box.innerHTML = h.now
+    ? `<div class="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2"><span class="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">On now</span>
+        <span class="block font-semibold text-slate-800">${esc(h.now.label ? `${h.now.label}: ` : '')}${esc(h.now.title)}</span>
+        <span class="block text-xs text-slate-500">${esc(sessionTimes(h.now))}${h.now.workshop ? ' · workshop: those enrolled' : ''}</span></div>`
+    : `<div class="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-900">Nothing is on in ${esc(h.name)} now.${h.next
+      ? ` Next: <b>${esc(h.next.title)}</b>, ${esc(shortDateRange(h.next.date, h.next.date))} ${esc(guestTime12(h.next.start))}.` : ''}</div>`;
   hideAttendanceLetIn();
 }
 
@@ -11658,19 +11736,19 @@ function hideAttendanceLetIn() {
 
 async function attendanceSignIn(identifier, notEnrolledReason) {
   const id = String(identifier || '').trim();
-  const e = document.getElementById('att-event').value;
-  if (!id) return showToast('Scan a desk pass, or type an ID, mobile or email.');
-  if (!e) return showToast('Choose what they are signing into.');
+  const hallId = document.getElementById('att-hall').value;
+  if (!id) return showToast('Scan a badge, or type an ID, mobile or email.');
+  if (!hallId) return showToast('Choose the hall.');
   const res = await fetch('/api/attendance/scan', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ identifier: id, e, notEnrolledReason: notEnrolledReason || undefined }),
+    body: JSON.stringify({ identifier: id, hallId: Number(hallId), notEnrolledReason: notEnrolledReason || undefined }),
   });
   const data = await res.json();
   if (data.success) {
     hideAttendanceLetIn();
     document.getElementById('att-id').value = '';
-    if (data.already) showAttendanceResult('again', `${data.name}: already signed in`, `at ${fmtAuditTime(data.at)}${data.method ? ` · ${ATT_METHODS[data.method] || data.method}` : ''}`);
-    else showAttendanceResult('ok', data.name, `${data.event}${data.registrationNumber ? ` · ${data.registrationNumber}` : ''}`);
+    if (data.already) showAttendanceResult('again', `${data.name}: already marked`, `${data.session.title}, at ${fmtAuditTime(data.at)}`);
+    else showAttendanceResult('ok', data.name, data.session.title);
     return data;
   }
   if (data.notEnrolled) {
@@ -11680,7 +11758,7 @@ async function attendanceSignIn(identifier, notEnrolledReason) {
     document.getElementById('att-notenrolled-reason').value = '';
     return data;
   }
-  showAttendanceResult('bad', data.name || 'Not signed in', data.error || 'Could not sign in.');
+  showAttendanceResult('bad', data.name || 'Not marked', data.error || 'Could not mark them present.');
   return data;
 }
 
@@ -11690,12 +11768,12 @@ function attendanceLetIn() {
   if (attState.pending) attendanceSignIn(attState.pending, reason);
 }
 
-// The camera stays open: scan one desk pass after another. The same code
-// read twice within a few seconds (the camera seeing it again) counts once.
+// The camera stays open: scan one badge after another. The same code read
+// twice within a few seconds (the camera seeing it again) counts once.
 async function openAttendanceScanner() {
-  const ev = attEvent(document.getElementById('att-event').value);
-  if (!ev) return showToast('Choose what they are signing into.');
-  setText('att-scan-event', ev.longLabel);
+  const h = attState.halls.find((x) => String(x.id) === document.getElementById('att-hall').value);
+  if (!h) return showToast('Choose the hall.');
+  setText('att-scan-event', h.now ? `${h.name}: ${h.now.title}` : h.name);
   const line = document.getElementById('att-scan-result');
   line.className = 'p-4 text-center text-sm font-semibold text-slate-600';
   line.textContent = 'Starting the camera…';
@@ -11704,9 +11782,9 @@ async function openAttendanceScanner() {
     if (!window.Html5Qrcode) await loadScriptOnce(DESK_SCANNER_SRC);
     attState.scanner = new window.Html5Qrcode('att-scan-reader');
     await attState.scanner.start({ facingMode: 'environment' },
-      { fps: 10, qrbox: (w, h) => { const side = Math.floor(Math.min(w, h) * 0.75); return { width: side, height: side }; } },
+      { fps: 10, qrbox: (w, ht) => { const side = Math.floor(Math.min(w, ht) * 0.75); return { width: side, height: side }; } },
       (text) => onAttendanceScan(text), () => {});
-    line.textContent = 'Point the camera at a desk pass.';
+    line.textContent = 'Point the camera at a badge.';
   } catch (e) {
     line.textContent = 'The camera could not start. Allow camera access for this site, or type the ID instead.';
   }
@@ -11717,7 +11795,7 @@ async function onAttendanceScan(text) {
   if (text === attState.lastScan.text && now - attState.lastScan.at < 4000) return;
   attState.lastScan = { text, at: now };
   const id = deskIdentifierFromScan(text);
-  if (!id) return showAttendanceResult('bad', 'Not a desk pass', 'That code holds no ID, mobile or email.');
+  if (!id) return showAttendanceResult('bad', 'Not a badge', 'That code holds no ID, mobile or email.');
   await attendanceSignIn(id);
 }
 
@@ -11732,55 +11810,33 @@ async function closeAttendanceScanner() {
   if (can('attendance.view')) renderAttendanceView();
 }
 
-// The screen at the venue. A fresh code every 20 seconds (each is good for a
-// few minutes), the event in large type, and the time.
-function openAttendanceScreen() {
-  const ev = attEvent(document.getElementById('att-event').value);
-  if (!ev) return showToast('Choose what the screen signs people into.');
-  setText('att-screen-conf', [conferenceInfo.acronym || conferenceInfo.name, ev.date ? formatFullDate(ev.date) : ''].filter(Boolean).join(' · '));
-  setText('att-screen-event', ev.longLabel);
-  const refresh = () => {
-    document.getElementById('att-screen-qr').src = `/api/attendance/screen-qr.png?e=${encodeURIComponent(ev.e)}&t=${Date.now()}`;
-    setText('att-screen-clock', new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' }));
-  };
-  refresh();
-  clearInterval(attState.screenTimer);
-  attState.screenTimer = setInterval(refresh, 20000);
-  const screen = document.getElementById('att-screen');
-  screen.classList.remove('hidden');
-  if (screen.requestFullscreen) screen.requestFullscreen().catch(() => {});
-}
-
-function closeAttendanceScreen() {
-  clearInterval(attState.screenTimer);
-  attState.screenTimer = null;
-  document.getElementById('att-screen').classList.add('hidden');
-  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
-}
-
 function renderAttendanceSummary() {
   const s = attState.summary;
   if (!s) return;
-  setText('att-completed', `${s.completed} of ${s.registered} have completed the conference`);
-  document.getElementById('att-summary').innerHTML = s.events.map((ev) => {
-    const pct = ev.expected ? Math.min(100, Math.round((ev.count / ev.expected) * 100)) : 0;
-    return `<div class="py-2.5 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4">
-      <div class="min-w-0 flex-1">
-        <p class="font-semibold text-slate-800 text-sm">${esc(ev.longLabel)}${ev.window && ev.window.open ? ' <span class="text-[10px] bg-emerald-100 text-emerald-700 border border-emerald-300 px-2 py-0.5 rounded-full font-bold">Open</span>' : ''}</p>
-        <p class="text-xs text-slate-500">${ev.date ? `${esc(formatFullDate(ev.date))}${ev.from && ev.until ? ` · ${esc(guestTime12(ev.from))} – ${esc(guestTime12(ev.until))}` : ''}` : 'No date set -- set it in Programs'}</p>
-      </div>
-      <div class="sm:w-56 shrink-0">
-        <div class="flex justify-between text-xs font-semibold text-slate-600 tabular-nums"><span>${ev.count} in</span><span>of ${ev.expected}</span></div>
-        <div class="h-2 bg-slate-100 rounded-full overflow-hidden mt-1"><div class="h-full bg-emerald-500" style="width:${pct}%"></div></div>
-      </div>
-    </div>`;
-  }).join('') || '<p class="py-6 text-center text-sm text-slate-400">Set the conference dates in Settings → General to take attendance.</p>';
+  const day = document.getElementById('att-day').value;
+  const list = s.sessions.filter((x) => x.date === day);
+  const halls = [...new Set(list.map((x) => x.hall))];
+  document.getElementById('att-summary').innerHTML = halls.map((hall) => `
+    <div class="py-2">
+      <p class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">${esc(hall)}</p>
+      ${list.filter((x) => x.hall === hall).map((x) => `
+        <button type="button" onclick="showAttendanceRoster(${Number(x.id)})" class="w-full text-left flex items-center gap-3 py-1.5 hover:bg-slate-50 rounded">
+          <span class="w-28 shrink-0 text-xs text-slate-500 tabular-nums">${esc(sessionTimes(x))}</span>
+          <span class="flex-1 min-w-0 truncate text-sm text-slate-800">${esc(x.label ? `${x.label}: ` : '')}${esc(x.title)}${x.window && x.window.open ? ' <span class="text-[10px] bg-emerald-100 text-emerald-700 border border-emerald-300 px-2 py-0.5 rounded-full font-bold">On now</span>' : ''}</span>
+          <span class="shrink-0 text-sm font-bold tabular-nums text-slate-800">${x.present}${x.enrolled != null ? `<span class="font-normal text-slate-400"> / ${x.enrolled}</span>` : ''}</span>
+        </button>`).join('')}
+    </div>`).join('') || '<p class="py-6 text-center text-sm text-slate-400">No sessions take attendance on this day.</p>';
+}
+
+function showAttendanceRoster(id) {
+  document.getElementById('att-roster-session').value = String(id);
+  loadAttendanceRoster();
 }
 
 async function loadAttendanceRoster() {
-  const e = document.getElementById('att-roster-event').value;
-  if (!e) return;
-  const res = await fetch(`/api/attendance/roster?e=${encodeURIComponent(e)}`);
+  const id = document.getElementById('att-roster-session').value;
+  if (!id) return;
+  const res = await fetch(`/api/attendance/roster?session=${encodeURIComponent(id)}`);
   attState.roster = res.ok ? await res.json() : null;
   renderAttendanceRoster();
 }
@@ -11795,32 +11851,40 @@ function renderAttendanceRoster() {
   const shown = r.people
     .filter((p) => !filter || (filter === 'in' ? p.attendance : !p.attendance))
     .filter((p) => !term || [p.name, p.registrationNumber].some((v) => String(v || '').toLowerCase().includes(term)));
-  const inCount = r.people.filter((p) => p.attendance).length;
-  setText('att-roster-count', `${inCount} of ${r.people.filter((p) => p.expected).length} expected are in${r.people.some((p) => !p.expected) ? ` · ${r.people.filter((p) => !p.expected).length} let in without enrolment` : ''} · showing ${shown.length}`);
+  const present = r.people.filter((p) => p.attendance).length;
+  setText('att-roster-count', r.session.workshop
+    ? `${present} present of ${r.people.filter((p) => p.expected).length} enrolled · showing ${shown.length}`
+    : `${present} present · showing ${shown.length}`);
   box.innerHTML = shown.map((p) => {
     const a = p.attendance;
     return `<div class="px-3 py-2 flex items-center gap-2">
       <span class="w-5 text-center font-bold ${a ? 'text-emerald-600' : 'text-slate-300'}">${a ? '✓' : '○'}</span>
       <span class="min-w-0 flex-1">
-        <span class="block font-semibold text-slate-700 truncate">${esc(p.name || p.phone)}${p.expected ? '' : ' <span class="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full font-bold">Not enrolled</span>'}</span>
-        <span class="block text-xs text-slate-400 truncate">${esc([p.registrationNumber, a ? `${fmtAuditTime(a.at)} · ${ATT_METHODS[a.method] || a.method}${a.by ? ` by ${a.by}` : ''}` : '', a && a.note ? a.note : ''].filter(Boolean).join(' · '))}</span>
+        <span class="block font-semibold text-slate-700 truncate">${esc(p.name || p.phone)}${r.session.workshop && !p.expected ? ' <span class="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full font-bold">Not enrolled</span>' : ''}</span>
+        <span class="block text-xs text-slate-400 truncate">${esc([p.registrationNumber, a ? `${fmtAuditTime(a.at)} · ${ATT_METHODS[a.method] || a.method}${a.by && a.method !== 'SELF' ? ` by ${a.by}` : ''}` : '', a && a.note ? a.note : ''].filter(Boolean).join(' · '))}</span>
       </span>
       ${mayManage ? (a
         ? `<button type="button" onclick="removeAttendance(${Number(a.id)})" class="shrink-0 px-2.5 py-1 border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-lg text-xs font-semibold">Remove</button>`
-        : `<button type="button" onclick="markAttendanceByHand('${esc(p.phone)}')" class="shrink-0 px-2.5 py-1 border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-xs font-semibold">Mark in</button>`) : ''}
+        : `<button type="button" onclick="markAttendanceByHand('${esc(p.phone)}')" class="shrink-0 px-2.5 py-1 border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-xs font-semibold">Mark present</button>`) : ''}
     </div>`;
-  }).join('') || '<p class="px-3 py-6 text-center text-sm text-slate-400">Nobody to show.</p>';
+  }).join('') || '<p class="px-3 py-6 text-center text-sm text-slate-400">Nobody yet.</p>';
 }
 
+// By hand: a row's "Mark present" (phone), or the box above the roster (an
+// ID, mobile or email).
 async function markAttendanceByHand(phone) {
-  const e = document.getElementById('att-roster-event').value;
-  const reason = await showPrompt('Why is this being recorded by hand? The reason is kept with the record.');
+  const sessionId = document.getElementById('att-roster-session').value;
+  const identifier = phone ? null : document.getElementById('att-manual-id').value.trim();
+  if (!phone && !identifier) return showToast('Type their ID, mobile or email.');
+  const reason = await showPrompt('Why is this being marked by hand? The reason is kept with the record.');
   if (!reason) return;
   const data = await (await fetch('/api/attendance/manual', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone, e, reason }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: Number(sessionId), phone: phone || undefined, identifier: identifier || undefined, reason }),
   })).json();
-  if (!data.success) return showToast(data.error || 'Could not record it.');
-  showToast(data.already ? 'Already recorded.' : 'Recorded.', 'success');
+  if (!data.success) return showToast(data.error || 'Could not mark them present.');
+  showToast(data.already ? 'Already marked present.' : 'Marked present.', 'success');
+  document.getElementById('att-manual-id').value = '';
   renderAttendanceView();
 }
 
@@ -11835,10 +11899,129 @@ async function removeAttendance(id) {
   renderAttendanceView();
 }
 
+// --- PROGRAMME (admin) ---
+async function renderProgramme() {
+  const res = await fetch('/api/admin/programme');
+  if (!res.ok) return;
+  const p = await res.json();
+  attState.programme = p;
+  document.getElementById('prog-halls').innerHTML = p.halls.map((h) => `
+    <div class="py-2 flex flex-col sm:flex-row sm:items-center gap-2 ${h.active ? '' : 'opacity-60'}">
+      <input value="${esc(h.name)}" data-hall="${esc(h.id)}" aria-label="Hall name" class="prog-hall-name flex-1 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+      <div class="flex flex-wrap gap-1.5">
+        <button type="button" onclick="saveHall(${Number(h.id)})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save</button>
+        <a href="/api/admin/programme/posters.pdf?hall=${encodeURIComponent(h.id)}" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50">QR poster</a>
+        <button type="button" onclick="newHallCode(${Number(h.id)})" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">New QR</button>
+        <button type="button" onclick="putHall(${Number(h.id)}, { active: ${h.active ? 'false' : 'true'} })" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">${h.active ? 'Turn off' : 'Turn on'}</button>
+      </div>
+    </div>`).join('') || '<p class="py-4 text-sm text-slate-400">No halls yet.</p>';
+  const days = [...new Set([...p.sessions.map((s) => s.date), conferenceInfo.startDate, conferenceInfo.endDate].filter(Boolean))].sort();
+  const daySel = document.getElementById('prog-day');
+  const keep = daySel.value;
+  daySel.innerHTML = days.map((d) => `<option value="${esc(d)}">${esc(formatFullDate(d))}</option>`).join('');
+  if (days.includes(keep)) daySel.value = keep;
+  document.getElementById('ps-hall').innerHTML = p.halls.filter((h) => h.active).map((h) => `<option value="${esc(h.id)}">${esc(h.name)}</option>`).join('');
+  document.getElementById('ps-option').innerHTML = '<option value="">Not a workshop or practice</option>'
+    + p.options.map((o) => `<option value="${esc(o.id)}">${esc(o.group_name)}: ${esc(o.name)}</option>`).join('');
+  renderProgrammeSessions();
+}
+
+function renderProgrammeSessions() {
+  const p = attState.programme;
+  if (!p) return;
+  const day = document.getElementById('prog-day').value;
+  const list = p.sessions.filter((s) => s.date === day);
+  document.getElementById('prog-sessions').innerHTML = list.map((s) => `
+    <div class="py-2 flex items-start gap-3 ${s.counts ? '' : 'opacity-70'}">
+      <span class="w-28 shrink-0 text-xs text-slate-500 tabular-nums pt-0.5">${esc(sessionTimes(s))}</span>
+      <span class="flex-1 min-w-0">
+        <span class="block text-sm text-slate-800"><span class="text-[10px] bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full font-bold mr-1">${esc(s.hall)}</span>${esc(s.label ? `${s.label}: ` : '')}<b>${esc(s.title)}</b></span>
+        <span class="block text-xs text-slate-500 truncate">${esc([s.speakers, s.chairs ? `Chair: ${s.chairs}` : ''].filter(Boolean).join(' · '))}</span>
+        <span class="block text-[11px] mt-0.5">${s.counts ? `<span class="text-emerald-700 font-semibold">Takes attendance · ${s.present} present</span>` : '<span class="text-slate-400">No attendance</span>'}${s.optionName ? ` · <span class="text-indigo-700">${s.workshop ? 'Workshop' : 'Practice'}: ${esc(s.optionName)}</span>` : ''}</span>
+      </span>
+      <button type="button" onclick="editProgrammeSession(${Number(s.id)})" class="shrink-0 px-2.5 py-1 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">Edit</button>
+    </div>`).join('') || '<p class="py-4 text-sm text-slate-400">No sessions on this day.</p>';
+}
+
+function editProgrammeSession(id) {
+  const p = attState.programme;
+  const s = id ? p.sessions.find((x) => x.id === id) : null;
+  const set = (k, v) => { document.getElementById(k).value = v == null ? '' : v; };
+  set('ps-id', s ? s.id : '');
+  set('ps-hall', s ? s.hallId : (p.halls.find((h) => h.active) || {}).id);
+  set('ps-date', s ? s.date : document.getElementById('prog-day').value);
+  set('ps-start', s ? s.start : '');
+  set('ps-end', s ? s.end : '');
+  set('ps-label', s ? s.label : '');
+  set('ps-title', s ? s.title : '');
+  set('ps-speakers', s ? s.speakers : '');
+  set('ps-chairs', s ? s.chairs : '');
+  set('ps-option', s && s.optionId ? s.optionId : '');
+  document.getElementById('ps-counts').checked = s ? s.counts : true;
+  document.getElementById('ps-delete').classList.toggle('hidden', !s);
+  document.getElementById('prog-session-form').classList.remove('hidden');
+  document.getElementById('ps-title').focus();
+}
+
+async function saveProgrammeSession(e) {
+  e.preventDefault();
+  const id = document.getElementById('ps-id').value;
+  const v = (k) => document.getElementById(k).value;
+  const body = {
+    hallId: Number(v('ps-hall')), date: v('ps-date'), start: v('ps-start'), end: v('ps-end'), label: v('ps-label'),
+    title: v('ps-title'), speakers: v('ps-speakers'), chairs: v('ps-chairs'), optionId: v('ps-option') ? Number(v('ps-option')) : null,
+    counts: document.getElementById('ps-counts').checked,
+  };
+  const data = await (await fetch(id ? `/api/admin/programme/sessions/${encodeURIComponent(id)}` : '/api/admin/programme/sessions', {
+    method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not save.');
+  showToast('Saved.', 'success');
+  document.getElementById('prog-session-form').classList.add('hidden');
+  document.getElementById('prog-day').value = body.date;
+  renderProgramme();
+}
+
+async function deleteProgrammeSession() {
+  const id = document.getElementById('ps-id').value;
+  if (!id || !(await showConfirm('Delete this session from the programme?'))) return;
+  const data = await (await fetch(`/api/admin/programme/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' })).json();
+  if (!data.success) return showToast(data.error || 'Could not delete it.');
+  document.getElementById('prog-session-form').classList.add('hidden');
+  renderProgramme();
+}
+
+async function putHall(id, body) {
+  const data = await (await fetch(`/api/admin/programme/halls/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })).json();
+  if (!data.success) { showToast(data.error || 'Could not save.'); return; }
+  showToast('Saved.', 'success');
+  renderProgramme();
+}
+function saveHall(id) {
+  putHall(id, { name: document.querySelector(`.prog-hall-name[data-hall="${id}"]`).value });
+}
+async function newHallCode(id) {
+  if (!(await showConfirm('Give this hall a new QR code? Its printed poster stops working -- print the new one and replace it.', 'New QR code'))) return;
+  putHall(id, { newCode: true });
+}
+async function addHall(e) {
+  e.preventDefault();
+  const name = document.getElementById('prog-new-hall').value.trim();
+  const data = await (await fetch('/api/admin/programme/halls', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not add it.');
+  document.getElementById('prog-new-hall').value = '';
+  renderProgramme();
+}
+
 // --- The tab's three views ---
-const ATT_VIEWS = ['attendance', 'certificates', 'settings'];
+const ATT_VIEWS = ['attendance', 'programme', 'certificates', 'settings'];
 function attendanceViewAllowed(view) {
   if (view === 'attendance') return can('attendance.mark') || can('attendance.view');
+  if (view === 'programme') return can('programme.manage');
   if (view === 'certificates') return can('certificates.view');
   if (view === 'settings') return can('certificates.manage');
   return false;
@@ -11864,6 +12047,7 @@ async function switchAttendanceView(view) {
   });
   ATT_VIEWS.forEach((v) => { const el = document.getElementById(`att-view-${v}`); if (el) el.classList.toggle('hidden', v !== view); });
   if (view === 'attendance') await renderAttendanceView();
+  if (view === 'programme') await renderProgramme();
   if (view === 'certificates') await renderCertificates();
   if (view === 'settings') await renderCertificateSettings();
 }
@@ -12021,11 +12205,8 @@ async function renderCertificateSettings() {
   document.getElementById('cs-mmc-points').value = d.settings.mmc.points || '';
   document.getElementById('cs-categories').innerHTML = d.categories.map((c) => `<label class="flex items-center gap-1.5">
     <input type="checkbox" class="cs-category" value="${esc(c.value)}" ${d.settings.eligibleCategories.includes(c.value) ? 'checked' : ''}> ${esc(c.label)}</label>`).join('');
-  const h = d.settings.hours;
-  document.getElementById('cs-day-start').value = h.dayStart;
-  document.getElementById('cs-day-end').value = h.dayEnd;
-  document.getElementById('cs-out-from').value = h.signOutFrom;
-  document.getElementById('cs-out-until').value = h.signOutUntil;
+  document.getElementById('cs-lunch').value = d.settings.attendance.lunchSplit;
+  document.getElementById('cs-early').value = d.settings.attendance.earlyMinutes;
   setText('cs-background-state', d.settings.hasBackground
     ? "Certificates are printed over the designer's background. The text sits in the same places as on the generated design."
     : 'Certificates use the generated design: a navy frame with a gold rule. Upload the designer\'s artwork (A4 landscape, 297 × 210 mm) to print over it instead.');
@@ -12084,10 +12265,7 @@ async function saveCertificateSettings() {
   const ok = await putCertificateSettings({
     mmc: { accreditationNo: document.getElementById('cs-mmc-no').value, points: document.getElementById('cs-mmc-points').value },
     eligibleCategories: Array.from(document.querySelectorAll('.cs-category')).filter((b) => b.checked).map((b) => b.value),
-    hours: {
-      dayStart: document.getElementById('cs-day-start').value, dayEnd: document.getElementById('cs-day-end').value,
-      signOutFrom: document.getElementById('cs-out-from').value, signOutUntil: document.getElementById('cs-out-until').value,
-    },
+    attendance: { lunchSplit: document.getElementById('cs-lunch').value, earlyMinutes: Number(document.getElementById('cs-early').value) },
   });
   if (ok) renderCertificateSettings();
 }

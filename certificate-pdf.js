@@ -173,4 +173,56 @@ function renderCertificatePdf(opts) {
   });
 }
 
-module.exports = { renderCertificatePdf, PAGE: { W, H } };
+// The posters for the hall doors: one A4 portrait page per hall -- the
+// conference, the hall's name, its QR (a portal link carrying the hall's
+// code) and how to use it. pages: [{ hall, code, qr }].
+function renderHallPosters(pages, conference = {}) {
+  const Doc = pdfkit();
+  const PW = 595.28;
+  const PH = 841.89;
+  return new Promise((resolve, reject) => {
+    const doc = new Doc({ size: 'A4', margin: 0, autoFirstPage: false, info: { Title: 'Hall attendance QR codes', Author: conference.name } });
+    const chunks = [];
+    doc.on('data', (c) => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+    try {
+      doc.registerFont('body', path.join(FONT_DIR, 'NotoSans-Regular.ttf'));
+      doc.registerFont('bold', path.join(FONT_DIR, 'NotoSans-Bold.ttf'));
+      for (const p of pages) {
+        doc.addPage();
+        doc.rect(0, 0, PW, PH).fill('#ffffff');
+        doc.rect(0, 0, PW, 132).fill(C.navy);
+        doc.rect(0, 132, PW, 5).fill(C.gold);
+        doc.font('bold').fontSize(13).fillColor('#d6b46a')
+          .text(String(conference.acronym || '').toUpperCase(), 0, 40, { width: PW, align: 'center', characterSpacing: 4 });
+        doc.font('body').fontSize(11).fillColor('#ffffff').text(conference.name || '', 60, 64, { width: PW - 120, align: 'center' });
+        doc.font('bold').fontSize(13).fillColor(C.steel)
+          .text('MARK YOUR ATTENDANCE', 0, 168, { width: PW, align: 'center', characterSpacing: 3 });
+        let size = 50;
+        doc.font(timesCan(p.hall) ? 'Times-Bold' : 'bold').fontSize(size);
+        while (doc.widthOfString(p.hall) > PW - 80 && size > 26) doc.fontSize(--size);
+        doc.fillColor(C.navy).text(p.hall, 40, 192, { width: PW - 80, align: 'center' });
+        const qr = 330;
+        doc.image(p.qr, (PW - qr) / 2, 272, { width: qr, height: qr });
+        const steps = ['Open your phone camera and scan this code.', 'Log in to the registration portal if asked.',
+          'You are marked present at the session on in this hall now.'];
+        let y = 630;
+        steps.forEach((t, i) => {
+          doc.circle(118, y + 9, 11).fill(C.steel);
+          doc.font('bold').fontSize(11).fillColor('#ffffff').text(String(i + 1), 107, y + 2.5, { width: 22, align: 'center' });
+          doc.font('body').fontSize(13).fillColor(C.ink).text(t, 142, y, { width: PW - 200 });
+          y += 34;
+        });
+        doc.font('body').fontSize(10).fillColor(C.muted)
+          .text("Can't scan? Show your badge to the volunteer at the door.", 0, 752, { width: PW, align: 'center' });
+        doc.fontSize(8).text(`Hall code ${p.code}`, 0, 790, { width: PW, align: 'center' });
+      }
+      doc.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+module.exports = { renderCertificatePdf, renderHallPosters, PAGE: { W, H } };
