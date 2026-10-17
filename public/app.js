@@ -10549,8 +10549,12 @@ function openGuestEditor(id) {
   // point) from the flight number and date, for the coordinator to check
   // and save. See GET /api/guests/flight.
   const canFetch = travel && guestData.flightLookup;
-  const fetchBtn = (leg) => (canFetch
-    ? `<button type="button" onclick="fetchGuestFlight('${leg}')" class="mt-1 text-[11px] font-semibold text-indigo-700 hover:text-indigo-900 underline">Fetch flight times</button>` : '');
+  const fetchBtn = (leg) => `<span class="mt-1 flex flex-wrap gap-x-2 text-[11px]">
+      ${canFetch ? `<button type="button" onclick="fetchGuestFlight('${leg}')" class="font-semibold text-indigo-700 hover:text-indigo-900 underline">Fetch flight times</button>` : ''}
+      <span class="text-slate-500">Check flight:
+        <button type="button" onclick="openFlightCheck('${leg}', 'google')" class="font-semibold text-indigo-700 hover:text-indigo-900 underline">Google</button> ·
+        <button type="button" onclick="openFlightCheck('${leg}', 'fr24')" class="font-semibold text-indigo-700 hover:text-indigo-900 underline">Flightradar24</button></span>
+    </span>`;
   const flightPanel = (leg) => (canFetch ? `<div id="guest-flight-${leg}" class="hidden col-span-2 sm:col-span-4"></div>` : '');
   // A yes/no that spans the row: they make their own way, or their own stay.
   const tick = (name, label, enabled) => `<label class="col-span-2 sm:col-span-4 flex items-center gap-2 text-sm text-slate-700 ${enabled ? 'cursor-pointer' : 'opacity-60'}">
@@ -10623,6 +10627,36 @@ function openGuestEditor(id) {
   const remove = document.getElementById('guest-remove-btn');
   if (remove) remove.classList.toggle('hidden', !can('guests.manage'));
   openModal('modal-guest-edit');
+}
+
+// Check a flight by hand: no key, no allowance. The same reading of a flight
+// number as the server's (guests.js normaliseFlightNumber) -- a train number
+// gets no link.
+function flightNumberOf(raw) {
+  const n = String(raw || '').replace(/[\s-]+/g, '').toUpperCase();
+  return /^([A-Z]{2}|[A-Z][0-9]|[0-9][A-Z]|[A-Z]{3})\d{1,4}[A-Z]?$/.test(n) ? n : null;
+}
+function flightCheckUrl(site, number, date) {
+  const n = flightNumberOf(number);
+  if (!n) return null;
+  if (site === 'fr24') return `https://www.flightradar24.com/data/flights/${encodeURIComponent(n.toLowerCase())}`;
+  const when = date ? ` ${formatFullDate(date)}` : '';
+  return `https://www.google.com/search?q=${encodeURIComponent(`${n} flight${when}`)}`;
+}
+// From the editor: whatever is typed right now.
+function openFlightCheck(leg, site) {
+  const form = document.getElementById('guest-edit-form');
+  if (!form) return;
+  const number = form.querySelector(`[name="${leg}_number"]`).value;
+  const date = form.querySelector(`[name="${leg}_date"]`).value;
+  const url = flightCheckUrl(site, number, date);
+  if (!url) return showToast('Enter a flight number first (e.g. 6E 123).');
+  window.open(url, '_blank', 'noopener');
+}
+// A flight number in a schedule, as a link to its Google flight card.
+function flightNumberLink(number, date) {
+  const url = flightCheckUrl('google', number, date);
+  return url ? `<a href="${esc(url)}" target="_blank" rel="noopener" class="text-indigo-700 hover:underline" title="Check this flight">${esc(number)}</a>` : esc(number || '—');
 }
 
 // What the flight service said, per leg, until the coordinator uses it.
@@ -10861,7 +10895,7 @@ function renderGuestSchedule(kind) {
             <td class="p-3 whitespace-nowrap font-semibold ${r.at ? 'text-slate-800' : 'text-slate-400'}">${esc(r.at || 'Not set')}</td>
             <td class="p-3"><button type="button" onclick="openGuestEditor(${esc(r.id)})" class="font-semibold text-indigo-700 hover:underline text-left">${esc(r.name)}</button></td>
             <td class="p-3 font-mono text-xs">${esc(r.phone || '')}</td>
-            <td class="p-3">${esc(r.mode || '—')}</td><td class="p-3">${esc(r.number || '—')}</td><td class="p-3">${esc(r.point || '—')}</td>
+            <td class="p-3">${esc(r.mode || '—')}</td><td class="p-3">${flightNumberLink(r.number, r.at ? r.at.slice(0, 10) : '')}</td><td class="p-3">${esc(r.point || '—')}</td>
             <td class="p-3">${r.vehicle ? `<p>${esc(r.vehicle)}</p>${r.driverPhone ? `<p class="text-xs text-slate-500 font-mono">${esc(r.driverPhone)}</p>` : ''}` : `<span class="${r.alert ? 'text-orange-700 font-semibold' : 'text-slate-400'}">None</span>`}
               ${r.clash.map((c) => `<p class="text-[11px] text-amber-800 mt-1">${esc(c)}</p>`).join('')}</td>
             <td class="p-3">${r.status ? guestPill('bg-white text-slate-600 border-slate-300', r.status) : '<span class="text-xs text-slate-400">Not set</span>'}</td>
