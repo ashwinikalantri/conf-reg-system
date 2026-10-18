@@ -216,28 +216,19 @@
         <div id="cert-council-wrap" class="hidden sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label for="cert-council" class="block text-xs font-semibold text-slate-600 mb-1">Medical Council</label>
-            <input id="cert-council" list="cert-council-list" maxlength="80" placeholder="Maharashtra Medical Council" class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-            <datalist id="cert-council-list">
-              <option value="Maharashtra Medical Council"></option>
-              <option value="Madhya Pradesh Medical Council"></option>
-              <option value="Gujarat Medical Council"></option>
-              <option value="Karnataka Medical Council"></option>
-              <option value="Telangana State Medical Council"></option>
-              <option value="Chhattisgarh Medical Council"></option>
-              <option value="Delhi Medical Council"></option>
-              <option value="Uttar Pradesh Medical Council"></option>
-              <option value="Rajasthan Medical Council"></option>
-              <option value="Tamil Nadu Medical Council"></option>
-              <option value="Kerala State Medical Council"></option>
-              <option value="West Bengal Medical Council"></option>
-              <option value="National Medical Commission"></option>
-            </datalist>
+            <select id="cert-council" class="w-full h-10 px-2 border border-slate-300 rounded-lg text-sm bg-white outline-none"></select>
           </div>
           <div>
             <label for="cert-council-no" class="block text-xs font-semibold text-slate-600 mb-1">Registration number</label>
             <input id="cert-council-no" maxlength="30" autocomplete="off" class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none">
           </div>
           <p class="sm:col-span-2 text-[11px] text-slate-500 -mt-1">Needed for the certificate with MMC credit points. Without it you receive the participation certificate.</p>
+        </div>
+        <!-- Given: shown, not edited here; the organisers correct it. -->
+        <div id="cert-council-saved" class="hidden sm:col-span-2">
+          <p class="text-xs font-semibold text-slate-600">Medical Council registration</p>
+          <p id="cert-council-saved-text" class="text-sm font-semibold text-slate-800 mt-0.5"></p>
+          <p class="text-[11px] text-slate-500">To correct it, please contact the organisers.</p>
         </div>
         <div class="sm:col-span-2">
           <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Save certificate details</button>

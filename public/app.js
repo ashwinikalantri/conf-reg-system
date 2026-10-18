@@ -1025,8 +1025,13 @@ async function loadAttendanceCard() {
   document.querySelectorAll('#cert-details-form input, #cert-details-form button').forEach((el) => { el.disabled = !!c.locked; });
   certificateDefaultName = c.defaultName || '';
   document.getElementById('cert-name').value = c.name || c.defaultName || '';
-  document.getElementById('cert-council-wrap').classList.toggle('hidden', !c.asksCouncilNumber);
-  document.getElementById('cert-council').value = c.councilName || '';
+  if (Array.isArray(c.councils)) medicalCouncilList = c.councils;
+  // Given once: then shown, not edited here.
+  const councilSaved = !!c.councilRegNo;
+  document.getElementById('cert-council-wrap').classList.toggle('hidden', !c.asksCouncilNumber || councilSaved);
+  document.getElementById('cert-council-saved').classList.toggle('hidden', !councilSaved);
+  setText('cert-council-saved-text', councilSaved ? `${c.councilName || 'Medical Council'} · ${c.councilRegNo}` : '');
+  document.getElementById('cert-council').innerHTML = councilOptionsHtml(c.councilName || '');
   document.getElementById('cert-council-no').value = c.councilRegNo || '';
 }
 
@@ -1632,6 +1637,18 @@ function calculateFee() {
   // carries requiresStudentId -- see loadFees).
   const idBlock = document.getElementById('id-card-block');
   if (idBlock) idBlock.classList.toggle('hidden', !(feeCategories[catKey] && feeCategories[catKey].requiresStudentId));
+  // Doctors and Medical PGs: their council registration -- asked once, then
+  // shown.
+  const councilBlock = document.getElementById('council-block');
+  if (councilBlock) {
+    const asks = !!(feeCategories[catKey] && feeCategories[catKey].asksCouncilNumber);
+    const saved = currentDelegate && currentDelegate.council_reg_no;
+    councilBlock.classList.toggle('hidden', !asks);
+    document.getElementById('council-inputs').classList.toggle('hidden', !!saved);
+    const savedLine = document.getElementById('council-saved');
+    savedLine.classList.toggle('hidden', !saved);
+    savedLine.textContent = saved ? `${currentDelegate.council_name || 'Medical Council'} · ${currentDelegate.council_reg_no}` : '';
+  }
 
   if (!catKey) return;
 
@@ -1819,11 +1836,26 @@ function validateProgramGroupSelections() {
 
 // Categories + current-phase fee, loaded from the fee master.
 let feeCategories = {};
+// The medical councils (councils.js on the server), from /api/fees.
+let medicalCouncilList = [];
+const councilOptionsHtml = (selected) => `<option value="">— Medical Council —</option>${medicalCouncilList
+  .map((c) => `<option value="${esc(c)}"${c === selected ? ' selected' : ''}>${esc(c)}</option>`).join('')}`;
+// Admin pages: the list, for the edit forms.
+async function loadMedicalCouncils() {
+  if (medicalCouncilList.length) return;
+  try { medicalCouncilList = (await (await fetch('/api/fees')).json()).medicalCouncils || []; } catch (e) { /* the forms fall back to typing */ }
+}
+
 async function loadFees() {
   try {
     const data = await (await fetch('/api/fees')).json();
     feeCategories = {};
     (data.categories || []).forEach((c) => { feeCategories[c.key] = c; });
+    if (Array.isArray(data.medicalCouncils)) {
+      medicalCouncilList = data.medicalCouncils;
+      const councilSel = document.getElementById('payment-council');
+      if (councilSel) councilSel.innerHTML = councilOptionsHtml(councilSel.value);
+    }
     if (data.upi && data.upi.id) OFFICIAL_UPI_ID = data.upi.id;
     if (data.upi && data.upi.payeeName) {
       OFFICIAL_UPI_PAYEE_NAME = data.upi.payeeName;
@@ -1906,6 +1938,10 @@ async function verifyAndSubmitPayment(e) {
 
   const idFile = document.getElementById('payment-id-card').files[0];
   if (isStudent && !idFile) return showToast('Please upload your student ID card for this category.');
+  const asksCouncil = !!(feeCategories[categoryKey] && feeCategories[categoryKey].asksCouncilNumber) && !(currentDelegate && currentDelegate.council_reg_no);
+  const councilName = asksCouncil ? document.getElementById('payment-council').value : '';
+  const councilRegNo = asksCouncil ? document.getElementById('payment-council-no').value.trim() : '';
+  if (asksCouncil && (!councilName || !councilRegNo)) return showToast('Choose your Medical Council and enter your registration number.');
 
   const groupError = validateProgramGroupSelections();
   if (groupError) return showToast(groupError);
@@ -1932,6 +1968,8 @@ async function verifyAndSubmitPayment(e) {
       paymentMode: (document.querySelector('input[name="payment-mode"]:checked') || {}).value || 'UPI',
       // Only send the promo code if it's applied to the category being submitted.
       discountCode: (appliedPromo && appliedPromo.categoryKey === categoryKey) ? appliedPromo.code : undefined,
+      councilName: asksCouncil ? councilName : undefined,
+      councilRegNo: asksCouncil ? councilRegNo : undefined,
     };
 
     async function submit(acknowledged) {
@@ -1974,6 +2012,8 @@ async function verifyAndSubmitPayment(e) {
         : (isFreeReg ? "Registration confirmed — no payment was required." : "Registration submitted successfully! It is PENDING manual verification."),
         data.flagged ? 'info' : 'success'
       );
+      // Given now, it is saved: not asked again on a resubmission.
+      if (asksCouncil && currentDelegate) Object.assign(currentDelegate, { council_name: councilName, council_reg_no: councilRegNo.replace(/\s+/g, '').toUpperCase() });
       closeModal('modal-conference');
       loadDashboard();
     } else {
@@ -3315,6 +3355,7 @@ async function initBackendPortal() {
   if (canSee('abstracts')) await renderBackendAbstracts();
   // Fills the Faculty tab badge (arrivals without a vehicle, faculty without a room).
   if (canSee('faculty')) renderGuests();
+  loadMedicalCouncils();
   if (canSee('users')) await loadBackendUsers();
   // The role picker used in Users & Roles and the Create Staff User modal --
   // needed by anyone who can assign a role, not only someone who can also
@@ -5823,6 +5864,11 @@ function userDetailEditForm(u) {
           ${GENDER_OPTIONS.map((g) => `<option value="${esc(g)}"${u.gender === g ? ' selected' : ''}>${esc(g)}</option>`).join('')}
         </select></div>
     </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div><label class="block text-[11px] font-semibold text-slate-600 mb-1">Medical Council</label>
+        <select id="ude-council_name" class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">${councilOptionsHtml(u.council_name || '')}</select></div>
+      ${field('council_reg_no', 'Council registration no.', u.council_reg_no)}
+    </div>
     <div>
       <label class="block text-[11px] font-semibold text-slate-600 mb-1">Pincode</label>
       <input id="ude-pincode" type="text" maxlength="6" value="${u.pincode == null ? '' : esc(String(u.pincode))}"
@@ -5876,7 +5922,7 @@ async function saveUserDetailEdit() {
   if (!userDetailPhone) return;
   // institution reads from the directory control's hidden field, which is
   // named for the form ("institute") rather than the column ("institution").
-  const ids = ['salutation', 'full_name', 'designation', 'age', 'gender', 'district', 'state', 'pincode'];
+  const ids = ['salutation', 'full_name', 'designation', 'age', 'gender', 'district', 'state', 'pincode', 'council_name', 'council_reg_no'];
   const payload = {};
   ids.forEach((id) => {
     const el = document.getElementById(`ude-${id}`);
@@ -10421,6 +10467,9 @@ function deskOpenEdit() {
       ${field('age', 'Age', u.age, 'number')}
       ${directory('designation', 'Designation', u.designation)}
       ${directory('institute', 'Institution', u.institution)}
+      <div><label class="block text-[11px] text-slate-500 font-semibold mb-1">Medical Council</label>
+        <select id="desk-edit-council_name" class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">${councilOptionsHtml(u.council_name || '')}</select></div>
+      ${field('council_reg_no', 'Council registration no.', u.council_reg_no)}
       <div><label class="block text-[11px] text-slate-500 font-semibold mb-1">Gender</label>
         <select id="desk-edit-gender" class="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200">
           <option value="">Select</option>
@@ -10480,6 +10529,8 @@ async function deskSaveEdit() {
     pincode: val('pincode'),
     state: val('state'),
     district: val('district'),
+    council_name: val('council_name'),
+    council_reg_no: val('council_reg_no'),
   };
   // Omitted entirely when verified: the field is not on the form, and the
   // server would refuse the change anyway. Sending the unchanged address

@@ -14,6 +14,19 @@
             <option value="">-- Select Category --</option>
           </select>
 
+          <!-- Doctors and Medical PGs: their Medical Council registration, for
+               the certificate with MMC credit points. Given once; already
+               given, it is shown, not asked again. See calculateFee(). -->
+          <div id="council-block" class="hidden mt-3 bg-sky-50 border border-sky-200 rounded-xl p-3">
+            <p class="text-xs font-semibold text-sky-900">Medical Council registration <span class="text-sky-700">(required for doctors and medical PGs)</span></p>
+            <div id="council-inputs" class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+              <select id="payment-council" aria-label="Medical Council" class="w-full p-2.5 border rounded-lg bg-white text-sm outline-none"></select>
+              <input id="payment-council-no" maxlength="30" autocomplete="off" placeholder="Registration number" class="w-full p-2.5 border rounded-lg bg-white text-sm outline-none">
+            </div>
+            <p id="council-saved" class="hidden mt-1 text-sm font-semibold text-sky-900"></p>
+            <p class="text-[10px] text-sky-800 mt-1">Printed on your certificate with MMC credit points.</p>
+          </div>
+
           <!-- Shown only for student categories -->
           <div id="id-card-block" class="hidden mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3">
             <label class="block text-xs font-semibold text-amber-900">Student ID Card <span class="text-amber-700">(required for student categories)</span></label>

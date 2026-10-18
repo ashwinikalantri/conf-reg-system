@@ -32,6 +32,7 @@ const XLSX = require('xlsx');
 const guestLib = require('./guests');
 const reminderLib = require('./reminders');
 const attendanceLib = require('./attendance');
+const councilsLib = require('./councils');
 const certificatePdfLib = require('./certificate-pdf');
 const https = require('https');
 const QRCode = require('qrcode');
@@ -4376,6 +4377,21 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     // Resolved before the fee below so a paid option's fee can be added in.
     const resolved = await resolveSelections(optionIds, ownRegId);
     if (resolved.error) return res.status(400).json({ success: false, error: resolved.error });
+
+    // A Doctor or Medical PG gives their Medical Council and registration
+    // number, once: it goes on the certificate with MMC points. Already
+    // given, it stands (the organisers correct it).
+    if ((await certificateSettings()).eligibleCategories.includes(effectiveCategoryKey)) {
+      const mine = await dbGet('SELECT council_name, council_reg_no FROM users WHERE phone_number = ?', [phone]);
+      if (!(mine && mine.council_reg_no)) {
+        const councilProblem = councilsLib.councilError(req.body.councilName, req.body.councilRegNo);
+        if (councilProblem) return res.status(400).json({ success: false, error: councilProblem });
+        const councilName = String(req.body.councilName).trim();
+        const regNo = councilsLib.cleanRegNo(req.body.councilRegNo);
+        await dbRun('UPDATE users SET council_name = ?, council_reg_no = ? WHERE phone_number = ?', [councilName, regNo, phone]);
+        await recordAudit({ req, entityType: 'user', entityId: phone, action: 'COUNCIL_NUMBER_GIVEN', oldValue: null, newValue: `${councilName} ${regNo}` });
+      }
+    }
     const selections = resolved.selections;
     const optionsFee = selections.reduce((sum, s) => sum + (Number(s.opt.fee) || 0), 0);
 
@@ -4936,7 +4952,10 @@ app.get('/api/fees', requireAuth, async (req, res, next) => {
     const config = await getFeeConfig();
     const phase = currentPhase(config);
     const cats = await dbAll('SELECT category_key, label, subtitle, early_fee, regular_fee, late_fee, spot_fee, requires_student_id FROM fee_categories WHERE active = 1 ORDER BY sort_order, id');
+    const { eligibleCategories } = await certificateSettings();
     res.json({
+      // The councils a Doctor or Medical PG chooses from (see councils.js).
+      medicalCouncils: councilsLib.MEDICAL_COUNCILS,
       phase,
       earlyUntil: config ? config.early_until : null,
       regularUntil: config ? config.regular_until : null,
@@ -4947,6 +4966,8 @@ app.get('/api/fees', requireAuth, async (req, res, next) => {
         subtitle: c.subtitle || '',
         fee: { early: c.early_fee, regular: c.regular_fee, late: c.late_fee, spot: c.spot_fee }[phase],
         requiresStudentId: !!c.requires_student_id,
+        // Doctors and Medical PGs give their Medical Council registration.
+        asksCouncilNumber: eligibleCategories.includes(c.category_key),
       })),
       upi: { id: UPI.id, payeeName: UPI.payeeName },
       bank: { accountName: BANK.accountName, accountNumber: BANK.accountNumber, ifsc: BANK.ifsc, branch: BANK.branch },
@@ -8032,6 +8053,19 @@ app.put('/api/users/:phone', requirePermission('users.edit'), async (req, res, n
         params.push(value === '' ? null : value);
       }
     }
+    // The Medical Council registration: given once by the delegate, corrected
+    // here by the organisers. Both together, the council from the list;
+    // both blank clears it.
+    if (Object.prototype.hasOwnProperty.call(b, 'council_name') || Object.prototype.hasOwnProperty.call(b, 'council_reg_no')) {
+      const councilName = String(b.council_name || '').trim();
+      const regNo = councilsLib.cleanRegNo(b.council_reg_no);
+      if (councilName || regNo) {
+        const problem = councilsLib.councilError(councilName, regNo);
+        if (problem) return res.status(400).json({ success: false, error: problem });
+      }
+      sets.push('council_name = ?', 'council_reg_no = ?');
+      params.push(councilName || null, regNo || null);
+    }
     // Back to unproven whenever the address actually changes: the delegate
     // verifies the new one themselves (the dashboard banner prompts them)
     // rather than inheriting the old address's verified standing.
@@ -9062,6 +9096,7 @@ app.get('/api/attendance/me', requireAuth, async (req, res, next) => {
         councilRegNo: me && me.council_reg_no ? me.council_reg_no : '',
         // Asked for only where it can earn MMC points.
         asksCouncilNumber: !!reg && settings.eligibleCategories.includes(reg.category_key),
+        councils: councilsLib.MEDICAL_COUNCILS,
         // Issued: the details are fixed; corrections go through the organisers.
         locked: !!(await dbGet('SELECT 1 AS yes FROM certificates WHERE phone_number = ? AND revoked_at IS NULL', [req.session.phone])),
       },
@@ -9076,25 +9111,29 @@ app.get('/api/attendance/me', requireAuth, async (req, res, next) => {
 app.put('/api/attendance/me/certificate', requireAuth, async (req, res, next) => {
   try {
     const name = String(req.body.certificateName || '').replace(/\s+/g, ' ').trim();
-    const councilName = String(req.body.councilName || '').replace(/\s+/g, ' ').trim();
-    const councilRegNo = String(req.body.councilRegNo || '').replace(/\s+/g, '').trim().toUpperCase();
     // Once a certificate is issued, its name is the organisers' to correct.
     if (await dbGet('SELECT 1 AS yes FROM certificates WHERE phone_number = ? AND revoked_at IS NULL', [req.session.phone])) {
       return res.status(409).json({ success: false, error: 'Your certificate has been issued. To correct it, please contact the organisers.' });
     }
     if (name && (name.length < 3 || name.length > 120)) return res.status(400).json({ success: false, error: 'Enter your name as it should appear, 3 to 120 characters.' });
     if (/[<>{}]/.test(name)) return res.status(400).json({ success: false, error: 'The name contains characters that cannot be printed.' });
-    if (councilRegNo && !/^[A-Z0-9/.-]{3,30}$/.test(councilRegNo)) {
-      return res.status(400).json({ success: false, error: 'Enter the registration number as it appears on your certificate: letters, digits, / . or -.' });
-    }
-    if (councilRegNo && !councilName) return res.status(400).json({ success: false, error: 'Choose which Medical Council you are registered with.' });
-    if (councilName.length > 80) return res.status(400).json({ success: false, error: 'The council name is too long.' });
     const before = await dbGet('SELECT certificate_name, council_name, council_reg_no FROM users WHERE phone_number = ?', [req.session.phone]);
+    // The council number is given once; after that it stands, and the
+    // organisers correct it. Not given yet, it can be given here.
+    let councilName = before ? before.council_name : null;
+    let councilRegNo = before ? before.council_reg_no : null;
+    const givingCouncil = !councilRegNo && (String(req.body.councilName || '').trim() || String(req.body.councilRegNo || '').trim());
+    if (givingCouncil) {
+      const problem = councilsLib.councilError(req.body.councilName, req.body.councilRegNo);
+      if (problem) return res.status(400).json({ success: false, error: problem });
+      councilName = String(req.body.councilName).trim();
+      councilRegNo = councilsLib.cleanRegNo(req.body.councilRegNo);
+    }
     await dbRun('UPDATE users SET certificate_name = ?, council_name = ?, council_reg_no = ? WHERE phone_number = ?',
       [name || null, councilName || null, councilRegNo || null, req.session.phone]);
     await recordAudit({ req, entityType: 'user', entityId: req.session.phone, action: 'CERTIFICATE_DETAILS_UPDATED',
       oldValue: before ? `${before.certificate_name || '(default name)'} · ${before.council_name || ''} ${before.council_reg_no || ''}`.trim() : null,
-      newValue: `${name || '(default name)'} · ${councilName} ${councilRegNo}`.trim() });
+      newValue: `${name || '(default name)'} · ${councilName || ''} ${councilRegNo || ''}`.trim() });
     res.json({ success: true });
   } catch (err) {
     next(err);
