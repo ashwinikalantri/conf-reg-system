@@ -30,7 +30,7 @@ function page(cookie, perms) {
     document: { getElementById: el, querySelector: () => null, querySelectorAll: () => [], addEventListener() {},
       createElement: () => el(`tmp${Math.random()}`), body: el('body'), documentElement: el('html'), readyState: 'loading', cookie: '' },
     window: { addEventListener() {}, location: { href: '', hash: '', pathname: '/', search: '', origin: 'https://portal.example' },
-      matchMedia: () => ({ matches: false, addEventListener() {} }), history: { replaceState() {} } },
+      matchMedia: () => ({ matches: false, addEventListener() {} }), history: { replaceState() {} }, scrollTo() {} },
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     navigator: { userAgent: 'node' },
@@ -40,7 +40,7 @@ function page(cookie, perms) {
     },
     console: { log() {}, warn() {}, error() {}, info() {} },
     setTimeout, clearTimeout, setInterval: () => 0, clearInterval, URL, URLSearchParams, Intl, Date, Math, JSON, Promise, requestAnimationFrame: () => 0,
-    __toasts: toasts,
+    scrollTo() {}, __toasts: toasts,
   };
   sandbox.window.document = sandbox.document; sandbox.self = sandbox; sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
@@ -49,9 +49,11 @@ function page(cookie, perms) {
     conferenceInfo = { name: 'Fixture Conference', acronym: 'FIXCON', location: 'Sevagram', startDate: '2026-11-21', endDate: '2026-11-22' };
     showToast = (m, t) => globalThis.__toasts.push([m, t]);
     globalThis.__f = { renderAttendance, attendanceSignIn, renderBackendPrograms, loadAttendanceCard, saveCertificateDetails, switchAttendanceView,
-      renderProgrammeSessions, editProgrammeSession, loadProgrammeCard, renderBadge, showAbstractCard };
+      renderProgrammeSessions, editProgrammeSession, loadProgrammeCard, renderBadge, showAbstractCard,
+      openProgrammePage, renderHomeHero };
+    globalThis.__setReg = (r) => { currentRegistration = r; };
     globalThis.__setDelegate = (d) => { currentDelegate = d; };`, sandbox);
-  return { el, f: sandbox.__f, toasts };
+  return { el, f: sandbox.__f, toasts, sb: sandbox };
 }
 
 (async () => {
@@ -135,8 +137,25 @@ function page(cookie, perms) {
     const u = await db.get('SELECT certificate_name, council_name, council_reg_no FROM users WHERE phone_number = ?', [phone]);
     check('saving an unchanged name keeps following their profile, not a copy', u.certificate_name === null && u.council_reg_no === '2015/04/5678', u);
     await P.f.loadProgrammeCard();
-    check('the programme: today\'s sessions, what is on now, and a tick where they were present', !P.el('programme-card').classList.contains('hidden')
-      && P.el('programme-list').innerHTML.includes(`Client Talk ${N}`) && /On now/.test(P.el('programme-list').innerHTML) && /You were marked present/.test(P.el('programme-list').innerHTML));
+    check('the home screen\'s programme panel: what is on now', !P.el('programme-card').classList.contains('hidden')
+      && P.el('programme-now').innerHTML.includes(`Client Talk ${N}`) && /On now/.test(P.el('programme-now').innerHTML));
+    P.f.openProgrammePage();
+    const pageHtml = P.el('prog-page-list').innerHTML;
+    check('the programme page: the day\'s talks, on now ringed, and where they were present', !P.el('programme-page').classList.contains('hidden')
+      && pageHtml.includes(`Client Talk ${N}`) && /data-now="1"/.test(pageHtml) && /you are marked present/.test(pageHtml) && /Day 1/.test(P.el('prog-page-days').innerHTML));
+    // As the page ships them: the action banners hidden until they apply.
+    ['reverify-banner', 'balance-banner'].forEach((id) => P.el(id).classList.add('hidden'));
+    P.sb.__setReg({ bank_status: 'BANK_VERIFIED', registration_number: `CH${N}` });
+    P.f.renderHomeHero();
+    check('the home screen leads with what matters now: on the day, what is on and the badge', !P.el('home-hero').classList.contains('hidden')
+      && P.el('home-hero').innerHTML.includes(`Client Talk ${N}`) && /Show my badge/.test(P.el('home-hero').innerHTML));
+    P.sb.__setReg(null);
+    P.f.renderHomeHero();
+    check('...before registering, the way to register', /Register and pay/.test(P.el('home-hero').innerHTML));
+    P.el('balance-banner').classList.remove('hidden');
+    P.sb.__setReg({ bank_status: 'PARTIAL_PAYMENT' });
+    P.f.renderHomeHero();
+    check('...and a balance due leads with its own banner instead', P.el('home-hero').classList.contains('hidden'));
 
     console.log('\n== The badge ==');
     P.f.renderBadge({ registration_number: `CH${N}`, delegate_name: `Dr Card Holder ${N}`, category_label: 'Doctor', is_faculty_member: true });

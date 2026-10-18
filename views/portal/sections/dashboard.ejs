@@ -1,101 +1,223 @@
-  <!-- PAGE 3: DELEGATE DASHBOARD -->
-  <section id="dashboard-page" class="hidden w-full max-w-4xl bg-white shadow-card rounded-2xl p-8 border border-slate-200">
-    <div class="flex flex-col sm:flex-row justify-between sm:items-center border-b pb-4 mb-6 gap-4">
-      <div>
-        <h2 class="text-2xl font-bold text-slate-800">Welcome, <span id="user-display-name" class="skeleton text-indigo-600">Delegate</span></h2>
-        <p id="user-display-sub" class="text-xs text-slate-500 mt-0.5"></p>
+  <!-- PAGE 3: DELEGATE DASHBOARD. Phone first, in the conference's navy and
+       gold. A navy header (who they are; a menu for password, admin, log
+       out); then the one thing that matters now (#home-hero, renderHomeHero
+       in app.js -- or a banner that needs action); then their registration,
+       abstract, attendance and certificate, and group. Beside it on a wide
+       screen (below it on a phone): the badge and the programme, whose full
+       timetable is its own page (#programme-page). -->
+  <section id="dashboard-page" class="hidden w-full max-w-5xl">
+    <header class="rounded-2xl bg-navy text-white px-5 py-4 sm:px-6 sm:py-5 flex items-start justify-between gap-3 shadow-card">
+      <div class="min-w-0">
+        <p id="dash-acronym" class="text-xs tracking-[0.3em] font-semibold text-gold-300"></p>
+        <h2 class="text-xl sm:text-2xl font-bold mt-1 leading-tight text-balance"><span id="user-display-name" class="skeleton">Delegate</span></h2>
+        <p id="user-display-sub" class="text-sm text-white/75 mt-0.5"></p>
+        <p id="dash-when" class="text-xs text-white/60 mt-1"></p>
       </div>
-      <div class="self-start sm:self-auto flex items-center gap-2">
-        <a id="admin-nav-btn" href="/admin" title="Admin Backend Panel" aria-label="Admin Backend Panel" class="hidden px-3 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 hover:text-indigo-600 transition">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="11" cy="17" r="2" fill="currentColor" stroke="none"/></svg>
-        </a>
-        <button onclick="openSetPasswordModal(false)" title="Set Password" aria-label="Set Password" class="px-3 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 hover:text-indigo-600 transition">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><circle cx="7" cy="12" r="4"/><line x1="11" y1="12" x2="21" y2="12"/><line x1="17" y1="12" x2="17" y2="16"/><line x1="21" y1="12" x2="21" y2="16"/></svg>
+      <div class="relative shrink-0">
+        <button type="button" id="dash-menu-btn" onclick="toggleDashMenu(event)" aria-label="Menu" aria-haspopup="true" class="w-10 h-10 rounded-lg border border-white/25 hover:bg-white/10 flex items-center justify-center">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-5 h-5"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
         </button>
-        <button onclick="logout()" class="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50">Logout</button>
-      </div>
-    </div>
-
-    <div id="reverify-banner" class="hidden mb-6 bg-rose-50 border-l-4 border-rose-500 p-4 rounded-r-xl">
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <h4 id="reverify-title" class="text-sm font-bold text-rose-800 flex items-center gap-2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg> Action Needed</h4>
-          <p id="reverify-msg" class="text-xs text-rose-700 mt-1"></p>
+        <div id="dash-menu" class="hidden absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-card border border-slate-200 text-slate-700 z-30 py-1 text-[15px]">
+          <a id="admin-nav-btn" href="/admin" class="hidden block px-4 py-2.5 hover:bg-slate-50">Admin panel</a>
+          <button type="button" onclick="openSetPasswordModal(false)" class="w-full text-left px-4 py-2.5 hover:bg-slate-50">Change password</button>
+          <button type="button" onclick="logout()" class="w-full text-left px-4 py-2.5 hover:bg-slate-50">Log out</button>
         </div>
-        <button id="reverify-btn" onclick="resolveRejection()" class="shrink-0 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-lg shadow">Update</button>
       </div>
-    </div>
+    </header>
 
-    <!-- Email verification banner. The post-login modal is skippable (and
-         only fires once a session), so without this there'd be no way back
-         to it -- and no way to verify at all for anyone already logged in.
-         Shown whenever the address is unproven, cleared the moment it is.
-         Doubles as the prompt to ADD an address for a phone-only signup,
-         which otherwise has no way to receive receipts or reminders. -->
-    <div id="verify-email-banner" class="hidden mb-6 bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-xl">
-      <div class="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h4 class="text-sm font-bold text-amber-800 flex items-center gap-2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M3 6.5 L12 13 L21 6.5"/></svg> <span id="verify-email-banner-title">Email not verified</span></h4>
-          <p id="verify-email-banner-msg" class="text-xs text-amber-700 mt-1"></p>
+    <div class="mt-4 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_22rem] gap-4 items-start">
+      <div class="space-y-4 min-w-0">
+        <!-- What needs their action, when something does. -->
+        <div id="reverify-banner" class="hidden rounded-2xl border-2 border-rose-300 bg-rose-50 p-5">
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h4 id="reverify-title" class="text-base font-bold text-rose-800">Action Needed</h4>
+              <p id="reverify-msg" class="text-sm text-rose-700 mt-1"></p>
+            </div>
+            <button id="reverify-btn" onclick="resolveRejection()" class="shrink-0 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-sm rounded-lg">Update</button>
+          </div>
         </div>
-        <button onclick="openVerifyEmailModal()" class="shrink-0 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs rounded-lg shadow">Verify Now</button>
-      </div>
-    </div>
 
-    <!-- Partial-payment / outstanding-balance banner: shown when part of the
-         fee has been verified but a balance is still due. -->
-    <div id="balance-banner" class="hidden mb-6 bg-orange-50 border-l-4 border-orange-500 p-4 rounded-r-xl">
-      <div class="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h4 class="text-sm font-bold text-orange-800 flex items-center gap-2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg> Balance Due</h4>
-          <p class="text-xs text-orange-700 mt-1">Part of your registration fee has been received. Please pay the remaining balance to complete your registration.</p>
+        <!-- Email not verified (or none on file). Shown whenever the address
+             is unproven, cleared the moment it is. -->
+        <div id="verify-email-banner" class="hidden rounded-2xl border border-amber-300 bg-amber-50 p-4">
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h4 class="text-[15px] font-bold text-amber-900"><span id="verify-email-banner-title">Email not verified</span></h4>
+              <p id="verify-email-banner-msg" class="text-sm text-amber-800 mt-1"></p>
+            </div>
+            <button onclick="openVerifyEmailModal()" class="shrink-0 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-sm rounded-lg">Verify now</button>
+          </div>
+        </div>
+
+        <!-- Part of the fee received, a balance still due. -->
+        <div id="balance-banner" class="hidden rounded-2xl border-2 border-orange-300 bg-orange-50 p-5">
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h4 class="text-base font-bold text-orange-900">Balance due</h4>
+              <p class="text-sm text-orange-800 mt-1">Part of your registration fee has been received. Pay the remaining balance to complete your registration.</p>
+            </div>
+            <button id="balance-topup-btn" onclick="openTopupModal()" class="shrink-0 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-sm rounded-lg">Pay balance</button>
+          </div>
           <div class="grid grid-cols-3 gap-2 mt-3">
-            <div class="bg-white/70 border border-orange-200 rounded-lg px-2.5 py-1.5">
-              <p class="text-[10px] text-slate-500 uppercase tracking-wide font-semibold">Total fee</p>
-              <p id="balance-fee" class="text-sm font-bold text-slate-800 mt-0.5"></p>
+            <div class="bg-white border border-orange-200 rounded-lg px-3 py-2">
+              <p class="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Total fee</p>
+              <p id="balance-fee" class="text-base font-bold text-slate-800 mt-0.5 tabular-nums"></p>
             </div>
-            <div class="bg-white/70 border border-orange-200 rounded-lg px-2.5 py-1.5">
-              <p class="text-[10px] text-slate-500 uppercase tracking-wide font-semibold">Paid</p>
-              <p id="balance-paid" class="text-sm font-bold text-emerald-700 mt-0.5"></p>
+            <div class="bg-white border border-orange-200 rounded-lg px-3 py-2">
+              <p class="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Paid</p>
+              <p id="balance-paid" class="text-base font-bold text-emerald-700 mt-0.5 tabular-nums"></p>
             </div>
-            <div class="bg-white/70 border border-orange-200 rounded-lg px-2.5 py-1.5">
-              <p class="text-[10px] text-slate-500 uppercase tracking-wide font-semibold">Balance due</p>
-              <p id="balance-due" class="text-sm font-bold text-orange-700 mt-0.5"></p>
+            <div class="bg-white border border-orange-200 rounded-lg px-3 py-2">
+              <p class="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Balance</p>
+              <p id="balance-due" class="text-base font-bold text-orange-700 mt-0.5 tabular-nums"></p>
+            </div>
+          </div>
+          <p id="balance-pending-note" class="hidden text-sm text-orange-800 mt-2 font-semibold">Your top-up payment is submitted and pending verification.</p>
+        </div>
+
+        <!-- The one thing that matters now: register; being verified; your
+             badge; what is on now; your certificates. renderHomeHero(). -->
+        <div id="home-hero" class="hidden rounded-2xl border-2 border-gold-500 bg-white p-5 shadow-card"></div>
+
+        <!-- Registration -->
+        <div id="registration-card" class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="flex items-start justify-between gap-3">
+            <h3 class="text-lg font-bold text-slate-900">Registration</h3>
+            <!-- Neutral until the real status is known; the server normally
+                 sets it on first paint (__BOOTSTRAP_REG__ in the / route). -->
+            <span id="payment-status-tag" class="skeleton shrink-0 text-xs bg-slate-100 text-slate-600 font-bold px-2.5 py-1 rounded-full border border-slate-200">Checking&hellip;</span>
+          </div>
+          <p id="payment-desc" class="text-[15px] text-slate-600 mt-1 leading-relaxed">Choose your category, workshop and QI exposure, pay, and submit your payment reference with a screenshot.</p>
+
+          <!-- Shown only once the payment is verified -->
+          <div id="confirmed-block" class="hidden mt-4 space-y-3">
+            <div class="flex items-baseline justify-between gap-3 border-b border-slate-100 pb-3">
+              <p class="text-sm text-slate-500">Registration number</p>
+              <p id="reg-number-display" class="text-lg font-bold font-mono text-navy tracking-wide">—</p>
+            </div>
+            <!-- One line per chosen programme option, across every group. -->
+            <div id="conf-selections" class="text-[15px] space-y-1.5"></div>
+            <button onclick="window.open('/api/registrations/me/receipt','_blank')" class="w-full sm:w-auto px-5 py-2.5 border border-indigo-600 text-indigo-700 hover:bg-indigo-50 font-semibold text-sm rounded-lg">View or download receipt</button>
+          </div>
+
+          <!-- Hidden until the status is known: a confirmed delegate is never
+               shown a Register button, however briefly. -->
+          <div id="payment-action-area" class="mt-4 hidden">
+            <div id="payment-action-note" class="mb-3 bg-amber-50 p-3 rounded-xl border border-amber-200 text-sm text-amber-900 leading-relaxed">
+              <b>Note:</b> Registration remains <b>Pending</b> until payment is verified manually by the finance admin.
+            </div>
+            <button id="register-conf-btn" onclick="openPaymentModal()" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg">Register &amp; Pay Now</button>
+          </div>
+        </div>
+
+        <!-- Abstract. Hidden while submission is closed, unless they have one
+             (its status still matters to them). See loadAbstractStatus(). -->
+        <div id="abstract-card" class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="flex items-start justify-between gap-3">
+            <h3 class="text-lg font-bold text-slate-900">Abstract</h3>
+            <span id="abstract-status-tag" class="skeleton shrink-0 text-xs bg-slate-100 text-slate-600 font-bold px-2.5 py-1 rounded-full border border-slate-200">Not Submitted</span>
+          </div>
+          <p id="abstract-desc" class="text-[15px] text-slate-600 mt-1 leading-relaxed">Submit a paper or poster on healthcare quality and patient safety. One abstract per delegate; it cannot be changed once submitted.</p>
+          <!-- The last date, on its own line. renderAbstractDeadlineNote(). -->
+          <p id="abstract-deadline-note" class="hidden mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-navy bg-gold-50 border border-gold-300 rounded-full px-3 py-1"></p>
+          <button type="button" id="abstract-preview-toggle" onclick="toggleAbstractPreview()" class="hidden block text-sm text-indigo-700 hover:underline font-semibold mt-2">View my submission</button>
+          <div id="abstract-preview-box" class="hidden mt-2 p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 space-y-2"></div>
+          <button id="abstract-action-btn" onclick="openModal('modal-abstract')" class="mt-4 w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg">Submit Abstract</button>
+        </div>
+
+        <!-- Attendance & certificate: once registered. Their progress to the
+             certificate, the sessions they were at, their certificates, and
+             the name (and council number) it carries. loadAttendanceCard(). -->
+        <div id="attendance-card" class="hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div class="flex items-start justify-between gap-3">
+            <h3 class="text-lg font-bold text-slate-900">Attendance &amp; certificate</h3>
+            <span id="attendance-status" class="shrink-0 text-xs font-bold px-2.5 py-1 rounded-full border"></span>
+          </div>
+          <p class="text-[15px] text-slate-600 mt-1 leading-relaxed">At each session, scan the QR code at the hall door, or show your badge to the volunteer there. For the conference certificate, be marked present at a session before lunch and one after.</p>
+          <ul id="attendance-list" class="mt-3 space-y-2 text-[15px]"></ul>
+          <details id="attendance-sessions" class="hidden mt-3">
+            <summary class="text-sm font-semibold text-slate-600 cursor-pointer select-none">Sessions you were marked present at</summary>
+            <ul id="attendance-session-list" class="mt-2 space-y-1 text-sm text-slate-600"></ul>
+          </details>
+          <!-- Issued certificates, to download. -->
+          <div id="cert-downloads" class="hidden mt-4 p-4 rounded-xl border border-gold-300 bg-gold-50">
+            <p class="text-[15px] font-bold text-navy">Your certificates</p>
+            <div id="cert-download-list" class="mt-2 flex flex-col sm:flex-row sm:flex-wrap gap-2"></div>
+          </div>
+          <p id="cert-locked-note" class="hidden mt-4 text-sm text-slate-600">Your certificate has been issued with the details below. To correct them, contact the organisers.</p>
+          <form id="cert-details-form" onsubmit="saveCertificateDetails(event)" class="mt-4 pt-4 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div class="sm:col-span-2">
+              <label for="cert-name" class="block text-sm font-semibold text-slate-700 mb-1">Name on your certificate</label>
+              <input id="cert-name" maxlength="120" class="w-full h-11 px-3 border border-slate-300 rounded-lg text-[15px] outline-none">
+              <p class="text-xs text-slate-500 mt-1">Exactly as it should be printed, with your title. Leave it as it is if it is right.</p>
+            </div>
+            <div id="cert-council-wrap" class="hidden sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label for="cert-council" class="block text-sm font-semibold text-slate-700 mb-1">Medical Council</label>
+                <select id="cert-council" class="w-full h-11 px-2 border border-slate-300 rounded-lg text-[15px] bg-white outline-none"></select>
+              </div>
+              <div>
+                <label for="cert-council-no" class="block text-sm font-semibold text-slate-700 mb-1">Registration number</label>
+                <input id="cert-council-no" maxlength="30" autocomplete="off" class="w-full h-11 px-3 border border-slate-300 rounded-lg text-[15px] outline-none">
+              </div>
+              <p class="sm:col-span-2 text-xs text-slate-500 -mt-1">Needed for the certificate with MMC credit points. Without it you receive the participation certificate.</p>
+            </div>
+            <!-- Given: shown, not edited here; the organisers correct it. -->
+            <div id="cert-council-saved" class="hidden sm:col-span-2">
+              <p class="text-sm font-semibold text-slate-700">Medical Council registration</p>
+              <p id="cert-council-saved-text" class="text-[15px] font-semibold text-slate-900 mt-0.5"></p>
+              <p class="text-xs text-slate-500">To correct it, contact the organisers.</p>
+            </div>
+            <div class="sm:col-span-2">
+              <button type="submit" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Save certificate details</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Group registration (when a group discount is available or they
+             are in a group). renderGroupSection(). -->
+        <div id="group-section" class="hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"></div>
+      </div>
+
+      <aside class="space-y-4 min-w-0">
+        <!-- The virtual conference badge, once registered and verified; its
+             QR is the desk pass, scanned at the desk and the hall doors.
+             renderBadge(). -->
+        <div id="desk-pass" class="hidden flex justify-center">
+          <div id="badge-card" class="w-full max-w-sm rounded-2xl overflow-hidden shadow-card border border-slate-200 bg-white">
+            <div class="relative bg-navy text-white px-5 pt-4 pb-4 text-center">
+              <div class="mx-auto mb-3 w-16 h-2.5 rounded-full bg-white/25" aria-hidden="true"></div>
+              <p id="badge-acronym" class="text-xs tracking-[0.3em] font-bold text-gold-300"></p>
+              <p id="badge-conference" class="text-sm font-semibold leading-snug mt-1 text-balance"></p>
+              <p id="badge-when" class="text-xs text-white/70 mt-1"></p>
+            </div>
+            <p id="badge-role" class="text-center text-xs font-extrabold tracking-[0.35em] py-1.5 text-white bg-[#2f5673]">DELEGATE</p>
+            <div class="px-5 pt-5 pb-4 text-center">
+              <p id="badge-name" class="text-2xl font-extrabold text-slate-900 leading-tight text-balance"></p>
+              <p id="badge-designation" class="text-sm text-slate-600 mt-1.5"></p>
+              <p id="badge-institution" class="text-sm text-slate-500"></p>
+              <img id="desk-pass-qr" alt="Your badge QR code" width="176" height="176" class="mx-auto mt-4 w-44 h-44">
+              <p id="badge-reg" class="font-mono font-bold text-slate-800 tracking-widest"></p>
+              <p id="badge-category" class="text-xs text-slate-500 mt-0.5"></p>
+            </div>
+            <div class="px-5 pb-5">
+              <button type="button" onclick="openBadgeFullScreen()" class="w-full py-2.5 bg-navy hover:bg-[#244560] text-white font-semibold text-sm rounded-lg">Show full screen</button>
+              <p class="text-xs text-slate-500 text-center mt-2">Show it at the registration desk and the hall doors.</p>
             </div>
           </div>
         </div>
-        <button id="balance-topup-btn" onclick="openTopupModal()" class="shrink-0 px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs rounded-lg shadow">Pay Balance</button>
-      </div>
-      <p id="balance-pending-note" class="hidden text-[11px] text-orange-700 mt-2 font-semibold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 inline align-[-1px] mr-1"><circle cx="12" cy="12" r="9"/><path d="M12 7 L12 12 L16 14"/></svg>Your top-up payment is submitted and pending verification.</p>
+
+        <!-- The programme: what is on now (or next), and the way to the full
+             timetable. loadProgrammeCard(). -->
+        <div id="programme-card" class="hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h3 class="text-lg font-bold text-slate-900">Programme</h3>
+          <div id="programme-now" class="mt-2 space-y-2 text-[15px]"></div>
+          <button type="button" onclick="openProgrammePage()" class="mt-4 w-full py-2.5 border border-indigo-600 text-indigo-700 hover:bg-indigo-50 font-semibold text-sm rounded-lg">See the full programme</button>
+        </div>
+      </aside>
     </div>
 
-    <!-- The virtual conference badge, once registered and verified: a
-         lanyard card with the delegate's name and role, and their desk pass
-         QR -- scanned at the registration desk and at the hall doors. Filled
-         by renderBadge() in app.js. -->
-    <div id="desk-pass" class="hidden mb-6 flex justify-center">
-      <div id="badge-card" class="w-full max-w-sm rounded-2xl overflow-hidden shadow-card border border-slate-200 bg-white">
-        <div class="relative bg-[#1c3549] text-white px-5 pt-4 pb-4 text-center">
-          <div class="mx-auto mb-3 w-16 h-2.5 rounded-full bg-white/25" aria-hidden="true"></div>
-          <p id="badge-acronym" class="text-xs tracking-[0.3em] font-bold text-[#d6b46a]"></p>
-          <p id="badge-conference" class="text-sm font-semibold leading-snug mt-1 text-balance"></p>
-          <p id="badge-when" class="text-[11px] text-white/70 mt-1"></p>
-        </div>
-        <p id="badge-role" class="text-center text-xs font-extrabold tracking-[0.35em] py-1.5 text-white bg-[#2f5673]">DELEGATE</p>
-        <div class="px-5 pt-5 pb-4 text-center">
-          <p id="badge-name" class="text-2xl font-extrabold text-slate-900 leading-tight text-balance"></p>
-          <p id="badge-designation" class="text-sm text-slate-600 mt-1.5"></p>
-          <p id="badge-institution" class="text-sm text-slate-500"></p>
-          <img id="desk-pass-qr" alt="Your badge QR code" width="176" height="176" class="mx-auto mt-4 w-44 h-44">
-          <p id="badge-reg" class="font-mono font-bold text-slate-800 tracking-widest"></p>
-          <p id="badge-category" class="text-[11px] text-slate-500 mt-0.5"></p>
-        </div>
-        <div class="px-5 pb-5">
-          <button type="button" onclick="openBadgeFullScreen()" class="w-full py-2.5 bg-[#1c3549] hover:bg-[#244560] text-white font-semibold text-sm rounded-lg">Show full screen</button>
-          <p class="text-[11px] text-slate-500 text-center mt-2">Show it at the registration desk and the hall doors. To mark your attendance, scan the QR code at a hall's door.</p>
-        </div>
-      </div>
-    </div>
     <!-- The badge, large, for a volunteer to scan. -->
     <div id="badge-full" class="hidden fixed inset-0 z-50 bg-white flex flex-col items-center justify-center p-6 text-center" onclick="closeBadgeFullScreen()">
       <p id="badge-full-role" class="text-sm font-extrabold tracking-[0.35em] text-[#2f5673]"></p>
@@ -104,135 +226,26 @@
       <p id="badge-full-reg" class="font-mono text-xl font-bold text-slate-800 tracking-widest mt-2"></p>
       <p class="text-sm text-slate-400 mt-6">Tap anywhere to close</p>
     </div>
+  </section>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div id="registration-card" class="border border-indigo-100 bg-indigo-50/50 rounded-xl p-6 flex flex-col justify-between">
-        <div>
-          <div class="flex justify-end items-center mb-2">
-            <!-- Neutral until the real status is known. This used to ship
-                 "Registration Pending", which meant a confirmed delegate was
-                 shown a wrong status until the fetch returned. The server
-                 normally replaces it on the first paint (see __BOOTSTRAP_REG__
-                 in the / route); this is what an anonymous visitor, or a
-                 delegate whose session the server could not resolve, sees
-                 while applyRegistrationState works it out. -->
-            <span id="payment-status-tag" class="skeleton text-xs bg-slate-100 text-slate-600 font-bold px-2.5 py-1 rounded-full border border-slate-200">
-              Checking&hellip;
-            </span>
-          </div>
-          <h3 class="text-xl font-bold text-slate-800 mt-1">Conference Registration & Payment</h3>
-          <p id="payment-desc" class="text-sm text-slate-600 mt-2">Select category, workshop & QI exposure choices, scan dynamic QR, and submit UTR with screenshot.</p>
-
-          <!-- Shown only once the payment is verified -->
-          <div id="confirmed-block" class="hidden mt-4 bg-white border border-emerald-200 rounded-xl p-4 space-y-3">
-            <div>
-              <p class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Registration Number</p>
-              <p id="reg-number-display" class="text-lg font-extrabold font-mono text-emerald-800 mt-0.5">—</p>
-            </div>
-            <!-- One line per chosen program option, across every group --
-                 populated by loadDashboard() in app.js from reg.selections. -->
-            <div id="conf-selections" class="text-xs space-y-1 border-t border-emerald-100 pt-2"></div>
-            <button onclick="window.open('/api/registrations/me/receipt','_blank')" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-lg shadow-sm">
-              View / Download Receipt
-            </button>
-          </div>
-        </div>
-
-        <!-- Hidden until the status is known, for the same reason as the chip
-             above: a confirmed delegate should never be shown a Register &
-             Pay button, however briefly. applyRegistrationState unhides it. -->
-        <div id="payment-action-area" class="mt-6 hidden">
-          <div id="payment-action-note" class="mb-3 bg-white p-3 rounded-xl border border-amber-200 text-xs text-amber-900 leading-relaxed">
-            <b>Note:</b> Registration remains <b>Pending</b> until payment is verified manually by the finance admin.
-          </div>
-          <button id="register-conf-btn" onclick="openPaymentModal()" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md">
-            Register & Pay Now
-          </button>
-        </div>
+  <!-- PAGE: THE PROGRAMME, for reading. One day at a time; start times in a
+       column of their own; a card per talk (kind, title, speaker, chairs);
+       breaks as thin dividers; a session common to several halls shown once.
+       Filter by hall. On the day it opens at what is on now. Filled by
+       renderProgrammePage() in app.js. -->
+  <section id="programme-page" class="hidden w-full max-w-2xl">
+    <header class="rounded-2xl bg-navy text-white px-5 py-4 flex items-center gap-3 shadow-card">
+      <button type="button" onclick="closeProgrammePage()" aria-label="Back" class="w-10 h-10 shrink-0 rounded-lg border border-white/25 hover:bg-white/10 flex items-center justify-center">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5"><path d="M15 6l-6 6 6 6"/></svg>
+      </button>
+      <div class="min-w-0">
+        <p id="prog-page-acronym" class="text-xs tracking-[0.3em] font-semibold text-gold-300"></p>
+        <h2 class="text-xl font-bold leading-tight">Programme</h2>
       </div>
-
-      <!-- Hidden while abstract submission is closed, unless they have one
-           (its status still matters to them). See loadAbstractStatus(). -->
-      <div id="abstract-card" class="border border-emerald-100 bg-emerald-50/50 rounded-xl p-6 flex flex-col justify-between">
-        <div>
-          <div class="flex justify-end items-center">
-            <span id="abstract-status-tag" class="skeleton text-xs bg-slate-100 text-slate-600 font-bold px-2.5 py-1 rounded-full border border-slate-200">Not Submitted</span>
-          </div>
-          <h3 class="text-xl font-bold text-slate-800 mt-1">Submit Abstract</h3>
-          <p id="abstract-desc" class="text-sm text-slate-600 mt-2">Submit papers or posters under Healthcare Quality &amp; Patient Safety. One abstract per delegate; it cannot be changed once submitted.</p>
-          <!-- The last date, on its own line so it is not lost in the paragraph
-               above. Filled by renderAbstractDeadlineNote() from the server's
-               submission window; hidden once it no longer concerns them. -->
-          <p id="abstract-deadline-note" class="hidden mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800 bg-white border border-emerald-200 rounded-full px-2.5 py-1"></p>
-          <button type="button" id="abstract-preview-toggle" onclick="toggleAbstractPreview()" class="hidden text-xs text-indigo-600 hover:underline font-semibold mt-2">View my submission</button>
-          <div id="abstract-preview-box" class="hidden mt-2 p-3 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 space-y-2"></div>
-        </div>
-        <button id="abstract-action-btn" onclick="openModal('modal-abstract')" class="mt-6 w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow-md">Submit Abstract</button>
-      </div>
+    </header>
+    <div class="sticky top-0 z-10 bg-slate-100 pt-3 pb-2 space-y-2">
+      <div id="prog-page-days" role="tablist" class="flex gap-2"></div>
+      <div id="prog-page-halls" class="flex gap-2 overflow-x-auto pb-1"></div>
     </div>
-
-    <!-- Group registration (shown only when a group discount is available or
-         the delegate is already in a group). Rendered by renderGroupSection. -->
-    <div id="group-section" class="hidden mt-6 border border-indigo-100 bg-indigo-50/40 rounded-xl p-6"></div>
-
-    <!-- The programme: day by day, each session with its hall; what is on now
-         stands out, and the sessions they were present at are ticked.
-         Filled by loadProgrammeCard(). -->
-    <div id="programme-card" class="hidden mt-6 border border-slate-200 rounded-xl p-6">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <h3 class="text-lg font-bold text-slate-800">Programme</h3>
-        <div id="programme-days" role="tablist" class="flex gap-1.5"></div>
-      </div>
-      <div id="programme-list" class="mt-3 divide-y divide-slate-100"></div>
-    </div>
-
-    <!-- Attendance & certificate: shown once registered. What they have
-         signed into (and what is left for the certificate), the name the
-         certificate will carry and -- for a doctor or medical PG -- their
-         Medical Council number. Filled by loadAttendanceCard(). -->
-    <div id="attendance-card" class="hidden mt-6 border border-slate-200 rounded-xl p-6">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <h3 class="text-lg font-bold text-slate-800">Attendance &amp; Certificate</h3>
-        <span id="attendance-status" class="text-xs font-bold px-2.5 py-1 rounded-full border"></span>
-      </div>
-      <p class="text-sm text-slate-600 mt-1">At each session, scan the QR code at the hall's door with your phone &mdash; or show your badge to the volunteer there. For the conference certificate, be marked present at a session before lunch and at one after.</p>
-      <ul id="attendance-list" class="mt-3 space-y-1.5 text-sm"></ul>
-      <details id="attendance-sessions" class="hidden mt-3">
-        <summary class="text-xs font-semibold text-slate-600 cursor-pointer select-none">Sessions you were marked present at</summary>
-        <ul id="attendance-session-list" class="mt-2 space-y-1 text-xs text-slate-600"></ul>
-      </details>
-      <!-- Issued certificates, to download. -->
-      <div id="cert-downloads" class="hidden mt-4 p-4 rounded-xl border border-emerald-200 bg-emerald-50">
-        <p class="text-sm font-bold text-emerald-900">Your certificates</p>
-        <div id="cert-download-list" class="mt-2 flex flex-col sm:flex-row sm:flex-wrap gap-2"></div>
-      </div>
-      <p id="cert-locked-note" class="hidden mt-4 text-xs text-slate-600">Your certificate has been issued with the details below. To correct them, please contact the organisers.</p>
-      <form id="cert-details-form" onsubmit="saveCertificateDetails(event)" class="mt-5 pt-4 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div class="sm:col-span-2">
-          <label for="cert-name" class="block text-xs font-semibold text-slate-600 mb-1">Name on your certificate</label>
-          <input id="cert-name" maxlength="120" class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-          <p class="text-[11px] text-slate-500 mt-1">Exactly as it should be printed, with your title. Leave it as it is if it is right.</p>
-        </div>
-        <div id="cert-council-wrap" class="hidden sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label for="cert-council" class="block text-xs font-semibold text-slate-600 mb-1">Medical Council</label>
-            <select id="cert-council" class="w-full h-10 px-2 border border-slate-300 rounded-lg text-sm bg-white outline-none"></select>
-          </div>
-          <div>
-            <label for="cert-council-no" class="block text-xs font-semibold text-slate-600 mb-1">Registration number</label>
-            <input id="cert-council-no" maxlength="30" autocomplete="off" class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-          </div>
-          <p class="sm:col-span-2 text-[11px] text-slate-500 -mt-1">Needed for the certificate with MMC credit points. Without it you receive the participation certificate.</p>
-        </div>
-        <!-- Given: shown, not edited here; the organisers correct it. -->
-        <div id="cert-council-saved" class="hidden sm:col-span-2">
-          <p class="text-xs font-semibold text-slate-600">Medical Council registration</p>
-          <p id="cert-council-saved-text" class="text-sm font-semibold text-slate-800 mt-0.5"></p>
-          <p class="text-[11px] text-slate-500">To correct it, please contact the organisers.</p>
-        </div>
-        <div class="sm:col-span-2">
-          <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Save certificate details</button>
-        </div>
-      </form>
-    </div>
+    <div id="prog-page-list" class="pb-8"></div>
   </section>

@@ -104,7 +104,7 @@ console.log('\n== Nothing is left shimmering after the load, even a failed one =
     !els['conf-name-h1'].classList.contains('skeleton') && !els['user-display-name'].classList.contains('skeleton'));
 }
 check('loadDashboard settles them once every section has had its turn',
-  /settleSkeletons\(\);\s*\n\}/.test(js.slice(js.indexOf('async function loadDashboard'), js.indexOf('async function loadDashboard') + 2200)));
+  /settleSkeletons\(\);\s*\n\}/.test(js.slice(js.indexOf('async function loadDashboard'), js.indexOf('async function loadDashboard') + 3200)));
 check('renderBackendPayments settles them too',
   js.slice(js.indexOf('async function renderBackendPayments')).slice(0, 6000).includes('settleSkeletons()'));
 
