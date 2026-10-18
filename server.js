@@ -8760,7 +8760,9 @@ app.get('/api/admin/reminders/history/:id', requirePermission('comms.reminders_v
 // these defaults. The MMC details are placeholders until the accreditation
 // comes through.
 const CERT_SETTINGS_DEFAULTS = {
-  attendance: { ...attendanceLib.DEFAULTS },
+  // showFrom: the first day delegates see their attendance ('' = the day
+  // before the conference starts).
+  attendance: { ...attendanceLib.DEFAULTS, showFrom: '' },
   mmc: { accreditationNo: 'MMC/MAC/2026/XXXXX', points: 'X', councilLabel: 'Maharashtra Medical Council' },
   // Doctors and Medical PGs, and of them only those who give a Medical
   // Council registration number, receive the certificate with MMC points.
@@ -8775,6 +8777,16 @@ async function certificateSettings() {
     attendance: { ...CERT_SETTINGS_DEFAULTS.attendance, ...(saved.attendance || {}) },
     mmc: { ...CERT_SETTINGS_DEFAULTS.mmc, ...(saved.mmc || {}) },
   };
+}
+
+// The first day delegates see their attendance: as set, else the day before
+// the conference starts.
+function attendanceShownFrom(settings) {
+  if (settings.attendance.showFrom) return settings.attendance.showFrom;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(CONFERENCE.startDate || '')) return '';
+  const d = new Date(`${CONFERENCE.startDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
 }
 
 // A hall's code, printed in its QR: random, so a hall cannot be guessed.
@@ -9090,6 +9102,9 @@ app.get('/api/attendance/me', requireAuth, async (req, res, next) => {
       registered: !!reg,
       attended: attended.map((s) => ({ ...publicSession(s), at: at.get(s.id) })),
       completion: { complete: done.complete, parts: done.parts.map((p) => ({ label: p.label, done: p.done, session: p.session ? publicSession(p.session) : null })) },
+      // Attendance is shown to delegates from a day before the conference.
+      showAttendance: attendanceLib.istParts(Date.now()).date >= attendanceShownFrom(settings),
+      showAttendanceFrom: attendanceShownFrom(settings),
       workshops,
       certificate: {
         defaultName: reminderName(me && me.salutation, me && me.full_name),
@@ -9456,7 +9471,7 @@ app.get('/api/admin/certificates/settings', requirePermission('certificates.mana
     const settings = await certificateSettings();
     const signatories = await dbAll('SELECT id, name, designation, signature_file IS NOT NULL AS has_signature, sort_order, active FROM certificate_signatories ORDER BY sort_order, id');
     res.json({
-      settings: { mmc: settings.mmc, attendance: settings.attendance, eligibleCategories: settings.eligibleCategories, hasBackground: !!settings.background },
+      settings: { mmc: settings.mmc, attendance: { ...settings.attendance, showFromEffective: attendanceShownFrom(settings) }, eligibleCategories: settings.eligibleCategories, hasBackground: !!settings.background },
       templates: certTemplates(settings, signatories), signatories, placeholders: CERT_PLACEHOLDERS, kinds: CERT_KIND_LABEL,
       categories: await dbAll('SELECT category_key AS value, label FROM fee_categories ORDER BY sort_order, id'),
     });
@@ -9483,6 +9498,11 @@ app.put('/api/admin/certificates/settings', requirePermission('certificates.mana
       if (b.attendance.lunchSplit !== undefined) {
         if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(b.attendance.lunchSplit))) return res.status(400).json({ success: false, error: 'The lunch time must be HH:MM.' });
         a.lunchSplit = String(b.attendance.lunchSplit);
+      }
+      if (b.attendance.showFrom !== undefined) {
+        const v = String(b.attendance.showFrom || '').trim();
+        if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return res.status(400).json({ success: false, error: 'Enter a date for when delegates see their attendance.' });
+        a.showFrom = v;
       }
       if (b.attendance.earlyMinutes !== undefined) {
         const n = Number(b.attendance.earlyMinutes);

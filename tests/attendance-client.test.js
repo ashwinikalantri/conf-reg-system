@@ -127,7 +127,12 @@ function page(cookie, perms) {
     await db.run("INSERT INTO attendance (phone_number, event_key, at, method) VALUES (?, ?, ?, 'SELF')", [phone, `s:${talk}`, Date.now()]);
     const P = page(signed.cookie, []);
     await P.f.loadAttendanceCard();
-    check('registered: the card, part by part towards the certificate', !P.el('attendance-card').classList.contains('hidden') && /Conference: /.test(P.el('attendance-list').innerHTML));
+    check('weeks before the conference: the card is the certificate details alone', !P.el('attendance-card').classList.contains('hidden')
+      && P.el('attendance-list').classList.contains('hidden') && P.el('attendance-intro').classList.contains('hidden') && P.el('attendance-title').textContent === 'Certificate');
+    await call('PUT', '/api/admin/certificates/settings', { attendance: { showFrom: '2020-01-01' } }, admin);
+    await P.f.loadAttendanceCard();
+    check('from the day set, attendance shows: part by part towards the certificate', !P.el('attendance-list').classList.contains('hidden')
+      && /Conference: /.test(P.el('attendance-list').innerHTML) && P.el('attendance-title').textContent === 'Attendance & certificate');
     check('...the sessions they were present at', P.el('attendance-session-list').innerHTML.includes(`Client Talk ${N}`) && !P.el('attendance-sessions').classList.contains('hidden'));
     check('...their name filled in, ready to correct', P.el('cert-name').value === `Dr Card Holder ${N}`);
     check('...and, a doctor, asked for their council number', !P.el('cert-council-wrap').classList.contains('hidden'));
@@ -171,6 +176,7 @@ function page(cookie, perms) {
     P.f.showAbstractCard(true);
     check('...open again: it comes back', !P.el('abstract-card').classList.contains('hidden') && !P.el('registration-card').classList.contains('md:col-span-2'));
   } finally {
+    await call('PUT', '/api/admin/certificates/settings', { attendance: { showFrom: '' } }, admin);
     if (phone) await db.run('DELETE FROM attendance WHERE phone_number = ?', [phone]);
     if (regId) await db.run('DELETE FROM registrations WHERE id = ?', [regId]);
     await db.run('DELETE FROM programme_sessions WHERE hall_id IN (?, ?)', [hallId, roomId]);

@@ -141,6 +141,14 @@ const S = (id, date, start, end, extra = {}) => ({ id, session_date: date, start
     check('the sessions they were present at', me.attended.some((s) => s.id === all.body.id && s.at));
     check('how far towards the certificate, part by part', Array.isArray(me.completion.parts) && me.completion.parts.length >= 1);
     check('...and their workshop', me.workshops.some((w) => w.optionId === option.id && w.present === false));
+    const conf = (await call('GET', '/api/conference')).body;
+    const dayBefore = new Date(`${conf.startDate}T00:00:00Z`);
+    dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+    check('attendance is shown to delegates from the day before the conference, not yet', me.showAttendance === false && me.showAttendanceFrom === dayBefore.toISOString().slice(0, 10), [me.showAttendance, me.showAttendanceFrom]);
+    check('...a date that can be set', (await call('PUT', '/api/admin/certificates/settings', { attendance: { showFrom: 'soon' } }, admin)).status === 400);
+    await call('PUT', '/api/admin/certificates/settings', { attendance: { showFrom: today } }, admin);
+    check('...and from that day, it is', (await call('GET', '/api/attendance/me', null, inP.cookie)).body.showAttendance === true);
+    await call('PUT', '/api/admin/certificates/settings', { attendance: { showFrom: '' } }, admin);
     const pg = (await call('GET', '/api/programme', null, inP.cookie)).body;
     check('the programme, with what they were present at', pg.sessions.some((s) => s.id === all.body.id && s.speakers === 'Dr Speaker') && pg.mine.includes(all.body.id) && !!pg.now.date);
     check('...open to delegates, not to anyone signed out', (await call('GET', '/api/programme')).status === 401);

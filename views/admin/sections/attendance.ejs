@@ -166,6 +166,8 @@
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div><label for="cs-lunch" class="block text-xs font-semibold text-slate-600 mb-1">Lunch starts</label><input id="cs-lunch" type="time" class="w-full h-10 px-2 border border-slate-300 rounded-lg text-sm"></div>
             <div><label for="cs-early" class="block text-xs font-semibold text-slate-600 mb-1">Marking opens (min before)</label><input id="cs-early" type="number" min="0" max="60" class="w-full h-10 px-2 border border-slate-300 rounded-lg text-sm"></div>
+            <div class="col-span-2"><label for="cs-show-from" class="block text-xs font-semibold text-slate-600 mb-1">Delegates see their attendance from</label><input id="cs-show-from" type="date" class="w-full h-10 px-2 border border-slate-300 rounded-lg text-sm">
+              <p id="cs-show-from-note" class="text-[11px] text-slate-500 mt-1"></p></div>
           </div>
           <p class="text-[11px] text-slate-500">The conference certificate needs a session before lunch and one after, on each conference day that has sessions on both sides.</p>
           <button type="button" onclick="saveCertificateSettings()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Save</button>

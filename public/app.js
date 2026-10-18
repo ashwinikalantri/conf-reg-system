@@ -1014,11 +1014,16 @@ async function loadAttendanceCard() {
       <span class="flex-1"><span class="${done ? 'text-slate-800 font-semibold' : 'text-slate-600'}">${esc(label)}</span>
         ${sub ? `<span class="block text-xs text-slate-500">${esc(sub)}</span>` : ''}</span>
     </li>`;
+  // Until the day before the conference, the card is the certificate
+  // details alone.
+  const showAtt = data.showAttendance !== false;
+  ['attendance-intro', 'attendance-list', 'attendance-status'].forEach((id) => document.getElementById(id).classList.toggle('hidden', !showAtt));
+  setText('attendance-title', showAtt ? 'Attendance & certificate' : 'Certificate');
   document.getElementById('attendance-list').innerHTML = [
     ...data.completion.parts.map((p) => tick(p.done, `Conference: ${p.label}`, p.session ? `${p.session.title}, ${p.session.hall}` : '')),
     ...data.workshops.map((w) => tick(w.present, `Workshop: ${w.name}`, w.present ? '' : formatFullDate(w.date))),
   ].join('') || '<li class="text-slate-500">The programme is not out yet.</li>';
-  document.getElementById('attendance-sessions').classList.toggle('hidden', !data.attended.length);
+  document.getElementById('attendance-sessions').classList.toggle('hidden', !showAtt || !data.attended.length);
   document.getElementById('attendance-session-list').innerHTML = data.attended.map((s) => `<li>${esc(shortDateRange(s.date, s.date))}, ${esc(time(s.at))} · ${esc(s.hall)} · ${esc(s.title)}</li>`).join('');
   const status = document.getElementById('attendance-status');
   status.className = `text-xs font-bold px-2.5 py-1 rounded-full border ${data.completion.complete ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-600 border-slate-200'}`;
@@ -12427,6 +12432,8 @@ async function renderCertificateSettings() {
   document.getElementById('cs-categories').innerHTML = d.categories.map((c) => `<label class="flex items-center gap-1.5">
     <input type="checkbox" class="cs-category" value="${esc(c.value)}" ${d.settings.eligibleCategories.includes(c.value) ? 'checked' : ''}> ${esc(c.label)}</label>`).join('');
   document.getElementById('cs-lunch').value = d.settings.attendance.lunchSplit;
+  document.getElementById('cs-show-from').value = d.settings.attendance.showFrom || '';
+  setText('cs-show-from-note', d.settings.attendance.showFrom ? '' : `Blank: the day before the conference${d.settings.attendance.showFromEffective ? ` (${formatFullDate(d.settings.attendance.showFromEffective)})` : ''}.`);
   document.getElementById('cs-early').value = d.settings.attendance.earlyMinutes;
   setText('cs-background-state', d.settings.hasBackground
     ? "Certificates are printed over the designer's background. The text sits in the same places as on the generated design."
@@ -12486,7 +12493,7 @@ async function saveCertificateSettings() {
   const ok = await putCertificateSettings({
     mmc: { accreditationNo: document.getElementById('cs-mmc-no').value, points: document.getElementById('cs-mmc-points').value },
     eligibleCategories: Array.from(document.querySelectorAll('.cs-category')).filter((b) => b.checked).map((b) => b.value),
-    attendance: { lunchSplit: document.getElementById('cs-lunch').value, earlyMinutes: Number(document.getElementById('cs-early').value) },
+    attendance: { lunchSplit: document.getElementById('cs-lunch').value, earlyMinutes: Number(document.getElementById('cs-early').value), showFrom: document.getElementById('cs-show-from').value },
   });
   if (ok) renderCertificateSettings();
 }
