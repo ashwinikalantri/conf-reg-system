@@ -2989,10 +2989,11 @@ function setupAdminDelegation() {
   const programsBox = document.getElementById('program-groups-admin-container');
   if (programsBox) {
     programsBox.addEventListener('change', async (e) => {
-      const box = e.target.closest('.group-attendance');
+      const box = e.target.closest('.group-attendance, .group-invite');
       if (!box) return;
+      const body = box.classList.contains('group-invite') ? { inviteOnly: box.checked } : { takesAttendance: box.checked };
       const data = await (await fetch(`/api/admin/program-groups/${encodeURIComponent(box.dataset.id)}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ takesAttendance: box.checked }),
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       })).json();
       if (!data.success) showToast(data.error || 'Could not change it.');
       renderBackendPrograms();
@@ -5979,11 +5980,14 @@ async function renderBackendPrograms() {
       <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
         <div>
           <h4 class="font-bold text-slate-800">${esc(g.name)}${g.active ? '' : ' <span class="text-[10px] font-normal text-slate-400">(inactive)</span>'}</h4>
-          <p class="text-[11px] text-slate-500">${g.required ? 'Required' : 'Optional'} · choose up to ${Number(g.max_select)}</p>
+          <p class="text-[11px] text-slate-500">${Number(g.invite_only) ? 'By invitation: delegates do not see it -- enrol invitees from an option\'s Roster' : `${g.required ? 'Required' : 'Optional'} · choose up to ${Number(g.max_select)}`}</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
           <label class="flex items-center gap-1.5 text-xs font-semibold text-slate-600 mr-1 select-none" title="Its options are workshops: their sessions in the programme earn a workshop certificate">
             <input type="checkbox" class="group-attendance" data-id="${esc(g.id)}" ${Number(g.takes_attendance) ? 'checked' : ''}> Attendance &amp; certificates
+          </label>
+          <label class="flex items-center gap-1.5 text-xs font-semibold text-slate-600 mr-1 select-none" title="Not offered to delegates; the organisers enrol invitees">
+            <input type="checkbox" class="group-invite" data-id="${esc(g.id)}" ${Number(g.invite_only) ? 'checked' : ''}> Invite only
           </label>
           <button class="group-toggle px-2.5 py-1.5 ${g.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(g.id)}" data-active="${g.active ? 1 : 0}">${g.active ? 'Deactivate' : 'Activate'}</button>
           <button class="group-delete px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(g.id)}">Delete Group</button>

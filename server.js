@@ -1249,9 +1249,13 @@ async function resolveSelections(optionIds, ownRegId) {
   for (const id of ids) {
     if (!optionById.has(id)) return { error: 'One of the selected options is no longer available.' };
   }
+  const inviteOnly = new Set(groups.filter((g) => Number(g.invite_only)).map((g) => g.id));
+  if (ids.some((id) => inviteOnly.has(optionById.get(id).group_id))) {
+    return { error: 'One of the selected options is by invitation only.' };
+  }
 
   const selections = [];
-  for (const group of groups) {
+  for (const group of groups.filter((g) => !inviteOnly.has(g.id))) {
     const chosen = ids.filter((id) => optionById.get(id).group_id === group.id);
     if (group.required && chosen.length === 0) {
       return { error: `Please choose an option under "${group.name}".` };
@@ -1273,7 +1277,9 @@ async function resolveSelections(optionIds, ownRegId) {
 // enroll/faculty endpoints below, and would otherwise be silently reset on
 // every resubmission anyway since a delegate can't set it themselves).
 async function saveRegistrationSelections(registrationId, selections) {
-  await dbRun('DELETE FROM registration_options WHERE registration_id = ?', [registrationId]);
+  // An invitation (an invite-only group's enrolment) is the organisers' and
+  // stays.
+  await dbRun('DELETE FROM registration_options WHERE registration_id = ? AND group_id NOT IN (SELECT id FROM program_groups WHERE invite_only = 1)', [registrationId]);
   for (const s of selections) {
     await dbRun(
       'INSERT INTO registration_options (registration_id, group_id, option_id, is_faculty) VALUES (?, ?, ?, 0)',
@@ -2160,6 +2166,12 @@ db.serialize(() => {
   // 0 once set in Programs; until then (NULL) a group named like "Workshops"
   // does and any other does not. See groupTakesAttendanceSql.
   db.run('ALTER TABLE program_groups ADD COLUMN takes_attendance INTEGER', () => {});
+  // By invitation only: the group is not offered on the registration form,
+  // and a delegate cannot choose its options -- the organisers enrol the
+  // invitees from the option's roster. A delegate's own choices, saved again,
+  // leave these enrolments alone. See resolveSelections and
+  // saveRegistrationSelections.
+  db.run('ALTER TABLE program_groups ADD COLUMN invite_only INTEGER NOT NULL DEFAULT 0', () => {});
 
   // A delegate's chosen options across every group -- the generalized
   // replacement for the old fixed workshop_option_id/qi_option_id columns on
@@ -4856,7 +4868,8 @@ app.get('/api/registrations/me', requireAuth, async (req, res, next) => {
 // fixed workshop/QI pair.
 app.get('/api/program-options', requireAuth, async (req, res, next) => {
   try {
-    const groups = await fetchProgramGroups({ activeOnly: true });
+    // Invite-only groups are not offered: the organisers enrol invitees.
+    const groups = (await fetchProgramGroups({ activeOnly: true })).filter((g) => !Number(g.invite_only));
     res.json({
       groups: groups.map((g) => ({
         id: g.id, name: g.name, description: g.description, required: !!g.required, maxSelect: g.max_select,
@@ -10573,7 +10586,7 @@ app.post('/api/admin/program-groups', requirePermission('masters.programs_manage
 
 app.put('/api/admin/program-groups/:id', requirePermission('masters.programs_manage'), async (req, res, next) => {
   try {
-    const { name, description, required, maxSelect, sortOrder, active, takesAttendance } = req.body;
+    const { name, description, required, maxSelect, sortOrder, active, takesAttendance, inviteOnly } = req.body;
     const bad = validGroupInput({ name, maxSelect: maxSelect !== undefined ? Number(maxSelect) : undefined }, { partial: true });
     if (bad) return res.status(400).json({ success: false, error: bad });
 
@@ -10588,10 +10601,15 @@ app.put('/api/admin/program-groups/:id', requirePermission('masters.programs_man
       sort_order: sortOrder !== undefined ? Number(sortOrder) : existing.sort_order,
       active: active !== undefined ? (active ? 1 : 0) : existing.active,
       takes_attendance: takesAttendance !== undefined ? (takesAttendance ? 1 : 0) : existing.takes_attendance,
+      invite_only: inviteOnly !== undefined ? (inviteOnly ? 1 : 0) : (existing.invite_only || 0),
     };
+    // An invite-only group cannot also be one every delegate must choose from.
+    if (updated.invite_only && updated.required) {
+      return res.status(400).json({ success: false, error: 'An invite-only group cannot be required.' });
+    }
     await dbRun(
-      'UPDATE program_groups SET name = ?, description = ?, required = ?, max_select = ?, sort_order = ?, active = ?, takes_attendance = ? WHERE id = ?',
-      [updated.name, updated.description, updated.required, updated.max_select, updated.sort_order, updated.active, updated.takes_attendance, req.params.id]
+      'UPDATE program_groups SET name = ?, description = ?, required = ?, max_select = ?, sort_order = ?, active = ?, takes_attendance = ?, invite_only = ? WHERE id = ?',
+      [updated.name, updated.description, updated.required, updated.max_select, updated.sort_order, updated.active, updated.takes_attendance, updated.invite_only, req.params.id]
     );
     await recordAudit({
       req, entityType: 'program_group', entityId: req.params.id,
