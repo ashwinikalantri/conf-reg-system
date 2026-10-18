@@ -1941,7 +1941,8 @@ async function verifyAndSubmitPayment(e) {
   const asksCouncil = !!(feeCategories[categoryKey] && feeCategories[categoryKey].asksCouncilNumber) && !(currentDelegate && currentDelegate.council_reg_no);
   const councilName = asksCouncil ? document.getElementById('payment-council').value : '';
   const councilRegNo = asksCouncil ? document.getElementById('payment-council-no').value.trim() : '';
-  if (asksCouncil && (!councilName || !councilRegNo)) return showToast('Choose your Medical Council and enter your registration number.');
+  // Optional, but both together.
+  if (asksCouncil && (!councilName !== !councilRegNo)) return showToast('Choose your Medical Council and enter your registration number -- or leave both blank.');
 
   const groupError = validateProgramGroupSelections();
   if (groupError) return showToast(groupError);
@@ -1968,8 +1969,8 @@ async function verifyAndSubmitPayment(e) {
       paymentMode: (document.querySelector('input[name="payment-mode"]:checked') || {}).value || 'UPI',
       // Only send the promo code if it's applied to the category being submitted.
       discountCode: (appliedPromo && appliedPromo.categoryKey === categoryKey) ? appliedPromo.code : undefined,
-      councilName: asksCouncil ? councilName : undefined,
-      councilRegNo: asksCouncil ? councilRegNo : undefined,
+      councilName: asksCouncil && councilName ? councilName : undefined,
+      councilRegNo: asksCouncil && councilRegNo ? councilRegNo : undefined,
     };
 
     async function submit(acknowledged) {
@@ -2013,7 +2014,7 @@ async function verifyAndSubmitPayment(e) {
         data.flagged ? 'info' : 'success'
       );
       // Given now, it is saved: not asked again on a resubmission.
-      if (asksCouncil && currentDelegate) Object.assign(currentDelegate, { council_name: councilName, council_reg_no: councilRegNo.replace(/\s+/g, '').toUpperCase() });
+      if (asksCouncil && councilRegNo && currentDelegate) Object.assign(currentDelegate, { council_name: councilName, council_reg_no: councilRegNo.replace(/\s+/g, '').toUpperCase() });
       closeModal('modal-conference');
       loadDashboard();
     } else {

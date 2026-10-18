@@ -3,7 +3,8 @@
 //   * The registration form asks for it -- the council from the National
 //     Medical Commission's list of state medical councils, and the number --
 //     for the categories that earn MMC points, and only those.
-//   * It is required there, and given once: after that the form and the
+//   * It is optional there (without it, the participation certificate),
+//     and given once: after that the form and the
 //     dashboard show it, and the delegate cannot change it; the organisers
 //     can, from the user's record or the desk.
 const { call, check, report, ADMIN_PW, appFile, adminLogin, loginPassword, openDb } = require('./harness');
@@ -38,7 +39,10 @@ const N = String(Date.now()).slice(-7);
     check('...and nobody else', ['chw', 'nursing_ug', 'med_student', 'nurse_cho'].every((k) => cat(k).asksCouncilNumber === false));
     const submit = (extra) => call('POST', '/api/registrations', { categoryKey: 'faculty_mo', optionIds: [], acknowledged: true, paymentMode: 'UPI', ...extra }, me);
     const none = await submit({});
-    check('a Doctor who leaves it out is stopped', none.body.success === false && /Medical Council/.test(none.body.error), none.body);
+    check('a Doctor may leave it out: the form moves on', !/Medical Council/.test(none.body.error || ''), none.body);
+    check('...and nothing is saved', !(await db.get('SELECT council_reg_no FROM users WHERE phone_number = ?', [phone])).council_reg_no);
+    const half = await submit({ councilRegNo: '2015/04/5678' });
+    check('given, it needs both the council and the number', /Medical Council/.test(half.body.error || ''), half.body);
     const wrong = await submit({ councilName: 'Some Other Council', councilRegNo: '123' });
     check('...as is one with a council not on the list', /from the list/.test(wrong.body.error || ''));
     const right = await submit({ councilName: 'Maharashtra Medical Council', councilRegNo: ' 2015/04/5678 ' });
@@ -71,6 +75,7 @@ const N = String(Date.now()).slice(-7);
     const dash = fs.readFileSync(appFile('views', 'portal', 'sections', 'dashboard.ejs'), 'utf8');
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
     check('the form: the council and the number, or what was given', ['id="council-block"', 'id="payment-council"', 'id="payment-council-no"', 'id="council-saved"'].every((x) => form.includes(x)));
+    check('...marked optional', /Medical Council registration <span class="text-sky-700">\(optional\)<\/span>/.test(form));
     check('the panel: shown once given, not an input', dash.includes('id="cert-council-saved"') && /setText\('cert-council-saved-text'/.test(js));
     check('the councils are a list to choose from, not typed', /<select id="cert-council"/.test(dash) && !dash.includes('cert-council-list'));
     check('the user record and the desk can correct it', /id="ude-council_name"/.test(js) && /id="desk-edit-council_name"/.test(js));

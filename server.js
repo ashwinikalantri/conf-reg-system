@@ -4378,10 +4378,12 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     const resolved = await resolveSelections(optionIds, ownRegId);
     if (resolved.error) return res.status(400).json({ success: false, error: resolved.error });
 
-    // A Doctor or Medical PG gives their Medical Council and registration
-    // number, once: it goes on the certificate with MMC points. Already
-    // given, it stands (the organisers correct it).
-    if ((await certificateSettings()).eligibleCategories.includes(effectiveCategoryKey)) {
+    // A Doctor or Medical PG may give their Medical Council and registration
+    // number, once: it goes on the certificate with MMC points (without it,
+    // theirs is the participation certificate). Optional; if given, both
+    // must be valid. Already given, it stands (the organisers correct it).
+    const givesCouncil = String(req.body.councilName || '').trim() || String(req.body.councilRegNo || '').trim();
+    if (givesCouncil && (await certificateSettings()).eligibleCategories.includes(effectiveCategoryKey)) {
       const mine = await dbGet('SELECT council_name, council_reg_no FROM users WHERE phone_number = ?', [phone]);
       if (!(mine && mine.council_reg_no)) {
         const councilProblem = councilsLib.councilError(req.body.councilName, req.body.councilRegNo);
