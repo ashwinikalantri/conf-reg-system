@@ -3407,19 +3407,21 @@ function canSee(section) {
 // /api/auth/me before this is called -- see initBackendPortal.
 function applyRoleVisibility() {
   const tabPayments = document.getElementById('nav-tab-payments');
-  const tabStatement = document.getElementById('nav-tab-statement');
   const tabAbstracts = document.getElementById('nav-tab-abstracts');
   const tabReports = document.getElementById('nav-tab-reports');
   const tabDesk = document.getElementById('nav-tab-desk');
   if (tabDesk) tabDesk.classList.toggle('hidden', !canSee('desk'));
-  if (tabPayments) tabPayments.classList.toggle('hidden', !canSee('payments'));
-  if (tabStatement) tabStatement.classList.toggle('hidden', !canSee('statement'));
+  // One Registration tab holds both the approval worklist and the bank
+  // statement; it opens for a role that sees either.
+  if (tabPayments) tabPayments.classList.toggle('hidden', !(canSee('payments') || canSee('statement')));
+  const regPay = document.getElementById('reg-subtab-payments');
+  const regStatement = document.getElementById('reg-subtab-statement');
+  if (regPay) regPay.classList.toggle('hidden', !canSee('payments'));
+  if (regStatement) regStatement.classList.toggle('hidden', !canSee('statement'));
   if (tabAbstracts) tabAbstracts.classList.toggle('hidden', !canSee('abstracts'));
   if (tabReports) tabReports.classList.toggle('hidden', !canSee('reports'));
   const tabFaculty = document.getElementById('nav-tab-faculty');
   if (tabFaculty) tabFaculty.classList.toggle('hidden', !canSee('faculty'));
-  const tabAttendance = document.getElementById('nav-tab-attendance');
-  if (tabAttendance) tabAttendance.classList.toggle('hidden', !canSee('attendance'));
 
   // The walk-in registration button now lives on the Front Desk tab
   // (#desk-register-btn, toggled in initFrontDesk) rather than in the
@@ -3440,7 +3442,7 @@ function applyRoleVisibility() {
   // own tab, from the same source that gated it above -- no separate list of
   // roles kept in step by hand.
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
-  const settingsItems = ['programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount', 'roles'];
+  const settingsItems = ['attendance', 'programme', 'programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount', 'roles'];
   let anySettingsItem = false;
   settingsItems.forEach((key) => {
     const visible = canSee(key);
@@ -3506,6 +3508,7 @@ async function initBackendPortal() {
   const defaultTab = canSee('desk') ? 'desk'
     : canSee('overview') ? 'overview'
     : canSee('payments') ? 'payments'
+    : canSee('statement') ? 'statement'
     : canSee('abstracts') ? 'abstracts'
     : canSee('reports') ? 'reports'
     // The coordinators' whole job is the Guests tab.
@@ -9200,7 +9203,19 @@ async function updateAbstractStatus(id, status) {
   renderBackendAbstracts();
 }
 
+// Assigning a format is what emails the author their decision, so it asks
+// first. Re-saving the format already assigned sends nothing, so it does not.
+async function confirmAllocationEmail(id, allocation) {
+  const a = abstractsCache.find((x) => String(x.id) === String(id));
+  if (a && a.allocation === allocation) return true;
+  const who = a && a.author_name ? a.author_name : 'the author';
+  const kind = abstractFormatLabel(allocation).toLowerCase();
+  const note = a && abstractProvisional(a) ? ' The email will say the acceptance is provisional until they register.' : '';
+  return showConfirm(`Assign ${kind} presentation and email ${who} that their abstract is accepted for it?${note}`, 'Assign & send email');
+}
+
 async function updateAbstractAllocation(id, allocation) {
+  if (!(await confirmAllocationEmail(id, allocation))) return;
   const data = await (await fetch(`/api/abstracts/${encodeURIComponent(id)}/allocation`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allocation })
   })).json();
@@ -10310,6 +10325,7 @@ async function deskOpenAbstract(id) {
   openAbstractReview(id);
 }
 async function deskAllotAbstract(id, allocation) {
+  if (!(await confirmAllocationEmail(id, allocation))) return;
   const data = await (await fetch(`/api/abstracts/${encodeURIComponent(id)}/allocation`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allocation }),
   })).json().catch(() => ({}));
@@ -11805,8 +11821,9 @@ async function deleteGuestListValue(id) {
   renderGuests();
 }
 
-const SETTINGS_TABS = ['programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
-const MAIN_TABS = ['overview', 'desk', 'payments', 'statement', 'abstracts', 'faculty', 'attendance', 'reports'];
+const SETTINGS_TABS = ['attendance', 'programme', 'programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
+// 'payments' and 'statement' are two screens of the Registration tab.
+const MAIN_TABS = ['overview', 'desk', 'payments', 'statement', 'abstracts', 'faculty', 'reports'];
 
 // Which tabs each role may open -- the single source of truth used both to
 // pick the landing tab and to validate a tab restored from the URL, so a
@@ -11841,6 +11858,7 @@ function switchBackendTab(tab) {
   if (tab === 'reports') loadReportWorkshopOptions();
   if (tab === 'faculty') renderGuests();
   if (tab === 'attendance') renderAttendance();
+  if (tab === 'programme') renderProgramme();
   if (tab === 'programs') renderBackendPrograms();
   if (tab === 'fees') renderBackendFees();
   if (tab === 'discount') renderDiscountCodes();
@@ -11856,7 +11874,7 @@ function switchBackendTab(tab) {
 
     const btn = document.getElementById(`nav-tab-${t}`);
     if (btn) {
-      const active = t === tab;
+      const active = t === tab || (t === 'payments' && tab === 'statement');
       btn.classList.toggle('text-indigo-600', active);
       btn.classList.toggle('border-b-2', active);
       btn.classList.toggle('border-indigo-600', active);
@@ -11872,6 +11890,20 @@ function switchBackendTab(tab) {
     const active = key === tab;
     item.classList.toggle('bg-indigo-50', active);
     item.classList.toggle('text-indigo-700', active);
+  });
+
+  // Registration's sub-menu, while either of its two screens is open and the
+  // role may open both.
+  const regScreen = tab === 'payments' || tab === 'statement';
+  const regStrip = document.getElementById('reg-subtabs');
+  if (regStrip) regStrip.classList.toggle('hidden', !(regScreen && canSee('payments') && canSee('statement')));
+  document.querySelectorAll('.reg-subtab').forEach((b) => {
+    const on = b.id === `reg-subtab-${tab}`;
+    b.classList.toggle('bg-indigo-600', on);
+    b.classList.toggle('text-white', on);
+    b.classList.toggle('text-slate-600', !on);
+    b.classList.toggle('hover:bg-slate-100', !on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
   });
 
   if (tab === 'statement') loadReconciliation();
@@ -11915,7 +11947,7 @@ async function renderAttendanceView() {
     const picker = document.getElementById('att-hall');
     const keep = picker.value || storageGet('local', 'nqocn_att_hall');
     picker.innerHTML = attState.halls.map((h) => `<option value="${esc(h.id)}">${esc(h.name)}${h.now ? ' — on now' : ''}</option>`).join('')
-      || '<option value="">No halls yet -- add them under Programme</option>';
+      || '<option value="">No halls yet -- add them under Settings → Programme</option>';
     if (attState.halls.some((h) => String(h.id) === String(keep))) picker.value = keep;
     onAttendanceHallChange();
   }
@@ -12256,11 +12288,10 @@ async function addHall(e) {
   renderProgramme();
 }
 
-// --- The tab's three views ---
-const ATT_VIEWS = ['attendance', 'programme', 'certificates', 'settings'];
+// --- The Attendance page's views (the Programme is its own Settings page) ---
+const ATT_VIEWS = ['attendance', 'certificates', 'settings'];
 function attendanceViewAllowed(view) {
   if (view === 'attendance') return can('attendance.mark') || can('attendance.view');
-  if (view === 'programme') return can('programme.manage');
   if (view === 'certificates') return can('certificates.view');
   if (view === 'settings') return can('certificates.manage');
   return false;
@@ -12286,7 +12317,6 @@ async function switchAttendanceView(view) {
   });
   ATT_VIEWS.forEach((v) => { const el = document.getElementById(`att-view-${v}`); if (el) el.classList.toggle('hidden', v !== view); });
   if (view === 'attendance') await renderAttendanceView();
-  if (view === 'programme') await renderProgramme();
   if (view === 'certificates') await renderCertificates();
   if (view === 'settings') await renderCertificateSettings();
 }

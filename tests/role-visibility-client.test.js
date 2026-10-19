@@ -27,8 +27,9 @@ const STAFF = {
 // Every element applyRoleVisibility()/allowedBackendTabs() touch, so a role's
 // full visible surface can be read back after driving the real code.
 const ELEMENT_IDS = [
-  'nav-tab-desk', 'nav-tab-payments', 'nav-tab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
+  'nav-tab-desk', 'nav-tab-payments', 'reg-subtab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
   'settings-menu-btn',
+  'settings-item-attendance', 'settings-item-programme',
   'settings-item-programs', 'settings-item-fees', 'settings-item-general',
   'settings-item-discount', 'settings-item-activity',
   'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
@@ -50,18 +51,18 @@ const ELEMENT_IDS = [
 // bugfix for the ID-verification/category-picker screens they already use,
 // with this tab-visibility grant as its accepted, read-only side effect.
 const EXPECTED_VISIBLE = {
-  SUPER_ADMIN: ['nav-tab-desk', 'nav-tab-payments', 'nav-tab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
-    'settings-menu-btn', 'settings-item-programs', 'settings-item-fees',
+  SUPER_ADMIN: ['nav-tab-desk', 'nav-tab-payments', 'reg-subtab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
+    'settings-menu-btn', 'settings-item-attendance', 'settings-item-programme', 'settings-item-programs', 'settings-item-fees',
     'settings-item-general', 'settings-item-discount', 'settings-item-activity',
     'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
     'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts',
     'abstracts-assignment-block'],
-  FINANCE_ADMIN: ['nav-tab-payments', 'nav-tab-statement', 'nav-tab-reports',
+  FINANCE_ADMIN: ['nav-tab-payments', 'reg-subtab-statement', 'nav-tab-reports',
     'settings-menu-btn', 'settings-item-fees', 'settings-item-discount',
     'settings-item-reminders', 'settings-item-groupdiscount',
     'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops'],
   ACADEMIC_REVIEWER: ['nav-tab-abstracts', 'nav-tab-reports', 'report-summary', 'report-abstracts'],
-  FINANCE_ACADEMIC: ['nav-tab-payments', 'nav-tab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
+  FINANCE_ACADEMIC: ['nav-tab-payments', 'reg-subtab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
     'settings-menu-btn', 'settings-item-fees', 'settings-item-discount',
     'settings-item-reminders', 'settings-item-groupdiscount',
     'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
@@ -69,7 +70,7 @@ const EXPECTED_VISIBLE = {
   // and has no business in the payments worklist or the statement. It sees
   // the Fee Master read-only because masters.fees_view is what tells it which
   // categories need a student ID.
-  FRONT_DESK: ['nav-tab-desk', 'settings-menu-btn', 'settings-item-fees'],
+  FRONT_DESK: ['nav-tab-desk', 'settings-menu-btn', 'settings-item-attendance', 'settings-item-fees'],
   OPERATIONS: ['nav-tab-reports', 'settings-menu-btn', 'settings-item-users',
     'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
 };

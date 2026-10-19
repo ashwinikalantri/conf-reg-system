@@ -1,0 +1,8 @@
+    <!-- Registration's sub-menu: the approval worklist and the bank statement
+         are two screens of one tab (the Registration tab in the bar). One
+         strip, shown while either is open; each button follows the section
+         it opens. -->
+    <div id="reg-subtabs" role="tablist" class="hidden flex gap-1.5 overflow-x-auto border-b border-slate-200 pb-2 mb-6 -mx-1 px-1">
+      <button type="button" id="reg-subtab-payments" onclick="switchBackendTab('payments')" class="reg-subtab shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Approval</button>
+      <button type="button" id="reg-subtab-statement" onclick="switchBackendTab('statement')" class="reg-subtab shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Bank statement</button>
+    </div>

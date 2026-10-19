@@ -375,7 +375,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // Super Admin; the two coordinator roles that open it are new, so they are
   // not in the baseline this table is held against.
   const CLIENT_TODAY = {
-    SUPER_ADMIN: ['overview', 'desk', 'payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'faculty', 'attendance', 'general', 'activity'],
+    SUPER_ADMIN: ['overview', 'desk', 'payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'faculty', 'attendance', 'programme', 'general', 'activity'],
     FINANCE_ADMIN: ['overview', 'payments', 'statement', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
     ACADEMIC_REVIEWER: ['overview', 'abstracts', 'reports'],
     FINANCE_ACADEMIC: ['overview', 'payments', 'statement', 'abstracts', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],

@@ -26,6 +26,9 @@ const fs = require('fs');
   const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
   check('the assignment cards offer Award', /data-alloc="AWARD"/.test(js));
   check('the desk offers Award', js.includes("deskAllotAbstract(${esc(a.id)}, 'AWARD')"));
+  check('assigning asks before it emails, on the cards and on the desk',
+    /async function updateAbstractAllocation\(id, allocation\) \{\s*if \(!\(await confirmAllocationEmail\(/.test(js)
+    && /async function deskAllotAbstract\(id, allocation\) \{\s*if \(!\(await confirmAllocationEmail\(/.test(js));
   const form = fs.readFileSync(appFile('views', 'portal', 'modals', 'abstract.ejs'), 'utf8');
   const options = form.match(/name="abstract-format" value="[^"]+"/g) || [];
   check('the submission form still offers only Oral and Poster',

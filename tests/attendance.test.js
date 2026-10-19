@@ -185,7 +185,11 @@ const S = (id, date, start, end, extra = {}) => ({ id, session_date: date, start
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
     const view = fs.readFileSync(appFile('views', 'admin', 'sections', 'attendance.ejs'), 'utf8');
     const portal = fs.readFileSync(appFile('views', 'portal', 'sections', 'dashboard.ejs'), 'utf8');
-    check('the admin tab: a hall, what is on, scan; counts; who was present; the programme', ['id="att-hall"', 'id="att-now"', 'onclick="openAttendanceScanner()"', 'id="att-summary"', 'id="att-roster"', 'id="prog-sessions"', 'posters.pdf'].every((x) => view.includes(x)));
+    check('the admin tab: a hall, what is on, scan; counts; who was present', ['id="att-hall"', 'id="att-now"', 'onclick="openAttendanceScanner()"', 'id="att-summary"', 'id="att-roster"'].every((x) => view.includes(x)));
+    const programmePage = fs.readFileSync(appFile('views', 'admin', 'sections', 'programme.ejs'), 'utf8');
+    check('the programme is its own Settings page, not a view of Attendance',
+      ['id="section-programme"', 'id="prog-halls"', 'id="prog-sessions"', 'posters.pdf'].every((x) => programmePage.includes(x))
+      && !view.includes('id="prog-sessions"'));
     check('the camera stays open, counting one badge once', /now - attState\.lastScan\.at < 4000/.test(js));
     check('the portal keeps a hall code until login, and takes it out of the address',
       /storageSet\('session', 'nqocn_hall', code\);\n\s*window\.history\.replaceState/.test(js) && /markFromHallCode\(\)\.then/.test(js));

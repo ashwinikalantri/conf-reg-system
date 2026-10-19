@@ -1,13 +1,11 @@
     <!-- TAB: ATTENDANCE. Session by session: every hall has a QR at its
          door; a delegate scans it and is marked present at the session on
-         there now, or a volunteer picks the hall and scans their badge. The
-         Programme view holds the halls and sessions; Certificates and their
-         settings follow. Routes under /api/attendance and
+         there now, or a volunteer picks the hall and scans their badge. Certificates and their
+         settings follow. The halls and sessions are the Programme section. Routes under /api/attendance and
          /api/admin/programme in server.js; the rules in attendance.js. -->
     <section id="section-attendance" class="hidden space-y-5">
       <div role="tablist" class="flex gap-1.5 overflow-x-auto border-b border-slate-200 pb-2 -mx-1 px-1">
         <button type="button" data-att-view="attendance" onclick="switchAttendanceView('attendance')" class="att-subtab shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Attendance</button>
-        <button type="button" data-att-view="programme" onclick="switchAttendanceView('programme')" class="att-subtab hidden shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Programme</button>
         <button type="button" data-att-view="certificates" onclick="switchAttendanceView('certificates')" class="att-subtab hidden shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Certificates</button>
         <button type="button" data-att-view="settings" onclick="switchAttendanceView('settings')" class="att-subtab hidden shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Certificate settings</button>
       </div>
@@ -67,52 +65,6 @@
           </form>
           <p id="att-roster-count" class="text-xs text-slate-500 mb-2"></p>
           <div id="att-roster" class="border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-[32rem] overflow-y-auto text-sm"></div>
-        </div>
-      </div>
-
-      <!-- PROGRAMME: the halls (each with its door QR) and the sessions. -->
-      <div id="att-view-programme" class="att-view hidden space-y-5">
-        <div class="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 class="text-lg font-bold text-slate-800">Programme</h2>
-            <p class="text-xs text-slate-500">Each hall's QR marks attendance at the session on there. Breaks, meals and registration take none.</p>
-          </div>
-          <a href="/api/admin/programme/posters.pdf" target="_blank" rel="noopener" class="w-full sm:w-auto text-center px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-sm rounded-xl shadow-md">Print all hall QR posters</a>
-        </div>
-        <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
-          <h3 class="text-sm font-bold text-slate-800 mb-3">Halls</h3>
-          <div id="prog-halls" class="divide-y divide-slate-100"></div>
-          <form onsubmit="addHall(event)" class="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row gap-2">
-            <input id="prog-new-hall" maxlength="80" placeholder="New hall, e.g. Hall D" class="flex-1 h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-            <button type="submit" class="h-10 px-4 bg-slate-700 hover:bg-slate-800 text-white font-semibold text-sm rounded-lg">Add hall</button>
-          </form>
-        </div>
-        <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
-          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <h3 class="text-sm font-bold text-slate-800">Sessions</h3>
-            <div class="flex gap-2">
-              <select id="prog-day" onchange="renderProgrammeSessions()" aria-label="Day" class="h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
-              <button type="button" onclick="editProgrammeSession(null)" class="h-9 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Add session</button>
-            </div>
-          </div>
-          <form id="prog-session-form" onsubmit="saveProgrammeSession(event)" class="hidden mb-4 p-3 rounded-xl border border-indigo-200 bg-indigo-50/40 grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <input type="hidden" id="ps-id">
-            <select id="ps-hall" aria-label="Hall" class="col-span-2 h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
-            <input id="ps-date" type="date" aria-label="Date" class="h-9 px-2 border border-slate-300 rounded-lg text-sm">
-            <div class="flex items-center gap-1"><input id="ps-start" type="time" aria-label="Starts" class="min-w-0 flex-1 h-9 px-1 border border-slate-300 rounded-lg text-sm"><span class="text-xs text-slate-400">–</span><input id="ps-end" type="time" aria-label="Ends" class="min-w-0 flex-1 h-9 px-1 border border-slate-300 rounded-lg text-sm"></div>
-            <input id="ps-label" maxlength="60" placeholder="Label, e.g. Session 4" class="h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-            <input id="ps-title" maxlength="300" placeholder="Title" class="col-span-2 sm:col-span-3 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-            <input id="ps-speakers" maxlength="600" placeholder="Speakers / facilitators" class="col-span-2 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-            <input id="ps-chairs" maxlength="300" placeholder="Chairpersons / moderator" class="col-span-2 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-            <select id="ps-option" aria-label="Workshop or practice" class="col-span-2 h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
-            <label class="col-span-2 flex items-center gap-2 text-sm text-slate-700"><input id="ps-counts" type="checkbox"> Takes attendance</label>
-            <div class="col-span-2 sm:col-span-4 flex flex-wrap gap-2">
-              <button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Save</button>
-              <button type="button" onclick="document.getElementById('prog-session-form').classList.add('hidden')" class="h-9 px-4 border border-slate-300 text-slate-700 font-semibold text-sm rounded-lg">Cancel</button>
-              <button type="button" id="ps-delete" onclick="deleteProgrammeSession()" class="hidden h-9 px-4 border border-rose-300 text-rose-700 font-semibold text-sm rounded-lg sm:ml-auto">Delete</button>
-            </div>
-          </form>
-          <div id="prog-sessions" class="divide-y divide-slate-100 text-sm"></div>
         </div>
       </div>
 
