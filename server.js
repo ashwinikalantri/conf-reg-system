@@ -34,6 +34,7 @@ const reminderLib = require('./reminders');
 const attendanceLib = require('./attendance');
 const councilsLib = require('./councils');
 const certificatePdfLib = require('./certificate-pdf');
+const { renderAbstractPdf } = require('./abstract-pdf');
 const https = require('https');
 const QRCode = require('qrcode');
 // Shared with scripts/daily-digest.js -- see the note there about why the
@@ -2016,7 +2017,7 @@ db.serialize(() => {
     if (err) return console.error('Schema check failed:', err.message);
     const names = cols.map((c) => c.name);
     if (!names.includes('status')) db.run("ALTER TABLE abstracts ADD COLUMN status TEXT DEFAULT 'UNDER_REVIEW'");
-    if (!names.includes('allocation')) db.run('ALTER TABLE abstracts ADD COLUMN allocation TEXT'); // ORAL | POSTER
+    if (!names.includes('allocation')) db.run('ALTER TABLE abstracts ADD COLUMN allocation TEXT'); // ORAL | POSTER | AWARD
     // Structured submission: one column per section. abstract_file (the old
     // PDF-upload column) and the never-used legacy `text` column are gone
     // from the app's own writes -- PDF upload/serving/conversion was
@@ -13156,6 +13157,22 @@ app.get('/api/abstracts', requirePermission('abstracts.view'), async (req, res, 
   }
 });
 
+// The abstract as a PDF, for the reviewer to keep or print. Same reach as
+// reading it on the desk (abstracts.view).
+app.get('/api/abstracts/:id/pdf', requirePermission('abstracts.view'), async (req, res, next) => {
+  try {
+    const row = await dbGet('SELECT * FROM abstracts WHERE id = ?', [req.params.id]);
+    if (!row) return res.status(404).json({ success: false, error: 'Abstract not found.' });
+    const buf = await renderAbstractPdf(row, { conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym } });
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `attachment; filename="abstract-${row.id}.pdf"`);
+    res.set('Cache-Control', 'private, no-store');
+    res.send(buf);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Step 1 of abstract review: Approval. Accept/reject/reset/send-back-for-
 // corrections. Deliberately silent for UNDER_REVIEW/ACCEPTED -- no delegate
 // email fires there. Approving the abstract of an author who has not
@@ -13227,7 +13244,7 @@ app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), asyn
   }
 });
 
-// Step 2 of abstract review: Assignment (oral/poster), for approved
+// Step 2 of abstract review: Assignment (oral/poster/award), for approved
 // abstracts only. This is the delegate's one and only decision email --
 // it states both that the abstract was accepted and the final format. For an
 // author who has not registered, it says the acceptance is provisional and
@@ -13235,8 +13252,8 @@ app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), asyn
 app.put('/api/abstracts/:id/allocation', requirePermission('abstracts.assign'), async (req, res, next) => {
   try {
     const { allocation } = req.body;
-    if (!['ORAL', 'POSTER'].includes(allocation)) {
-      return res.status(400).json({ success: false, error: 'Allocation must be ORAL or POSTER.' });
+    if (!['ORAL', 'POSTER', 'AWARD'].includes(allocation)) {
+      return res.status(400).json({ success: false, error: 'Allocation must be ORAL, POSTER or AWARD.' });
     }
     const a = await dbGet('SELECT status, allocation, phone_number, author_name, title FROM abstracts WHERE id = ?', [req.params.id]);
     if (!a) return res.status(404).json({ success: false, error: 'Abstract not found.' });
@@ -13253,7 +13270,7 @@ app.put('/api/abstracts/:id/allocation', requirePermission('abstracts.assign'), 
     // the same value shouldn't re-notify the delegate.
     const provisional = !(await authorHasRegistered(a.phone_number));
     if (isFirstAssignment || a.allocation !== allocation) {
-      const kind = allocation === 'ORAL' ? 'oral' : 'poster';
+      const kind = { ORAL: 'oral', POSTER: 'poster', AWARD: 'award' }[allocation];
       if (provisional) {
         notifyDelegate(a.phone_number, 'Your abstract has been provisionally accepted — please register',
           emailWrap('Abstract provisionally accepted', `<p>Dear ${escapeHtml(a.author_name)},</p>

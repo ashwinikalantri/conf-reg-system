@@ -16,6 +16,7 @@
         <button class="abstract-status-btn px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg text-xs" data-status="REJECTED">Reject</button>
         <button type="button" onclick="toggleAbstractRevisionBox()" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-lg text-xs">Send Back for Corrections</button>
         <button class="abstract-status-btn px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg text-xs" data-status="UNDER_REVIEW">Reset</button>
+        <button type="button" onclick="downloadAbstractPdf()" class="ml-auto px-3 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-50 font-semibold rounded-lg text-xs">Download PDF</button>
       </div>
 
       <!-- Note is required server-side (see PUT /api/abstracts/:id/status) --

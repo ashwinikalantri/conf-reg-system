@@ -285,6 +285,7 @@ const ROUTE_PERMISSIONS = {
 
   // Abstracts
   'GET /api/abstracts': 'abstracts.view',
+  'GET /api/abstracts/:id/pdf': 'abstracts.view',
   'PUT /api/abstracts/:id/status': 'abstracts.review',
   'PUT /api/abstracts/:id/allocation': 'abstracts.assign',
   'PUT /api/abstracts/extensions/:phone': 'abstracts.extend_deadline',

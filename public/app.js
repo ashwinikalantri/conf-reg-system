@@ -1571,7 +1571,7 @@ async function loadAbstractStatus() {
     if (abs) {
       let [label, cls] = STYLES[abs.status] || ['Submitted', 'bg-slate-100 text-slate-600'];
       if (abs.status === 'ACCEPTED' && abs.allocation) {
-        label = `${registered ? 'Accepted' : 'Provisionally Accepted'} · ${abs.allocation === 'ORAL' ? 'Oral' : 'Poster'}`;
+        label = `${registered ? 'Accepted' : 'Provisionally Accepted'} · ${abstractFormatLabel(abs.allocation)}`;
       } else if (abs.status === 'ACCEPTED' && !registered) {
         label = 'Provisionally Accepted';
       }
@@ -1590,7 +1590,7 @@ async function loadAbstractStatus() {
       }
       if (desc) {
         if (abs.status === 'ACCEPTED' && abs.allocation) {
-          const kind = abs.allocation === 'ORAL' ? 'oral' : 'poster';
+          const kind = abstractFormatLabel(abs.allocation).toLowerCase();
           desc.innerHTML = registered
             ? `Your abstract has been <b>accepted for ${kind} presentation</b>. Details will be communicated.`
             : `Your abstract has been <b>provisionally accepted for ${kind} presentation</b>, pending your registration.`;
@@ -9081,6 +9081,11 @@ function abstractSectionsHtml(a) {
 // without a second round-trip.
 let abstractsCache = [];
 
+// Assignment formats. Submission offers only Oral and Poster; Award is
+// something a reviewer assigns.
+const ABSTRACT_FORMATS = { ORAL: 'Oral', POSTER: 'Poster', AWARD: 'Award' };
+const abstractFormatLabel = (a) => ABSTRACT_FORMATS[a] || a || '';
+
 function openAbstractReview(id) {
   const a = abstractsCache.find((x) => String(x.id) === String(id));
   if (!a) return;
@@ -9097,6 +9102,12 @@ function openAbstractReview(id) {
   if (revisionBox) revisionBox.classList.add('hidden');
   if (revisionNote) revisionNote.value = '';
   openModal('modal-abstract-review');
+}
+
+function downloadAbstractPdf() {
+  const actions = document.getElementById('abstract-review-modal-actions');
+  const id = actions && actions.dataset.id;
+  if (id) window.location.href = `/api/abstracts/${encodeURIComponent(id)}/pdf`;
 }
 
 function toggleAbstractRevisionBox() {
@@ -9169,7 +9180,8 @@ async function renderBackendAbstracts() {
         <span class="text-[11px] font-semibold text-slate-500">Assign format:</span>
         <button class="abstract-alloc-btn px-3 py-1.5 ${a.allocation === 'ORAL' ? 'bg-indigo-600' : 'bg-white border border-indigo-300 text-indigo-700'} ${a.allocation === 'ORAL' ? 'text-white' : ''} font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-alloc="ORAL">Oral</button>
         <button class="abstract-alloc-btn px-3 py-1.5 ${a.allocation === 'POSTER' ? 'bg-indigo-600' : 'bg-white border border-indigo-300 text-indigo-700'} ${a.allocation === 'POSTER' ? 'text-white' : ''} font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-alloc="POSTER">Poster</button>
-        ${a.allocation ? `<span class="text-[11px] text-emerald-600 font-semibold">Assigned &amp; delegate notified: ${esc(a.allocation === 'ORAL' ? 'Oral' : 'Poster')}</span>` : `<span class="text-[11px] text-amber-600 font-semibold">Not yet assigned — delegate has not been notified</span>`}
+        <button class="abstract-alloc-btn px-3 py-1.5 ${a.allocation === 'AWARD' ? 'bg-indigo-600' : 'bg-white border border-indigo-300 text-indigo-700'} ${a.allocation === 'AWARD' ? 'text-white' : ''} font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-alloc="AWARD">Award</button>
+        ${a.allocation ? `<span class="text-[11px] text-emerald-600 font-semibold">Assigned &amp; delegate notified: ${esc(abstractFormatLabel(a.allocation))}</span>` : `<span class="text-[11px] text-amber-600 font-semibold">Not yet assigned — delegate has not been notified</span>`}
       </div>
       ${abstractProvisional(a) ? `<p class="text-[11px] text-sky-700 mt-2">${a.allocation ? 'The delegate was told the acceptance is provisional, and that registration is mandatory to present.' : 'The email will say the acceptance is provisional, and that registration is mandatory to present.'}</p>` : ''}
     </div>
@@ -10209,6 +10221,7 @@ function deskAbstractCard(abstracts, win, ext) {
     can('abstracts.view') ? deskBtn('Review', `deskOpenAbstract(${esc(a.id)})`) : '',
     can('abstracts.assign') && a.status === 'ACCEPTED' ? deskBtn(a.allocation === 'ORAL' ? 'Oral ✓' : 'Oral', `deskAllotAbstract(${esc(a.id)}, 'ORAL')`) : '',
     can('abstracts.assign') && a.status === 'ACCEPTED' ? deskBtn(a.allocation === 'POSTER' ? 'Poster ✓' : 'Poster', `deskAllotAbstract(${esc(a.id)}, 'POSTER')`) : '',
+    can('abstracts.assign') && a.status === 'ACCEPTED' ? deskBtn(a.allocation === 'AWARD' ? 'Award ✓' : 'Award', `deskAllotAbstract(${esc(a.id)}, 'AWARD')`) : '',
   ].filter(Boolean).join('');
   return deskCard('Abstract', abstracts.map((a) => {
     const [tone, label] = DESK_ABSTRACT_STATUS[a.status] || ['due', a.status || 'Submitted'];
@@ -10216,7 +10229,7 @@ function deskAbstractCard(abstracts, win, ext) {
       <p class="text-sm text-slate-800">${esc(a.title || 'Untitled')}</p>
       <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
         <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${tones[tone]}">${esc(label)}</span>
-        <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${a.allocation ? 'bg-indigo-100 text-indigo-800 border-indigo-300' : 'bg-slate-100 text-slate-500 border-slate-300'}">${esc(a.allocation ? a.allocation : 'Format not assigned')}</span>
+        <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${a.allocation ? 'bg-indigo-100 text-indigo-800 border-indigo-300' : 'bg-slate-100 text-slate-500 border-slate-300'}">${esc(a.allocation ? abstractFormatLabel(a.allocation) : 'Format not assigned')}</span>
       </div>
       ${a.revision_note ? `<p class="text-[11px] text-amber-800 mt-1">${esc(a.revision_note)}</p>` : ''}
       ${abstractActions(a) ? `<div class="flex flex-wrap gap-1.5 mt-2">${abstractActions(a)}</div>` : ''}
@@ -10301,7 +10314,7 @@ async function deskAllotAbstract(id, allocation) {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allocation }),
   })).json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not allot.');
-  showToast(`Allotted ${allocation === 'ORAL' ? 'oral' : 'poster'}; the author has been emailed.`, 'success');
+  showToast(`Allotted ${abstractFormatLabel(allocation).toLowerCase()}; the author has been emailed.`, 'success');
   deskReload();
 }
 async function deskOpenFaculty(id) {

@@ -112,6 +112,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // who may reach it. An unlisted new route fails, so widening access by
   // adding a route is as visible as widening it by editing a role.
   const ADDED_SINCE_BASELINE = {
+    'GET /api/abstracts/:id/pdf': 'One abstract as a PDF download. abstracts.view -- the same people who already read the abstract on the review desk, so nobody gains content they could not see.',
     'POST /api/admin/roles/reload': 'Phase 2. Re-reads roles from the database. Super Admin only.',
     'GET /api/admin/roles': 'Phase 4. The role editor\'s own detail view. Super Admin only.',
     'GET /api/admin/roles/options': 'Phase 4. Light role list for an assignment picker -- users.assign_role, not manage_roles.',
