@@ -2927,9 +2927,13 @@ async function submitVerifyEmail(e) {
     // Update whichever portal's copy of the account is in play.
     if (currentDelegate) { currentDelegate = data.user; persistDelegate(currentDelegate); }
     if (activeAdminUser) activeAdminUser = data.user;
-    showToast('Email verified.', 'success');
+    showToast(data.repriced
+      ? `Email verified. ${data.repriced.code} now applies: your fee is ₹${inr(data.repriced.to)} (was ₹${inr(data.repriced.from)}).`
+      : 'Email verified.', 'success');
     closeModal('modal-verify-email');
     renderVerifyEmailBanner();
+    // The fee shown on the dashboard changed.
+    if (data.repriced && currentDelegate) loadDashboard();
   } finally {
     btn.disabled = false;
   }
@@ -7961,6 +7965,27 @@ ${steelButton(window.location.origin, 'Download My Certificate')}
 ${reminderSignOff()}`;
 }
 
+// MGIMS accounts whose @mgims.ac.in address is not verified: the
+// email-domain code (MGIMS2026) waits on verification, and verifying now
+// re-prices a registration already made (repriceWithBestCode).
+async function buildMgimsVerifyBody() {
+  const c = conferenceInfo;
+  return `<p>Dear {{name}},</p>
+<p>You have an account for <b>${esc(c.name || 'the conference')}</b> with your <b>@mgims.ac.in</b> email address, but the address has not been verified yet.</p>
+<div style="background:#eef3f6;border:1px solid #b9cedb;border-radius:10px;padding:1rem 1.25rem;margin:1.25rem 0">
+  <div style="font-size:.7rem;letter-spacing:.09em;text-transform:uppercase;color:#2f5673;font-weight:700">The Early Bird price, for MGIMS</div>
+  <div style="font-size:.9rem;color:#1c3549;margin-top:.4rem">Registering with a <b>verified</b> @mgims.ac.in address gets you the <b>Early Bird fee</b>, whatever the date. There is no code to enter: it is applied by itself once your address is verified. If you have already registered, verifying now lowers your fee automatically.</div>
+</div>
+<p><b>To verify it</b></p>
+<ol style="padding-left:1.1rem;margin:.5rem 0">
+  <li>Log in to the registration portal.</li>
+  <li>On your dashboard, click <b>Verify now</b>.</li>
+  <li>Enter the code we email you to your @mgims.ac.in address.</li>
+</ol>
+${steelButton(window.location.origin, 'Log In and Verify')}
+${reminderSignOff()}`;
+}
+
 // An account whose email address is not verified. Confirmations go to it,
 // and a code issued to the address -- or to its domain -- waits on it.
 async function buildVerifyEmailBody() {
@@ -8221,6 +8246,15 @@ const CUSTOM_REMINDER_TEMPLATES = {
       return `Please verify your email address${who}`;
     },
     body: buildVerifyEmailBody,
+  },
+  'mgims-verify': {
+    label: 'MGIMS — verify your email for the Early Bird price',
+    audiences: ['domain', 'unverified'],
+    async subject() {
+      const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
+      return `Verify your @mgims.ac.in email to get the Early Bird price${who}`;
+    },
+    body: buildMgimsVerifyBody,
   },
   'early-bird-ending': {
     label: 'Early bird — ending soon',

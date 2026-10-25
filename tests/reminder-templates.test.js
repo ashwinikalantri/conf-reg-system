@@ -30,7 +30,7 @@ function build(earlyUntil, conf) {
     ${js.match(/const MGIMS_BOTTLE_DEADLINE = '[^']*';/)[0]} ${grab('buildMgimsRegisterBody')}
     ${js.match(/const steelButton = [\s\S]*?<\/p>`;/)[0]}
     ${js.match(/const reminderSignOff = [^\n]+/)[0]}
-    ${grab('buildRegistrationReminderBody')} ${grab('buildBalanceDueBody')} ${grab('buildCodeHolderBody')} ${grab('buildVerifyEmailBody')} ${grab('buildCertificateReadyBody')}
+    ${grab('buildRegistrationReminderBody')} ${grab('buildBalanceDueBody')} ${grab('buildCodeHolderBody')} ${grab('buildVerifyEmailBody')} ${grab('buildCertificateReadyBody')} ${grab('buildMgimsVerifyBody')}
     ${js.match(/const NOT_REGISTERED = [^\n]+/)[0]}
     ${js.slice(js.indexOf('const CUSTOM_REMINDER_TEMPLATES = {'), js.indexOf('\n};', js.indexOf('const CUSTOM_REMINDER_TEMPLATES = {'))+3)}
     CUSTOM_REMINDER_TEMPLATES;`;

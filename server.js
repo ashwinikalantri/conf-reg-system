@@ -1481,6 +1481,50 @@ async function validateDiscountCode(rawCode, phone, categoryKey) {
   return { ok: true, code: row };
 }
 
+// A delegate who verifies their email after registering may now qualify for
+// a code that was waiting on it -- their institution's email-domain code
+// (MGIMS2026), or a personal code issued to the address. A registration still
+// being paid for (PENDING, PARTIAL_PAYMENT) is re-priced with the best of them
+// when it takes off more than what it already has. A rejected one is priced
+// afresh when resubmitted; one paid in full is left alone (lowering it would
+// mean a refund, which is finance's call).
+//
+// Only the category fee is discounted, as at submission: the fee charged then
+// is recovered from what is stored (expected = fee - discount + options fee -
+// any fee adjustment), so a later fee phase does not change the result.
+// Returns { from, to, code } when it re-priced, else null.
+async function repriceWithBestCode(req, phone) {
+  const reg = await dbGet('SELECT * FROM registrations WHERE phone_number = ?', [phone]);
+  if (!reg || !['PENDING', 'PARTIAL_PAYMENT'].includes(reg.bank_status)) return null;
+  const optionsFee = Number((await dbGet(
+    'SELECT COALESCE(SUM(o.fee), 0) AS f FROM registration_options ro JOIN program_options o ON o.id = ro.option_id WHERE ro.registration_id = ?',
+    [reg.id])).f) || 0;
+  const oldDiscount = Number(reg.discount_amount) || 0;
+  const adjustment = Number(reg.fee_adjustment) || 0;
+  const categoryFee = Math.round((Number(reg.expected_amount) || 0) + oldDiscount + adjustment - optionsFee);
+  const { best } = await bestPersonalCode(phone, reg.category_key, categoryFee);
+  if (!best) return null;
+  const v = await validateDiscountCode(best.code, phone, reg.category_key);
+  if (!v.ok) return null;
+  const newDiscount = computeDiscountAmount(v.code, categoryFee);
+  if (!(newDiscount > oldDiscount)) return null;
+  const from = Number(reg.expected_amount) || 0;
+  const to = Math.max(0, categoryFee - newDiscount + optionsFee - adjustment);
+  await dbRun('UPDATE registrations SET discount_code = ?, discount_amount = ?, expected_amount = ? WHERE id = ?',
+    [v.code.code, newDiscount, to, reg.id]);
+  // Part-paid, and now paid in full: back to finance to confirm, as a fee
+  // adjustment does.
+  if (reg.bank_status === 'PARTIAL_PAYMENT' && (await getPaymentSummary(reg.id, to)).fullyPaid) {
+    await dbRun("UPDATE registrations SET bank_status = 'PENDING' WHERE id = ?", [reg.id]);
+  }
+  await recordAudit({ req, entityType: 'registration', entityId: reg.id, action: 'FEE_REPRICED_CODE',
+    oldValue: `₹${inr(from)}${reg.discount_code ? ` (${reg.discount_code})` : ''}`,
+    newValue: `₹${inr(to)} with ${v.code.code} (−₹${inr(newDiscount)}), on verifying their email` });
+  writeAuditRow('discount_code', v.code.id, 'DISCOUNT_CODE_USED', null,
+    `${v.code.code} applied to reg ${reg.registration_number || reg.id} when its holder verified their email`, phone, null, 'DELEGATE').catch(() => {});
+  return { from, to, code: v.code.code };
+}
+
 // The best personal code a delegate holds for a category, so it can be
 // applied without their typing it: every active INDIVIDUAL code that is
 // theirs -- bound to their account, or still waiting on their email address
@@ -1490,7 +1534,9 @@ async function validateDiscountCode(rawCode, phone, categoryKey) {
 // off for this category (a set fee above it) is not "applied". Also reports
 // whether a code was held back only because their email is not verified yet,
 // so they can be told rather than left wondering where their discount went.
-async function bestPersonalCode(accountKey, categoryKey) {
+// baseFee: price against this category fee rather than today's (re-pricing a
+// registration made in an earlier fee phase).
+async function bestPersonalCode(accountKey, categoryKey, baseFee = null) {
   const feeInfo = await resolveFee(categoryKey);
   if (!feeInfo || !accountKey) return { feeInfo, best: null, needsVerification: false };
   const me = await dbGet('SELECT email FROM users WHERE phone_number = ?', [accountKey]);
@@ -1510,7 +1556,7 @@ async function bestPersonalCode(accountKey, categoryKey) {
       if (/Verify your email address/.test(v.error)) needsVerification = true;
       continue;
     }
-    const amount = computeDiscountAmount(v.code, feeInfo.amount);
+    const amount = computeDiscountAmount(v.code, baseFee != null ? baseFee : feeInfo.amount);
     if (amount > 0 && (!best || amount > best.discountAmount)) {
       best = { code: v.code.code, discountType: v.code.discount_type, discountValue: v.code.discount_value, feeTier: v.code.fee_tier || null, discountAmount: amount,
         scopeType: v.code.scope_type, domain: v.code.scope_type === 'DOMAIN' ? v.code.scope_value : null };
@@ -4301,8 +4347,10 @@ app.post('/api/auth/verify-contact/confirm', requireAuth, async (req, res, next)
     } else {
       await dbRun('UPDATE users SET phone = ?, phone_verified = 1 WHERE phone_number = ?', [value, req.session.phone]);
     }
+    // A code that was waiting on this address may lower what they owe.
+    const repriced = channel === 'email' ? await repriceWithBestCode(req, req.session.phone) : null;
     const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [req.session.phone]);
-    res.json({ success: true, user: omitPasswordHash(user) });
+    res.json({ success: true, user: omitPasswordHash(user), ...(repriced ? { repriced } : {}) });
   } catch (err) {
     next(err);
   }
