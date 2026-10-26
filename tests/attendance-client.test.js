@@ -50,7 +50,7 @@ function page(cookie, perms) {
     showToast = (m, t) => globalThis.__toasts.push([m, t]);
     globalThis.__f = { renderAttendance, attendanceSignIn, renderBackendPrograms, loadAttendanceCard, saveCertificateDetails, switchAttendanceView, renderProgramme,
       renderProgrammeSessions, editProgrammeSession, loadProgrammeCard, renderBadge, showAbstractCard,
-      openProgrammePage, renderHomeHero };
+      openProgrammePage, renderHomeHero, applyRegistrationState, openProfilePage, renderBadgeBack, flipBadge, dashGo };
     globalThis.__setReg = (r) => { currentRegistration = r; };
     globalThis.__setDelegate = (d) => { currentDelegate = d; };`, sandbox);
   return { el, f: sandbox.__f, toasts, sb: sandbox };
@@ -156,7 +156,7 @@ function page(cookie, perms) {
       && P.el('home-hero').innerHTML.includes(`Client Talk ${N}`) && /Show my badge/.test(P.el('home-hero').innerHTML));
     P.sb.__setReg(null);
     P.f.renderHomeHero();
-    check('...before registering, the way to register', /Register and pay/.test(P.el('home-hero').innerHTML));
+    check('...before registering, it steps aside: the registration panel leads', P.el('home-hero').classList.contains('hidden'));
     P.el('balance-banner').classList.remove('hidden');
     P.sb.__setReg({ bank_status: 'PARTIAL_PAYMENT' });
     P.f.renderHomeHero();
@@ -169,6 +169,38 @@ function page(cookie, perms) {
     check('...the conference across its top', P.el('badge-acronym').textContent === 'FIXCON' && /21 - 22 Nov 2026/.test(P.el('badge-when').textContent));
     P.f.renderBadge({ registration_number: `CH${N}`, delegate_name: 'X', is_faculty_member: false });
     check('a delegate not on the faculty list: DELEGATE', P.el('badge-role').textContent === 'DELEGATE');
+
+    console.log('\n== One registration panel, by stage ==');
+    P.f.applyRegistrationState(null);
+    check('not registered: "Register for the conference", with the button', P.el('reg-kicker').textContent === 'Next step' && P.el('reg-title').textContent === 'Register for the conference'
+      && !P.el('payment-action-area').classList.contains('hidden') && P.el('confirmed-block').classList.contains('hidden'));
+    P.f.applyRegistrationState({ bank_status: 'PENDING', registration_number: null, selections: [] });
+    check('submitted: "being verified", no button', /being verified/.test(P.el('reg-title').textContent) && /Being verified/.test(P.el('payment-status-tag').innerText || P.el('payment-status-tag').textContent));
+    P.f.applyRegistrationState({ bank_status: 'BANK_VERIFIED', registration_number: `CH${N}`, category_label: 'Doctor', verified_total: 3000, expected_amount: 3000, delegate_name: `Dr Card Holder ${N}`,
+      selections: [{ group_name: 'Workshops', option_name: 'Psychology of Change' }] });
+    check('confirmed: "You are registered", the number, category and what was paid, their choices', P.el('reg-kicker').textContent === 'You are registered'
+      && P.el('reg-title').classList.contains('hidden') && P.el('reg-number-display').innerText === `CH${N}` && P.el('reg-category-line').textContent === 'Doctor · ₹3,000 paid'
+      && /Workshops<\/span><span[^>]*>Psychology of Change/.test(P.el('conf-selections').innerHTML) && !P.el('confirmed-block').classList.contains('hidden'));
+
+    console.log('\n== The badge\'s back, and turning it over ==');
+    P.f.renderBadgeBack();
+    const back = P.el('badge-back-programme').innerHTML;
+    check('the back: the conference-day halls, from the programme', /Sessions in/.test(back) && back.includes(`Client Hall ${N}`), back);
+    P.f.flipBadge();
+    check('a tap turns it over', P.el('badge-card').classList.contains('flipped'));
+    P.f.flipBadge();
+    check('...and back', !P.el('badge-card').classList.contains('flipped'));
+
+    console.log('\n== The menu and the Profile page ==');
+    P.sb.__setDelegate({ salutation: 'Dr', full_name: `Card Holder ${N}`, designation: 'Professor', institution: 'Test College', email: email, email_verified: 1 });
+    P.f.dashGo('profile');
+    const prof = P.el('profile-details').innerHTML;
+    check('Profile: their details as registered', !P.el('profile-page').classList.contains('hidden') && prof.includes(`Dr Card Holder ${N}`) && prof.includes('Professor') && /verified/.test(prof));
+    check('...and the certificate card lives there', /id="attendance-card"/.test(require('fs').readFileSync(require('./harness').appFile('views', 'portal', 'sections', 'dashboard.ejs'), 'utf8').split('id="profile-page"')[1] || ''));
+    P.f.dashGo('home');
+    P.el('dashboard-page').classList.add('hidden');
+    P.f.dashGo('home');
+    check('Home from the menu', !P.el('dashboard-page').classList.contains('hidden'));
 
     console.log('\n== The abstract card ==');
     P.f.showAbstractCard(false);

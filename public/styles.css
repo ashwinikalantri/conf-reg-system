@@ -109,3 +109,25 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
 @media (prefers-reduced-motion: reduce) {
   .skeleton { animation: none; }
 }
+
+/* The delegate's 3D badge (dashboard.ejs #desk-pass; initBadge3d() in app.js):
+   a lanyard, a clip, and a card that tilts with the phone or the pointer and
+   flips to its back on a tap. Two faces; the edge gives it depth. */
+.badge3d-stage { perspective: 1000px; display: flex; flex-direction: column; align-items: center; width: 100%; touch-action: pan-y; }
+.badge3d-strap { width: 2.25rem; height: 5.5rem; background: #1c3549; color: #d6b46a; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.badge3d-strap span { writing-mode: vertical-rl; font-size: 10px; font-weight: 700; letter-spacing: .3em; white-space: nowrap; }
+.badge3d-clip { width: 3rem; height: 1.1rem; background: #9aa7b2; border-radius: 4px; margin-top: -2px; }
+.badge3d-swing { transform-origin: 50% -1.5rem; transition: transform .15s linear; margin-top: -2px; }
+.badge3d-card { position: relative; width: 15rem; height: 23rem; transform-style: preserve-3d; transition: transform .6s cubic-bezier(.2,.7,.2,1); cursor: pointer; outline: none; }
+.badge3d-card:focus-visible { box-shadow: 0 0 0 3px #d6b46a; border-radius: 14px; }
+.badge3d-card.flipped { transform: rotateY(180deg); }
+.badge3d-face { position: absolute; inset: 0; border-radius: 14px; overflow: hidden; background: #fff; border: 1px solid #c9d6df;
+  backface-visibility: hidden; -webkit-backface-visibility: hidden; box-shadow: 0 18px 30px -18px rgba(20,30,40,.45); }
+.badge3d-back { transform: rotateY(180deg); }
+.badge3d-edge { position: absolute; inset: 0; border-radius: 14px; background: #b9cedb; transform: translateZ(-4px); }
+.badge3d-slot { width: 2.75rem; height: .55rem; border-radius: 999px; background: #f4f7f9; border: 1px solid #2a4a63; margin: .6rem auto .5rem; }
+.badge3d-sheen { position: absolute; top: -40%; left: var(--sheen, -60%); width: 40%; height: 180%; pointer-events: none;
+  background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.35), rgba(255,255,255,0)); transform: rotate(20deg); transition: left .15s linear; }
+@media (prefers-reduced-motion: reduce) {
+  .badge3d-swing, .badge3d-card, .badge3d-sheen { transition: none; }
+}

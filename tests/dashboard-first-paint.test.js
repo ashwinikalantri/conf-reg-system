@@ -74,7 +74,7 @@ const bootOf=(html)=>{const m=html.match(/window\.__BOOTSTRAP_REG__ = ([\s\S]*?)
  check('app.js still evaluates cleanly with a bootstrap present', !threw, threw&&threw.message);
  const chip=els['payment-status-tag'];
  check('the chip reads Confirmed with no fetch having happened',
-   chip && /Registration Confirmed/.test(chip.innerText), chip&&chip.innerText);
+   chip && /^Confirmed/.test(chip.innerText), chip&&chip.innerText);
  check('it is styled as confirmed, not pending', chip && /emerald/.test(chip.className), chip&&chip.className);
  check('the Register & Pay action is hidden for a confirmed delegate',
    els['payment-action-area'] && els['payment-action-area'].classList.contains('hidden'));

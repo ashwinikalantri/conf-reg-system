@@ -253,7 +253,7 @@ function navigateTo(pageId) {
   // The dashboard and the programme carry the conference in their own navy
   // header; the title above the sign-in page would only repeat it.
   const hero = document.getElementById('portal-hero');
-  if (hero) hero.classList.toggle('hidden', pageId === 'dashboard-page' || pageId === 'programme-page');
+  if (hero) hero.classList.toggle('hidden', ['dashboard-page', 'programme-page', 'profile-page'].includes(pageId));
   // The backend button is only for admins on the dashboard; hide it elsewhere.
   updateAdminNav(pageId === 'dashboard-page' && isAdminUser());
 }
@@ -930,8 +930,10 @@ async function loadDashboard() {
     renderGroupSection(),
     markFromHallCode().then(() => Promise.all([loadAttendanceCard(), loadProgrammeCard()])),
   ]);
-  // The one thing that matters now, from everything just loaded.
+  // The one thing that matters now, from everything just loaded; and the
+  // badge's back, which needs the programme and their workshop.
   renderHomeHero();
+  renderBadgeBack();
   // Every section has had its turn, including the ones that failed -- see
   // settleSkeletons on why a shimmer must not outlive the attempt.
   settleSkeletons();
@@ -961,7 +963,115 @@ function renderBadge(reg) {
   document.getElementById('desk-pass-qr').src = `/api/qr/${encodeURIComponent(reg.registration_number)}.png`;
   setText('badge-reg', reg.registration_number);
   setText('badge-category', reg.category_label || '');
+  const acr = (c.acronym || '').toUpperCase();
+  setText('badge-strap-text', acr ? `${acr} · ${acr} · ${acr}` : '');
+  setText('badge-back-acronym', acr);
   pass.classList.remove('hidden');
+  renderBadgeBack();
+  initBadge3d();
+}
+
+// The badge's back: their own programme -- their workshop and its room on
+// the workshop day, the halls on the conference day -- once both are loaded.
+function renderBadgeBack() {
+  const box = document.getElementById('badge-back-programme');
+  if (!box) return;
+  const sessions = (programmeData && programmeData.sessions) || [];
+  if (!sessions.length) { box.innerHTML = '<p>The programme will be shown here.</p>'; return; }
+  const day = (d) => shortDateRange(d, d).replace(/ \d{4}$/, '');
+  const lines = [];
+  for (const w of (attendanceMeData && attendanceMeData.workshops) || []) {
+    const ws = sessions.filter((x) => x.optionId === w.optionId).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))[0];
+    if (ws) lines.push(`<p><b class="text-slate-800">${esc(day(ws.date))}</b> · ${esc(w.name)}<br>${esc(ws.hall)}, ${esc(guestTime12(ws.start))}</p>`);
+  }
+  const confDays = [...new Set(sessions.filter((x) => x.counts && !x.workshop).map((x) => x.date))].sort();
+  for (const d of confDays) {
+    const halls = [...new Set(sessions.filter((x) => x.date === d && x.counts && !x.workshop).map((x) => x.hall))];
+    lines.push(`<p><b class="text-slate-800">${esc(day(d))}</b> · Sessions in ${esc(halls.length > 1 ? `${halls.slice(0, -1).join(', ')} and ${halls[halls.length - 1]}` : halls[0])}</p>`);
+  }
+  box.innerHTML = lines.join('') || '<p>See the full programme.</p>';
+}
+
+// The badge in 3D: it tilts with the pointer, or with the phone (iPhones ask
+// once, on the first tap), and a tap turns it over. Still for anyone who
+// asked for less motion.
+let badge3dReady = false;
+let badgeMotionAsked = false;
+function tiltBadge(x, y) {
+  const swing = document.getElementById('badge3d-swing');
+  const card = document.getElementById('badge-card');
+  if (!swing || !card) return;
+  const cx = Math.max(-1, Math.min(1, x));
+  const cy = Math.max(-1, Math.min(1, y));
+  swing.style.transform = `rotateX(${(-cy * 12).toFixed(1)}deg) rotateY(${(cx * 20).toFixed(1)}deg)`;
+  if (card.style.setProperty) card.style.setProperty('--sheen', `${Math.round(-60 + (cx + 1) * 80)}%`);
+}
+function onBadgeOrientation(e) {
+  if (e.gamma == null || e.beta == null) return;
+  tiltBadge(e.gamma / 30, (e.beta - 45) / 30);
+}
+function initBadge3d() {
+  if (badge3dReady) return;
+  badge3dReady = true;
+  const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const stage = document.getElementById('badge3d-stage');
+  if (!stage || still) return;
+  stage.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'touch') return;
+    const b = stage.getBoundingClientRect();
+    tiltBadge(((e.clientX - b.left) / b.width) * 2 - 1, ((e.clientY - b.top) / b.height) * 2 - 1);
+  });
+  stage.addEventListener('pointerleave', () => tiltBadge(0, 0));
+  // Phones that hand out motion freely (Android): listen now.
+  if (window.DeviceOrientationEvent && typeof window.DeviceOrientationEvent.requestPermission !== 'function') {
+    window.addEventListener('deviceorientation', onBadgeOrientation);
+  }
+  tiltBadge(0.3, -0.1);
+}
+function flipBadge() {
+  const card = document.getElementById('badge-card');
+  if (card) card.classList.toggle('flipped');
+  // iPhones: motion needs asking, from a tap.
+  if (!badgeMotionAsked && window.DeviceOrientationEvent && typeof window.DeviceOrientationEvent.requestPermission === 'function') {
+    badgeMotionAsked = true;
+    window.DeviceOrientationEvent.requestPermission()
+      .then((answer) => { if (answer === 'granted') window.addEventListener('deviceorientation', onBadgeOrientation); })
+      .catch(() => {});
+  }
+}
+
+// --- Menu and the Profile page ---
+function dashGo(where) {
+  const menu = document.getElementById('dash-menu');
+  if (menu) menu.classList.add('hidden');
+  if (where === 'programme') return openProgrammePage();
+  if (where === 'profile') return openProfilePage();
+  navigateTo('dashboard-page');
+  window.scrollTo(0, 0);
+}
+
+function openProfilePage() {
+  setText('profile-page-acronym', (conferenceInfo.acronym || '').toUpperCase());
+  renderProfilePage();
+  navigateTo('profile-page');
+  window.scrollTo(0, 0);
+}
+
+// Their details, as registered: read here, corrected at the counter.
+function renderProfilePage() {
+  const d = currentDelegate || {};
+  const box = document.getElementById('profile-details');
+  if (!box) return;
+  const phone = delegateDisplayPhone(d);
+  const rows = [
+    ['Name', [d.salutation, d.full_name || d.name].filter(Boolean).join(' ')],
+    ['Designation', d.designation],
+    ['Institution', d.institution || d.institute],
+    ['Category', currentRegistration && currentRegistration.category_label],
+    ['Email', d.email ? `${d.email}${d.email_verified ? ' · verified' : ' · not verified'}` : ''],
+    ['Mobile', phone],
+  ].filter(([, v]) => v);
+  box.innerHTML = rows.map(([k, v]) => `<div class="flex justify-between gap-4 py-2"><dt class="text-slate-500 shrink-0">${esc(k)}</dt><dd class="text-slate-900 text-right break-words min-w-0">${esc(v)}</dd></div>`).join('');
 }
 
 function openBadgeFullScreen() {
@@ -1088,6 +1198,10 @@ async function loadProgrammeCard() {
   try { programmeData = await (await fetch('/api/programme')).json(); } catch (e) { return; }
   const sessions = programmeData.sessions || [];
   card.classList.toggle('hidden', !sessions.length);
+  const regProg = document.getElementById('reg-programme-btn');
+  if (regProg) regProg.classList.toggle('hidden', !sessions.length);
+  const menuProg = document.getElementById('dash-menu-programme');
+  if (menuProg) menuProg.classList.toggle('hidden', !sessions.length);
   if (!sessions.length) return;
   const days = [...new Set(sessions.map((s) => s.date))].sort();
   if (!days.includes(programmeDay)) programmeDay = days.includes(programmeData.now.date) ? programmeData.now.date : days[0];
@@ -1214,13 +1328,11 @@ function renderHomeHero() {
   const kicker = (t) => `<p class="text-xs font-bold tracking-[0.15em] text-gold-700 uppercase">${esc(t)}</p>`;
   const primary = (label, onclick) => `<button type="button" onclick="${onclick}" class="mt-4 w-full sm:w-auto px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg">${esc(label)}</button>`;
   const secondary = (label, onclick) => `<button type="button" onclick="${onclick}" class="mt-2 sm:mt-4 sm:ml-2 w-full sm:w-auto px-5 py-3 border border-indigo-600 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg">${esc(label)}</button>`;
+  // Registering, being verified and registered are the registration panel's
+  // to say; this leads only on the days and after.
   let html = '';
-  if (!reg) {
-    html = `${kicker('Next step')}<h3 class="text-xl font-bold text-slate-900 mt-1">Register for the conference</h3>
-      <p class="text-[15px] text-slate-600 mt-1">Choose your category and workshop, and pay. It takes a few minutes.</p>${primary('Register and pay', 'openPaymentModal()')}`;
-  } else if (reg.bank_status === 'PENDING') {
-    html = `${kicker('Almost there')}<h3 class="text-xl font-bold text-slate-900 mt-1">Your registration is being verified</h3>
-      <p class="text-[15px] text-slate-600 mt-1">The finance team checks each payment by hand. You will get an email when it is confirmed.</p>`;
+  if (!reg || reg.bank_status !== 'BANK_VERIFIED') {
+    html = '';
   } else if (reg.bank_status === 'BANK_VERIFIED' && myCertificates.length) {
     html = `${kicker('Your certificates')}<h3 class="text-xl font-bold text-slate-900 mt-1">Thank you for attending</h3>
       <div class="mt-3 flex flex-col sm:flex-row sm:flex-wrap gap-2">${myCertificates.map((m) => `<a href="/api/certificates/mine/${encodeURIComponent(m.id)}.pdf" class="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-center">Download: ${esc(m.label)}</a>`).join('')}</div>`;
@@ -1237,11 +1349,8 @@ function renderHomeHero() {
       ${primary('Show my badge', 'openBadgeFullScreen()')}${secondary('Full programme', 'openProgrammePage()')}`;
   } else if (reg.bank_status === 'BANK_VERIFIED' && last && today > last) {
     html = `${kicker('Thank you for attending')}<h3 class="text-xl font-bold text-slate-900 mt-1">Your certificates will be ready here soon</h3>
-      <p class="text-[15px] text-slate-600 mt-1">We will email you when they are. Meanwhile, check the name your certificate will carry below.</p>`;
-  } else if (reg.bank_status === 'BANK_VERIFIED') {
-    html = `${kicker('You are registered')}<h3 class="text-xl font-bold text-slate-900 mt-1">See you ${first ? `on ${esc(shortDateRange(first, last))}` : 'soon'}</h3>
-      <p class="text-[15px] text-slate-600 mt-1">Registration number <span class="font-mono font-bold text-navy">${esc(reg.registration_number || '')}</span>. Your badge is your pass at the desk and the hall doors.</p>
-      ${primary('Open my badge', 'openBadgeFullScreen()')}${programmeData && (programmeData.sessions || []).length ? secondary('Full programme', 'openProgrammePage()') : ''}`;
+      <p class="text-[15px] text-slate-600 mt-1">We will email you when they are. Meanwhile, check the name your certificate will carry in your Profile.</p>
+      <button type="button" onclick="openProfilePage()" class="mt-4 w-full sm:w-auto px-5 py-3 border border-indigo-600 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg">Open my profile</button>`;
   }
   box.innerHTML = html;
   box.classList.toggle('hidden', !html);
@@ -1327,35 +1436,44 @@ function applyRegistrationState(reg) {
       ? '<b>Your payment details are locked</b> while awaiting verification by the finance admin. Contact the finance team if a correction is needed.'
       : '<b>Note:</b> Registration remains <b>Pending</b> until payment is verified manually by the finance admin.';
   }
+  // One panel through every stage: what it says at the top, by status.
+  const stage = !reg ? ['Next step', 'Register for the conference', null]
+    : verified ? ['You are registered', '', null]
+      : reg.bank_status === 'REJECTED' ? ['Action needed', 'Your registration needs a correction', 'See the note above, then update your registration.']
+        : partial ? ['Balance due', 'Pay the balance to complete your registration', null]
+          : ['Almost there', 'Your registration is being verified', 'The finance team checks each payment by hand. You will get an email when it is confirmed.'];
+  setText('reg-kicker', stage[0]);
+  const regTitle = document.getElementById('reg-title');
+  if (regTitle) { regTitle.textContent = stage[1]; regTitle.classList.toggle('hidden', !stage[1]); }
+  if (paymentDesc && stage[2]) paymentDesc.textContent = stage[2];
   if (verified) {
     document.getElementById('reg-number-display').innerText = reg.registration_number || '—';
+    setText('reg-category-line', [reg.category_label, Number(reg.verified_total) > 0 ? `₹${inr(Number(reg.verified_total))} paid` : (Number(reg.expected_amount) === 0 ? 'No fee' : '')].filter(Boolean).join(' · '));
     renderBadge(reg);
     const selBox = document.getElementById('conf-selections');
     if (selBox) {
       const selections = reg.selections || [];
-      selBox.innerHTML = selections.length
-        ? selections.map((s) => `<div><span class="text-slate-500">${esc(s.group_name)}:</span> <span class="font-semibold text-slate-800">${esc(s.option_name)}</span></div>`).join('')
-        : '';
+      selBox.innerHTML = selections.map((s) => `<div class="flex justify-between gap-3 py-2"><span class="text-slate-500">${esc(s.group_name)}</span><span class="font-semibold text-slate-800 text-right">${esc(s.option_name)}</span></div>`).join('');
     }
   }
 
   if (!reg) {
     // No payment submitted yet — reset to the initial pending state.
     statusTag.className = "text-xs bg-amber-100 text-amber-800 font-bold px-2.5 py-1 rounded-full border border-amber-300";
-    statusTag.innerText = "Registration Pending";
+    statusTag.innerText = "Not registered";
     confBtn.innerText = "Register & Pay Now";
     reverifyBanner.classList.add('hidden');
   } else if (verified) {
     // Confirmed: the action button/note are hidden; only the confirmed block
     // (number, workshop, QI, receipt) is shown.
     statusTag.className = "text-xs bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1 rounded-full border border-emerald-300";
-    statusTag.innerText = "Registration Confirmed ✓";
+    statusTag.innerText = "Confirmed ✓";
     reverifyBanner.classList.add('hidden');
   } else if (reg.bank_status === 'REJECTED') {
     // Rejected: show the reason and the tailored action the delegate should
     // take. The button dispatches by reason (see resolveRejection).
     statusTag.className = "text-xs bg-rose-100 text-rose-800 font-bold px-2.5 py-1 rounded-full border border-rose-300";
-    statusTag.innerText = "Registration Rejected";
+    statusTag.innerText = "Rejected";
 
     const R = {
       WRONG_DETAILS: { msg: 'Your payment reference details did not match. Please correct your transaction reference — no need to re-upload the screenshot.', label: 'Correct Details' },
@@ -1376,7 +1494,7 @@ function applyRegistrationState(reg) {
   } else if (partial) {
     // Partial payment: the balance banner above carries the CTA (Pay Balance).
     statusTag.className = "text-xs bg-orange-100 text-orange-800 font-bold px-2.5 py-1 rounded-full border border-orange-300";
-    statusTag.innerText = "Partial Payment — Balance Due";
+    statusTag.innerText = "Balance due";
     reverifyBanner.classList.add('hidden');
   } else {
     // Pending manual verification: payment details are locked once
@@ -1384,7 +1502,7 @@ function applyRegistrationState(reg) {
     // the action button entirely rather than opening a form the server
     // will just reject.
     statusTag.className = "text-xs bg-amber-100 text-amber-800 font-bold px-2.5 py-1 rounded-full border border-amber-300";
-    statusTag.innerText = reg.is_flagged ? "Flagged - Awaiting Manual Audit" : "Registration Pending (Awaiting Verification)";
+    statusTag.innerText = reg.is_flagged ? "Being checked" : "Being verified";
     reverifyBanner.classList.add('hidden');
   }
 

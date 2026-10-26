@@ -18,6 +18,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-5 h-5"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
         </button>
         <div id="dash-menu" class="hidden absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-card border border-slate-200 text-slate-700 z-30 py-1 text-[15px]">
+          <button type="button" onclick="dashGo('home')" class="w-full text-left px-4 py-2.5 hover:bg-slate-50">Home</button>
+          <button type="button" id="dash-menu-programme" onclick="dashGo('programme')" class="w-full text-left px-4 py-2.5 hover:bg-slate-50">Programme</button>
+          <button type="button" onclick="dashGo('profile')" class="w-full text-left px-4 py-2.5 hover:bg-slate-50">Profile</button>
+          <div class="my-1 border-t border-slate-100"></div>
           <a id="admin-nav-btn" href="/admin" class="hidden block px-4 py-2.5 hover:bg-slate-50">Admin panel</a>
           <button type="button" onclick="openSetPasswordModal(false)" class="w-full text-left px-4 py-2.5 hover:bg-slate-50">Change password</button>
           <button type="button" onclick="logout()" class="w-full text-left px-4 py-2.5 hover:bg-slate-50">Log out</button>
@@ -80,25 +84,31 @@
              badge; what is on now; your certificates. renderHomeHero(). -->
         <div id="home-hero" class="hidden rounded-2xl border-2 border-gold-500 bg-white p-5 shadow-card"></div>
 
-        <!-- Registration -->
-        <div id="registration-card" class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <!-- Registration, and -- once confirmed -- "You are registered": the
+             number, category and what was paid, their choices, the badge,
+             receipt and programme. One panel, painted by
+             applyRegistrationState(). -->
+        <div id="registration-card" class="rounded-2xl border-2 border-gold-500 bg-white p-5 shadow-card">
           <div class="flex items-start justify-between gap-3">
-            <h3 class="text-lg font-bold text-slate-900">Registration</h3>
+            <p id="reg-kicker" class="text-xs font-bold tracking-[0.15em] text-gold-700 uppercase">Registration</p>
             <!-- Neutral until the real status is known; the server normally
                  sets it on first paint (__BOOTSTRAP_REG__ in the / route). -->
             <span id="payment-status-tag" class="skeleton shrink-0 text-xs bg-slate-100 text-slate-600 font-bold px-2.5 py-1 rounded-full border border-slate-200">Checking&hellip;</span>
           </div>
+          <h3 id="reg-title" class="text-xl font-bold text-slate-900 mt-1">Register for the conference</h3>
           <p id="payment-desc" class="text-[15px] text-slate-600 mt-1 leading-relaxed">Choose your category, workshop and QI exposure, pay, and submit your payment reference with a screenshot.</p>
 
           <!-- Shown only once the payment is verified -->
-          <div id="confirmed-block" class="hidden mt-4 space-y-3">
-            <div class="flex items-baseline justify-between gap-3 border-b border-slate-100 pb-3">
-              <p class="text-sm text-slate-500">Registration number</p>
-              <p id="reg-number-display" class="text-lg font-bold font-mono text-navy tracking-wide">—</p>
+          <div id="confirmed-block" class="hidden mt-2">
+            <p id="reg-number-display" class="text-2xl font-bold font-mono text-navy tracking-wide">—</p>
+            <p id="reg-category-line" class="text-[15px] text-slate-600 mt-0.5"></p>
+            <!-- One row per chosen programme option, across every group. -->
+            <div id="conf-selections" class="mt-3 text-[15px] divide-y divide-slate-100 border-t border-slate-100"></div>
+            <button type="button" onclick="openBadgeFullScreen()" class="mt-4 w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg">Open my badge</button>
+            <div class="mt-2 grid grid-cols-2 gap-2">
+              <button type="button" onclick="window.open('/api/registrations/me/receipt','_blank')" class="py-2.5 border border-indigo-600 text-indigo-700 hover:bg-indigo-50 font-semibold text-sm rounded-lg">Receipt</button>
+              <button type="button" id="reg-programme-btn" onclick="openProgrammePage()" class="py-2.5 border border-indigo-600 text-indigo-700 hover:bg-indigo-50 font-semibold text-sm rounded-lg">Programme</button>
             </div>
-            <!-- One line per chosen programme option, across every group. -->
-            <div id="conf-selections" class="text-[15px] space-y-1.5"></div>
-            <button onclick="window.open('/api/registrations/me/receipt','_blank')" class="w-full sm:w-auto px-5 py-2.5 border border-indigo-600 text-indigo-700 hover:bg-indigo-50 font-semibold text-sm rounded-lg">View or download receipt</button>
           </div>
 
           <!-- Hidden until the status is known: a confirmed delegate is never
@@ -126,6 +136,125 @@
           <button id="abstract-action-btn" onclick="openModal('modal-abstract')" class="mt-4 w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg">Submit Abstract</button>
         </div>
 
+        <!-- Group registration (when a group discount is available or they
+             are in a group). renderGroupSection(). -->
+        <div id="group-section" class="hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"></div>
+      </div>
+
+      <aside class="space-y-4 min-w-0">
+        <!-- The virtual conference badge, once registered and verified: a 3D
+             badge on a lanyard that tilts as the phone moves (or with the
+             pointer) and flips to its back on a tap. The front's QR is the
+             desk pass; "Show full screen" gives a flat one to scan.
+             renderBadge(), renderBadgeBack(), initBadge3d(); styles.css. -->
+        <div id="desk-pass" class="hidden flex flex-col items-center">
+          <div id="badge3d-stage" class="badge3d-stage">
+            <div class="badge3d-strap" aria-hidden="true"><span id="badge-strap-text"></span></div>
+            <div class="badge3d-clip" aria-hidden="true"></div>
+            <div id="badge3d-swing" class="badge3d-swing">
+              <div id="badge-card" class="badge3d-card" role="button" tabindex="0" aria-label="Your badge. Tap to turn it over." onclick="flipBadge()" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); flipBadge(); }">
+                <div class="badge3d-edge" aria-hidden="true"></div>
+                <div class="badge3d-face">
+                  <div class="bg-navy text-white px-4 pb-3 text-center">
+                    <div class="badge3d-slot" aria-hidden="true"></div>
+                    <p id="badge-acronym" class="text-xs tracking-[0.3em] font-bold text-gold-300"></p>
+                    <p id="badge-conference" class="text-[13px] font-semibold leading-snug mt-1 text-balance"></p>
+                    <p id="badge-when" class="text-[11px] text-white/70 mt-1"></p>
+                  </div>
+                  <p id="badge-role" class="text-center text-xs font-extrabold tracking-[0.35em] py-1.5 text-white bg-[#2f5673]">DELEGATE</p>
+                  <div class="px-4 pt-3 text-center">
+                    <p id="badge-name" class="text-[22px] font-extrabold text-slate-900 leading-tight text-balance"></p>
+                    <p id="badge-designation" class="text-[13px] text-slate-600 mt-1"></p>
+                    <p id="badge-institution" class="text-[13px] text-slate-500"></p>
+                    <img id="desk-pass-qr" alt="Your badge QR code" width="132" height="132" class="mx-auto mt-2 w-[8.25rem] h-[8.25rem]">
+                    <p id="badge-reg" class="font-mono font-bold text-slate-800 tracking-widest text-sm"></p>
+                    <p id="badge-category" class="text-[11px] text-slate-500"></p>
+                  </div>
+                  <div class="badge3d-sheen" aria-hidden="true"></div>
+                </div>
+                <div class="badge3d-face badge3d-back">
+                  <div class="bg-navy text-white px-4 pb-3 text-center">
+                    <div class="badge3d-slot" aria-hidden="true"></div>
+                    <p id="badge-back-acronym" class="text-xs tracking-[0.3em] font-bold text-gold-300"></p>
+                  </div>
+                  <div class="px-4 py-3 text-[13px] text-slate-700 leading-snug space-y-3">
+                    <div><p class="font-bold text-navy">Your programme</p><div id="badge-back-programme" class="text-slate-600 space-y-1 mt-0.5"></div></div>
+                    <div><p class="font-bold text-navy">Attendance</p><p class="text-slate-600">Scan the QR code at each hall door, or show this badge to the volunteer.</p></div>
+                    <div><p class="font-bold text-navy">Help</p><p class="text-slate-600">Registration counter</p></div>
+                    <p class="text-[11px] text-slate-500 border-t border-slate-200 pt-2">If found, please return to the registration counter.</p>
+                  </div>
+                  <div class="badge3d-sheen" aria-hidden="true"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500 text-center mt-3">Tap the badge to turn it over.</p>
+          <button type="button" onclick="openBadgeFullScreen()" class="mt-2 w-full max-w-[16rem] py-2.5 bg-navy hover:bg-[#244560] text-white font-semibold text-sm rounded-lg">Show full screen to scan</button>
+        </div>
+
+        <!-- The programme: what is on now (or next), and the way to the full
+             timetable. loadProgrammeCard(). -->
+        <div id="programme-card" class="hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h3 class="text-lg font-bold text-slate-900">Programme</h3>
+          <div id="programme-now" class="mt-2 space-y-2 text-[15px]"></div>
+          <button type="button" onclick="openProgrammePage()" class="mt-4 w-full py-2.5 border border-indigo-600 text-indigo-700 hover:bg-indigo-50 font-semibold text-sm rounded-lg">See the full programme</button>
+        </div>
+      </aside>
+    </div>
+
+    <!-- The badge, large, for a volunteer to scan. -->
+    <div id="badge-full" class="hidden fixed inset-0 z-50 bg-white flex flex-col items-center justify-center p-6 text-center" onclick="closeBadgeFullScreen()">
+      <p id="badge-full-role" class="text-sm font-extrabold tracking-[0.35em] text-[#2f5673]"></p>
+      <p id="badge-full-name" class="text-3xl font-extrabold text-slate-900 mt-2 text-balance"></p>
+      <img id="badge-full-qr" alt="Your badge QR code" class="mt-6 w-[min(80vw,60vh)] h-[min(80vw,60vh)]">
+      <p id="badge-full-reg" class="font-mono text-xl font-bold text-slate-800 tracking-widest mt-2"></p>
+      <p class="text-sm text-slate-400 mt-6">Tap anywhere to close</p>
+    </div>
+  </section>
+
+  <!-- PAGE: THE PROGRAMME, for reading. One day at a time; start times in a
+       column of their own; a card per talk (kind, title, speaker, chairs);
+       breaks as thin dividers; a session common to several halls shown once.
+       Filter by hall. On the day it opens at what is on now. Filled by
+       renderProgrammePage() in app.js. -->
+  <section id="programme-page" class="hidden w-full max-w-2xl">
+    <header class="rounded-2xl bg-navy text-white px-5 py-4 flex items-center gap-3 shadow-card">
+      <button type="button" onclick="closeProgrammePage()" aria-label="Back" class="w-10 h-10 shrink-0 rounded-lg border border-white/25 hover:bg-white/10 flex items-center justify-center">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5"><path d="M15 6l-6 6 6 6"/></svg>
+      </button>
+      <div class="min-w-0">
+        <p id="prog-page-acronym" class="text-xs tracking-[0.3em] font-semibold text-gold-300"></p>
+        <h2 class="text-xl font-bold leading-tight">Programme</h2>
+      </div>
+    </header>
+    <div class="sticky top-0 z-10 bg-slate-100 pt-3 pb-2 space-y-2">
+      <div id="prog-page-days" role="tablist" class="flex gap-2"></div>
+      <div id="prog-page-halls" class="flex gap-2 overflow-x-auto pb-1"></div>
+    </div>
+    <div id="prog-page-list" class="pb-8"></div>
+  </section>
+
+  <!-- PAGE: PROFILE (from the menu). Their details as registered, and the
+       certificate: the name it carries, their Medical Council number, their
+       downloads, and -- from the day before the conference -- their
+       attendance. renderProfilePage(); the certificate card is
+       loadAttendanceCard()'s. -->
+  <section id="profile-page" class="hidden w-full max-w-2xl">
+    <header class="rounded-2xl bg-navy text-white px-5 py-4 flex items-center gap-3 shadow-card">
+      <button type="button" onclick="dashGo('home')" aria-label="Back" class="w-10 h-10 shrink-0 rounded-lg border border-white/25 hover:bg-white/10 flex items-center justify-center">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5"><path d="M15 6l-6 6 6 6"/></svg>
+      </button>
+      <div class="min-w-0">
+        <p id="profile-page-acronym" class="text-xs tracking-[0.3em] font-semibold text-gold-300"></p>
+        <h2 class="text-xl font-bold leading-tight">Profile</h2>
+      </div>
+    </header>
+    <div class="mt-4 space-y-4 pb-8">
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h3 class="text-lg font-bold text-slate-900">Your details</h3>
+        <dl id="profile-details" class="mt-2 text-[15px] divide-y divide-slate-100"></dl>
+        <p class="text-xs text-slate-500 mt-3">To correct these, contact the registration counter.</p>
+      </div>
         <!-- Attendance & certificate: once registered. Their progress to the
              certificate, the sessions they were at, their certificates, and
              the name (and council number) it carries. loadAttendanceCard(). -->
@@ -177,78 +306,5 @@
             </div>
           </form>
         </div>
-
-        <!-- Group registration (when a group discount is available or they
-             are in a group). renderGroupSection(). -->
-        <div id="group-section" class="hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"></div>
-      </div>
-
-      <aside class="space-y-4 min-w-0">
-        <!-- The virtual conference badge, once registered and verified; its
-             QR is the desk pass, scanned at the desk and the hall doors.
-             renderBadge(). -->
-        <div id="desk-pass" class="hidden flex justify-center">
-          <div id="badge-card" class="w-full max-w-sm rounded-2xl overflow-hidden shadow-card border border-slate-200 bg-white">
-            <div class="relative bg-navy text-white px-5 pt-4 pb-4 text-center">
-              <div class="mx-auto mb-3 w-16 h-2.5 rounded-full bg-white/25" aria-hidden="true"></div>
-              <p id="badge-acronym" class="text-xs tracking-[0.3em] font-bold text-gold-300"></p>
-              <p id="badge-conference" class="text-sm font-semibold leading-snug mt-1 text-balance"></p>
-              <p id="badge-when" class="text-xs text-white/70 mt-1"></p>
-            </div>
-            <p id="badge-role" class="text-center text-xs font-extrabold tracking-[0.35em] py-1.5 text-white bg-[#2f5673]">DELEGATE</p>
-            <div class="px-5 pt-5 pb-4 text-center">
-              <p id="badge-name" class="text-2xl font-extrabold text-slate-900 leading-tight text-balance"></p>
-              <p id="badge-designation" class="text-sm text-slate-600 mt-1.5"></p>
-              <p id="badge-institution" class="text-sm text-slate-500"></p>
-              <img id="desk-pass-qr" alt="Your badge QR code" width="176" height="176" class="mx-auto mt-4 w-44 h-44">
-              <p id="badge-reg" class="font-mono font-bold text-slate-800 tracking-widest"></p>
-              <p id="badge-category" class="text-xs text-slate-500 mt-0.5"></p>
-            </div>
-            <div class="px-5 pb-5">
-              <button type="button" onclick="openBadgeFullScreen()" class="w-full py-2.5 bg-navy hover:bg-[#244560] text-white font-semibold text-sm rounded-lg">Show full screen</button>
-              <p class="text-xs text-slate-500 text-center mt-2">Show it at the registration desk and the hall doors.</p>
-            </div>
-          </div>
-        </div>
-
-        <!-- The programme: what is on now (or next), and the way to the full
-             timetable. loadProgrammeCard(). -->
-        <div id="programme-card" class="hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 class="text-lg font-bold text-slate-900">Programme</h3>
-          <div id="programme-now" class="mt-2 space-y-2 text-[15px]"></div>
-          <button type="button" onclick="openProgrammePage()" class="mt-4 w-full py-2.5 border border-indigo-600 text-indigo-700 hover:bg-indigo-50 font-semibold text-sm rounded-lg">See the full programme</button>
-        </div>
-      </aside>
     </div>
-
-    <!-- The badge, large, for a volunteer to scan. -->
-    <div id="badge-full" class="hidden fixed inset-0 z-50 bg-white flex flex-col items-center justify-center p-6 text-center" onclick="closeBadgeFullScreen()">
-      <p id="badge-full-role" class="text-sm font-extrabold tracking-[0.35em] text-[#2f5673]"></p>
-      <p id="badge-full-name" class="text-3xl font-extrabold text-slate-900 mt-2 text-balance"></p>
-      <img id="badge-full-qr" alt="Your badge QR code" class="mt-6 w-[min(80vw,60vh)] h-[min(80vw,60vh)]">
-      <p id="badge-full-reg" class="font-mono text-xl font-bold text-slate-800 tracking-widest mt-2"></p>
-      <p class="text-sm text-slate-400 mt-6">Tap anywhere to close</p>
-    </div>
-  </section>
-
-  <!-- PAGE: THE PROGRAMME, for reading. One day at a time; start times in a
-       column of their own; a card per talk (kind, title, speaker, chairs);
-       breaks as thin dividers; a session common to several halls shown once.
-       Filter by hall. On the day it opens at what is on now. Filled by
-       renderProgrammePage() in app.js. -->
-  <section id="programme-page" class="hidden w-full max-w-2xl">
-    <header class="rounded-2xl bg-navy text-white px-5 py-4 flex items-center gap-3 shadow-card">
-      <button type="button" onclick="closeProgrammePage()" aria-label="Back" class="w-10 h-10 shrink-0 rounded-lg border border-white/25 hover:bg-white/10 flex items-center justify-center">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5"><path d="M15 6l-6 6 6 6"/></svg>
-      </button>
-      <div class="min-w-0">
-        <p id="prog-page-acronym" class="text-xs tracking-[0.3em] font-semibold text-gold-300"></p>
-        <h2 class="text-xl font-bold leading-tight">Programme</h2>
-      </div>
-    </header>
-    <div class="sticky top-0 z-10 bg-slate-100 pt-3 pb-2 space-y-2">
-      <div id="prog-page-days" role="tablist" class="flex gap-2"></div>
-      <div id="prog-page-halls" class="flex gap-2 overflow-x-auto pb-1"></div>
-    </div>
-    <div id="prog-page-list" class="pb-8"></div>
   </section>
