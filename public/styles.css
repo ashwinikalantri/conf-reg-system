@@ -120,11 +120,14 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
 .badge3d-strap { width: 2.25rem; height: 5.5rem; background: #1c3549; color: #d6b46a; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .badge3d-strap span { writing-mode: vertical-rl; font-size: 10px; font-weight: 700; letter-spacing: .3em; white-space: nowrap; }
 .badge3d-clip { width: 3rem; height: 1.1rem; background: #9aa7b2; border-radius: 4px; margin-top: -2px; }
-.badge3d-swing { transform-origin: 50% -1.5rem; transition: transform .15s linear; margin-top: -2px; transform-style: preserve-3d; max-width: 100%; }
+.badge3d-swing { transform-origin: 50% -1.5rem; transition: transform .15s linear; margin-top: -2px; transform-style: preserve-3d; width: min(16rem, 100%); }
+/* The swing has the width, not the card: a width the card took from it as a
+   percentage let a long line of text widen the swing, and the card sat at
+   its left, off the lanyard. */
 /* The card is as tall as its taller face, whatever the name or institution:
    the edge and both faces share one grid cell, so they are always the same
    size, and turning it over never shows a shorter back. */
-.badge3d-card { position: relative; display: grid; width: min(16rem, 100%); min-height: 23rem; transform-style: preserve-3d; transition: transform .6s cubic-bezier(.2,.7,.2,1); cursor: pointer; outline: none; }
+.badge3d-card { position: relative; display: grid; width: 100%; min-height: 23rem; transform-style: preserve-3d; transition: transform .6s cubic-bezier(.2,.7,.2,1); cursor: pointer; outline: none; }
 .badge3d-card > * { grid-area: 1 / 1; }
 .badge3d-card:focus-visible { box-shadow: 0 0 0 3px #d6b46a; border-radius: 14px; }
 .badge3d-card.flipped { transform: rotateY(180deg); }
