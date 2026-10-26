@@ -12847,9 +12847,26 @@ async function buildReport(type, opts = {}) {
   }
   if (type === 'payments') {
     const rows = (await dbAll(
-      `SELECT id, registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, phone_number, category_label,
-         payment_mode, utr_number, paid_amount, expected_amount, bank_status, submitted_at
-         FROM registrations ORDER BY registration_number`)).map(withDelegateSalutation);
+      `SELECT registrations.id, registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number, category_label,
+         payment_mode, utr_number, paid_amount, expected_amount, bank_status, submitted_at, bank_txn_id,
+         u.designation, u.institution
+         FROM registrations LEFT JOIN users u ON u.phone_number = registrations.phone_number
+         ORDER BY registrations.registration_number`)).map(withDelegateSalutation);
+    // When the money reached the account: the bank statement's date of each
+    // credit linked to the registration -- through its payments, or (older
+    // links) the registration itself. Several for a delegate who paid in
+    // instalments.
+    const creditDates = {};
+    const addCredit = (regId, iso) => { if (iso) (creditDates[regId] ||= new Set()).add(String(iso).slice(0, 10)); };
+    for (const c of await dbAll(
+      `SELECT pt.registration_id, b.post_date FROM payment_transactions pt
+         JOIN bank_statement_transactions b ON b.id = pt.bank_txn_id
+        WHERE COALESCE(pt.txn_status, '') != 'REJECTED'`)) addCredit(c.registration_id, c.post_date);
+    for (const c of await dbAll(
+      `SELECT r.id AS registration_id, b.post_date FROM registrations r
+         JOIN bank_statement_transactions b ON b.id = r.bank_txn_id`)) addCredit(c.registration_id, c.post_date);
+    const fmtIso = (iso) => attendanceLib.dateRange(iso, iso); // "12 Sep 2026", the same on every server
+    const paymentDates = (regId) => [...(creditDates[regId] || [])].sort().map(fmtIso).join('; ');
     // Same verified-total-minus-refunds computation as GET /api/registrations
     // and getPaymentSummary -- paid_amount above is just the claimed amount
     // at submission, not the cumulative verified total across every linked
@@ -12868,12 +12885,13 @@ async function buildReport(type, opts = {}) {
     return {
       title: 'Delegate Payment Details & Status',
       sections: [{
-        columns: ['Reg No', 'Delegate', 'Mobile', 'Category', 'Mode', 'UTR / Txn No.', 'Amount Paid', 'Expected Amount', 'Excess Paid', 'Status', 'Submitted'],
+        columns: ['Reg No', 'Delegate', 'Designation', 'Institution', 'Mobile', 'Category', 'Mode', 'UTR / Txn No.', 'Payment Date (Bank)',
+          'Amount Paid', 'Expected Amount', 'Excess Paid', 'Status', 'Submitted'],
         rows: rows.map((r) => {
           const netVerified = (verifiedByReg[r.id] || 0) - (refundedByReg[r.id] || 0);
           const overpaid = Math.max(0, netVerified - (r.expected_amount || 0));
-          return [r.registration_number, r.delegate_name, displayPhone(r), r.category_label,
-            PAYMENT_MODE_LABELS[r.payment_mode] || r.payment_mode, r.utr_number, r.paid_amount, r.expected_amount,
+          return [r.registration_number, r.delegate_name, r.designation || '', r.institution || '', displayPhone(r), r.category_label,
+            PAYMENT_MODE_LABELS[r.payment_mode] || r.payment_mode, r.utr_number, paymentDates(r.id), r.paid_amount, r.expected_amount,
             overpaid > 0 ? overpaid : '', BANK_STATUS_LABELS[r.bank_status] || r.bank_status, fmtDate(r.submitted_at)];
         }),
       }],
