@@ -971,25 +971,30 @@ function renderBadge(reg) {
   initBadge3d();
 }
 
-// The badge's back: their own programme -- their workshop and its room on
-// the workshop day, the halls on the conference day -- once both are loaded.
+// The badge's back: what is coming up -- the next few talks from now, by
+// day, time and hall; of the workshops, only their own; no breaks; a session
+// common to several halls once. Refreshed every minute, so on the day it
+// keeps up with the programme.
+let badgeBackTimer = null;
 function renderBadgeBack() {
   const box = document.getElementById('badge-back-programme');
   if (!box) return;
+  if (!badgeBackTimer && typeof setInterval === 'function') badgeBackTimer = setInterval(renderBadgeBack, 60000);
   const sessions = (programmeData && programmeData.sessions) || [];
   if (!sessions.length) { box.innerHTML = '<p>The programme will be shown here.</p>'; return; }
-  const day = (d) => shortDateRange(d, d).replace(/ \d{4}$/, '');
-  const lines = [];
-  for (const w of (attendanceMeData && attendanceMeData.workshops) || []) {
-    const ws = sessions.filter((x) => x.optionId === w.optionId).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))[0];
-    if (ws) lines.push(`<p><b class="text-slate-800">${esc(day(ws.date))}</b> · ${esc(w.name)}<br>${esc(ws.hall)}, ${esc(guestTime12(ws.start))}</p>`);
-  }
-  const confDays = [...new Set(sessions.filter((x) => x.counts && !x.workshop).map((x) => x.date))].sort();
-  for (const d of confDays) {
-    const halls = [...new Set(sessions.filter((x) => x.date === d && x.counts && !x.workshop).map((x) => x.hall))];
-    lines.push(`<p><b class="text-slate-800">${esc(day(d))}</b> · Sessions in ${esc(halls.length > 1 ? `${halls.slice(0, -1).join(', ')} and ${halls[halls.length - 1]}` : halls[0])}</p>`);
-  }
-  box.innerHTML = lines.join('') || '<p>See the full programme.</p>';
+  const ist = new Date(Date.now() + 5.5 * 3600e3);
+  const today = ist.toISOString().slice(0, 10);
+  const nowMin = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  const mine = new Set(((attendanceMeData && attendanceMeData.workshops) || []).map((w) => w.optionId));
+  const ahead = sessions.filter((x) => !progIsBreak(x) && (!x.workshop || mine.has(x.optionId))
+    && (x.date > today || (x.date === today && progToMin(x.end) >= nowMin)));
+  const allHalls = [...new Set(sessions.map((x) => x.hall))];
+  const items = programmeItems(ahead).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start)).slice(0, 4);
+  const when = (it) => `${it.date === today ? (progToMin(it.start) <= nowMin ? 'Now' : 'Today') : shortDateRange(it.date, it.date).replace(/ \d{4}$/, '')} · ${guestTime12(it.start)}`;
+  box.innerHTML = items.length
+    ? items.map((it) => `<div><p class="text-[11px] font-bold text-indigo-700 uppercase tracking-wide">${esc(when(it))} · ${esc(hallsLabel(it.halls, allHalls))}</p>
+        <p class="text-slate-800 leading-snug line-clamp-2">${esc(it.title)}</p></div>`).join('')
+    : '<p>The programme is over. Thank you for attending.</p>';
 }
 
 // The badge in 3D: it tilts with the pointer, or with the phone (iPhones ask

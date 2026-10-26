@@ -185,7 +185,8 @@ function page(cookie, perms) {
     console.log('\n== The badge\'s back, and turning it over ==');
     P.f.renderBadgeBack();
     const back = P.el('badge-back-programme').innerHTML;
-    check('the back: the conference-day halls, from the programme', /Sessions in/.test(back) && back.includes(`Client Hall ${N}`), back);
+    check('the back: what is coming up -- the talk on now, with its hall', /Now · /.test(back) && back.includes(`Client Talk ${N}`) && back.includes(`Client Hall ${N}`), back);
+    check('...but not workshops they are not in', !back.includes(`Client Workshop ${N}`));
     P.f.flipBadge();
     check('a tap turns it over', P.el('badge-card').classList.contains('flipped'));
     P.f.flipBadge();
