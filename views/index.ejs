@@ -21,7 +21,7 @@
        admin.ejs, and admin.ejs did link it, but this page never did: the
        font was downloaded on every portal load and then applied to nothing,
        so every heading here rendered in the body face instead. -->
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=<%= assetVersion %>">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {

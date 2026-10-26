@@ -3648,11 +3648,13 @@ app.use(express.urlencoded({ limit: '8mb', extended: true }));
 //
 // Computed once at startup: the file cannot change under a running process
 // (the image is rebuilt and the container replaced on every deploy).
+// styles.css is cached the same way, so it carries the same fingerprint: the
+// hash is of both files, and a change to either is a new URL for each.
 const ASSET_VERSION = (() => {
   try {
-    return crypto.createHash('sha1')
-      .update(fs.readFileSync(path.join(__dirname, 'public', 'app.js')))
-      .digest('hex').slice(0, 10);
+    const h = crypto.createHash('sha1');
+    for (const f of ['app.js', 'styles.css']) h.update(fs.readFileSync(path.join(__dirname, 'public', f)));
+    return h.digest('hex').slice(0, 10);
   } catch { return String(Date.now()); }
 })();
 app.locals.assetVersion = ASSET_VERSION;

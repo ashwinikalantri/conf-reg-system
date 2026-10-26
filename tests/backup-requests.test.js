@@ -95,8 +95,10 @@ const rm=(f)=>{try{fs.unlinkSync(f)}catch{}};
  check('both pages ask for the same build',
    m && portalHtml.includes(`app.js?v=${m[1]}`), m && m[1]);
  const expected=require('crypto').createHash('sha1')
-   .update(fs.readFileSync(appFile('public','app.js'))).digest('hex').slice(0,10);
- check('and the version is the file\'s own hash', m && m[1]===expected, {got:m&&m[1], expected});
+   .update(fs.readFileSync(appFile('public','app.js'))).update(fs.readFileSync(appFile('public','styles.css'))).digest('hex').slice(0,10);
+ check('and the version is the hash of app.js and styles.css', m && m[1]===expected, {got:m&&m[1], expected});
+ check('the stylesheet carries the same version (Cloudflare kept the old one for hours)',
+   portalHtml.includes(`styles.css?v=${m && m[1]}`) && adminHtml.includes(`styles.css?v=${m && m[1]}`));
  check('the file is still served at its plain path', (await call('GET','/app.js',null,null)).status===200);
 
  rm(REQ); rm(STAT);

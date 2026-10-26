@@ -98,7 +98,7 @@ console.log('\n== Every page that scopes a font by id actually loads that styles
 // to nothing. Nothing about that is visible in a diff of either file, which
 // is why it lasted; the invariant is cheap to state, so state it.
 const css = fs.readFileSync(appFile('public', 'styles.css'), 'utf8');
-const linksStylesheet = (src) => /<link[^>]+href="styles\.css"/.test(src);
+const linksStylesheet = (src) => /<link[^>]+href="styles\.css\?v=<%= assetVersion %>"/.test(src);
 for (const page of ['index.ejs', 'admin.ejs']) {
   const src = fs.readFileSync(appFile('views', page), 'utf8');
   check(`${page} links styles.css`, linksStylesheet(src));

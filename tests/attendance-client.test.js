@@ -191,6 +191,10 @@ function page(cookie, perms) {
     check('a tap turns it over', P.el('badge-card').classList.contains('flipped'));
     P.f.flipBadge();
     check('...and back', !P.el('badge-card').classList.contains('flipped'));
+    const css = fs.readFileSync(appFile('public', 'styles.css'), 'utf8');
+    check('turned over, the back is in front of the edge (it sat behind it and looked blank)',
+      /\.badge3d-back \{ transform: rotateY\(180deg\) translateZ\(8px\)/.test(css) && /\.badge3d-edge \{[^}]*translateZ\(-4px\)/.test(css));
+    check('the card is never wider than the phone', /\.badge3d-card \{[^}]*width: min\(16rem, 100%\)/.test(css));
 
     console.log('\n== The menu and the Profile page ==');
     P.sb.__setDelegate({ salutation: 'Dr', full_name: `Card Holder ${N}`, designation: 'Professor', institution: 'Test College', email: email, email_verified: 1 });
