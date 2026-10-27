@@ -16,8 +16,10 @@ const header = read('views', 'admin', 'partials', 'header.ejs');
 check('the admin header is the delegate page\'s navy bar, gold kicker, white title',
   /<header class="[^"]*bg-navy text-white/.test(header) && /text-gold-300">Admin Panel/.test(header) && /id="conf-name-h1" class="skeleton[^"]*text-white/.test(header));
 check('...with no white buttons left on it', !/bg-white hover:bg-slate-50/.test(header.split('id="settings-menu"')[0]));
-check('their name opens their delegate page; no separate Delegate Portal button',
-  /<a href="\/" title="Open your delegate page"[^>]*>[\s\S]*?id="active-admin-role-badge"/.test(header) && !/Delegate Portal/.test(header));
+check('the header has one control, the delegate page\'s menu button; the delegate portal is its first item',
+  (header.split('id="settings-menu"')[0].match(/<(a|button)\b/g) || []).length === 1
+  && /id="settings-menu-btn"[^>]*class="w-10 h-10 rounded-lg border border-white\/25 hover:bg-white\/10/.test(header)
+  && /id="settings-menu"[^>]*>\s*<a id="admin-menu-portal" href="\/"[\s\S]*?Delegate portal/.test(header));
 check('Settings is a menu button (☰), and Log out is the last item in the menu',
   /id="settings-menu-btn"[^>]*aria-label="Menu"/.test(header) && !/> Settings <span/.test(header)
   && /id="admin-logout-item" onclick="logout\(\)"[\s\S]*?<\/button>\s*<\/div>\s*<\/div>\s*<\/div>\s*<\/header>/.test(header)

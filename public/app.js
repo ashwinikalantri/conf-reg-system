@@ -3579,14 +3579,11 @@ function applyRoleVisibility() {
   const usersItem = document.getElementById('settings-item-users');
   const seesUsers = canSee('users');
   if (usersItem) usersItem.classList.toggle('hidden', !seesUsers);
-  // The menu itself is always there: Log out lives in it. What a role with no
-  // Settings screens loses is just the heading over them, and the line
-  // between them and Log out.
+  // The menu itself is always there: the delegate portal and Log out live in
+  // it. What a role with no Settings screens loses is the heading over them.
   if (settingsMenuBtn) settingsMenuBtn.classList.remove('hidden');
-  ['settings-menu-heading', 'settings-menu-divider'].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) el.classList.toggle('hidden', !(anySettingsItem || seesUsers));
-  });
+  const settingsHeading = document.getElementById('settings-menu-heading');
+  if (settingsHeading) settingsHeading.classList.toggle('hidden', !(anySettingsItem || seesUsers));
 
   // Show only the report cards this permission set can access. Each report
   // is its own permission (see permissions.js), so this is not one
@@ -3619,7 +3616,6 @@ async function initBackendPortal() {
   activeAdminUser = me.user;
   myPermissions = new Set(me.permissions || []);
   mySections = me.sections || {};
-  setText('active-admin-role-badge', activeAdminUser.full_name);
 
   applyRoleVisibility();
 
