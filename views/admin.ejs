@@ -6,9 +6,10 @@
   <title>Admin & Backend Portal</title>
   <!-- Same Direction A ("Clinical Trust") tokens as the delegate portal --
        Libre Franklin for headings, Source Sans 3 for body text, the portal's
-       steel-blue accent remapped onto Tailwind's own `indigo`. This is a
-       SEPARATE copy of the CDN script from index.ejs's, so the config has to
-       be repeated here rather than shared, but every value matches exactly. -->
+       steel-blue accent remapped onto Tailwind's own `indigo`, and the
+       conference's navy and gold. This is a SEPARATE copy of the CDN script
+       from index.ejs's, so the config has to be repeated here rather than
+       shared, but every value matches exactly. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -23,6 +24,10 @@
               400: '#628ea8', 500: '#46708c', 600: '#2f5673', 700: '#244560',
               800: '#1c3549', 900: '#142838',
             },
+            // The conference's own, as on the delegate page: the badge,
+            // certificates, posters and emails share them.
+            navy: '#1c3549',
+            gold: { 50: '#faf5e8', 100: '#f3e7c6', 300: '#d6b46a', 500: '#b08d3c', 700: '#8a6d2b' },
           },
           fontFamily: {
             sans: ['"Source Sans 3"', 'system-ui', '-apple-system', 'sans-serif'],

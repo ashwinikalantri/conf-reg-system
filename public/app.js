@@ -12032,9 +12032,9 @@ function switchBackendTab(tab) {
     const btn = document.getElementById(`nav-tab-${t}`);
     if (btn) {
       const active = t === tab || (t === 'payments' && tab === 'statement');
-      btn.classList.toggle('text-indigo-600', active);
+      btn.classList.toggle('text-navy', active);
       btn.classList.toggle('border-b-2', active);
-      btn.classList.toggle('border-indigo-600', active);
+      btn.classList.toggle('border-gold-500', active);
       btn.classList.toggle('text-slate-500', !active);
     }
   });
@@ -12045,8 +12045,8 @@ function switchBackendTab(tab) {
     const item = document.getElementById(`settings-item-${key}`);
     if (!item) return;
     const active = key === tab;
-    item.classList.toggle('bg-indigo-50', active);
-    item.classList.toggle('text-indigo-700', active);
+    item.classList.toggle('bg-gold-50', active);
+    item.classList.toggle('text-navy', active);
   });
 
   // Registration's sub-menu, while either of its two screens is open and the
@@ -12056,7 +12056,7 @@ function switchBackendTab(tab) {
   if (regStrip) regStrip.classList.toggle('hidden', !(regScreen && canSee('payments') && canSee('statement')));
   document.querySelectorAll('.reg-subtab').forEach((b) => {
     const on = b.id === `reg-subtab-${tab}`;
-    b.classList.toggle('bg-indigo-600', on);
+    b.classList.toggle('bg-navy', on);
     b.classList.toggle('text-white', on);
     b.classList.toggle('text-slate-600', !on);
     b.classList.toggle('hover:bg-slate-100', !on);
