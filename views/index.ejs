@@ -2,7 +2,20 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- No zooming in the delegate portal on a phone. The viewport tag is
+       enough for Android; iPhones ignore user-scalable, so a pinch is also
+       stopped below (Safari's gesture events, and two-finger moves), and
+       touch-action stops the double-tap zoom on both. Not the admin page. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <style>html { touch-action: pan-x pan-y; }</style>
+  <script>
+    (function () {
+      var stop = function (e) { e.preventDefault(); };
+      document.addEventListener('gesturestart', stop, { passive: false });
+      document.addEventListener('gesturechange', stop, { passive: false });
+      document.addEventListener('touchmove', function (e) { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
+    })();
+  </script>
   <title><%= conferenceName || 'Registration Portal' %></title>
   <!-- Direction A, "Clinical Trust" -- settled on from three low-fi sketches
        (see the delegate-portal UI plan). Libre Franklin for headings, Source
