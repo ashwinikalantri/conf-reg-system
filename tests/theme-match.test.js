@@ -38,5 +38,6 @@ const order = ['admin-menu-portal', 'settings-group-conference', 'settings-item-
   'settings-group-system', 'settings-item-general', 'settings-item-users', 'settings-item-roles', 'settings-item-activity', 'admin-logout-item'];
 check('the menu: Delegate portal, the four groups in order, Log out last', order.every((id, i) => i === 0 || menu.indexOf(`id="${id}"`) > menu.indexOf(`id="${order[i - 1]}"`)) && menu.indexOf('id="admin-menu-portal"') >= 0);
 check('...with Workshops and Conference setup as the names', />Workshops<\/span>/.test(menu) && />Conference setup<\/span>/.test(menu) && !/Program Groups|>General</.test(menu));
+check('...and the Workshops screen adds a "workshop group"', />Add workshop group<\/h3>/.test(read('views', 'admin', 'sections', 'programs.ejs')) && !/Program Group/.test(read('views', 'admin', 'sections', 'programs.ejs').split('-->').slice(1).join('')));
 check('a placeholder on navy shimmers in white', /\.bg-navy \.skeleton \{/.test(read('public', 'styles.css')));
 report();
