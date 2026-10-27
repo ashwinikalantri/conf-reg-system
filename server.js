@@ -8130,6 +8130,23 @@ app.put('/api/users/:phone', requirePermission('users.edit'), async (req, res, n
 
     params.push(phone);
     await dbRun(`UPDATE users SET ${sets.join(', ')} WHERE phone_number = ?`, params);
+    // The registration keeps its own copy of the name (delegate_name, taken
+    // at registration), and that copy is what the badge, the receipt and the
+    // reports print. A corrected name has to reach it, or the correction
+    // shows nowhere a delegate or the organisers look. A title the old copy
+    // carried is kept when the account has none of its own.
+    const newName = Object.prototype.hasOwnProperty.call(b, 'full_name') ? String(b.full_name || '').replace(/\s+/g, ' ').trim() : '';
+    if (newName) {
+      const reg = await dbGet('SELECT r.id, r.delegate_name, u.salutation FROM registrations r JOIN users u ON u.phone_number = r.phone_number WHERE r.phone_number = ?', [phone]);
+      if (reg) {
+        const embedded = splitSalutation(reg.delegate_name).salutation;
+        const copy = !reg.salutation && embedded ? `${embedded} ${newName}` : newName;
+        if (copy !== reg.delegate_name) {
+          await dbRun('UPDATE registrations SET delegate_name = ? WHERE id = ?', [copy, reg.id]);
+          await recordAudit({ req, entityType: 'registration', entityId: reg.id, action: 'NAME_CHANGED', oldValue: reg.delegate_name, newValue: copy });
+        }
+      }
+    }
     res.json({ success: true });
   } catch (err) {
     next(err);
