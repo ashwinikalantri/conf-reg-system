@@ -3563,9 +3563,8 @@ function applyRoleVisibility() {
   const assignBlock = document.getElementById('abstracts-assignment-block');
   if (assignBlock) assignBlock.classList.toggle('hidden', !can('abstracts.assign'));
 
-  // Masters/Users/Reminders/Logs live in the header's Settings menu, not
-  // the main tab bar. The menu button itself only shows if at least one
-  // item would. Each item toggles on the same section key that governs its
+  // Masters/Users/Reminders/Logs live in the header's menu, not the main
+  // tab bar, above Log out. Each item toggles on the same section key that governs its
   // own tab, from the same source that gated it above -- no separate list of
   // roles kept in step by hand.
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
@@ -3580,7 +3579,14 @@ function applyRoleVisibility() {
   const usersItem = document.getElementById('settings-item-users');
   const seesUsers = canSee('users');
   if (usersItem) usersItem.classList.toggle('hidden', !seesUsers);
-  if (settingsMenuBtn) settingsMenuBtn.classList.toggle('hidden', !(anySettingsItem || seesUsers));
+  // The menu itself is always there: Log out lives in it. What a role with no
+  // Settings screens loses is just the heading over them, and the line
+  // between them and Log out.
+  if (settingsMenuBtn) settingsMenuBtn.classList.remove('hidden');
+  ['settings-menu-heading', 'settings-menu-divider'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', !(anySettingsItem || seesUsers));
+  });
 
   // Show only the report cards this permission set can access. Each report
   // is its own permission (see permissions.js), so this is not one
