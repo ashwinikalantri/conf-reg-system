@@ -3569,21 +3569,26 @@ function applyRoleVisibility() {
   // roles kept in step by hand.
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
   const settingsItems = ['attendance', 'programme', 'programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount', 'roles'];
-  let anySettingsItem = false;
   settingsItems.forEach((key) => {
-    const visible = canSee(key);
-    if (visible) anySettingsItem = true;
     const el = document.getElementById(`settings-item-${key}`);
-    if (el) el.classList.toggle('hidden', !visible);
+    if (el) el.classList.toggle('hidden', !canSee(key));
   });
   const usersItem = document.getElementById('settings-item-users');
-  const seesUsers = canSee('users');
-  if (usersItem) usersItem.classList.toggle('hidden', !seesUsers);
+  if (usersItem) usersItem.classList.toggle('hidden', !canSee('users'));
   // The menu itself is always there: the delegate portal and Log out live in
-  // it. What a role with no Settings screens loses is the heading over them.
+  // it. Each group's heading shows only when the role may open something
+  // under it.
   if (settingsMenuBtn) settingsMenuBtn.classList.remove('hidden');
-  const settingsHeading = document.getElementById('settings-menu-heading');
-  if (settingsHeading) settingsHeading.classList.toggle('hidden', !(anySettingsItem || seesUsers));
+  const SETTINGS_GROUPS = {
+    conference: ['programme', 'programs', 'attendance'],
+    fees: ['fees', 'discount', 'groupdiscount'],
+    messages: ['reminders'],
+    system: ['general', 'users', 'roles', 'activity'],
+  };
+  Object.entries(SETTINGS_GROUPS).forEach(([group, keys]) => {
+    const heading = document.getElementById(`settings-group-${group}`);
+    if (heading) heading.classList.toggle('hidden', !keys.some(canSee));
+  });
 
   // Show only the report cards this permission set can access. Each report
   // is its own permission (see permissions.js), so this is not one
@@ -6694,7 +6699,7 @@ async function renderBackendActivity() {
 
   const areaLabels = {
     program_option: 'Workshop / QI', fee_config: 'Fee Dates', fee_category: 'Fee Category',
-    discount_code: 'Discount Code', group_rule: 'Group Discount', general_settings: 'General', settings: 'General',
+    discount_code: 'Discount Code', group_rule: 'Group Discount', general_settings: 'Conference setup', settings: 'Conference setup',
     bank_statement_transaction: 'Bank Statement',
   };
   setText('activity-count-master', String((data.master || []).length));

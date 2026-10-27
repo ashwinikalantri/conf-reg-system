@@ -7,9 +7,11 @@
     </div>
 
     <!-- One menu, as on the delegate page: the delegate portal, the Settings
-         screens this role may open, then Log out, always last. Every role
-         has it (it holds Log out); only the Settings heading hides when the
-         role has no Settings screens. -->
+         screens this role may open in four groups (Conference, Fees and
+         discounts, Messages, System and access), then Log out, always last.
+         Every role has it (it holds Log out); a group's heading shows only
+         when the role may open something under it (SETTINGS_GROUPS in
+         applyRoleVisibility). -->
     <div class="shrink-0">
       <div class="relative">
         <button type="button" id="settings-menu-btn" onclick="toggleSettingsMenu()" aria-label="Menu" aria-haspopup="true" class="w-10 h-10 rounded-lg border border-white/25 hover:bg-white/10 text-white flex items-center justify-center">
@@ -19,31 +21,34 @@
           <a id="admin-menu-portal" href="/" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
             <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.6 3.1-6.5 7-6.5s7 2.9 7 6.5"/></svg>Delegate portal</span>
           </a>
-          <p id="settings-menu-heading" class="mt-1.5 border-t border-slate-100 px-4 pt-2.5 pb-1 text-[11px] font-bold uppercase tracking-widest text-slate-400">Settings</p>
-          <button id="settings-item-attendance" onclick="selectSettingsTab('attendance')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 12l3 3 5-6"/></svg>Attendance</span>
-          </button>
+          <p id="settings-group-conference" class="settings-group-heading mt-1.5 border-t border-slate-100 px-4 pt-2.5 pb-1 text-[11px] font-bold uppercase tracking-widest text-slate-400">Conference</p>
           <button id="settings-item-programme" onclick="selectSettingsTab('programme')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
             <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/></svg>Programme</span>
           </button>
           <button id="settings-item-programs" onclick="selectSettingsTab('programs')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M14.5 3.5a4.5 4.5 0 0 0-5.9 5.9L3 15l3 3 5.6-5.6a4.5 4.5 0 0 0 5.9-5.9l-2.8 2.8-2-2z"/></svg>Program Groups</span>
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M14.5 3.5a4.5 4.5 0 0 0-5.9 5.9L3 15l3 3 5.6-5.6a4.5 4.5 0 0 0 5.9-5.9l-2.8 2.8-2-2z"/></svg>Workshops</span>
           </button>
+          <button id="settings-item-attendance" onclick="selectSettingsTab('attendance')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 12l3 3 5-6"/></svg>Attendance</span>
+          </button>
+          <p id="settings-group-fees" class="settings-group-heading mt-1.5 border-t border-slate-100 px-4 pt-2.5 pb-1 text-[11px] font-bold uppercase tracking-widest text-slate-400">Fees and discounts</p>
           <button id="settings-item-fees" onclick="selectSettingsTab('fees')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
             <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="12" cy="12" r="9"/><path d="M12 7v10"/><path d="M9 9.7c0-1.1 1.2-1.7 3-1.7s3 .8 3 1.9-1.2 1.6-3 1.6-3 .6-3 1.8 1.2 1.9 3 1.9 3-.6 3-1.6"/></svg>Fee Master</span>
           </button>
-          <button id="settings-item-general" onclick="selectSettingsTab('general')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="11" cy="17" r="2" fill="currentColor" stroke="none"/></svg>General</span>
-          </button>
-          <button id="settings-item-reminders" onclick="selectSettingsTab('reminders')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M3 6.5 L12 13 L21 6.5"/></svg>Reminders</span>
-            <span id="badge-pending-signups" class="ml-auto bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
+          <button id="settings-item-discount" onclick="selectSettingsTab('discount')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><line x1="14" y1="6" x2="14" y2="18" stroke-dasharray="2.5 2.5"/></svg>Discount codes</span>
           </button>
           <button id="settings-item-groupdiscount" onclick="selectSettingsTab('groupdiscount')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
             <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2c2.8.4 5 2.8 5 5.8"/></svg>Group Discount</span>
           </button>
-          <button id="settings-item-discount" onclick="selectSettingsTab('discount')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><line x1="14" y1="6" x2="14" y2="18" stroke-dasharray="2.5 2.5"/></svg>Discount Code</span>
+          <p id="settings-group-messages" class="settings-group-heading mt-1.5 border-t border-slate-100 px-4 pt-2.5 pb-1 text-[11px] font-bold uppercase tracking-widest text-slate-400">Messages</p>
+          <button id="settings-item-reminders" onclick="selectSettingsTab('reminders')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M3 6.5 L12 13 L21 6.5"/></svg>Reminders</span>
+            <span id="badge-pending-signups" class="ml-auto bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
+          </button>
+          <p id="settings-group-system" class="settings-group-heading mt-1.5 border-t border-slate-100 px-4 pt-2.5 pb-1 text-[11px] font-bold uppercase tracking-widest text-slate-400">System and access</p>
+          <button id="settings-item-general" onclick="selectSettingsTab('general')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="11" cy="17" r="2" fill="currentColor" stroke="none"/></svg>Conference setup</span>
           </button>
           <button id="settings-item-users" onclick="selectSettingsTab('users')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
             <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>Users</span>

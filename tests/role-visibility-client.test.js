@@ -28,7 +28,7 @@ const STAFF = {
 // full visible surface can be read back after driving the real code.
 const ELEMENT_IDS = [
   'nav-tab-desk', 'nav-tab-payments', 'reg-subtab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
-  'settings-menu-heading',
+  'settings-group-conference', 'settings-group-fees', 'settings-group-messages', 'settings-group-system',
   'settings-item-attendance', 'settings-item-programme',
   'settings-item-programs', 'settings-item-fees', 'settings-item-general',
   'settings-item-discount', 'settings-item-activity',
@@ -52,26 +52,26 @@ const ELEMENT_IDS = [
 // with this tab-visibility grant as its accepted, read-only side effect.
 const EXPECTED_VISIBLE = {
   SUPER_ADMIN: ['nav-tab-desk', 'nav-tab-payments', 'reg-subtab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
-    'settings-menu-heading', 'settings-item-attendance', 'settings-item-programme', 'settings-item-programs', 'settings-item-fees',
+    'settings-group-conference', 'settings-group-fees', 'settings-group-messages', 'settings-group-system', 'settings-item-attendance', 'settings-item-programme', 'settings-item-programs', 'settings-item-fees',
     'settings-item-general', 'settings-item-discount', 'settings-item-activity',
     'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
     'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts',
     'abstracts-assignment-block'],
   FINANCE_ADMIN: ['nav-tab-payments', 'reg-subtab-statement', 'nav-tab-reports',
-    'settings-menu-heading', 'settings-item-fees', 'settings-item-discount',
+    'settings-group-fees', 'settings-group-messages', 'settings-item-fees', 'settings-item-discount',
     'settings-item-reminders', 'settings-item-groupdiscount',
     'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops'],
   ACADEMIC_REVIEWER: ['nav-tab-abstracts', 'nav-tab-reports', 'report-summary', 'report-abstracts'],
   FINANCE_ACADEMIC: ['nav-tab-payments', 'reg-subtab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
-    'settings-menu-heading', 'settings-item-fees', 'settings-item-discount',
+    'settings-group-fees', 'settings-group-messages', 'settings-item-fees', 'settings-item-discount',
     'settings-item-reminders', 'settings-item-groupdiscount',
     'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
   // One main tab, and that is the point: the desk works a person at a time
   // and has no business in the payments worklist or the statement. It sees
   // the Fee Master read-only because masters.fees_view is what tells it which
   // categories need a student ID.
-  FRONT_DESK: ['nav-tab-desk', 'settings-menu-heading', 'settings-item-attendance', 'settings-item-fees'],
-  OPERATIONS: ['nav-tab-reports', 'settings-menu-heading', 'settings-item-users',
+  FRONT_DESK: ['nav-tab-desk', 'settings-group-conference', 'settings-group-fees', 'settings-item-attendance', 'settings-item-fees'],
+  OPERATIONS: ['nav-tab-reports', 'settings-group-system', 'settings-item-users',
     'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
 };
 
