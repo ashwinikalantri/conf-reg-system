@@ -79,6 +79,11 @@ function load() {
     && (await db.get('SELECT floor FROM halls WHERE id = ?', [id])).floor === '2nd floor'
     && (await put({ floor: '' })).body.success === true && (await db.get('SELECT floor FROM halls WHERE id = ?', [id])).floor === null);
   check('...and kept short', (await put({ floor: 'x'.repeat(61) })).status === 400);
+  check('a building can be named, in the programme and the log', (await put({ building: ' MCH  building ' })).body.success === true
+    && (await call('GET', '/api/programme', null, admin)).body.halls.find((h) => h.id === id).building === 'MCH building'
+    && /in MCH building/.test((await db.get("SELECT new_value FROM audit_log WHERE action = 'HALL_UPDATED' AND entity_id = ? ORDER BY id DESC LIMIT 1", [String(id)])).new_value));
+  check('...and cleared', (await put({ building: '' })).body.success === true && (await db.get('SELECT building FROM halls WHERE id = ?', [id])).building === null);
+  check('the editor has a building box, saved with the rest', /class="prog-hall-building /.test(js) && /building: document\.querySelector\(`\.prog-hall-building/.test(js));
   check('the editor has a floor box, saved with the rest', /class="prog-hall-floor /.test(js) && /floor: document\.querySelector\(`\.prog-hall-floor/.test(js));
   check('blank clears it', (await put({ location: '' })).body.success === true && JSON.stringify(await row()) === JSON.stringify({ lat: null, lng: null }));
   check('the editor has a location box on each hall, saved with the name', /class="prog-hall-loc /.test(js)
@@ -97,7 +102,7 @@ function load() {
   ];
   const places = sb.__f.campusPlaces(halls);
   check('halls without a location are left off', places.length === 3 && !places.some((p) => p.halls.some((h) => h.id === 9)));
-  check('halls at the same spot share a pin, in programme order', places[2].n === 3 && places[2].halls.map((h) => h.id).join() === '7,6');
+  check('halls at the same spot share a pin, ground floor up -- a hall with no floor after', places[2].n === 3 && places[2].halls.map((h) => h.id).join() === '6,7');
   check('directions: Google Maps, walking, to the spot', sb.__f.campusDirectionsUrl(places[0])
     === 'https://www.google.com/maps/dir/?api=1&destination=20.741279,78.662397&travelmode=walking');
   sb.__set({ halls, now: { date: '2026-11-22', minutes: 10 * 60 + 15 }, mine: [], sessions: [
@@ -107,9 +112,24 @@ function load() {
   ] });
   const list = sb.__f.campusListHtml(places, 3);
   check('the list numbers each place as its pin', (list.match(/class="campus-pin shrink-0/g) || []).length === 3);
-  check('a shared building names its other halls', /Obstetrics and Gynaecology Seminar Hall<\/span>\s*<span class="block text-xs text-slate-500">Same building: Pediatrics Seminar Hall/.test(list));
-  check('a floor shows with its hall; none where none is set', /Same building: Pediatrics Seminar Hall, 2nd floor/.test(list)
-    && !/Main Auditorium<\/span>\s*<span class="block text-xs font-semibold text-slate-600">/.test(list));
+  check('no building named: the first hall heads, with its floor, and names the others', /Pediatrics Seminar Hall<\/span>\s*<span class="block text-xs font-semibold text-slate-600">2nd floor<\/span>\s*<span class="block text-xs text-slate-500">Same building: Obstetrics and Gynaecology Seminar Hall</.test(list), list);
+  check('...no floor where none is set', !/Main Auditorium<\/span>\s*<span class="block text-xs font-semibold text-slate-600">/.test(list) && !/Gynaecology Seminar Hall, /.test(list));
+  const mch = sb.__f.campusPlaces([
+    { id: 6, name: 'Pediatrics Seminar Hall', lat: 20.740149, lng: 78.659761, floor: 'First floor', building: 'Maternal and Child Health (MCH) building' },
+    { id: 7, name: 'Obstetrics and Gynaecology Seminar Hall', lat: 20.740149, lng: 78.659761, floor: 'Second floor', building: 'Maternal and Child Health (MCH) building' },
+    { id: 17, name: 'MLCU, MCH Wing', lat: 20.740149, lng: 78.659761, floor: 'Ground floor', building: 'Maternal and Child Health (MCH) building' }]);
+  const mchList = sb.__f.campusListHtml(mch, 0);
+  check('a named building heads its halls, ground floor up', mch.length === 1 && mch[0].halls.map((h) => h.id).join() === '17,6,7'
+    && /Maternal and Child Health \(MCH\) building<\/span>\s*<span class="block text-xs text-slate-600">MLCU, MCH Wing <span class="text-slate-400">·<\/span> <span class="font-semibold">Ground floor/.test(mchList)
+    && mchList.indexOf('Pediatrics Seminar Hall') < mchList.indexOf('Obstetrics and Gynaecology') && !/Same building/.test(mchList), mchList);
+  const complex = sb.__f.campusPlaces([
+    { id: 1, name: 'Main Auditorium', lat: 20.741279, lng: 78.662397, building: 'New Auditorium Complex' },
+    { id: 2, name: 'Hall A', lat: 20.74101, lng: 78.662377, building: 'New Auditorium Complex' }]);
+  check('halls of one building at their own spots keep their own pins, each headed by the building', complex.length === 2
+    && (sb.__f.campusListHtml(complex, 0).match(/New Auditorium Complex<\/span>/g) || []).length === 2);
+  const rank = (f) => vm.runInContext(`campusFloorRank(${JSON.stringify(f)})`, sb);
+  check('floors ordered as people write them', rank('Basement') < rank('Ground Floor') && rank('Ground floor') < rank('1st floor')
+    && rank('First Floor') === rank('1st floor') && rank('Second floor') < rank('3rd floor') && rank('') > rank('Tenth floor'));
   const solo = sb.__f.campusPlaces([{ id: 4, name: 'Sarojini Naidu Hall', lat: 20.739344, lng: 78.660126, floor: 'Ground floor' }]);
   check('...under the name, for a hall on its own', /Sarojini Naidu Hall<\/span>\s*<span class="block text-xs font-semibold text-slate-600">Ground floor<\/span>/.test(sb.__f.campusListHtml(solo, 0)));
   check('what is on now, or next today, in that building', /On now: Quality as a Strategy/.test(list) && /Next, 2:30 PM: Neonatal QI/.test(list));

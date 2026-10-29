@@ -1908,6 +1908,8 @@ db.serialize(() => {
   db.run('ALTER TABLE halls ADD COLUMN lng REAL', () => {});
   // Which floor, where it helps to say ("2nd floor"). Optional.
   db.run('ALTER TABLE halls ADD COLUMN floor TEXT', () => {});
+  // The building, where several halls share one ("MCH building"). Optional.
+  db.run('ALTER TABLE halls ADD COLUMN building TEXT', () => {});
   db.run(`
     CREATE TABLE IF NOT EXISTS programme_sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8933,7 +8935,7 @@ app.get('/api/programme', requireAuth, async (req, res, next) => {
     const mine = (await dbAll("SELECT event_key FROM attendance WHERE phone_number = ? AND removed_at IS NULL AND event_key LIKE 's:%'", [req.session.phone]))
       .map((r) => Number(r.event_key.slice(2)));
     // With where each hall is, for the campus map (null where not set).
-    const halls = await dbAll('SELECT id, name, lat, lng, floor FROM halls WHERE active = 1 ORDER BY sort_order, id');
+    const halls = await dbAll('SELECT id, name, lat, lng, floor, building FROM halls WHERE active = 1 ORDER BY sort_order, id');
     res.json({ halls, sessions: sessions.map(publicSession), mine, now: attendanceLib.istParts(Date.now()) });
   } catch (err) {
     next(err);
@@ -8943,7 +8945,7 @@ app.get('/api/programme', requireAuth, async (req, res, next) => {
 // --- The programme, for its editors ---
 app.get('/api/admin/programme', requirePermission('programme.manage'), async (req, res, next) => {
   try {
-    const halls = await dbAll('SELECT id, name, code, sort_order, active, lat, lng, floor FROM halls ORDER BY sort_order, id');
+    const halls = await dbAll('SELECT id, name, code, sort_order, active, lat, lng, floor, building FROM halls ORDER BY sort_order, id');
     const counts = new Map((await dbAll("SELECT event_key, COUNT(*) AS n FROM attendance WHERE removed_at IS NULL AND event_key LIKE 's:%' GROUP BY event_key"))
       .map((r) => [Number(r.event_key.slice(2)), r.n]));
     const options = await dbAll(`SELECT o.id, o.name, g.name AS group_name FROM program_options o JOIN program_groups g ON g.id = o.group_id
@@ -9005,13 +9007,18 @@ app.put('/api/admin/programme/halls/:id', requirePermission('programme.manage'),
     }
     const floor = req.body.floor !== undefined ? (String(req.body.floor).replace(/\s+/g, ' ').trim() || null) : h.floor;
     if (floor && floor.length > 60) return res.status(400).json({ success: false, error: 'Keep the floor short, e.g. "2nd floor" (60 characters at most).' });
-    await dbRun('UPDATE halls SET name = ?, active = ?, code = ?, lat = ?, lng = ?, floor = ? WHERE id = ?', [name, active, code, lat, lng, floor, h.id]);
+    const building = req.body.building !== undefined ? (String(req.body.building).replace(/\s+/g, ' ').trim() || null) : h.building;
+    if (building && building.length > 80) return res.status(400).json({ success: false, error: 'Keep the building\'s name to 80 characters.' });
+    await dbRun('UPDATE halls SET name = ?, active = ?, code = ?, lat = ?, lng = ?, floor = ?, building = ? WHERE id = ?',
+      [name, active, code, lat, lng, floor, building, h.id]);
     const moved = hallLocationText(h.lat, h.lng) !== hallLocationText(lat, lng);
     const floorText = (f) => (f ? ` · ${f}` : ' · no floor');
+    const buildingText = (b) => (b ? ` · in ${b}` : ' · no building');
     const reFloored = (h.floor || null) !== floor;
+    const rehoused = (h.building || null) !== building;
     await recordAudit({ req, entityType: 'hall', entityId: h.id, action: 'HALL_UPDATED',
-      oldValue: `${h.name}${h.active ? '' : ' (off)'}${moved ? ` · ${hallLocationText(h.lat, h.lng)}` : ''}${reFloored ? floorText(h.floor) : ''}`,
-      newValue: `${name}${active ? '' : ' (off)'}${req.body.newCode ? ' · new QR code' : ''}${moved ? ` · ${hallLocationText(lat, lng)}` : ''}${reFloored ? floorText(floor) : ''}` });
+      oldValue: `${h.name}${h.active ? '' : ' (off)'}${moved ? ` · ${hallLocationText(h.lat, h.lng)}` : ''}${reFloored ? floorText(h.floor) : ''}${rehoused ? buildingText(h.building) : ''}`,
+      newValue: `${name}${active ? '' : ' (off)'}${req.body.newCode ? ' · new QR code' : ''}${moved ? ` · ${hallLocationText(lat, lng)}` : ''}${reFloored ? floorText(floor) : ''}${rehoused ? buildingText(building) : ''}` });
     res.json({ success: true });
   } catch (err) {
     next(err);

@@ -1347,10 +1347,26 @@ function campusPlaces(halls) {
     if (h.lat == null || h.lng == null) continue;
     const key = `${Number(h.lat).toFixed(6)},${Number(h.lng).toFixed(6)}`;
     let p = places.find((x) => x.key === key);
-    if (!p) { p = { key, n: places.length + 1, lat: Number(h.lat), lng: Number(h.lng), halls: [] }; places.push(p); }
+    if (!p) { p = { key, n: places.length + 1, lat: Number(h.lat), lng: Number(h.lng), building: '', halls: [] }; places.push(p); }
     p.halls.push({ id: h.id, name: h.name, floor: h.floor || '' });
+    if (!p.building && h.building) p.building = h.building;
   }
+  // In a building, ground floor up; halls with no floor keep their order.
+  for (const p of places) p.halls.sort((a, b) => campusFloorRank(a.floor) - campusFloorRank(b.floor));
   return places;
+}
+// "Basement" -1, "Ground floor" 0, "First floor" / "1st floor" 1, ... Not a
+// floor anyone wrote: after the rest (sort is stable, so they keep order).
+function campusFloorRank(floor) {
+  const f = String(floor || '').toLowerCase();
+  if (!f) return 99;
+  if (/basement|lower ground/.test(f)) return -1;
+  if (/ground/.test(f)) return 0;
+  const n = /(\d+)/.exec(f);
+  if (n) return Number(n[1]);
+  const words = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+  const i = words.findIndex((w) => f.includes(w));
+  return i >= 0 ? i + 1 : 98;
 }
 // "Pediatrics Seminar Hall, 2nd floor" -- the floor only where one is set.
 const campusHallName = (h) => (h.floor ? `${h.name}, ${h.floor}` : h.name);
@@ -1386,12 +1402,17 @@ function campusListHtml(places, chosen) {
     const [first, ...rest] = p.halls;
     const now = campusPlaceNow(p);
     const away = campusAway(places, p);
+    // A named building heads its halls, each with its floor.
+    const lines = p.building
+      ? `<span class="block font-semibold text-navy leading-snug">${esc(p.building)}</span>
+          ${p.halls.map((h) => `<span class="block text-xs text-slate-600">${esc(h.name)}${h.floor ? ` <span class="text-slate-400">·</span> <span class="font-semibold">${esc(h.floor)}</span>` : ''}</span>`).join('')}`
+      : `<span class="block font-semibold text-navy leading-snug">${esc(first.name)}</span>
+          ${first.floor ? `<span class="block text-xs font-semibold text-slate-600">${esc(first.floor)}</span>` : ''}
+          ${rest.length ? `<span class="block text-xs text-slate-500">Same building: ${esc(rest.map(campusHallName).join('; '))}</span>` : ''}`;
     return `<div class="flex items-center gap-3 px-4 py-3 ${p.n === chosen ? 'bg-gold-50' : ''}">
       <button type="button" onclick="focusCampusPlace(${p.n})" class="flex items-center gap-3 flex-1 min-w-0 text-left">
         <span class="campus-pin shrink-0 ${p.n === chosen ? 'is-chosen' : ''}" aria-hidden="true">${p.n}</span>
-        <span class="min-w-0"><span class="block font-semibold text-navy leading-snug">${esc(first.name)}</span>
-          ${first.floor ? `<span class="block text-xs font-semibold text-slate-600">${esc(first.floor)}</span>` : ''}
-          ${rest.length ? `<span class="block text-xs text-slate-500">Same building: ${esc(rest.map(campusHallName).join('; '))}</span>` : ''}
+        <span class="min-w-0">${lines}
           ${away ? `<span class="block text-xs text-slate-500">Off campus, about ${esc(Math.round(away / 1000))} km away</span>` : ''}
           ${now ? `<span class="block text-xs font-semibold text-gold-700 truncate">${esc(now)}</span>` : ''}</span>
       </button>
@@ -1428,7 +1449,8 @@ async function openMapPage(hallId) {
 
 const campusIcon = (L, p) => L.divIcon({ className: '', html: `<span class="campus-pin ${p.n === campusChosen ? 'is-chosen' : ''}">${p.n}</span>`,
   iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -16] });
-const campusPopupHtml = (p) => `<p style="margin:0 0 6px;font-weight:700;color:#1c3549">${p.halls.map((h) => esc(campusHallName(h))).join('<br>')}</p>
+const campusPopupHtml = (p) => `${p.building ? `<p style="margin:0 0 2px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#8a6d2b">${esc(p.building)}</p>` : ''}
+  <p style="margin:0 0 6px;font-weight:700;color:#1c3549">${p.halls.map((h) => esc(campusHallName(h))).join('<br>')}</p>
   <a href="${esc(campusDirectionsUrl(p))}" target="_blank" rel="noopener" style="font-weight:600;color:#8a6d2b">Walking directions</a>`;
 
 function renderCampusMap(L) {
@@ -12685,6 +12707,8 @@ async function renderProgramme() {
         title="For the delegates' campus map. In Google Maps, press and hold the spot, then copy the numbers shown." class="prog-hall-loc sm:w-56 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none tabular-nums">
       <input value="${esc(h.floor || '')}" data-hall="${esc(h.id)}" aria-label="Floor" maxlength="60" placeholder="Floor (if it helps)"
         title="Shown with the hall on the delegates' campus map, e.g. 2nd floor. Leave blank where it is obvious." class="prog-hall-floor sm:w-36 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+      <input value="${esc(h.building || '')}" data-hall="${esc(h.id)}" aria-label="Building" maxlength="80" placeholder="Building (if shared)"
+        title="Where several halls share a building and a map location: its name heads them on the delegates' campus map." class="prog-hall-building sm:w-44 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
       <div class="flex flex-wrap gap-1.5">
         <button type="button" onclick="saveHall(${Number(h.id)})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save</button>
         <a href="/api/admin/programme/posters.pdf?hall=${encodeURIComponent(h.id)}" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50">QR poster</a>
@@ -12781,6 +12805,7 @@ function saveHall(id) {
     name: document.querySelector(`.prog-hall-name[data-hall="${id}"]`).value,
     location: document.querySelector(`.prog-hall-loc[data-hall="${id}"]`).value,
     floor: document.querySelector(`.prog-hall-floor[data-hall="${id}"]`).value,
+    building: document.querySelector(`.prog-hall-building[data-hall="${id}"]`).value,
   });
 }
 async function newHallCode(id) {
