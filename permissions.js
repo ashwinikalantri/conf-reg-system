@@ -220,6 +220,7 @@ const ROUTE_PERMISSIONS = {
   'POST /api/admin/programme/halls': 'programme.manage',
   'PUT /api/admin/programme/halls/:id': 'programme.manage',
   'POST /api/admin/programme/sessions': 'programme.manage',
+  'POST /api/admin/programme/faculty': 'programme.manage',
   'PUT /api/admin/programme/sessions/:id': 'programme.manage',
   'DELETE /api/admin/programme/sessions/:id': 'programme.manage',
   'GET /api/admin/programme/posters.pdf': 'programme.manage',

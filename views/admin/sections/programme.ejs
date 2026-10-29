@@ -35,8 +35,14 @@
           <div class="flex items-center gap-1"><input id="ps-start" type="time" aria-label="Starts" class="min-w-0 flex-1 h-9 px-1 border border-slate-300 rounded-lg text-sm"><span class="text-xs text-slate-400">–</span><input id="ps-end" type="time" aria-label="Ends" class="min-w-0 flex-1 h-9 px-1 border border-slate-300 rounded-lg text-sm"></div>
           <input id="ps-label" maxlength="60" placeholder="Label, e.g. Session 4" class="h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
           <input id="ps-title" maxlength="300" placeholder="Title" class="col-span-2 sm:col-span-3 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-          <input id="ps-speakers" maxlength="600" placeholder="Speakers / facilitators" class="col-span-2 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-          <input id="ps-chairs" maxlength="300" placeholder="Chairpersons / moderator" class="col-span-2 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+          <!-- Speakers and chairs: picked from the faculty list, in order, with
+               plain words where needed ("and Team"); someone not yet faculty
+               is added to the faculty list from here. renderSessionPeople(). -->
+          <p id="ps-people-note" class="hidden col-span-2 sm:col-span-4 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"></p>
+          <div class="col-span-2 sm:col-span-4 grid sm:grid-cols-2 gap-2">
+            <div id="ps-people-speakers" class="rounded-lg border border-slate-300 bg-white p-2.5"></div>
+            <div id="ps-people-chairs" class="rounded-lg border border-slate-300 bg-white p-2.5"></div>
+          </div>
           <select id="ps-option" aria-label="Workshop or practice" class="col-span-2 h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
           <label class="col-span-2 flex items-center gap-2 text-sm text-slate-700"><input id="ps-counts" type="checkbox"> Takes attendance</label>
           <div class="col-span-2 sm:col-span-4 flex flex-wrap gap-2">

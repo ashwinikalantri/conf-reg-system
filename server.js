@@ -30,6 +30,7 @@ const { renderReportPdf } = require('./report-pdf');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const guestLib = require('./guests');
+const peopleLib = require('./programme-people');
 const reminderLib = require('./reminders');
 const attendanceLib = require('./attendance');
 const councilsLib = require('./councils');
@@ -1903,6 +1904,20 @@ db.serialize(() => {
       created_at INTEGER NOT NULL
     )
   `);
+  // A session's speakers/facilitators and chairs/moderators, in order: a
+  // faculty member (guest_id) or plain words (name). See programme-people.js.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS programme_session_faculty (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      guest_id INTEGER,
+      name TEXT
+    )
+  `);
+  db.run('CREATE INDEX IF NOT EXISTS programme_session_faculty_session ON programme_session_faculty (session_id)');
+  db.run('CREATE INDEX IF NOT EXISTS programme_session_faculty_guest ON programme_session_faculty (guest_id)');
   // Where the hall is, for the delegates' campus map. Both or neither.
   db.run('ALTER TABLE halls ADD COLUMN lat REAL', () => {});
   db.run('ALTER TABLE halls ADD COLUMN lng REAL', () => {});
@@ -8874,12 +8889,60 @@ const hallUrl = (code) => `${String(PORTAL_URL).replace(/\/+$/, '')}/?hall=${cod
 // Every session, with its hall, its option, and whether it is a workshop's
 // (an option in a group that takes attendance -- these earn a workshop
 // certificate and do not count towards the conference's).
-const programmeSessions = () => dbAll(
-  `SELECT s.*, h.name AS hall, o.name AS option_name,
-          CASE WHEN s.option_id IS NOT NULL AND ${groupTakesAttendanceSql('g')} = 1 THEN 1 ELSE 0 END AS workshop
-     FROM programme_sessions s JOIN halls h ON h.id = s.hall_id
-     LEFT JOIN program_options o ON o.id = s.option_id LEFT JOIN program_groups g ON g.id = o.group_id
-    ORDER BY s.session_date, s.start_time, h.sort_order, h.id, s.id`);
+// A session with a faculty list has its speakers and chairs lines made from
+// it, names as the faculty list has them now; one typed before keeps its
+// words. `people` is the list ({ speakers, chairs }), or null.
+async function programmeSessions() {
+  const sessions = await dbAll(
+    `SELECT s.*, h.name AS hall, o.name AS option_name,
+            CASE WHEN s.option_id IS NOT NULL AND ${groupTakesAttendanceSql('g')} = 1 THEN 1 ELSE 0 END AS workshop
+       FROM programme_sessions s JOIN halls h ON h.id = s.hall_id
+       LEFT JOIN program_options o ON o.id = s.option_id LEFT JOIN program_groups g ON g.id = o.group_id
+      ORDER BY s.session_date, s.start_time, h.sort_order, h.id, s.id`);
+  const people = await sessionPeople();
+  for (const s of sessions) {
+    const p = people.get(s.id) || null;
+    s.people = p;
+    if (p) {
+      s.speakers = peopleLib.joinPeople(p.speakers.map((x) => x.name)) || null;
+      s.chairs = peopleLib.joinPeople(p.chairs.map((x) => x.name)) || null;
+    }
+  }
+  return sessions;
+}
+// Everyone on the faculty list, by id: their name as shown, designation,
+// and whether Cancelled.
+async function facultyDirectory() {
+  const rows = await dbAll(
+    `SELECT g.id, g.overall_status, COALESCE(NULLIF(TRIM(COALESCE(u.salutation, '') || ' ' || COALESCE(u.full_name, '')), ''), g.guest_name, '') AS name,
+            COALESCE(u.designation, g.guest_designation) AS designation
+       FROM guests g LEFT JOIN users u ON u.phone_number = g.phone_number`);
+  return new Map(rows.map((r) => [r.id, { id: r.id, name: r.name, designation: r.designation || '', cancelled: r.overall_status === guestLib.CANCELLED }]));
+}
+// Session id -> { speakers: [...], chairs: [...] }, each { guestId, name } or
+// { text, name }.
+async function sessionPeople() {
+  const rows = await dbAll('SELECT session_id, role, guest_id, name FROM programme_session_faculty ORDER BY session_id, role, position, id');
+  if (!rows.length) return new Map();
+  const dir = await facultyDirectory();
+  const out = new Map();
+  for (const r of rows) {
+    if (!out.has(r.session_id)) out.set(r.session_id, { speakers: [], chairs: [] });
+    const list = out.get(r.session_id)[r.role === 'chair' ? 'chairs' : 'speakers'];
+    if (r.guest_id != null && dir.has(r.guest_id)) list.push({ guestId: r.guest_id, name: dir.get(r.guest_id).name });
+    else if (r.name) list.push({ text: r.name, name: r.name });
+  }
+  return out;
+}
+async function saveSessionPeople(sessionId, people) {
+  await dbRun('DELETE FROM programme_session_faculty WHERE session_id = ?', [sessionId]);
+  for (const [role, list] of [['speaker', people.speakers], ['chair', people.chairs]]) {
+    for (let i = 0; i < list.length; i++) {
+      await dbRun('INSERT INTO programme_session_faculty (session_id, role, position, guest_id, name) VALUES (?, ?, ?, ?, ?)',
+        [sessionId, role, i, list[i].guestId != null ? list[i].guestId : null, list[i].guestId != null ? null : list[i].text]);
+    }
+  }
+}
 const isWorkshopSession = (s) => Number(s.workshop) === 1;
 const sessionLabel = (s) => `${s.title} · ${s.hall}, ${attendanceLib.shortDate(s.session_date)} ${attendanceLib.to12(s.start_time)}`;
 const publicSession = (s) => ({
@@ -8950,10 +9013,20 @@ app.get('/api/admin/programme', requirePermission('programme.manage'), async (re
       .map((r) => [Number(r.event_key.slice(2)), r.n]));
     const options = await dbAll(`SELECT o.id, o.name, g.name AS group_name FROM program_options o JOIN program_groups g ON g.id = o.group_id
       WHERE o.active = 1 ORDER BY g.sort_order, g.id, o.id`);
+    const dir = await facultyDirectory();
+    const faculty = [...dir.values()].sort((a, b) => a.name.localeCompare(b.name));
+    // A session typed before the faculty lists: its words, matched where a
+    // name is exactly one faculty member's, for the editor to propose.
+    const proposed = (text) => peopleLib.matchFaculty(peopleLib.splitLegacy(text), faculty)
+      .map((x) => (x.guestId != null ? { guestId: x.guestId, name: dir.get(x.guestId).name } : { text: x.text, name: x.text }));
     res.json({
       halls: halls.map((h) => ({ ...h, url: hallUrl(h.code) })),
-      sessions: (await programmeSessions()).map((s) => ({ ...publicSession(s), present: counts.get(s.id) || 0 })),
+      sessions: (await programmeSessions()).map((s) => ({
+        ...publicSession(s), present: counts.get(s.id) || 0,
+        people: s.people || { speakers: proposed(s.speakers), chairs: proposed(s.chairs), proposed: true },
+      })),
       options,
+      faculty,
     });
   } catch (err) {
     next(err);
@@ -9046,18 +9119,34 @@ async function sessionInput(b, current = {}) {
   if (out.end_time <= out.start_time) return { error: 'The end time must be after the start time.' };
   if (!out.title || out.title.length > 300) return { error: 'Enter the title.' };
   if (out.option_id && !(await dbGet('SELECT id FROM program_options WHERE id = ?', [out.option_id]))) return { error: 'That workshop or practice is not in Programs.' };
-  return { values: out };
+  // The faculty lists, when the editor sends them: they make the lines.
+  let people;
+  if (b.people !== undefined) {
+    const dir = await facultyDirectory();
+    const known = new Set(dir.keys());
+    const sp = peopleLib.cleanPeople((b.people || {}).speakers || [], known, 'Speakers');
+    if (sp.error) return { error: sp.error };
+    const ch = peopleLib.cleanPeople((b.people || {}).chairs || [], known, 'Chairs');
+    if (ch.error) return { error: ch.error };
+    people = { speakers: sp.value, chairs: ch.value };
+    const line = (list) => peopleLib.joinPeople(list.map((x) => (x.guestId != null ? dir.get(x.guestId).name : x.text))) || null;
+    out.speakers = line(people.speakers);
+    out.chairs = line(people.chairs);
+  }
+  return { values: out, people };
 }
+const sessionPeopleText = (v) => [v.speakers ? `Speakers: ${v.speakers}` : '', v.chairs ? `Chairs: ${v.chairs}` : ''].filter(Boolean).join(' · ');
 
 app.post('/api/admin/programme/sessions', requirePermission('programme.manage'), async (req, res, next) => {
   try {
-    const { values, error } = await sessionInput(req.body || {});
+    const { values, people, error } = await sessionInput(req.body || {});
     if (error) return res.status(400).json({ success: false, error });
     const cols = Object.keys(values);
     const r = await dbRun(`INSERT INTO programme_sessions (${cols.join(', ')}, created_at) VALUES (${cols.map(() => '?').join(', ')}, ?)`,
       [...cols.map((c) => values[c]), Date.now()]);
+    if (people) await saveSessionPeople(r.lastID, people);
     await recordAudit({ req, entityType: 'programme_session', entityId: r.lastID, action: 'SESSION_ADDED', oldValue: null,
-      newValue: `${values.session_date} ${values.start_time}-${values.end_time} · ${values.title}` });
+      newValue: [`${values.session_date} ${values.start_time}-${values.end_time} · ${values.title}`, sessionPeopleText(values)].filter(Boolean).join(' · ') });
     res.json({ success: true, id: r.lastID });
   } catch (err) {
     next(err);
@@ -9068,13 +9157,28 @@ app.put('/api/admin/programme/sessions/:id', requirePermission('programme.manage
   try {
     const s = await dbGet('SELECT * FROM programme_sessions WHERE id = ?', [req.params.id]);
     if (!s) return res.status(404).json({ success: false, error: 'Not found.' });
-    const { values, error } = await sessionInput(req.body || {}, s);
+    const { values, people, error } = await sessionInput(req.body || {}, s);
     if (error) return res.status(400).json({ success: false, error });
     const cols = Object.keys(values);
     await dbRun(`UPDATE programme_sessions SET ${cols.map((c) => `${c} = ?`).join(', ')}, updated_at = ? WHERE id = ?`, [...cols.map((c) => values[c]), Date.now(), s.id]);
+    if (people) await saveSessionPeople(s.id, people);
+    const peopleChanged = (s.speakers || null) !== (values.speakers || null) || (s.chairs || null) !== (values.chairs || null);
     await recordAudit({ req, entityType: 'programme_session', entityId: s.id, action: 'SESSION_UPDATED',
-      oldValue: `${s.session_date} ${s.start_time}-${s.end_time} · ${s.title}`, newValue: `${values.session_date} ${values.start_time}-${values.end_time} · ${values.title}` });
+      oldValue: [`${s.session_date} ${s.start_time}-${s.end_time} · ${s.title}`, peopleChanged ? sessionPeopleText(s) : ''].filter(Boolean).join(' · '),
+      newValue: [`${values.session_date} ${values.start_time}-${values.end_time} · ${values.title}`, peopleChanged ? sessionPeopleText(values) : ''].filter(Boolean).join(' · ') });
     res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A speaker or chair not yet on the faculty list, added from the session
+// editor: they join the faculty list, exactly as from the Faculty tab (an
+// account at that phone or email is offered instead; nobody twice).
+app.post('/api/admin/programme/faculty', requirePermission('programme.manage'), async (req, res, next) => {
+  try {
+    const { status, json } = await addFacultyMember(req, req.body || {});
+    res.status(status).json(json);
   } catch (err) {
     next(err);
   }
@@ -9089,6 +9193,7 @@ app.delete('/api/admin/programme/sessions/:id', requirePermission('programme.man
       return res.status(409).json({ success: false, error: 'People have been marked present at this session. Turn its attendance off instead.' });
     }
     await dbRun('DELETE FROM programme_sessions WHERE id = ?', [s.id]);
+    await dbRun('DELETE FROM programme_session_faculty WHERE session_id = ?', [s.id]);
     await recordAudit({ req, entityType: 'programme_session', entityId: s.id, action: 'SESSION_DELETED', oldValue: `${s.session_date} ${s.start_time} · ${s.title}`, newValue: null });
     res.json({ success: true });
   } catch (err) {
@@ -13495,6 +13600,16 @@ async function guestRowsJoined(where = '', params = []) {
     transport_coordinator_name: g.transport_coordinator ? ([g.tc_salutation, g.tc_name].filter(Boolean).join(' ') || g.transport_coordinator) : null,
     accommodation_coordinator_name: g.accommodation_coordinator ? ([g.ac_salutation, g.ac_name].filter(Boolean).join(' ') || g.accommodation_coordinator) : null,
   }));
+  // Their sessions in the programme, as speaker/facilitator or chair, in time
+  // order -- for the coordinators to set travel by.
+  const theirs = await dbAll(
+    `SELECT f.guest_id, f.role, s.title, s.session_date AS date, s.start_time AS start, s.end_time AS end, h.name AS hall
+       FROM programme_session_faculty f JOIN programme_sessions s ON s.id = f.session_id JOIN halls h ON h.id = s.hall_id
+      WHERE f.guest_id IS NOT NULL ORDER BY s.session_date, s.start_time, s.id`);
+  for (const g of out) {
+    g.sessions = theirs.filter((t) => t.guest_id === g.id)
+      .map((t) => ({ role: t.role === 'chair' ? 'Chair' : 'Speaker', title: t.title, date: t.date, start: t.start, end: t.end, hall: t.hall }));
+  }
   // A guest not yet linked whose typed phone or email belongs to a delegate
   // account: offered as the account to link, never linked by itself.
   for (const g of out) {
@@ -13639,65 +13754,73 @@ app.get('/api/guests/candidates', requirePermission('guests.edit'), async (req, 
 // it is pointed to.
 const LOCAL_TRANSFER_NOTE = '; from MGIMS/Sevagram, so pickup and drop not required';
 const blankValue = (v) => v == null || String(v).trim() === '';
-app.post('/api/guests', requirePermission('guests.edit'), async (req, res, next) => {
-  try {
-    const body = req.body || {};
-    const lists = activeGuestLists(await guestListRows());
-    const invited = lists.overall_status.find((v) => v === 'Invited') || null;
-    const now = Date.now();
-    const by = req.session.name || req.session.phone;
+// The work of adding a guest, for the Faculty tab and for the programme's
+// session editor (which adds a speaker or chair who is not yet faculty):
+// { status, json } to send. `body` is { phone } or { guest: {...} }, as below.
+async function addFacultyMember(req, body) {
+  const reply = (status, json) => ({ status, json });
+  const lists = activeGuestLists(await guestListRows());
+  const invited = lists.overall_status.find((v) => v === 'Invited') || null;
+  const now = Date.now();
+  const by = req.session.name || req.session.phone;
 
-    if (body.guest) {
-      const input = body.guest || {};
-      const { values, errors } = guestLib.validateGuestFields({
-        guest_name: input.name, guest_designation: input.designation, guest_phone: input.phone, guest_email: input.email,
+  if (body.guest) {
+    const input = body.guest || {};
+    const { values, errors } = guestLib.validateGuestFields({
+      guest_name: input.name, guest_designation: input.designation, guest_phone: input.phone, guest_email: input.email,
+    });
+    if (!values.guest_name) errors.unshift('Enter their name.');
+    if (errors.length) return reply(400, { success: false, error: errors.join(' ') });
+    const account = await accountMatchingGuest(values.guest_phone, values.guest_email);
+    if (account) {
+      const name = [account.salutation, account.full_name].filter(Boolean).join(' ');
+      return reply(409, {
+        success: false, code: 'ACCOUNT_EXISTS',
+        error: account.guest_id ? `${name} has an account and is already on the faculty list.`
+          : `${name} already has an account with that phone or email. Mark them as faculty instead.`,
+        account: { phone_number: account.phone_number, name, guestId: account.guest_id || null },
       });
-      if (!values.guest_name) errors.unshift('Enter their name.');
-      if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
-      const account = await accountMatchingGuest(values.guest_phone, values.guest_email);
-      if (account) {
-        const name = [account.salutation, account.full_name].filter(Boolean).join(' ');
-        return res.status(409).json({
-          success: false, code: 'ACCOUNT_EXISTS',
-          error: account.guest_id ? `${name} has an account and is already on the faculty list.`
-            : `${name} already has an account with that phone or email. Mark them as faculty instead.`,
-          account: { phone_number: account.phone_number, name, guestId: account.guest_id || null },
-        });
-      }
-      const twin = await unlinkedGuestMatching(values.guest_phone, values.guest_email);
-      if (twin) return res.status(409).json({ success: false, code: 'GUEST_EXISTS', error: `${twin.guest_name} is already on the faculty list with that phone or email.`, guestId: twin.id });
-      // From MGIMS or Sevagram: no pickup or drop (guests.js isLocalFaculty).
-      const local = guestLib.isLocalFaculty({ designation: values.guest_designation, email: values.guest_email });
-      const transfer = local ? guestLib.NOT_REQUIRED : null;
-      const r = await dbRun(
-        `INSERT INTO guests (guest_name, guest_designation, guest_phone, guest_email, pickup_status, drop_status, overall_status, created_at, created_by, updated_at, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [values.guest_name, values.guest_designation || null, values.guest_phone || null, values.guest_email || null, transfer, transfer, invited, now, by, now, by]);
-      await recordAudit({ req, entityType: 'guest', entityId: String(r.lastID), action: 'GUEST_ADDED', oldValue: null,
-        newValue: `${values.guest_name} added as faculty (not signed up)${local ? LOCAL_TRANSFER_NOTE : ''}` });
-      return res.json({ success: true, id: r.lastID, registered: false, linked: false, local });
     }
-
-    const phone = String(body.phone || '');
-    const u = await dbGet('SELECT phone_number, salutation, full_name, role, phone, email, institution, designation FROM users WHERE phone_number = ?', [phone]);
-    if (!u || !u.role) return res.status(404).json({ success: false, error: 'Account not found.' });
-    if (await dbGet('SELECT id FROM guests WHERE phone_number = ?', [phone])) {
-      return res.status(409).json({ success: false, error: 'They are already on the faculty list.' });
-    }
-    const twin = await unlinkedGuestMatching(u.phone || (isPhoneValue(u.phone_number) ? u.phone_number : null), u.email);
-    if (twin) {
-      return res.status(409).json({ success: false, code: 'GUEST_EXISTS', guestId: twin.id,
-        error: `${twin.guest_name} is already on the faculty list with this phone or email, not yet linked. Link them to this account instead.` });
-    }
-    const local = guestLib.isLocalFaculty(u);
+    const twin = await unlinkedGuestMatching(values.guest_phone, values.guest_email);
+    if (twin) return reply(409, { success: false, code: 'GUEST_EXISTS', error: `${twin.guest_name} is already on the faculty list with that phone or email.`, guestId: twin.id });
+    // From MGIMS or Sevagram: no pickup or drop (guests.js isLocalFaculty).
+    const local = guestLib.isLocalFaculty({ designation: values.guest_designation, email: values.guest_email });
     const transfer = local ? guestLib.NOT_REQUIRED : null;
     const r = await dbRun(
-      'INSERT INTO guests (phone_number, pickup_status, drop_status, overall_status, created_at, created_by, updated_at, updated_by, linked_at, linked_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [phone, transfer, transfer, invited, now, by, now, by, now, by]);
-    const name = [u.salutation, u.full_name].filter(Boolean).join(' ');
-    await recordAudit({ req, entityType: 'guest', entityId: String(r.lastID), action: 'GUEST_ADDED', oldValue: null, newValue: `${name} marked as faculty${local ? LOCAL_TRANSFER_NOTE : ''}` });
-    const registered = !!(await dbGet(`SELECT ${authorRegisteredSql('?')} AS yes`, [phone])).yes;
-    res.json({ success: true, id: r.lastID, registered, linked: true, local });
+      `INSERT INTO guests (guest_name, guest_designation, guest_phone, guest_email, pickup_status, drop_status, overall_status, created_at, created_by, updated_at, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [values.guest_name, values.guest_designation || null, values.guest_phone || null, values.guest_email || null, transfer, transfer, invited, now, by, now, by]);
+    await recordAudit({ req, entityType: 'guest', entityId: String(r.lastID), action: 'GUEST_ADDED', oldValue: null,
+      newValue: `${values.guest_name} added as faculty (not signed up)${local ? LOCAL_TRANSFER_NOTE : ''}` });
+    return reply(200, { success: true, id: r.lastID, name: values.guest_name, registered: false, linked: false, local });
+  }
+
+  const phone = String(body.phone || '');
+  const u = await dbGet('SELECT phone_number, salutation, full_name, role, phone, email, institution, designation FROM users WHERE phone_number = ?', [phone]);
+  if (!u || !u.role) return reply(404, { success: false, error: 'Account not found.' });
+  if (await dbGet('SELECT id FROM guests WHERE phone_number = ?', [phone])) {
+    return reply(409, { success: false, error: 'They are already on the faculty list.' });
+  }
+  const twin = await unlinkedGuestMatching(u.phone || (isPhoneValue(u.phone_number) ? u.phone_number : null), u.email);
+  if (twin) {
+    return reply(409, { success: false, code: 'GUEST_EXISTS', guestId: twin.id,
+      error: `${twin.guest_name} is already on the faculty list with this phone or email, not yet linked. Link them to this account instead.` });
+  }
+  const local = guestLib.isLocalFaculty(u);
+  const transfer = local ? guestLib.NOT_REQUIRED : null;
+  const r = await dbRun(
+    'INSERT INTO guests (phone_number, pickup_status, drop_status, overall_status, created_at, created_by, updated_at, updated_by, linked_at, linked_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [phone, transfer, transfer, invited, now, by, now, by, now, by]);
+  const name = [u.salutation, u.full_name].filter(Boolean).join(' ');
+  await recordAudit({ req, entityType: 'guest', entityId: String(r.lastID), action: 'GUEST_ADDED', oldValue: null, newValue: `${name} marked as faculty${local ? LOCAL_TRANSFER_NOTE : ''}` });
+  const registered = !!(await dbGet(`SELECT ${authorRegisteredSql('?')} AS yes`, [phone])).yes;
+  return reply(200, { success: true, id: r.lastID, name, registered, linked: true, local });
+}
+
+app.post('/api/guests', requirePermission('guests.edit'), async (req, res, next) => {
+  try {
+    const { status, json } = await addFacultyMember(req, req.body || {});
+    res.status(status).json(json);
   } catch (err) {
     next(err);
   }
@@ -14142,6 +14265,8 @@ app.delete('/api/guests/:id', requirePermission('guests.manage'), async (req, re
     const [g] = await guestRowsJoined('WHERE g.id = ?', [req.params.id]);
     if (!g) return res.status(404).json({ success: false, error: 'Faculty member not found.' });
     await dbRun('DELETE FROM guests WHERE id = ?', [g.id]);
+    // Their sessions keep their name, as words.
+    await dbRun('UPDATE programme_session_faculty SET guest_id = NULL, name = ? WHERE guest_id = ?', [g.name, g.id]);
     const kept = guestLib.ALL_FIELDS.filter((f) => g[f]).map((f) => `${guestLib.FIELD_LABELS[f]}: ${g[f]}`).join('; ');
     await recordAudit({ req, entityType: 'guest', entityId: String(g.id), action: 'GUEST_REMOVED', oldValue: `${g.name}${kept ? ` — ${kept}` : ''}`, newValue: null });
     res.json({ success: true });

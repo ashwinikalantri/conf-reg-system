@@ -186,6 +186,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/admin/programme/halls': 'Adds a hall. programme.manage.',
     'PUT /api/admin/programme/halls/:id': 'Renames a hall, turns it off, or gives it a new QR code. programme.manage.',
     'POST /api/admin/programme/sessions': 'Adds a session. programme.manage.',
+    'POST /api/admin/programme/faculty': 'Adds a speaker or chair from the session editor to the faculty list, exactly as the Faculty tab does (an account is offered instead; nobody twice). programme.manage, like editing the session.',
     'PUT /api/admin/programme/sessions/:id': 'Edits a session. programme.manage.',
     'DELETE /api/admin/programme/sessions/:id': 'Deletes a session nobody was marked present at. programme.manage.',
     'GET /api/admin/programme/posters.pdf': 'The hall door QR posters to print. programme.manage.',

@@ -11406,6 +11406,7 @@ function renderGuestList() {
           ${g.designation ? `<p class="text-xs text-slate-500 line-clamp-2" title="${esc(g.designation)}">${esc(g.designation)}</p>` : ''}
           <p class="text-xs text-slate-500 font-mono">${esc(g.phone || '')}</p>
           <div class="flex flex-wrap gap-1 mt-1">${guestFlagChips(g)}</div>
+          ${(g.sessions || []).length ? `<p class="text-[11px] font-semibold text-indigo-700 mt-1">${g.sessions.length} session${g.sessions.length === 1 ? '' : 's'} in the programme</p>` : ''}
         </div>
       </td>
       <td class="p-3">${travel(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status)}</td>
@@ -11759,7 +11760,12 @@ function openGuestEditor(id) {
       <button type="button" onclick="unlinkGuest(${esc(g.id)})" class="shrink-0 px-2.5 py-1 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-[11px] font-semibold rounded-md">Unlink from this account</button>
     </div><div class="h-4"></div>` : '';
   document.getElementById('guest-edit-flags').innerHTML = `${guestStatusBadge(g.overall_status)} ${guestFlagChips(g)}`;
-  document.getElementById('guest-edit-body').innerHTML = vehicles + identity + linkedTo + (identity ? '<div class="h-4"></div>' : '') + [
+  // Their sessions in the programme, to set travel by.
+  const theirSessions = (g.sessions || []).length ? `<div class="rounded-xl border border-indigo-100 bg-indigo-50/50 px-3 py-2.5 space-y-1.5">
+      <p class="text-xs font-bold text-slate-700 uppercase tracking-wide">In the programme</p>
+      ${g.sessions.map((s) => `<p class="text-sm leading-snug"><span class="font-semibold text-indigo-800">${esc(s.role)}</span> · ${esc(guestWhen(s.date, s.start))} · ${esc(s.hall)}<span class="block text-slate-700">${esc(s.title)}</span></p>`).join('')}
+    </div><div class="h-4"></div>` : '';
+  document.getElementById('guest-edit-body').innerHTML = vehicles + identity + linkedTo + (identity ? '<div class="h-4"></div>' : '') + theirSessions + [
     group('Arrival', travel, mineT ? 'As their transport volunteer you can update the pickup; the itinerary is the coordinator\'s.' : 'Only a transport coordinator can change travel.',
       field('arrival_date', 'Date', input('arrival_date', 'date', travel))
       + field('arrival_time', 'Time', time('arrival_time', travel))
@@ -12755,8 +12761,15 @@ function editProgrammeSession(id) {
   set('ps-end', s ? s.end : '');
   set('ps-label', s ? s.label : '');
   set('ps-title', s ? s.title : '');
-  set('ps-speakers', s ? s.speakers : '');
-  set('ps-chairs', s ? s.chairs : '');
+  // The faculty lists; a session typed before them comes with a proposal.
+  const copy = (list) => (list || []).map((x) => ({ ...x }));
+  psPeople = { speakers: copy(s && s.people && s.people.speakers), chairs: copy(s && s.people && s.people.chairs) };
+  const note = document.getElementById('ps-people-note');
+  const proposed = !!(s && s.people && s.people.proposed && (psPeople.speakers.length || psPeople.chairs.length));
+  note.classList.toggle('hidden', !proposed);
+  note.textContent = proposed ? 'This session was typed before the faculty lists. Names that match one faculty member are linked (navy); the rest are kept as typed (dashed) -- add a person to the faculty list, or leave words like "and Team". Check, then Save.' : '';
+  renderSessionPeople('speakers');
+  renderSessionPeople('chairs');
   set('ps-option', s && s.optionId ? s.optionId : '');
   document.getElementById('ps-counts').checked = s ? s.counts : true;
   document.getElementById('ps-delete').classList.toggle('hidden', !s);
@@ -12770,7 +12783,9 @@ async function saveProgrammeSession(e) {
   const v = (k) => document.getElementById(k).value;
   const body = {
     hallId: Number(v('ps-hall')), date: v('ps-date'), start: v('ps-start'), end: v('ps-end'), label: v('ps-label'),
-    title: v('ps-title'), speakers: v('ps-speakers'), chairs: v('ps-chairs'), optionId: v('ps-option') ? Number(v('ps-option')) : null,
+    title: v('ps-title'), optionId: v('ps-option') ? Number(v('ps-option')) : null,
+    people: Object.fromEntries(['speakers', 'chairs'].map((role) => [role,
+      psPeople[role].map((p) => (p.guestId != null ? { guestId: p.guestId } : { text: p.text }))])),
     counts: document.getElementById('ps-counts').checked,
   };
   const data = await (await fetch(id ? `/api/admin/programme/sessions/${encodeURIComponent(id)}` : '/api/admin/programme/sessions', {
@@ -12781,6 +12796,130 @@ async function saveProgrammeSession(e) {
   document.getElementById('prog-session-form').classList.add('hidden');
   document.getElementById('prog-day').value = body.date;
   renderProgramme();
+}
+
+// --- A session's speakers and chairs ---
+// Chips in order: navy for someone on the faculty list, dashed for words.
+// Search the faculty list to add; or keep what was typed as words; or add
+// the person to the faculty list (POST /api/admin/programme/faculty).
+let psPeople = { speakers: [], chairs: [] };
+let psPendingAccount = null;
+const PS_ROLE_LABELS = { speakers: 'Speakers / facilitators', chairs: 'Chairpersons / moderators' };
+const PS_TITLES = new Set(['dr', 'prof', 'professor', 'mrs', 'mr', 'ms', 'smt', 'shri', 'maj', 'gen', 'air', 'cmde', 'lt', 'col', 'brig', 'capt', 'sr']);
+// As programme-people.js normName: titles, dots and case aside.
+function psNormName(name) {
+  const words = String(name || '').toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean);
+  while (words.length > 1 && PS_TITLES.has(words[0])) words.shift();
+  return words.join(' ');
+}
+
+function renderSessionPeople(role) {
+  const box = document.getElementById(`ps-people-${role}`);
+  if (!box) return;
+  const x = (i, name) => `<button type="button" onclick="removeSessionPerson('${role}', ${i})" aria-label="Remove ${esc(name)}" class="w-5 h-5 rounded-full leading-none hover:bg-black/10">×</button>`;
+  const chip = (p, i) => (p.guestId != null
+    ? `<span class="inline-flex items-center gap-1 rounded-full bg-navy text-white text-xs font-semibold pl-2.5 pr-1 py-1">${esc(p.name)}${x(i, p.name)}</span>`
+    : `<span class="inline-flex items-center gap-1 rounded-full border border-dashed border-slate-400 bg-slate-50 text-slate-700 text-xs pl-2.5 pr-1 py-1" title="Not on the faculty list">${esc(p.text)}${/^and\b/i.test(p.text) ? ''
+      : ` <button type="button" onclick="startNewFaculty('${role}', ${i})" class="text-[11px] font-semibold text-indigo-700 underline">Add to faculty</button>`}${x(i, p.text)}</span>`);
+  box.innerHTML = `<p class="text-[11px] font-semibold text-slate-600 mb-1.5">${PS_ROLE_LABELS[role]}</p>
+    <div class="flex flex-wrap gap-1.5 mb-2">${psPeople[role].map(chip).join('') || '<span class="text-xs text-slate-400">None yet</span>'}</div>
+    <input id="ps-find-${role}" autocomplete="off" oninput="findSessionPerson('${role}')" onkeydown="if (event.key === 'Enter') event.preventDefault()"
+      placeholder="Search the faculty list" aria-label="Add to ${PS_ROLE_LABELS[role]}" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm outline-none">
+    <div id="ps-found-${role}" class="mt-1.5 space-y-1"></div>`;
+}
+
+function findSessionPerson(role) {
+  const q = document.getElementById(`ps-find-${role}`).value.trim();
+  const out = document.getElementById(`ps-found-${role}`);
+  if (q.length < 2) { out.innerHTML = ''; return; }
+  const key = psNormName(q);
+  const taken = new Set(psPeople[role].filter((p) => p.guestId != null).map((p) => p.guestId));
+  const hits = (attState.programme.faculty || []).filter((f) => !f.cancelled && !taken.has(f.id) && key && psNormName(f.name).includes(key)).slice(0, 8);
+  const btn = 'w-full text-left px-2.5 py-1.5 rounded-lg border text-sm';
+  out.innerHTML = hits.map((f) => `<button type="button" onclick="addSessionPerson('${role}', ${Number(f.id)})" class="${btn} border-slate-200 hover:bg-slate-50">
+      <span class="font-semibold text-slate-800">${esc(f.name)}</span>${f.designation ? `<span class="block text-[11px] text-slate-500 truncate">${esc(f.designation)}</span>` : ''}</button>`).join('')
+    + `<div class="flex flex-wrap gap-1.5 pt-0.5">
+      <button type="button" onclick="startNewFaculty('${role}')" class="px-2.5 py-1 rounded-lg border border-indigo-300 text-indigo-700 text-xs font-semibold hover:bg-indigo-50">Add “${esc(q)}” to the faculty list</button>
+      <button type="button" onclick="addSessionText('${role}')" class="px-2.5 py-1 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-50">Keep “${esc(q)}” as words</button></div>`;
+}
+
+function addSessionPerson(role, guestId) {
+  const f = (attState.programme.faculty || []).find((x) => x.id === guestId);
+  if (f && !psPeople[role].some((p) => p.guestId === guestId)) psPeople[role].push({ guestId, name: f.name });
+  renderSessionPeople(role);
+  const input = document.getElementById(`ps-find-${role}`);
+  if (input && input.focus) input.focus();
+}
+function addSessionText(role) {
+  const text = document.getElementById(`ps-find-${role}`).value.replace(/\s+/g, ' ').trim();
+  if (text) psPeople[role].push({ text, name: text });
+  renderSessionPeople(role);
+}
+function removeSessionPerson(role, i) {
+  psPeople[role].splice(i, 1);
+  renderSessionPeople(role);
+}
+
+// Someone not yet faculty: name (as typed), and what is known, to the
+// faculty list. `i` is the dashed chip being turned into them, if any.
+function startNewFaculty(role, i) {
+  const name = i != null ? psPeople[role][i].text : document.getElementById(`ps-find-${role}`).value.trim();
+  const out = document.getElementById(`ps-found-${role}`);
+  const field = 'w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm outline-none';
+  out.innerHTML = `<div class="rounded-lg border border-indigo-200 bg-indigo-50/60 p-2.5 space-y-1.5">
+      <p class="text-xs font-semibold text-indigo-900">Add to the faculty list</p>
+      <input id="ps-new-name-${role}" value="${esc(name)}" maxlength="120" placeholder="Name *" class="${field}">
+      <input id="ps-new-designation-${role}" maxlength="300" placeholder="Designation" class="${field}">
+      <div class="grid grid-cols-2 gap-1.5"><input id="ps-new-phone-${role}" inputmode="tel" maxlength="20" placeholder="Phone" class="${field}">
+        <input id="ps-new-email-${role}" type="email" maxlength="120" placeholder="Email" class="${field}"></div>
+      <p class="text-[11px] text-slate-500">A phone or email helps: if they have an account, it is used instead, and nobody is added twice.</p>
+      <p id="ps-new-msg-${role}" class="hidden text-xs text-amber-900"></p>
+      <div class="flex gap-1.5"><button type="button" onclick="submitNewFaculty('${role}', ${i == null ? 'null' : Number(i)})" class="h-8 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Add to faculty list</button>
+        <button type="button" onclick="renderSessionPeople('${role}')" class="h-8 px-3 border border-slate-300 text-slate-700 text-xs font-semibold rounded-lg">Cancel</button></div>
+    </div>`;
+}
+
+// Into the session, in place of the words it replaces (if any).
+function placeSessionFaculty(role, i, guestId, name) {
+  const fac = attState.programme.faculty || (attState.programme.faculty = []);
+  if (!fac.some((f) => f.id === guestId)) fac.push({ id: guestId, name, designation: '', cancelled: false });
+  const already = psPeople[role].some((p) => p.guestId === guestId);
+  if (i != null && psPeople[role][i]) {
+    if (already) psPeople[role].splice(i, 1); else psPeople[role][i] = { guestId, name };
+  } else if (!already) psPeople[role].push({ guestId, name });
+  renderSessionPeople(role);
+}
+
+async function submitNewFaculty(role, i, account) {
+  const v = (k) => (document.getElementById(`ps-new-${k}-${role}`) || {}).value || '';
+  const body = account ? { phone: account.phone_number } : { guest: { name: v('name'), designation: v('designation'), phone: v('phone'), email: v('email') } };
+  const data = await (await fetch('/api/admin/programme/faculty', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })).json().catch(() => ({}));
+  const msg = document.getElementById(`ps-new-msg-${role}`);
+  const say = (html) => { if (msg) { msg.innerHTML = html; msg.classList.remove('hidden'); } };
+  if (data.success) {
+    placeSessionFaculty(role, i, data.id, data.name);
+    showToast(`${data.name} added to the faculty list${data.linked && !data.registered ? ' (not registered yet)' : ''}.`, 'success');
+    return;
+  }
+  if (data.code === 'GUEST_EXISTS' && data.guestId) {
+    const f = (attState.programme.faculty || []).find((x) => x.id === data.guestId);
+    placeSessionFaculty(role, i, data.guestId, f ? f.name : v('name'));
+    showToast(`Already on the faculty list: ${f ? f.name : 'added them from there'}.`, 'success');
+    return;
+  }
+  if (data.code === 'ACCOUNT_EXISTS' && data.account) {
+    if (data.account.guestId) {
+      placeSessionFaculty(role, i, data.account.guestId, data.account.name);
+      showToast(`${data.account.name} is already on the faculty list.`, 'success');
+      return;
+    }
+    psPendingAccount = data.account;
+    say(`${esc(data.error)} <button type="button" onclick="submitNewFaculty('${role}', ${i == null ? 'null' : Number(i)}, psPendingAccount)" class="ml-1 px-2 py-0.5 bg-indigo-600 text-white rounded-md text-[11px] font-semibold">Mark ${esc(data.account.name)} as faculty</button>`);
+    return;
+  }
+  say(esc(data.error || 'Could not add them.'));
 }
 
 async function deleteProgrammeSession() {
