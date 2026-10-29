@@ -10,38 +10,49 @@ const row=new Function(`
   ${grab('esc')} ${grab('inr')} ${grab('fmtAuditTime')}
   ${grabConst('ADMIN_ICON_SVG')}
   ${grab('ICON')}
-  let reviewRegVerified=false;
+  let reviewRegVerified=false; let reviewStepOffset=0;
+  const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT/RTGS', CASH: 'Cash' };
+  ${grab('reviewCheckMark')}
   ${grab('reviewTxnRowHtml')}
   return reviewTxnRowHtml;`)();
 
 (async()=>{
- console.log('\n== The row identifies the payment by the statement line ==');
+ console.log("\n== The card: the delegate's claim beside the bank's line ==");
  const linked=row({id:1,amount:2000,verified_amount:750,txn_status:'VERIFIED',payment_mode:'UPI',
    utr_number:'128217278187',bank_txn_id:518,bank_txn_date:'2026-08-20',bank_txn_credit:750,
    bank_txn_description:'UPI/RRN 128217278187/UPI_PRIYANKA ANVIKAR POTHARE',submitted_at:Date.now(),has_screenshot:1});
- check('the statement description is shown', linked.includes('UPI_PRIYANKA ANVIKAR POTHARE'));
- check('the delegate-typed UTR is not shown on its own',
-   !/>\s*128217278187\s*</.test(linked), (linked.match(/>[^<]*128217278187[^<]*</)||[''])[0]);
- check('the description sits where the UTR used to, at the head of the row',
-   linked.indexOf('UPI_PRIYANKA') < linked.indexOf('₹750'));
- check('long descriptions truncate rather than shove the amount off',
-   /truncate/.test(linked) && /min-w-0/.test(linked));
- check('the full text is available on hover', /title="UPI\/RRN 128217278187/.test(linked));
- check('amount and status stay put', linked.includes('₹750') && linked.includes('VERIFIED'));
- check('the link line still shows the credit', linked.includes('<svg'));
+ const saysCol=linked.slice(linked.indexOf('The delegate says'), linked.indexOf('The bank shows'));
+ const bankCol=linked.slice(linked.indexOf('The bank shows'));
+ check('the bank\'s own statement line is in the bank column', bankCol.includes('UPI_PRIYANKA ANVIKAR POTHARE'));
+ check('the delegate-typed UTR is shown only as their claim, never as the bank\'s record', saysCol.includes('128217278187') && !/>\s*128217278187\s*</.test(bankCol));
+ check('long descriptions truncate, the full text on hover', /truncate/.test(bankCol) && /title="UPI\/RRN 128217278187/.test(bankCol));
+ check('the credit that arrived, and the step done', bankCol.includes('₹750') && /Done</.test(linked));
+ check('the link line still carries its icon', linked.includes('<svg'));
 
- console.log('\n== Nothing linked yet -> no statement line to show ==');
+ console.log('\n== Nothing linked yet ==');
  const unlinked=row({id:2,amount:1250,verified_amount:null,txn_status:'PENDING',payment_mode:'UPI',
    utr_number:'999888777666',bank_txn_id:null,bank_txn_description:null,submitted_at:Date.now(),has_screenshot:0});
- check('says so plainly', unlinked.includes('Not yet in the statement'));
- check('does not fall back to the delegate UTR', !unlinked.includes('999888777666'));
- check('still offers Link & acknowledge', unlinked.includes('Link &amp; acknowledge'));
+ check('the bank column says so, and asks for the credit', /Not linked yet\. Pick the credit:/.test(unlinked) && /id="txn-candidates-2"/.test(unlinked));
+ check('...the step is still to do', /To do</.test(unlinked));
 
  console.log('\n== Cash taken at the desk ==');
  const cash=row({id:3,amount:500,verified_amount:500,txn_status:'VERIFIED',payment_mode:'CASH',
-   utr_number:null,bank_txn_id:null,bank_txn_description:null,submitted_at:Date.now(),has_screenshot:0});
+   utr_number:null,bank_txn_id:null,bank_txn_description:null,submitted_at:Date.now(),has_screenshot:0,collected_by:'Desk A'});
  check('no em-dash placeholder where the UTR was', !/>—</.test(cash));
- check('shows the not-yet-banked state', cash.includes('not yet banked'));
+ check('says who took it, and that it is not yet banked', /₹500 in cash, taken by Desk A/.test(cash) && /Not yet banked/.test(cash));
+
+ console.log('\n== The likely credits, best match first ==');
+ const rank=new Function(`${grab('rankTxnCandidates')} return rankTxnCandidates;`)();
+ const credits=[
+   {id:1,remaining:1500,credit:1500,description:'UPI/RRN 555000111222/SOMEONE ELSE'},
+   {id:2,remaining:1490,credit:1490,description:'UPI/RRN 999888777666/THE DELEGATE'},
+   {id:3,remaining:1500,credit:1500,description:'NEFT XYZ 123'},
+ ];
+ const ranked=rank({amount:1500,utr_number:'999888777666'}, credits);
+ check('their transaction ID in the bank\'s description comes first, even a few rupees off', ranked[0].id===2 && ranked[0].ref===true && ranked[0].amount===false);
+ check('then the exact amounts, in the server\'s order', ranked[1].id===1 && ranked[2].id===3);
+ const noRef=rank({amount:1500,utr_number:''}, credits);
+ check('no transaction ID: exact amounts first, server order kept', noRef.map(c=>c.id).join()==='1,3,2');
 
  console.log('\n== The server actually sends the description ==');
  let r = { cookie: await adminLogin() };

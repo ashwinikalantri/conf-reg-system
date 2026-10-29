@@ -6085,6 +6085,9 @@ app.get('/api/registrations', requirePermission('payments.view'), async (req, re
       `SELECT pt.id, pt.registration_id, pt.amount, pt.verified_amount, pt.utr_number, pt.payment_mode,
               pt.txn_status, pt.is_flagged, pt.bank_txn_id, pt.rejection_reason, pt.rejection_note, pt.submitted_at,
               pt.reviewed_by, pt.reviewed_at,
+              -- Each payment's own automated checks and, for cash, who took it:
+              -- the review shows them against that payment.
+              pt.ocr_amount_match, pt.ocr_vpa_match, pt.ocr_utr_match, pt.collected_by,
               (pt.screenshot IS NOT NULL AND pt.screenshot != '') AS has_screenshot,
               b.post_date AS bank_txn_date, b.credit AS bank_txn_credit, b.description AS bank_txn_description
          FROM payment_transactions pt

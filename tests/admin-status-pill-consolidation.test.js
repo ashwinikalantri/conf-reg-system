@@ -33,8 +33,8 @@ check('...with a bordered tone for every state it can take',
   && /due: 'bg-amber-100 text-amber-800 border-amber-300'/.test(js)
   && /off: 'bg-slate-100 text-slate-500 border-slate-300'/.test(js)
   && /bad: 'bg-red-100 text-red-800 border-red-300'/.test(js));
-check('review-modal verdict pill is the canonical shape',
-  /verdict\.className = `text-xs font-bold px-2\.5 py-1 rounded-full border \$\{pillTone\}`/.test(js));
+check('review-modal verdict pill is the canonical shape (now in the header)',
+  /verdict\.className = `shrink-0 self-center text-xs font-bold px-2\.5 py-1 rounded-full border \$\{pillTone\}`/.test(js));
 check('review verdict tone map is bordered for all four states',
   ['BANK_VERIFIED', 'REJECTED', 'PARTIAL_PAYMENT', 'PENDING'].every((k) => new RegExp(`${k}: \\['[^']+', '[^']*border-[\\w]+-300'`).test(js)));
 check('REG_STATUS_STYLES (users table) is bordered for all four states',
@@ -75,8 +75,8 @@ check('the "Sent within 24h" tag is bordered',
   /bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0\.5 rounded-full font-bold">Sent within 24h<\/span>/.test(js));
 check('the payment-mode ledger tag is bordered and font-bold (was font-semibold, no border)',
   /bg-slate-100 text-slate-600 border border-slate-300 text-\[10px\] font-bold px-2 py-0\.5 rounded-full">\$\{esc\(PAYMENT_MODE_LABELS/.test(js));
-check('review-category-locked-badge (fixed during the icon pass) already matches the compact spec',
-  /text-\[10px\] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0\.5/.test(
+check('review-category-locked-badge matches the compact spec (12px since the review redesign)',
+  /text-xs font-bold text-navy bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0\.5/.test(
     fs.readFileSync(appFile('views', 'admin', 'modals', 'review.ejs'), 'utf8')));
 check('the Matched table\'s "rejected" tag (found during phase 09/10\'s statement pass, missed here because it used plain `rounded` not `rounded-full`)',
   /text-\[10px\] font-bold text-rose-800 bg-rose-100 border border-rose-300 rounded-full px-2 py-0\.5">rejected<\/span>/.test(js));

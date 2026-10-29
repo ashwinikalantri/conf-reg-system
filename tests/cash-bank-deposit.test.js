@@ -14,7 +14,9 @@ check('the under-used SMALL DEPOSIT still is', unmatched.some(d=>d.includes('SMA
 
 console.log('\n== Cash reads correctly in the review ledger ==');
 const js=(await call('GET','/app.js',null,null)).raw;
-check('cash never says "Not acknowledged"', /isCash\s*\n?\s*\?\s*`<span class="text-slate-500">💵 Cash taken at the desk/.test(js) || /Cash taken at the desk/.test(js));
+const cashRow=js.slice(js.indexOf('function reviewTxnRowHtml('), js.indexOf('\n}', js.indexOf('function reviewTxnRowHtml(')));
+check('cash never says "Not acknowledged"', !/Not acknowledged/.test(cashRow) && /in cash\$\{t\.collected_by \?/.test(cashRow));
+check('...its bank side says it is not yet banked', /Not yet banked — reconciled from the Bank Statement tab/.test(cashRow));
 check('cash shows "not yet banked" instead', /not yet banked/.test(js));
 check('cash has no per-delegate Link button', /reviewRegVerified \|\| isCash \? '' :/.test(js));
 

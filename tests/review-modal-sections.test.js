@@ -49,35 +49,35 @@ fs=require('fs');
  check('NEFT/RTGS gets no Mode mark at all', run('NEFT_RTGS')==='', JSON.stringify(run('NEFT_RTGS')));
  check('UPI still gets its Mode mark', run('UPI').includes('<svg') && run('UPI').includes('rose'), JSON.stringify(run('UPI')));
 
- console.log('\n== 3. Two main sections ==');
- const secs=[...h.matchAll(/<h4 class="text-xs font-extrabold[^"]*">([^<]+)<\/h4>/g)].map(m=>m[1]);
- check('exactly two section headings', secs.length===2, JSON.stringify(secs));
- check('ID Verification comes first, Payment Verification second',
-   secs[0]==='ID Verification' && secs[1]==='Payment Verification', JSON.stringify(secs));
- const iP=h.indexOf('>Payment Verification<'), iI=h.indexOf('>ID Verification<');
- check('the money detail lives under Payment Verification', iP < h.indexOf('id="review-txn-ledger"'));
+ console.log('\n== 3. The review as steps ==');
+ const iI=h.indexOf('id="review-idverify-wrap"'), iP=h.indexOf('id="review-payment-progress"');
+ check('the student ID step comes first, the payments after', iI>-1 && iP>iI);
+ check('the ID step is a <section> that hides as a whole (non-student categories)', /<section id="review-idverify-wrap" class="hidden/.test(h)
+   && h.indexOf('id="review-idverify-checkbox"') > iI && h.indexOf('id="review-idverify-checkbox"') < iP);
+ const idBlock=h.slice(iI, iP);
+ check('...and closes before the payments, so hiding it never hides them', idBlock.includes('</section>'));
+ check('each payment is a step card: what the delegate says beside what the bank shows',
+   /The delegate says/.test(js) && /The bank shows/.test(js) && /Payment \$\{esc\(i \+ 1\)\} · ₹/.test(js));
+ check('the step badge numbers payments after the ID step', /const n = reviewStepOffset \+ i \+ 1;/.test(js) && /reviewStepOffset = isStudent \? 1 : 0;/.test(js));
+ check('an unlinked payment loads its likely credits in its own card', /<div id="txn-candidates-\$\{esc\(t\.id\)\}"/.test(js)
+   && /txns\.filter\(\(t\) => t\.txn_status === 'PENDING' && t\.bank_txn_id == null && t\.payment_mode !== 'CASH'\)\.forEach\(\(t\) => toggleTxnCandidates\(t\.id\)\)/.test(js));
+ check('...best match first: the reference in the description, then the amount', /function rankTxnCandidates\(/.test(js) && /Best match: amount and reference/.test(js));
 
- console.log('\n== 4. The "Before you can verify" box sits above both sections ==');
+ console.log('\n== 4. What is owed up top; what is left beside the buttons ==');
  const iStrip=h.indexOf('id="review-status-strip"');
- check('the strip is above ID Verification', iStrip>-1 && iStrip < iI, `${iStrip} vs ${iI}`);
- check('and therefore above Payment Verification too', iStrip < iP);
- check('but still below the delegate name', h.indexOf('id="review-name"') < iStrip);
- check('its gate list moved with it', h.indexOf('id="review-gate-list"') > iStrip && h.indexOf('id="review-gate-list"') < iI);
- check('fee/paid/balance moved with it too',
-   [ 'review-strip-fee','review-strip-paid','review-strip-balance','review-strip-verdict' ]
-     .every(id=>{const k=h.indexOf(`id="${id}"`); return k>iStrip && k<iI;}));
- check('it is no longer inside the Payment Verification section', !(iStrip>iP));
- check('the ID checkbox lives under ID Verification, above the money',
-   iI < h.indexOf('id="review-idverify-checkbox"') && h.indexOf('id="review-idverify-checkbox"') < iP);
- check('ID Verification is a <section> that hides as a whole',
-   /<section id="review-idverify-wrap" class="hidden/.test(h));
- check('...so non-student categories see no stray heading',
-   h.indexOf('>ID Verification<') > h.indexOf('id="review-idverify-wrap"'));
- // The ID section closes before Payment Verification starts, so hiding the
- // former can never take the latter with it.
- const idBlock=h.slice(h.indexOf('id="review-idverify-wrap"'), iP);
- check('and Payment Verification, sitting outside that wrapper, always shows',
-   idBlock.includes('</section>') && !idBlock.includes('>Payment Verification<'));
- check('Corrections stays outside both sections', h.indexOf('id="review-corrections"') > iP);
+ check('fee, paid and balance sit above the steps', iStrip>-1 && iStrip<iI
+   && ['review-strip-fee','review-strip-paid','review-strip-balance'].every(id=>{const k=h.indexOf(`id="${id}"`); return k>iStrip && k<iI;}));
+ check('the status pill is in the header, beside who this is', h.indexOf('id="review-strip-verdict"') < h.indexOf('id="review-img-switcher"')
+   && h.indexOf('id="review-name"') < h.indexOf('id="review-strip-verdict"'));
+ const iFoot=h.indexOf('id="review-gate-list"');
+ check('what is still left sits in the footer, beside Accept', iFoot > h.indexOf('id="review-corrections"') && iFoot < h.indexOf('id="review-accept-btn"'));
+ check('...said in words, or "Ready to verify"', /step\$\{left\.length === 1 \? '' : 's'\} left: \$\{left\.join\(' · '\)\}/.test(js) && /'Ready to verify'/.test(js));
+ check('the rare actions are under More, shown only when they apply', /<details id="review-more" class="hidden/.test(h)
+   && h.indexOf('id="review-revise-btn"') > h.indexOf('id="review-more"') && h.indexOf('id="review-unapprove-btn"') > h.indexOf('id="review-more"'));
+ check('Accept & verify is navy; Reject outlined in rose', /id="review-accept-btn"[^>]*bg-navy/.test(h) && /id="review-reject-btn"[^>]*border-rose-300 text-rose-700/.test(h));
+ check('the close button is a real, labelled 44px button', /onclick="closeModal\('modal-review'\)" aria-label="Close" class="shrink-0 w-11 h-11/.test(h));
+ const modal=h.slice(h.indexOf('id="modal-review"'), h.indexOf('id="review-accept-btn"'));
+ check('no 10px capitals left in the modal', !/text-\[10px\][^"]*uppercase|uppercase[^"]*text-\[10px\]/.test(modal));
+ check('Corrections stays below the payments', h.indexOf('id="review-corrections"') > iP);
  report();
 })();

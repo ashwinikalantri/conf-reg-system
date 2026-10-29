@@ -4945,10 +4945,13 @@ function openReviewModal(id) {
   if (!p) return;
   reviewTargetId = id;
 
-  setText('review-title', p.is_flagged ? 'Review Payment (Flagged)' : 'Review Payment');
+  setText('review-title', p.is_flagged ? 'Review registration (flagged)' : 'Review registration');
   setText('review-name', p.delegate_name);
   setText('review-category', p.category_label);
-  setText('review-regno', p.registration_number ? `Reg No. ${p.registration_number}` : '');
+  setText('review-regno', p.registration_number ? ` · ${p.registration_number}` : '');
+  // One claim, no per-payment rows (an older registration): shown on its own.
+  const legacyClaim = document.getElementById('review-claim-legacy');
+  if (legacyClaim) legacyClaim.classList.toggle('hidden', (p.transactions || []).length > 0);
   // Context for the decision, not the decision itself -- one wrapped line
   // rather than four labelled cells. Blank fields drop out entirely instead
   // of rendering a row of em-dashes.
@@ -5031,6 +5034,14 @@ function openReviewModal(id) {
     }
   }
 
+  // "More" in the footer: shown only when it holds something.
+  const more = document.getElementById('review-more');
+  if (more) {
+    more.open = false;
+    more.classList.toggle('hidden', ['review-revise-btn', 'review-unapprove-btn', 'review-unreject-btn']
+      .every((id) => { const b = document.getElementById(id); return !b || b.classList.contains('hidden'); }));
+  }
+
   renderReviewIdVerification(p);
   // Bank reconciliation is per transaction, inside the ledger.
   renderReviewPaymentProgress(p);
@@ -5060,6 +5071,8 @@ let reviewImageBlobUrls = {};
 let reviewImageTabs = [];
 let reviewImageZoomed = false;
 let reviewImageWhich = '';
+// The documents opened this time: each tab says Seen or Not opened.
+let reviewImageSeen = new Set();
 
 // Build this registration's evidence tabs and show the first one.
 function buildReviewEvidence(p) {
@@ -5101,6 +5114,7 @@ function buildReviewEvidence(p) {
   }
 
   reviewImageZoomed = false;
+  reviewImageSeen = new Set();
   setReviewImage(reviewImageTabs.length ? reviewImageTabs[0].key : '');
   prefetchReviewImages();
 }
@@ -5136,6 +5150,7 @@ function fetchReviewImage(key) {
 
 function setReviewImage(which) {
   reviewImageWhich = which;
+  if (which) reviewImageSeen.add(which);
   const img = document.getElementById('review-screenshot');
   const empty = document.getElementById('review-img-empty');
   const link = document.getElementById('review-img-open-link');
@@ -5209,20 +5224,16 @@ function setReviewImage(which) {
       const active = key === which;
       // icon is our own markup (ICON()) and goes in as-is; only the text is
       // escaped. Escaping the pair together printed the SVG source instead.
-      return `<button type="button" onclick="setReviewImage('${esc(key)}')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition ${
-        active ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-300 hover:text-white hover:bg-slate-700'}">${icon || ''}${esc(label)}</button>`;
+      const seen = reviewImageSeen.has(key);
+      return `<button type="button" role="tab" aria-selected="${active}" onclick="setReviewImage('${esc(key)}')" class="flex items-center gap-1.5 h-10 px-3 rounded-lg text-sm font-bold transition ${
+        active ? 'bg-white text-slate-900 shadow-sm' : 'border border-slate-600 text-slate-200 hover:text-white hover:bg-slate-700'}">${icon || ''}${esc(label)}<span class="font-semibold ${seen ? (active ? 'text-emerald-700' : 'text-emerald-300') : 'text-amber-300'}">· ${seen ? 'Seen' : 'Not opened'}</span></button>`;
     }).join('');
   }
   // Nudges a reviewer looking at a payment slip to also open the ID card --
   // the document that actually gates Accept & Verify for a student category
   // -- rather than letting it go unnoticed as a small inactive tab. Clears
   // itself the moment they switch to it.
-  const hint = document.getElementById('review-img-switcher-hint');
-  if (hint) {
-    const nudge = !!reviewImageUrls.idcard && multi && which !== 'idcard';
-    hint.textContent = '← also check the ID card';
-    hint.classList.toggle('hidden', !nudge);
-  }
+  // (The old "check both" nudge is the tabs' own Seen / Not opened now.)
   applyReviewImageZoom();
 }
 
@@ -5273,19 +5284,18 @@ function renderReviewStatusStrip(p) {
   if (balWrap) balWrap.classList.toggle('hidden', balance <= 0);
   setText('review-strip-balance', `₹${inr(balance)}`);
 
+  // The status, in the header beside who this is. Same pill shape as the
+  // approval list (see paymentRowHtml).
   const verdict = document.getElementById('review-strip-verdict');
   const TONE = {
-    BANK_VERIFIED: ['Verified', 'bg-emerald-100 text-emerald-800 border-emerald-300', 'bg-emerald-50 border-emerald-200'],
-    REJECTED: ['Rejected', 'bg-rose-100 text-rose-800 border-rose-300', 'bg-rose-50 border-rose-200'],
-    PARTIAL_PAYMENT: ['Partial', 'bg-orange-100 text-orange-800 border-orange-300', 'bg-orange-50 border-orange-200'],
-    PENDING: ['Pending', 'bg-amber-100 text-amber-800 border-amber-300', 'bg-amber-50 border-amber-200'],
+    BANK_VERIFIED: ['Verified', 'bg-emerald-100 text-emerald-800 border-emerald-300'],
+    REJECTED: ['Rejected', 'bg-rose-100 text-rose-800 border-rose-300'],
+    PARTIAL_PAYMENT: ['Balance due', 'bg-rose-100 text-rose-800 border-rose-300'],
+    PENDING: ['Awaiting decision', 'bg-amber-100 text-amber-800 border-amber-300'],
   };
-  const [label, pillTone, stripTone] = TONE[p.bank_status] || TONE.PENDING;
-  // Same canonical status-pill shape as the payment table and the users
-  // table -- see paymentRowHtml.
-  if (verdict) verdict.className = `text-xs font-bold px-2.5 py-1 rounded-full border ${pillTone}`;
+  const [label, pillTone] = TONE[p.bank_status] || TONE.PENDING;
+  if (verdict) verdict.className = `shrink-0 self-center text-xs font-bold px-2.5 py-1 rounded-full border ${pillTone}`;
   if (verdict) verdict.textContent = label;
-  strip.className = `rounded-lg border p-3 ${stripTone}`;
 
   updateReviewAcceptGate();
 }
@@ -5310,7 +5320,11 @@ function renderReviewPaymentProgress(p) {
   if (wrap) wrap.classList.toggle('hidden', txns.length === 0);
   if (ledger && txns.length) {
     setText('review-progress-summary', `₹${inr(verifiedTotal)} / ₹${inr(fee)}${remaining > 0 ? ` · ₹${inr(remaining)} due` : ' · fully paid'}`);
-    ledger.innerHTML = txns.map(reviewTxnRowHtml).join('');
+    ledger.innerHTML = txns.map((t, i) => reviewTxnRowHtml(t, i)).join('');
+    // The credits each unlinked bank payment could be, ready in its card.
+    if (can('payments.link')) {
+      txns.filter((t) => t.txn_status === 'PENDING' && t.bank_txn_id == null && t.payment_mode !== 'CASH').forEach((t) => toggleTxnCandidates(t.id));
+    }
   }
 
   // Verify gate: no unacknowledged (pending) payments may remain -- linking a
@@ -5420,93 +5434,117 @@ async function deleteRefund(refundId) {
   openReviewModal(reviewTargetId);
 }
 
-// One transaction row in the reconciliation ledger: amount + status on top,
-// bank-link state below. Linking a payment to its bank credit acknowledges
-// (verifies) it, so a linked row shows VERIFIED with an Unlink control (until
-// the whole registration is confirmed); an unlinked row offers a Link button
-// with a collapsible candidate picker.
-function reviewTxnRowHtml(t) {
-  const TONE = { VERIFIED: 'text-emerald-700', PENDING: 'text-amber-700', REJECTED: 'text-rose-600' };
+// One payment, as a step of the review: what the delegate says (amount,
+// mode, transaction ID, each with its automated check) beside what the bank
+// shows (the linked credit, or the credits to link it to). Linking a payment
+// to its bank credit is what acknowledges it.
+function reviewTxnRowHtml(t, i = 0) {
   const amt = t.txn_status === 'VERIFIED' && t.verified_amount != null ? t.verified_amount : t.amount;
   const linked = t.bank_txn_id != null;
   const isRejected = t.txn_status === 'REJECTED';
-  // Unlink is offered on a linked payment until the registration itself is
-  // confirmed (BANK_VERIFIED) -- undoing a link un-acknowledges the payment.
-  // Cash is a different claim from a bank payment. It was acknowledged the
-  // moment it was taken at the desk, so "not acknowledged" would be wrong and
-  // "Link & acknowledge" would offer to do something already done -- what's
-  // outstanding is only whether it has been BANKED, which is reconciled in
-  // bulk from the Bank Statement tab, not one delegate at a time. See the
-  // cash-deposit endpoints in server.js.
+  // Cash was acknowledged when it was taken at the desk; what is left is only
+  // whether it has been BANKED, reconciled in bulk from the Bank Statement tab.
   const isCash = t.payment_mode === 'CASH';
-  const linkLine = linked
-    ? `<span class="text-emerald-700 font-semibold">${ICON('link')}${isCash ? 'Banked ' : ''}${esc(t.bank_txn_date || '')} · ₹${inr(esc(t.bank_txn_credit != null ? t.bank_txn_credit : ''))}</span>`
-        + (reviewRegVerified || isCash ? '' : ` <button type="button" class="text-rose-600 hover:underline font-semibold ml-1" onclick="unlinkTxn(${esc(t.id)})">Unlink</button>`)
-    : isRejected
-      ? `<span class="text-slate-400">Rejected — not linked</span>`
-      : isCash
-        ? `<span class="text-slate-500">${ICON('coin')}Cash taken at the desk — <span class="text-amber-700 font-semibold">not yet banked</span></span>`
-        : `<span class="text-amber-700 font-semibold">${ICON('warning')}Not acknowledged</span> <button type="button" class="text-indigo-600 hover:underline font-semibold ml-1" onclick="toggleTxnCandidates(${esc(t.id)})">Link &amp; acknowledge</button>`;
-  // Each payment keeps its OWN slip (payment_transactions.screenshot), unlike
-  // registrations.screenshot which the next submission overwrites -- so this
-  // is how the original partial payment's slip stays reachable after a
-  // top-up. Shown in the evidence pane on the left, same as the others.
-  // A real button, matching View ID Card in the ID section -- opening the
-  // evidence for a payment is the same kind of act as opening the evidence
-  // for a student ID, and it read as an afterthought as a text link.
+  const done = t.txn_status === 'VERIFIED';
+  const n = reviewStepOffset + i + 1;
+  const mode = PAYMENT_MODE_LABELS[t.payment_mode] || t.payment_mode || 'UPI';
+  const badge = `<span aria-hidden="true" class="w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-sm font-bold text-white ${done ? 'bg-emerald-700' : isRejected ? 'bg-slate-400' : 'bg-navy'}">${done ? '✓' : esc(n)}</span>`;
+  const state = done ? '<span class="text-sm font-bold text-emerald-800">Done</span>'
+    : isRejected ? '<span class="text-sm font-bold text-slate-500">Rejected</span>' : '<span class="text-sm font-bold text-amber-800">To do</span>';
+  // Each payment keeps its own slip; opening it shows it in the documents.
   const slipBtn = t.has_screenshot
-    ? `<button type="button" class="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-navy hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg" onclick="showTxnSlip(${esc(t.id)})">${ICON('document')}Payment Slip</button>`
-    : `<span class="text-slate-400 text-[10px]">No slip on file</span>`;
-  // The bank statement's own description of the credit this payment landed
-  // as -- the bank's words, not the delegate's. The UTR shown here before was
-  // typed in by the delegate: a CLAIM about a payment, unverified and
-  // sometimes simply wrong. Once a payment is linked, the statement line is
-  // the authoritative record of what actually arrived, so that's what a
-  // reviewer should be reading against. Descriptions run long, so it
-  // truncates with the full text on hover.
-  const stmtDesc = t.bank_txn_description
-    ? `<span class="font-mono text-slate-500 truncate min-w-0" title="${esc(t.bank_txn_description)}">${esc(t.bank_txn_description)}</span>`
-    : `<span class="text-slate-400 italic shrink-0">Not yet in the statement</span>`;
-  return `<div class="border border-slate-200 rounded-lg p-2 bg-white">
-    <div class="flex items-center justify-between gap-2">
-      ${stmtDesc}
-      <span class="flex items-center gap-2 shrink-0">
-        <span class="font-semibold">₹${inr(Number(amt))}</span>
-        <span class="font-bold ${TONE[t.txn_status] || 'text-slate-500'}">${esc(t.txn_status)}</span>
-      </span>
+    ? `<button type="button" class="shrink-0 h-9 px-3 rounded-lg border border-navy text-navy hover:bg-indigo-50 text-sm font-semibold" onclick="showTxnSlip(${esc(t.id)})">View slip</button>`
+    : '<span class="text-xs text-slate-500">No slip on file</span>';
+  const says = isCash
+    ? `<p>₹${inr(Number(t.amount))} in cash${t.collected_by ? `, taken by ${esc(t.collected_by)}` : ''}</p>`
+    : `<p class="flex items-center gap-1.5">${reviewCheckMark(t.ocr_amount_match, 'The amount')}<span>₹${inr(Number(t.amount))} by ${esc(mode)}</span></p>
+       ${t.payment_mode === 'NEFT_RTGS' ? '' : `<p class="flex items-center gap-1.5">${reviewCheckMark(t.ocr_vpa_match, 'The UPI ID')}<span>UPI ID on the slip</span></p>`}
+       ${t.utr_number ? `<p class="flex items-center gap-1.5 min-w-0">${reviewCheckMark(t.ocr_utr_match, 'The transaction ID')}<span class="font-mono text-[13px] break-all">${esc(t.utr_number)}</span></p>` : ''}`;
+  // The bank statement's own line: the authoritative record of what arrived.
+  const shows = linked
+    ? `<p class="font-semibold text-emerald-800">${ICON('link')}${isCash ? 'Banked: ' : ''}₹${inr(esc(t.bank_txn_credit != null ? t.bank_txn_credit : ''))} on ${esc(t.bank_txn_date || '')}</p>
+       ${t.bank_txn_description ? `<p class="font-mono text-[13px] text-slate-600 truncate" title="${esc(t.bank_txn_description)}">${esc(t.bank_txn_description)}</p>` : ''}
+       ${reviewRegVerified || isCash ? '' : `<button type="button" class="text-sm text-rose-700 hover:underline font-semibold" onclick="unlinkTxn(${esc(t.id)})">Unlink</button>`}`
+    : isRejected
+      ? '<p class="text-slate-500">Rejected — not linked</p>'
+      : isCash
+        ? '<p class="text-slate-600">Not yet banked — reconciled from the Bank Statement tab</p>'
+        : `<p class="font-semibold text-amber-800">Not linked yet. Pick the credit:</p>
+           <div id="txn-candidates-${esc(t.id)}" class="space-y-1.5"><p class="text-xs text-slate-500">Looking for matching credits…</p></div>`;
+  return `<article class="rounded-xl p-4 space-y-3 ${done ? 'border border-emerald-200 bg-emerald-50/40' : isRejected ? 'border border-slate-200 bg-slate-50' : 'border-2 border-gold-500'}">
+    <div class="flex items-center gap-2.5">
+      ${badge}
+      <h4 class="flex-1 min-w-0 text-base font-bold text-slate-900">Payment ${esc(i + 1)} · ₹${inr(Number(amt))} · ${esc(mode)}</h4>
+      ${state}
     </div>
-    <div class="mt-1 text-[10px] text-slate-400">${esc(fmtAuditTime(t.submitted_at) || '')}</div>
-    <!-- The slip button shares the reconciliation row rather than taking one
-         of its own: on its own it was right-aligned against an empty half-row,
-         which read as a gap in the card. The link line is the only thing it
-         could sit beside, and min-w-0 lets that line truncate rather than
-         push the button off. -->
-    <div class="mt-2 flex items-center justify-between gap-2">
-      <div class="text-[10px] min-w-0">${linkLine}</div>
-      ${slipBtn}
+    <div class="grid sm:grid-cols-2 gap-3 text-sm">
+      <div class="space-y-1 min-w-0">
+        <p class="text-xs font-bold text-slate-500">The delegate says</p>
+        ${says}
+        <p class="text-xs text-slate-500">Submitted ${esc(fmtAuditTime(t.submitted_at) || '—')}</p>
+      </div>
+      <div class="space-y-1 min-w-0">
+        <p class="text-xs font-bold text-slate-500">The bank shows</p>
+        ${shows}
+      </div>
     </div>
-    <div id="txn-candidates-${esc(t.id)}" class="hidden mt-2 divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-40 overflow-y-auto"></div>
-  </div>`;
+    <div class="flex justify-end">${slipBtn}</div>
+  </article>`;
 }
 
+// The credits a payment could be: fetched when its card is drawn, best match
+// first -- the delegate's transaction ID in the bank's description, then the
+// exact amount -- three shown, the rest a tap away. The server is still the
+// gate when linking.
+const reviewCandidates = {};
 async function toggleTxnCandidates(txnId) {
   const box = document.getElementById(`txn-candidates-${txnId}`);
   if (!box) return;
-  if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
-  box.classList.remove('hidden');
-  box.innerHTML = '<p class="text-[10px] text-slate-400 p-2">Loading candidates…</p>';
-  const res = await fetch(`/api/payment-transactions/${encodeURIComponent(txnId)}/candidates`);
-  if (!res.ok) { box.innerHTML = '<p class="text-[10px] text-rose-600 p-2">Could not load candidates.</p>'; return; }
-  const rows = (await res.json()).transactions || [];
-  // A credit with less than its full credit still unallocated (partially
-  // claimed by someone else already) shows "₹X of ₹Y available" so the
-  // admin can see at a glance whether this payment's own amount will fit --
-  // the server is still the actual gate at link time.
-  box.innerHTML = rows.length ? rows.map((c) => `
-    <div class="flex items-center justify-between gap-2 p-2 text-[10px]">
-      <div class="min-w-0"><p class="font-semibold text-slate-700">${esc(c.post_date)} · ₹${inr(esc(c.remaining))}${c.remaining !== c.credit ? ` of ₹${inr(esc(c.credit))}` : ''} available</p><p class="text-slate-500 truncate">${esc(c.description)}</p></div>
-      <button type="button" class="shrink-0 px-2 py-1 bg-navy hover:bg-indigo-700 text-white font-semibold rounded" onclick="linkTxnToBank(${esc(txnId)}, ${esc(c.id)})">Link</button>
-    </div>`).join('') : '<p class="text-[10px] text-slate-400 p-2">No unused credits in the statement yet.</p>';
+  box.innerHTML = '<p class="text-xs text-slate-500">Looking for matching credits…</p>';
+  let rows;
+  try {
+    const res = await fetch(`/api/payment-transactions/${encodeURIComponent(txnId)}/candidates`);
+    if (!res.ok) throw new Error('candidates');
+    rows = (await res.json()).transactions || [];
+  } catch (e) {
+    box.innerHTML = '<p class="text-xs text-rose-700">Could not load the bank credits. Close and open this again.</p>';
+    return;
+  }
+  const t = (reviewTxns || []).find((x) => String(x.id) === String(txnId)) || {};
+  reviewCandidates[txnId] = rankTxnCandidates(t, rows);
+  drawTxnCandidates(txnId, false);
+}
+// Score: the reference (the delegate's transaction ID, or its last six
+// digits) in the bank's description; the amount within a rupee. Stable, so
+// the server's order (closest amount, then latest) breaks ties.
+function rankTxnCandidates(t, rows) {
+  const utr = String(t.utr_number || '').replace(/\s+/g, '');
+  const tail = utr.length >= 6 ? utr.slice(-6) : utr;
+  return rows.map((c, i) => {
+    const desc = String(c.description || '').replace(/\s+/g, '');
+    const ref = !!tail && desc.includes(tail);
+    const amount = Math.abs(Number(c.remaining) - Number(t.amount)) < 1;
+    return { ...c, ref, amount, i };
+  }).sort((a, b) => (Number(b.ref) * 2 + Number(b.amount)) - (Number(a.ref) * 2 + Number(a.amount)) || a.i - b.i);
+}
+function drawTxnCandidates(txnId, all) {
+  const box = document.getElementById(`txn-candidates-${txnId}`);
+  const rows = reviewCandidates[txnId] || [];
+  if (!box) return;
+  if (!rows.length) { box.innerHTML = '<p class="text-xs text-slate-500">No unused credits in the bank statement yet. Import the latest statement, then open this again.</p>'; return; }
+  const shown = all ? rows : rows.slice(0, 3);
+  box.innerHTML = shown.map((c, k) => {
+    const best = k === 0 && (c.ref || c.amount);
+    const why = c.ref && c.amount ? 'Best match: amount and reference' : c.ref ? 'Best match: reference' : c.amount ? 'Amount matches' : '';
+    return `<div class="flex items-center gap-2 rounded-lg px-2.5 py-2 ${best ? 'border border-gold-500 bg-gold-50' : 'border border-slate-200'}">
+      <div class="flex-1 min-w-0 text-[13px]">
+        <p><b>₹${inr(esc(c.remaining))}</b>${c.remaining !== c.credit ? ` of ₹${inr(esc(c.credit))}` : ''} · ${esc(c.post_date)}</p>
+        <p class="font-mono text-slate-600 truncate" title="${esc(c.description)}">${esc(c.description)}</p>
+        ${why && k === 0 ? `<p class="text-xs font-bold text-gold-700">${why}</p>` : ''}
+      </div>
+      <button type="button" class="shrink-0 h-9 px-3 rounded-lg text-sm font-semibold ${best ? 'bg-navy hover:bg-indigo-700 text-white' : 'border border-navy text-navy hover:bg-indigo-50'}" onclick="linkTxnToBank(${esc(txnId)}, ${esc(c.id)})">Link</button>
+    </div>`;
+  }).join('') + (!all && rows.length > 3 ? `<button type="button" class="text-sm font-semibold text-navy underline" onclick="drawTxnCandidates(${esc(txnId)}, true)">Show ${rows.length - 3} more</button>` : '');
 }
 
 async function linkTxnToBank(txnId, bankId) {
@@ -5575,6 +5613,7 @@ async function adminAddPayment(bankTxnId, maxRemaining) {
 // approver's confirmation that the ID card verifies that status. Each
 // render function records its own reviewGate flag; this reconciles them.
 const reviewGate = { linked: false, idOk: true };
+let reviewStepOffset = 0;
 function updateReviewAcceptGate() {
   const acceptBtn = document.getElementById('review-accept-btn');
   const blocked = !(reviewGate.linked && reviewGate.idOk);
@@ -5585,21 +5624,21 @@ function updateReviewAcceptGate() {
   // checkbox updates the list immediately. Only rendered while the button is
   // actually on screen -- on an already-verified or rejected registration
   // there's no decision left to gate.
+  // In the footer, beside the buttons: what is still left, in the reviewer's
+  // words -- or that it is ready.
   const list = document.getElementById('review-gate-list');
   if (!list) return;
   const acceptVisible = acceptBtn && !acceptBtn.classList.contains('hidden');
-  if (!acceptVisible) { list.innerHTML = ''; return; }
-  const row = (ok, okText, blockedText) =>
-    `<div class="${ok ? 'text-emerald-700' : 'text-amber-700 font-semibold'}">${ok ? ICON('check') : ICON('circle')} ${ok ? okText : blockedText}</div>`;
-  const rows = [row(reviewGate.linked, 'All payments linked to bank credits', 'Link every payment to its bank credit below')];
-  // idOk is true for non-student categories, where there's nothing to confirm
-  // -- showing a permanently-ticked row there would be noise.
-  if (!reviewGate.idOk || isStudentCategory((cachedPaymentRegs.find((r) => String(r.id) === String(reviewTargetId)) || {}).category_key)) {
-    rows.push(row(reviewGate.idOk, 'Student ID confirmed', 'Confirm the student ID card below'));
+  if (!acceptVisible) { list.textContent = ''; return; }
+  const left = [];
+  if (!reviewGate.idOk) left.push('confirm the student ID');
+  if (!reviewGate.linked) {
+    const unlinked = reviewTxns.map((t, i) => (t.txn_status === 'PENDING' ? i + 1 : null)).filter(Boolean);
+    if (!reviewTxns.length) left.push('link the payment to its bank credit');
+    else unlinked.forEach((n) => left.push(`link payment ${n}${reviewTxns.length > 1 ? '' : ' to its bank credit'}`));
   }
-  list.innerHTML = blocked
-    ? `<p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Before you can verify</p>${rows.join('')}`
-    : rows.join('');
+  list.className = `flex-1 min-w-[12rem] text-sm font-semibold sm:text-right ${blocked ? 'text-amber-800' : 'text-emerald-800'}`;
+  list.textContent = blocked ? `${left.length} step${left.length === 1 ? '' : 's'} left: ${left.join(' · ')}` : 'Ready to verify';
 }
 
 // Category list for the review modal's lock control, loaded once from the fee
@@ -5757,6 +5796,20 @@ function renderReviewIdVerification(p) {
 
   if (wrap) wrap.classList.toggle('hidden', !isStudent);
   reviewGate.idOk = !isStudent || !!p.id_verified;
+  // Step 1 when it applies; the payments are numbered after it.
+  reviewStepOffset = isStudent ? 1 : 0;
+  const done = !!p.id_verified;
+  if (wrap) wrap.className = `${isStudent ? '' : 'hidden '}rounded-xl p-4 space-y-2.5 ${done ? 'border border-emerald-200 bg-emerald-50/60' : 'border-2 border-gold-500'}`;
+  const badge = document.getElementById('review-idverify-badge');
+  if (badge) {
+    badge.className = `w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-sm font-bold text-white ${done ? 'bg-emerald-700' : 'bg-navy'}`;
+    badge.textContent = done ? '✓' : '1';
+  }
+  const state = document.getElementById('review-idverify-state');
+  if (state) {
+    state.className = `text-sm font-bold ${done ? 'text-emerald-800' : 'text-amber-800'}`;
+    state.textContent = done ? 'Done' : 'To do';
+  }
 
   if (checkbox) checkbox.checked = !!p.id_verified;
   if (note) {

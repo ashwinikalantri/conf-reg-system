@@ -1,252 +1,181 @@
-  <!-- MODAL: PAYMENT REVIEW (verify / force verify entry point) -->
-  <div id="modal-review" class="hidden fixed inset-0 bg-slate-900/70 flex justify-center items-center p-2 sm:p-4 z-50">
-    <div class="bg-white w-full max-w-5xl rounded-2xl shadow-card relative max-h-[95vh] flex flex-col">
-      <button onclick="closeModal('modal-review')" class="absolute top-3 right-3 text-slate-400 hover:text-slate-600 text-xl font-bold z-10">✕</button>
-      <div class="p-5 border-b border-slate-100 shrink-0 flex items-start justify-between gap-3">
-        <h3 id="review-title" class="text-lg font-bold text-slate-800">Review Payment</h3>
-        <!-- Top right, beside the title: being flagged is a property of the
-             whole registration, so it belongs with the heading rather than
-             buried among the details. mr-7 keeps it clear of the ✕. The
-             failing checks themselves are marked against the individual
-             fields below, so this doesn't repeat them. -->
-        <div id="review-flagged-note" class="hidden shrink-0 mr-7 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-lg px-2.5 py-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>Flagged for manual scrutiny</div>
-      </div>
-      <div class="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 overflow-hidden">
-        <!-- Evidence pane. Carries BOTH documents (payment screenshot and,
-             for student categories, the ID card) behind a switcher -- the ID
-             card used to be squeezed into the narrow right column at full
-             width, which made a document you actually have to *read*
-             effectively unreadable. Zoom swaps object-contain fit for the
-             image's natural size inside a scrollable box, so a low-res ID
-             can be panned around. -->
-        <div class="bg-slate-900 flex flex-col min-h-[260px] md:min-h-0 md:h-full">
-          <!-- Document switcher: its own row, sized and colored to read as
-               the primary control of this pane (two documents to pick
-               between), not a third icon lost next to Zoom/Open -- those
-               stay in a lighter row underneath. Only rendered as a real
-               toggle when there IS a second document (id-card-tab hidden
-               otherwise); see setReviewImage. -->
+  <!-- MODAL: REGISTRATION REVIEW (verify / reject; reached from the approval
+       list). Laid out as the steps the review is (design review, 29 Oct
+       2026): who this is in the header; the documents on the left, each tab
+       saying whether it has been opened; on the right, step 1 the student ID
+       (student categories only) and a step per payment -- what the delegate
+       says beside what the bank shows, with the likely bank credits ready to
+       link; and in the footer what is still left before Accept & verify.
+       openReviewModal() and friends in app.js. -->
+  <div id="modal-review" class="hidden fixed inset-0 bg-slate-900/70 flex justify-center items-center p-0 sm:p-4 z-50">
+    <div role="dialog" aria-modal="true" aria-labelledby="review-name" class="bg-white w-full max-w-6xl sm:rounded-2xl shadow-card relative h-full sm:h-auto sm:max-h-[95vh] flex flex-col">
+      <header class="px-4 sm:px-5 py-3 sm:py-4 border-b border-slate-200 shrink-0 flex items-start gap-3">
+        <div class="flex-1 min-w-0">
+          <span id="review-title" class="sr-only">Review registration</span>
+          <h3 id="review-name" class="text-lg sm:text-xl font-bold text-slate-900 leading-tight"></h3>
+          <p class="text-sm text-slate-600 mt-0.5"><span id="review-category"></span><span id="review-regno" class="font-mono font-semibold text-navy"></span></p>
+          <p id="review-demographics" class="text-xs text-slate-500 mt-0.5"></p>
+        </div>
+        <!-- Being flagged is a property of the whole registration, so it sits
+             with who this is; the failing checks are marked on each payment. -->
+        <div id="review-flagged-note" class="hidden shrink-0 mr-7 sm:mr-0 self-center bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold rounded-lg px-2.5 py-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>Flagged for manual scrutiny</div>
+        <span id="review-strip-verdict" class="shrink-0 self-center text-xs font-bold px-2.5 py-1 rounded-full border"></span>
+        <button type="button" onclick="closeModal('modal-review')" aria-label="Close" class="shrink-0 w-11 h-11 -mr-2 -mt-1 rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 flex items-center justify-center">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-5 h-5" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+
+      <div class="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] overflow-y-auto md:overflow-hidden">
+        <!-- Documents: the ID card (student categories) and a slip per
+             payment, one tab each, marked Seen once opened (setReviewImage).
+             Zoom shows the image at its natural size to pan a small ID. -->
+        <div class="bg-slate-900 flex flex-col h-[42vh] md:h-full min-h-0">
           <div id="review-img-switcher" class="hidden items-center gap-1.5 px-2.5 pt-2.5 pb-1.5 shrink-0">
-            <!-- Tabs are built per registration by setReviewImage rather than
-                 being fixed slots: the ID card, then ONE TAB PER PAYMENT that
-                 has a slip on file. A partial payment and its top-up each get
-                 their own ("Payment Slip 1", "Payment Slip 2") instead of
-                 sharing a single reused slot, so both stay reachable at once. -->
-            <div id="review-img-tabs" class="flex gap-1 bg-slate-800 rounded-lg p-1"></div>
-            <span id="review-img-switcher-hint" class="hidden text-[10px] text-amber-300 font-semibold animate-pulse">← 2 documents, check both</span>
+            <div id="review-img-tabs" role="tablist" aria-label="Documents" class="flex flex-wrap gap-1.5"></div>
+            <span id="review-img-switcher-hint" class="hidden"></span>
           </div>
           <div class="flex items-center gap-1 px-2 pb-2 shrink-0 border-b border-slate-800">
-            <span id="review-img-solo-label" class="hidden px-1 text-[11px] font-semibold text-slate-400"></span>
+            <span id="review-img-solo-label" class="hidden px-1 text-sm font-semibold text-slate-300"></span>
             <div class="ml-auto flex items-center gap-1">
-              <button type="button" id="review-img-zoom-btn" onclick="toggleReviewImageZoom()" class="px-2.5 py-1 rounded-md text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="10" cy="10" r="7"/><line x1="15.5" y1="15.5" x2="21" y2="21"/></svg>Zoom</button>
-              <a id="review-img-open-link" href="" target="_blank" rel="noopener" class="px-2.5 py-1 rounded-md text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition">Open ↗</a>
+              <button type="button" id="review-img-zoom-btn" onclick="toggleReviewImageZoom()" class="h-9 px-3 rounded-lg text-sm font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="10" cy="10" r="7"/><line x1="15.5" y1="15.5" x2="21" y2="21"/></svg>Zoom</button>
+              <a id="review-img-open-link" href="" target="_blank" rel="noopener" class="h-9 px-3 inline-flex items-center rounded-lg text-sm font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition">Open ↗</a>
             </div>
           </div>
           <div id="review-img-box" class="flex-1 min-h-0 overflow-auto flex items-center justify-center p-1 relative">
-            <!-- Shown while the selected image is still downloading -- both
-                 documents are prefetched the moment the modal opens (see
-                 openReviewModal) so switching tabs is normally instant, but
-                 this covers a slow connection or a click that beats the
-                 prefetch. -->
-            <div id="review-img-loading" class="hidden absolute inset-0 flex items-center justify-center text-slate-400 text-xs font-semibold gap-2">
+            <!-- While the selected image is still downloading (documents are
+                 prefetched on open; this covers a slow connection). -->
+            <div id="review-img-loading" class="hidden absolute inset-0 flex items-center justify-center text-slate-400 text-sm font-semibold gap-2">
               <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
               Loading…
             </div>
             <img id="review-screenshot" src="" alt="" class="max-h-full max-w-full object-contain">
           </div>
-          <p id="review-img-empty" class="hidden text-[11px] text-slate-500 text-center pb-3">No image on file.</p>
+          <p id="review-img-empty" class="hidden text-sm text-slate-400 text-center pb-3"></p>
         </div>
 
-        <div class="p-5 overflow-y-auto space-y-4 text-sm">
-          <div>
-            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Delegate</p>
-            <p id="review-name" class="font-bold text-slate-800"></p>
-            <p id="review-category" class="text-xs text-slate-500"></p>
-            <p id="review-regno" class="text-xs font-mono text-indigo-700 font-semibold mt-0.5"></p>
-            <!-- Demographics: one wrapped line rather than a 2x2 grid of
-                 labelled cells. It's context for the decision, never the
-                 decision itself, so it doesn't earn four rows. -->
-            <p id="review-demographics" class="text-xs text-slate-500 mt-1"></p>
+        <div class="p-4 sm:p-5 md:overflow-y-auto space-y-4 text-sm">
+          <!-- What is owed and what has come in. What is still left to do is
+               said in the footer, beside the buttons it affects. -->
+          <div id="review-status-strip" class="flex flex-wrap gap-x-5 gap-y-1 text-[15px] text-slate-600 tabular-nums">
+            <span>Fee <b id="review-strip-fee" class="text-slate-900"></b></span>
+            <span>Paid <b id="review-strip-paid" class="text-slate-900"></b></span>
+            <span id="review-strip-balance-wrap" class="hidden">Balance <b id="review-strip-balance" class="text-rose-700"></b></span>
           </div>
 
-          <!-- DECISION STRIP: what was owed, what's actually in, and exactly
-               what's still blocking Accept & Verify. Sits ABOVE both sections
-               rather than inside Payment Verification, because its
-               "Before you can verify" checklist spans them both -- one line
-               about linking payments, one about confirming the student ID --
-               so filing it under the money section put half its content
-               above the section it was about. It's also the first thing a
-               reviewer should read: it says what, if anything, is still
-               outstanding. Rendered by renderReviewStatusStrip(); the gate
-               list is refreshed live by updateReviewAcceptGate() so ticking
-               the ID box updates it without a re-open. -->
-          <div id="review-status-strip" class="rounded-lg border p-3">
-            <div class="flex items-center justify-between gap-3 flex-wrap">
-              <div class="flex items-baseline gap-3 text-xs">
-                <span class="text-slate-500">Fee <b id="review-strip-fee" class="text-slate-800 text-sm"></b></span>
-                <span class="text-slate-500">Paid <b id="review-strip-paid" class="text-slate-800 text-sm"></b></span>
-                <span id="review-strip-balance-wrap" class="hidden text-slate-500">Balance <b id="review-strip-balance" class="text-orange-700 text-sm"></b></span>
-              </div>
-              <span id="review-strip-verdict" class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"></span>
+          <!-- STEP: STUDENT ID -- student categories only (renderReviewIdVerification).
+               It gates Accept & verify; the card itself is in the documents. -->
+          <section id="review-idverify-wrap" class="hidden rounded-xl border p-4 space-y-2.5" aria-labelledby="review-idverify-title">
+            <div class="flex items-center gap-2.5">
+              <span id="review-idverify-badge" aria-hidden="true" class="w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-sm font-bold"></span>
+              <h4 id="review-idverify-title" class="flex-1 text-base font-bold text-slate-900">Student ID</h4>
+              <span id="review-idverify-state" class="text-sm font-bold"></span>
             </div>
-            <div id="review-gate-list" class="mt-2 space-y-0.5 text-[11px]"></div>
-          </div>
-
-          <!-- SECTION 1 of 2: ID VERIFICATION. Hidden wholesale (header and
-               all) for categories that don't require a student ID, in which
-               case Payment Verification is simply the only section -- see
-               renderReviewIdVerification. It stays in the main flow rather
-               than in the Corrections disclosure because it gates
-               Accept & Verify; burying it would just move the "why is this
-               button disabled?" problem. The card image itself lives in the
-               evidence pane on the left. -->
-          <section id="review-idverify-wrap" class="hidden space-y-3">
-            <h4 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b border-slate-200 pb-1.5">ID Verification</h4>
-            <div class="flex items-center justify-between gap-2 mb-1.5">
-              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Student ID <span class="normal-case font-normal">(required to verify)</span></p>
-              <!-- Jumps the evidence pane straight to the ID card instead of
-                   making the reviewer hunt for the small tab on the left --
-                   the exact document this whole block is asking them to
-                   judge. See setReviewImage. -->
-              <button type="button" onclick="setReviewImage('idcard')" class="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-navy hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M6 16c0-1.7 1.3-3 3-3s3 1.3 3 3"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="13" x2="18" y2="13"/></svg>View ID Card</button>
-            </div>
-            <label class="flex items-start gap-2 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-2.5 cursor-pointer">
-              <input type="checkbox" id="review-idverify-checkbox" class="mt-0.5 shrink-0" onchange="reviewSetIdVerified(this.checked)">
-              <span>I have reviewed the ID card (click <b>View ID Card</b> above to see it) and confirm it verifies this delegate's student status for the selected category.</span>
+            <button type="button" onclick="setReviewImage('idcard')" class="text-sm font-semibold text-navy underline">View the ID card</button>
+            <label class="flex items-start gap-2.5 text-sm text-slate-700 cursor-pointer">
+              <input type="checkbox" id="review-idverify-checkbox" class="mt-0.5 w-4 h-4 shrink-0" onchange="reviewSetIdVerified(this.checked)">
+              <span>The ID card shows a current student, matching this category.</span>
             </label>
-            <p id="review-idverify-note" class="hidden text-[11px] text-emerald-700 font-semibold mt-1"></p>
+            <p id="review-idverify-note" class="hidden text-xs text-emerald-800 font-semibold"></p>
           </section>
 
-          <!-- SECTION 2 of 2: PAYMENT VERIFICATION. Everything about the
-               money -- what's owed, what arrived, how it reconciles against
-               the bank, and any excess. It comes second: for a student
-               category the ID decides whether this delegate is entitled to
-               the category's fee at all, so settling that first stops a
-               reviewer reconciling a payment against a fee that turns out to
-               be the wrong one. -->
-          <section class="space-y-3">
-            <h4 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider border-b border-slate-200 pb-1.5">Payment Verification</h4>
+          <!-- STEPS: ONE PER PAYMENT (reviewTxnRowHtml): the delegate's claim
+               beside the bank's credit, and the credits to link it to. -->
+          <section id="review-payment-progress" class="hidden space-y-3" aria-label="Payments">
+            <p id="review-progress-summary" class="sr-only"></p>
+            <div id="review-txn-ledger" class="space-y-3"></div>
+          </section>
 
-
-          <!-- The automated screenshot checks used to sit in a separate
-               "Automated Checks" pill row, which made the reviewer match a
-               pill back to the field it was judging. The verdict now sits
-               directly in front of the value it's about (see reviewCheckMark)
-               -- Mode carries the UPI-ID check, which is why NEFT/RTGS, where
-               there is no VPA to read, shows no mark at all. -->
-          <div class="grid grid-cols-2 gap-3">
-            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mode</p><p class="font-semibold flex items-center gap-1.5"><span id="review-mode-check" class="shrink-0"></span><span id="review-mode"></span></p></div>
-            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Amount</p><p class="font-semibold flex items-center gap-1.5"><span id="review-amount-check" class="shrink-0"></span><span id="review-amount"></span></p></div>
-            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Transaction ID</p><p class="font-semibold flex items-center gap-1.5"><span id="review-utr-check" class="shrink-0"></span><span id="review-utr" class="font-mono break-all"></span></p></div>
-            <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date Submitted</p><p id="review-date" class="font-semibold"></p></div>
+          <!-- An older registration with no per-payment rows: its one claim,
+               each check in front of the value it judges (reviewCheckMark). -->
+          <div id="review-claim-legacy" class="rounded-xl border border-slate-200 p-4 grid grid-cols-2 gap-3">
+            <div><p class="text-xs font-semibold text-slate-500">Mode</p><p class="font-semibold flex items-center gap-1.5"><span id="review-mode-check" class="shrink-0"></span><span id="review-mode"></span></p></div>
+            <div><p class="text-xs font-semibold text-slate-500">Amount</p><p class="font-semibold flex items-center gap-1.5"><span id="review-amount-check" class="shrink-0"></span><span id="review-amount"></span></p></div>
+            <div><p class="text-xs font-semibold text-slate-500">Transaction ID</p><p class="font-semibold flex items-center gap-1.5"><span id="review-utr-check" class="shrink-0"></span><span id="review-utr" class="font-mono break-all"></span></p></div>
+            <div><p class="text-xs font-semibold text-slate-500">Submitted</p><p id="review-date" class="font-semibold"></p></div>
           </div>
 
-          <!-- Payment progress: the per-transaction ledger and its bank
-               reconciliation. Effectively always shown -- every registration
-               has at least one transaction row. -->
-          <div id="review-payment-progress" class="hidden bg-slate-50 border border-slate-200 rounded-lg p-3">
-            <div class="flex items-center justify-between text-xs mb-2">
-              <span class="text-slate-500 font-semibold uppercase tracking-wider text-[10px]">Transactions &amp; Bank Reconciliation</span>
-              <span id="review-progress-summary" class="font-bold"></span>
-            </div>
-            <div id="review-txn-ledger" class="space-y-2 text-[11px]"></div>
-          </div>
-
-          <!-- Excess this delegate paid, and the refund record (bookkeeping
-               only -- see recordRefund). Hidden unless there's currently
-               outstanding excess or a refund has ever been recorded. -->
-          <div id="review-refund-section" class="hidden bg-amber-50 border border-amber-200 rounded-lg p-3 text-[11px]">
-            <span class="text-slate-500 font-semibold uppercase tracking-wider text-[10px]">Excess &amp; Refunds</span>
+          <!-- Excess this delegate paid, and the refunds recorded (bookkeeping
+               only -- see recordRefund). -->
+          <div id="review-refund-section" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs">
+            <p class="text-sm font-bold text-amber-900">Excess and refunds</p>
             <div id="review-refund-excess-line" class="mt-1"></div>
             <div id="review-refund-history" class="mt-1"></div>
           </div>
 
-          </section>
-
-
-          <!-- Corrections & adjustments: the two power tools (attach an
-               unclaimed bank credit, change/lock the category) folded into
-               one disclosure, closed by default. Both are rare -- only 6 of
-               127 registrations have ever had a category locked -- and they
-               previously sat permanently expanded, taking a large share of
-               this column for something almost no review needs. Opened
-               automatically when the category is already locked, so that
-               state stays discoverable. -->
-          <details id="review-corrections" class="border border-slate-200 rounded-lg">
-            <summary class="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 rounded-lg">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="11" cy="17" r="2" fill="currentColor" stroke="none"/></svg>Corrections &amp; adjustments
-              <span id="review-corrections-hint" class="font-normal text-slate-400"></span>
+          <!-- Corrections and adjustments: rare tools, closed by default (opened
+               when the category is already locked). -->
+          <details id="review-corrections" class="border border-slate-200 rounded-xl">
+            <summary class="cursor-pointer select-none px-3.5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 rounded-xl">
+              Corrections and adjustments
+              <span id="review-corrections-hint" class="font-normal text-slate-500"></span>
             </summary>
-            <div class="px-3 pb-3 pt-1 space-y-3">
-              <!-- Attach a bank credit that never had a matching claim
-                   submitted (e.g. a second transfer the delegate didn't
-                   mention). -->
+            <div class="px-3.5 pb-3.5 pt-1 space-y-3">
+              <!-- A bank credit that never had a matching claim. -->
               <div>
-                <button type="button" onclick="toggleAdminAddPayment()" class="text-[11px] text-indigo-600 hover:underline font-semibold">+ Add a bank credit not yet claimed</button>
+                <button type="button" onclick="toggleAdminAddPayment()" class="text-sm text-navy hover:underline font-semibold">+ Add a bank credit not yet claimed</button>
                 <div id="review-admin-add-payment-box" class="hidden mt-2 divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-40 overflow-y-auto"></div>
               </div>
 
-              <!-- Set the correct delegate category and lock it so the
-                   delegate can't change it; the fee recalculates. -->
+              <!-- Set the right category and lock it; the fee recalculates. -->
               <div class="border-t border-slate-100 pt-3">
                 <div class="flex items-center justify-between mb-1.5">
-                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Delegate Category</p>
-                  <span id="review-category-locked-badge" class="hidden text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Locked</span>
+                  <p class="text-xs font-semibold text-slate-500">Delegate category</p>
+                  <span id="review-category-locked-badge" class="hidden text-xs font-bold text-navy bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Locked</span>
                 </div>
                 <div class="flex items-center gap-2">
                   <select id="review-category-select" class="flex-1 p-2 border rounded-lg text-sm bg-white outline-none"></select>
-                  <button type="button" id="review-category-lock-btn" onclick="reviewLockCategory()" class="px-3 py-2 bg-navy hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shrink-0">Lock</button>
-                  <button type="button" id="review-category-unlock-btn" onclick="reviewUnlockCategory()" class="hidden px-3 py-2 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 rounded-lg text-xs font-semibold shrink-0">Unlock</button>
+                  <button type="button" id="review-category-lock-btn" onclick="reviewLockCategory()" class="px-3 py-2 bg-navy hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold shrink-0">Lock</button>
+                  <button type="button" id="review-category-unlock-btn" onclick="reviewUnlockCategory()" class="hidden px-3 py-2 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-semibold shrink-0">Unlock</button>
                 </div>
-                <p class="text-[11px] text-slate-500 mt-1">Locking recalculates the fee and prevents the delegate from changing category.</p>
+                <p class="text-xs text-slate-500 mt-1">Locking recalculates the fee and stops the delegate changing category.</p>
               </div>
 
-              <!-- FEE ADJUSTMENT
-                   Two ways what a delegate owes can differ from the price
-                   list. The first is evidenced and offered by the server when
-                   it applies (early-phase banner); the second is a judgement
-                   and must be written down. Both are behind
-                   payments.adjust_fee, which the front desk does not hold. -->
+              <!-- FEE ADJUSTMENT: an earlier phase's price (evidenced, offered
+                   by the server) or a judgement (written down). Both behind
+                   payments.adjust_fee. -->
               <div id="review-fee-adjust-block" class="hidden border-t border-slate-100 pt-3">
-                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Fee</p>
-
-                <!-- Shown only when a linked bank credit is dated inside a
-                     cheaper phase than the one they were charged at. -->
+                <p class="text-xs font-semibold text-slate-500 mb-1.5">Fee</p>
                 <div id="review-early-phase" class="hidden rounded-xl border border-amber-200 bg-amber-50 p-3 mb-2">
-                  <p id="review-early-phase-text" class="text-[11px] text-amber-900"></p>
+                  <p id="review-early-phase-text" class="text-sm text-amber-900"></p>
                   <button type="button" onclick="reviewHonourEarlyPhase()"
-                          class="mt-2 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold">Honour that price</button>
+                          class="mt-2 px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold">Honour that price</button>
                 </div>
-
-                <!-- Already adjusted: the row explains itself rather than
-                     leaving "why is this less than the category fee?" to the
-                     audit log. -->
                 <div id="review-fee-adjusted" class="hidden rounded-xl border border-emerald-200 bg-emerald-50 p-3 mb-2">
-                  <p id="review-fee-adjusted-text" class="text-[11px] text-emerald-900"></p>
+                  <p id="review-fee-adjusted-text" class="text-sm text-emerald-900"></p>
                 </div>
-
                 <div id="review-discretionary" class="hidden">
                   <div class="flex items-center gap-2">
                     <input id="review-adjust-amount" type="number" min="0" step="1" placeholder="New fee (₹)"
                            class="flex-1 p-2 border rounded-lg text-sm bg-white outline-none">
                     <button type="button" onclick="reviewAdjustFee()"
-                            class="px-3 py-2 bg-navy hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shrink-0">Adjust</button>
+                            class="px-3 py-2 bg-navy hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold shrink-0">Adjust</button>
                   </div>
                   <input id="review-adjust-reason" type="text" placeholder="Reason — recorded against this registration"
                          class="w-full mt-2 p-2 border rounded-lg text-sm bg-white outline-none">
-                  <p class="text-[11px] text-slate-500 mt-1">Reduces what this delegate owes. The reason is stored on the registration and in the audit log.</p>
+                  <p class="text-xs text-slate-500 mt-1">Reduces what this delegate owes. The reason is stored on the registration and in the activity log.</p>
                 </div>
               </div>
             </div>
           </details>
         </div>
       </div>
-      <div class="p-4 border-t border-slate-100 flex justify-end gap-2 shrink-0">
-        <button type="button" id="review-unapprove-btn" onclick="reviewUnapprove()" class="hidden px-4 py-2 bg-white border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-xl text-sm font-semibold mr-auto">Un-approve</button>
-        <button type="button" id="review-unreject-btn" onclick="reviewUnreject()" class="hidden px-4 py-2 bg-white border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-xl text-sm font-semibold mr-auto">Un-reject</button>
-        <button type="button" id="review-revise-btn" onclick="reviewRevisePayment()" title="" class="hidden px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-sm font-semibold shadow-md disabled:opacity-40 disabled:cursor-not-allowed">Revise Payment</button>
-        <button type="button" id="review-reject-btn" onclick="reviewReject()" class="px-4 py-2 bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-xl text-sm font-semibold">Reject</button>
-        <button type="button" id="review-accept-btn" onclick="reviewAccept()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold shadow-md disabled:opacity-40 disabled:cursor-not-allowed">Accept &amp; Verify</button>
-      </div>
+
+      <!-- The decision. "More" holds the rare ones (revise the payment asked
+           for, undo an approval or a rejection); beside the buttons, what is
+           still left before Accept & verify (updateReviewAcceptGate). -->
+      <footer class="px-4 sm:px-5 py-3 border-t border-slate-200 shrink-0 bg-white flex flex-wrap items-center gap-2">
+        <details id="review-more" class="hidden relative">
+          <summary class="list-none cursor-pointer h-11 px-3.5 inline-flex items-center rounded-xl border border-slate-300 text-sm font-semibold text-slate-700 hover:bg-slate-50" aria-label="More actions">More ▾</summary>
+          <div class="absolute bottom-full left-0 mb-2 w-60 bg-white rounded-xl shadow-card border border-slate-200 p-1.5 space-y-1 z-10">
+            <button type="button" id="review-revise-btn" onclick="reviewRevisePayment()" title="" class="hidden w-full text-left px-3 py-2.5 rounded-lg text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Ask for the balance (revise payment)</button>
+            <button type="button" id="review-unapprove-btn" onclick="reviewUnapprove()" class="hidden w-full text-left px-3 py-2.5 rounded-lg text-sm font-semibold text-amber-800 hover:bg-amber-50">Un-approve</button>
+            <button type="button" id="review-unreject-btn" onclick="reviewUnreject()" class="hidden w-full text-left px-3 py-2.5 rounded-lg text-sm font-semibold text-amber-800 hover:bg-amber-50">Un-reject</button>
+          </div>
+        </details>
+        <p id="review-gate-list" class="flex-1 min-w-[12rem] text-sm font-semibold sm:text-right" aria-live="polite"></p>
+        <div class="flex gap-2 w-full sm:w-auto">
+          <button type="button" id="review-reject-btn" onclick="reviewReject()" class="flex-1 sm:flex-none h-11 px-5 bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-xl text-[15px] font-semibold">Reject</button>
+          <button type="button" id="review-accept-btn" onclick="reviewAccept()" class="flex-1 sm:flex-none h-11 px-5 bg-navy hover:bg-indigo-700 text-white rounded-xl text-[15px] font-semibold shadow-md disabled:opacity-40 disabled:cursor-not-allowed">Accept &amp; verify</button>
+        </div>
+      </footer>
     </div>
   </div>

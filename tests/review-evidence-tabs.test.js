@@ -91,11 +91,13 @@ console.log('\n== 2. ID card comes first ==');
  check('ID Card is the first tab', tabs[0].label.includes('ID Card'), JSON.stringify(tabs.map(t=>t.label)));
  check('and is selected on open', which==='idcard', which);
  check('slips follow it', tabs[1].label.includes('Payment Slip 1') && tabs[2].label.includes('Payment Slip 2'));
+ const tabHtml=()=>els['review-img-tabs'].innerHTML;
+ const tabOf=(key)=>tabHtml().split('<button').find(b=>b.includes(`setReviewImage('${key}')`))||'';
+ check('on open: the ID card Seen, the slips Not opened', /· Seen/.test(tabOf('idcard')) && /· Not opened/.test(tabOf('slip11')) && /· Not opened/.test(tabOf('slip12')));
  api.setReviewImage('slip12');
- check('the nudge appears while looking away from the ID card',
-   !els['review-img-switcher-hint'].classList.contains('hidden'));
  api.setReviewImage('idcard');
- check('and clears once they open it', els['review-img-switcher-hint'].classList.contains('hidden'));
+ check('a slip once opened stays Seen; one never opened says so', /· Seen/.test(tabOf('slip12')) && /· Not opened/.test(tabOf('slip11')));
+ check('no pulsing nudge any more', !/animate-pulse/.test(tabHtml()));
 }
 {
  const {api}=harness();
@@ -116,31 +118,17 @@ console.log('\n== 2. ID card comes first ==');
    JSON.stringify(api.state().urls));
 }
 
-console.log('\n== 1. The ledger row button ==');
+console.log('\n== 1. The payment card\'s slip button ==');
 {
  const row=new Function(`${grab('esc')} ${grab('inr')} ${grab('fmtAuditTime')} ${iconSrc}
-   let reviewRegVerified=false; ${grab('reviewTxnRowHtml')} return reviewTxnRowHtml;`)();
+   let reviewRegVerified=false; let reviewStepOffset=0; const PAYMENT_MODE_LABELS={UPI:'UPI'};
+   ${grab('reviewCheckMark')} ${grab('reviewTxnRowHtml')} return reviewTxnRowHtml;`)();
  const withSlip=row({id:154,amount:2000,verified_amount:750,txn_status:'VERIFIED',payment_mode:'UPI',
    bank_txn_id:518,bank_txn_date:'2026-08-20',bank_txn_credit:750,
    bank_txn_description:'UPI/RRN 128217278187/UPI_PRIYANKA',submitted_at:Date.now(),has_screenshot:1});
- check('it is a button, not a text link', /<button[^>]*><svg[\s\S]*?<\/svg>Payment Slip<\/button>/.test(withSlip));
- check('styled like View ID Card (navy, rounded)',
-   /bg-navy[^"]*hover:bg-indigo-700/.test(withSlip) && /rounded-lg/.test(withSlip));
- check('no longer an underlined link', !/hover:underline[^"]*"[^>]*onclick="showTxnSlip/.test(withSlip));
- // It shares the reconciliation row instead of owning one: alone on its own
- // row it was right-aligned against an empty half-row, which read as a gap.
- const btnRow=withSlip.slice(withSlip.lastIndexOf('<div class="mt-2'));
- // The link icon and the Payment Slip button's document icon are both
- // <svg> now (previously distinct emoji) -- tell them apart by a path
- // fragment unique to each (see ADMIN_ICON_SVG.link / .document in app.js).
- const LINK_ICON_MARK = 'M8 12l-2.5 2.5';
- check('it shares a row with the reconciliation line',
-   btnRow.includes(LINK_ICON_MARK) && btnRow.includes('Payment Slip'));
- check('no row of its own with empty space beside it', !/justify-end/.test(withSlip));
- check('link line left, button right', btnRow.indexOf(LINK_ICON_MARK) < btnRow.indexOf('Payment Slip'));
- check('the row splits them to opposite ends', /justify-between/.test(btnRow));
- check('a long link line truncates rather than pushing the button off',
-   /min-w-0/.test(btnRow) && /shrink-0/.test(btnRow));
+ check('it is a real button, "View slip"', /<button type="button"[^>]*onclick="showTxnSlip\(154\)">View slip<\/button>/.test(withSlip));
+ check('outlined in navy, a real target (36px)', /h-9 px-3 rounded-lg border border-navy text-navy/.test(withSlip));
+ check('not an underlined link', !/hover:underline[^"]*"[^>]*onclick="showTxnSlip/.test(withSlip));
  check('it opens that payment, by id', withSlip.includes('showTxnSlip(154)'));
  const noSlip=row({id:2,amount:100,txn_status:'PENDING',payment_mode:'UPI',bank_txn_id:null,
    submitted_at:Date.now(),has_screenshot:0});
