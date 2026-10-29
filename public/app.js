@@ -11198,7 +11198,17 @@ function guestWhen(date, time) {
 // Whatever has been entered for one leg of the journey, and nothing made up:
 // the date and time, then mode / number / point, then vehicle and status.
 // '' when nothing at all is set (the caller says "Not set").
+// A pickup or drop "Not required" (guests.js NOT_REQUIRED): only that leg's
+// date and time are collected; any mode, number, point or vehicle entered
+// before is kept but not shown.
+function transferNotRequired(status) {
+  return String(status || '').trim().toLowerCase() === 'not required';
+}
 function guestLegHtml(date, time, mode, number, point, vehicle, status) {
+  if (transferNotRequired(status)) {
+    return (date ? `<p class="font-semibold text-slate-800">${esc(guestWhen(date, time))}</p>` : '')
+      + `<p class="text-xs mt-0.5 text-slate-500">${esc(status)}</p>`;
+  }
   const route = [mode, number, point].filter(Boolean).map(esc).join(' · ');
   const transfer = [vehicle ? esc(vehicle) : (date ? '<span class="text-slate-400">No vehicle</span>' : ''), status ? esc(status) : ''].filter(Boolean).join(' · ');
   return [
@@ -11330,6 +11340,18 @@ function syncGuestNights() {
   out.classList.toggle('text-rose-700', !!(cin && cout && n == null));
 }
 
+// Pickup or drop "Not required": the leg's details are not asked for.
+function syncGuestTransferFields(leg) {
+  const form = document.getElementById('guest-edit-form');
+  const statusEl = form && form.querySelector(`[name="${leg === 'arrival' ? 'pickup_status' : 'drop_status'}"]`);
+  const details = document.getElementById(`guest-${leg}-details`);
+  const note = document.getElementById(`guest-${leg}-note`);
+  if (!statusEl || !details) return;
+  const off = transferNotRequired(statusEl.value);
+  details.classList.toggle('hidden', off);
+  if (note) note.classList.toggle('hidden', !off);
+}
+
 function syncGuestStayFields() {
   const form = document.getElementById('guest-edit-form');
   const tickEl = form && form.querySelector('[name="stay_not_needed"]');
@@ -11398,6 +11420,12 @@ function openGuestEditor(id) {
   // The flight or train number, named after the mode (see syncGuestModeFields).
   const numberField = (leg) => `<label class="block min-w-0" data-number-for="${leg}"><span data-number-label class="block text-[11px] font-semibold text-slate-600 mb-1">Flight/Train No</span>${input(`${leg}_number`, 'text', travel)}${fetchBtn(leg)}</label>`;
   const modeSelect = (leg) => select(`${leg}_mode`, 'mode', travel, `onchange="syncGuestModeFields('${leg}')"`);
+  // A pickup or drop "Not required" asks only for the date and time: the
+  // rest of the leg is hidden (syncGuestTransferFields), and still saved
+  // as it was.
+  const legOff = (leg) => transferNotRequired(g[leg === 'arrival' ? 'pickup_status' : 'drop_status']);
+  const legNote = (leg, what, hadDetails) => `<p id="guest-${leg}-note" class="${legOff(leg) ? '' : 'hidden '}col-span-full text-[11px] text-slate-500 -mt-1">${what} not required: only the date and time are needed.${hadDetails ? ' Details entered earlier are kept, unused, and return if you change the status.' : ''}</p>`;
+  const legDetails = (leg, body) => `<div id="guest-${leg}-details" class="${legOff(leg) ? 'hidden ' : ''}col-span-full grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">${body}</div>`;
   const group = (title, enabled, note, body) => `<fieldset class="border border-slate-200 rounded-xl p-4">
       <legend class="px-1.5 text-xs font-bold text-slate-700 uppercase tracking-wide">${esc(title)}</legend>
       ${enabled ? '' : `<p class="text-[11px] text-slate-400 -mt-1 mb-2">${esc(note)}</p>`}
@@ -11427,21 +11455,25 @@ function openGuestEditor(id) {
     group('Arrival', travel, mineT ? 'As their transport volunteer you can update the pickup; the itinerary is the coordinator\'s.' : 'Only a transport coordinator can change travel.',
       field('arrival_date', 'Date', input('arrival_date', 'date', travel))
       + field('arrival_time', 'Time', time('arrival_time', travel))
-      + field('arrival_mode', 'Mode', modeSelect('arrival'))
-      + numberField('arrival')
-      + field('arrival_point', 'Point', select('arrival_point', 'point', travel))
-      + field('pickup_vehicle', 'Pickup Vehicle/Driver', input('pickup_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off"'))
-      + field('pickup_status', 'Pickup Status', select('pickup_status', 'transfer_status', pickupOk))
-      + flightPanel('arrival')),
+      + field('pickup_status', 'Pickup Status', select('pickup_status', 'transfer_status', pickupOk, `onchange="syncGuestTransferFields('arrival')"`))
+      + legNote('arrival', 'Pickup', g.arrival_mode || g.arrival_number || g.arrival_point || g.pickup_vehicle)
+      + legDetails('arrival',
+        field('arrival_mode', 'Mode', modeSelect('arrival'))
+        + numberField('arrival')
+        + field('arrival_point', 'Point', select('arrival_point', 'point', travel))
+        + field('pickup_vehicle', 'Pickup Vehicle/Driver', input('pickup_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off"'))
+        + flightPanel('arrival'))),
     group('Departure', travel, mineT ? 'As their transport volunteer you can update the drop; the itinerary is the coordinator\'s.' : 'Only a transport coordinator can change travel.',
       field('departure_date', 'Date', input('departure_date', 'date', travel))
       + field('departure_time', 'Time', time('departure_time', travel))
-      + field('departure_mode', 'Mode', modeSelect('departure'))
-      + numberField('departure')
-      + field('departure_point', 'Point', select('departure_point', 'point', travel))
-      + field('drop_vehicle', 'Drop Vehicle/Driver', input('drop_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off"'))
-      + field('drop_status', 'Drop Status', select('drop_status', 'transfer_status', pickupOk))
-      + flightPanel('departure')),
+      + field('drop_status', 'Drop Status', select('drop_status', 'transfer_status', pickupOk, `onchange="syncGuestTransferFields('departure')"`))
+      + legNote('departure', 'Drop', g.departure_mode || g.departure_number || g.departure_point || g.drop_vehicle)
+      + legDetails('departure',
+        field('departure_mode', 'Mode', modeSelect('departure'))
+        + numberField('departure')
+        + field('departure_point', 'Point', select('departure_point', 'point', travel))
+        + field('drop_vehicle', 'Drop Vehicle/Driver', input('drop_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off"'))
+        + flightPanel('departure'))),
     group('Stay', stay, mineS ? 'As their accommodation volunteer you can update the stay details.' : 'Only an accommodation coordinator can change the stay.',
       `<label class="col-span-full flex items-center gap-2 text-sm text-slate-700 ${stay ? 'cursor-pointer' : 'opacity-60'}">
         <input type="checkbox" name="stay_not_needed" ${Number(g.stay_not_needed) ? 'checked' : ''} ${stay ? '' : 'disabled'} onchange="syncGuestStayFields()"> Accommodation not needed — they arrange their own stay</label>
@@ -11471,6 +11503,8 @@ function openGuestEditor(id) {
   form.dataset.id = g.id;
   syncGuestModeFields('arrival');
   syncGuestModeFields('departure');
+  syncGuestTransferFields('arrival');
+  syncGuestTransferFields('departure');
   syncGuestStayFields();
   syncGuestNights();
   const save = document.getElementById('guest-save-btn');
@@ -11736,8 +11770,10 @@ function renderGuestSchedule(kind) {
   const rows = guestData[kind];
   const isPickup = kind === 'pickups';
   const clashes = rows.filter((r) => r.clash.length).length;
-  const driverLine = (r) => (r.vehicle ? `${esc(r.vehicle)}${r.driverPhone ? ` · ${telLink(r.driverPhone)}` : ''}`
-    : `<span class="${r.alert ? 'text-orange-700 font-semibold' : 'text-slate-400'}">No vehicle</span>`);
+  // "Not required": no vehicle is wanted, so none is missing.
+  const noVehicle = (r, word) => (transferNotRequired(r.status) ? '<span class="text-slate-400">—</span>'
+    : `<span class="${r.alert ? 'text-orange-700 font-semibold' : 'text-slate-400'}">${word}</span>`);
+  const driverLine = (r) => (r.vehicle ? `${esc(r.vehicle)}${r.driverPhone ? ` · ${telLink(r.driverPhone)}` : ''}` : noVehicle(r, 'No vehicle'));
   box.innerHTML = `${clashes ? `<p class="mb-3 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">${clashes} ${isPickup ? 'pickup' : 'drop'}(s) use a vehicle within ${esc(guestData.settings.clashMinutes)} minutes of another trip. Check each is intended — guests on the same flight can share.</p>` : ''}
     <div class="md:hidden space-y-2">${rows.length ? rows.map((r) => `
       <article class="bg-white rounded-2xl border border-slate-200 ${r.alert ? 'border-l-4 border-l-orange-400' : ''} shadow-sm p-3.5">
@@ -11764,7 +11800,7 @@ function renderGuestSchedule(kind) {
             <td class="p-3"><button type="button" onclick="openGuestEditor(${esc(r.id)})" class="font-semibold text-indigo-700 hover:underline text-left">${esc(r.name)}</button></td>
             <td class="p-3 font-mono text-xs">${telLink(r.phone)}</td>
             <td class="p-3">${esc(r.mode || '—')}</td><td class="p-3">${flightNumberLink(r.number, r.at ? r.at.slice(0, 10) : '')}</td><td class="p-3">${esc(r.point || '—')}</td>
-            <td class="p-3">${r.vehicle ? `<p>${esc(r.vehicle)}</p>${r.driverPhone ? `<p class="text-xs text-slate-500 font-mono">${telLink(r.driverPhone, 'text-slate-500 hover:underline')}</p>` : ''}` : `<span class="${r.alert ? 'text-orange-700 font-semibold' : 'text-slate-400'}">None</span>`}
+            <td class="p-3">${r.vehicle ? `<p>${esc(r.vehicle)}</p>${r.driverPhone ? `<p class="text-xs text-slate-500 font-mono">${telLink(r.driverPhone, 'text-slate-500 hover:underline')}</p>` : ''}` : noVehicle(r, 'None')}
               ${r.clash.map((c) => `<p class="text-[11px] text-amber-800 mt-1">${esc(c)}</p>`).join('')}</td>
             <td class="p-3">${r.status ? guestPill('bg-white text-slate-600 border-slate-300', r.status) : '<span class="text-xs text-slate-400">Not set</span>'}</td>
           </tr>`).join('') : '<tr><td colspan="8" class="p-8 text-center text-slate-400">No one to schedule yet.</td></tr>'}

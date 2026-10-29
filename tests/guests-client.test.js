@@ -209,6 +209,29 @@ stayRow.stay_not_needed = 0;
 stay.sb.__g.openGuestEditor(stayRow.id);
 check('unticked: the stay details are asked for', /id="guest-stay-fields" class="col-span-full/.test(stay.el('guest-edit-body').innerHTML));
 
+console.log('\n== Pickup or drop not required ==');
+const legRow = data.guests.find((x) => x.name === 'Alpha Arriving');
+Object.assign(legRow, { pickup_status: 'Not required', arrival_mode: 'Flight', arrival_point: 'Nagpur Airport', pickup_vehicle: 'Car A' });
+sb.__set(data);
+sb.__g.openGuestEditor(legRow.id);
+const lh = el('guest-edit-body').innerHTML;
+check('pickup not required: date, time and status asked for', /name="arrival_date"/.test(lh) && /name="arrival_time"/.test(lh) && /name="pickup_status"/.test(lh));
+check('...mode, number, point and vehicle hidden', /id="guest-arrival-details" class="hidden col-span-full/.test(lh)
+  && ['arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle'].every((f) => lh.indexOf(`name="${f}"`) > lh.indexOf('id="guest-arrival-details"')));
+check('...with a note, which says what was entered earlier is kept', /id="guest-arrival-note" class="col-span-full[^"]*">Pickup not required: only the date and time are needed\. Details entered earlier are kept/.test(lh));
+check('...changing the status shows or hides them at once', /name="pickup_status"[^>]*onchange="syncGuestTransferFields\('arrival'\)"/.test(lh)
+  && /name="drop_status"[^>]*onchange="syncGuestTransferFields\('departure'\)"/.test(lh));
+check('the drop is asked for in full while it is required', /id="guest-departure-details" class="col-span-full/.test(lh) && /id="guest-departure-note" class="hidden /.test(lh));
+sb.__g.renderGuestList();
+const lrow = (el('guests-tbody').innerHTML.split('<tr').find((r) => r.includes('>Alpha Arriving<')) || '');
+check('the list shows the arrival time and "Not required", not the set-aside details', />20 November 2026, 9:00 AM</.test(lrow) && />Not required</.test(lrow)
+  && !/Nagpur Airport|>Car A</.test(lrow));
+sb.__set({ ...data, pickups: [{ id: legRow.id, name: 'Alpha Arriving', at: '2026-11-20 09:00', status: 'Not required', clash: [], alert: false }] });
+sb.__g.renderGuestSchedule('pickups');
+check('the pickup schedule shows a dash, not "No vehicle"', !/No vehicle|>None</.test(el('guests-view-pickups').innerHTML));
+Object.assign(legRow, { pickup_status: null, arrival_mode: null, arrival_point: null, pickup_vehicle: null });
+sb.__set(data);
+
 console.log('\n== Checking a flight by hand ==');
 const fsb = { String, encodeURIComponent };
 vm.createContext(fsb);
@@ -236,13 +259,15 @@ check('"Assigned to me" shows a volunteer their own faculty', el('guests-tbody')
 el('guests-filter-flag').value = mineBefore;
 const dsb = { String, Number, Date, Math };
 vm.createContext(dsb);
-vm.runInContext(['let canKeys = [];', 'function can(k) { return canKeys.includes(k); }', `const deskBtn = ${js.match(/const deskBtn = (\(label, onclick, tone\) => \{[\s\S]*?\n\};)/)[1]}`, grabT('esc'), grabT('formatFullDate'), js.match(/const SHORT_MONTHS = [^\n]+/)[0], grabT('shortDateRange'), grabT('guestTime12'), grabT('guestWhen'), grabT('guestNights'), grabT('guestLegHtml'), grabT('guestStayHtml'), grabT('deskCard'), grabT('deskFacultyCard')].join('\n')
+vm.runInContext(['let canKeys = [];', 'function can(k) { return canKeys.includes(k); }', `const deskBtn = ${js.match(/const deskBtn = (\(label, onclick, tone\) => \{[\s\S]*?\n\};)/)[1]}`, grabT('esc'), grabT('formatFullDate'), js.match(/const SHORT_MONTHS = [^\n]+/)[0], grabT('shortDateRange'), grabT('guestTime12'), grabT('guestWhen'), grabT('guestNights'), grabT('transferNotRequired'), grabT('guestLegHtml'), grabT('guestStayHtml'), grabT('deskCard'), grabT('deskFacultyCard')].join('\n')
   + `\nconst nightsLabel = ${js.match(/const nightsLabel = ([^;]+);/)[1]};\nglobalThis.card = deskFacultyCard;`, dsb);
 const dcard = dsb.card({ arrival_date: '2026-11-20', arrival_time: '21:30', arrival_mode: 'Flight', arrival_number: '6E 123', pickup_vehicle: 'Car A',
   accommodation: 'Yatri Nivas', room_no: '7', checkin_date: '2026-11-20', checkout_date: '2026-11-22', transport_volunteer: 'Tara' });
 check('the Front Desk shows a faculty member\'s travel and stay', /Faculty — travel &amp; stay|Faculty — travel & stay/.test(dcard)
   && /20 November 2026, 9:30 PM<\/p><p class="text-xs text-slate-500">Flight · 6E 123/.test(dcard) && /Yatri Nivas · 7/.test(dcard) && /2 nights/.test(dcard) && /Tara/.test(dcard));
 check('...and nothing when there is nothing to show', dsb.card({ id: 1 }) === '' && dsb.card(null) === '');
+const dcardOwn = dsb.card({ arrival_date: '2026-11-20', arrival_time: '21:30', arrival_mode: 'Flight', arrival_number: '6E 123', pickup_vehicle: 'Car A', pickup_status: 'Not required' });
+check('...and for a pickup not required, the time and "Not required" only', /9:30 PM<\/p><p class="text-xs mt-0\.5 text-slate-500">Not required/.test(dcardOwn) && !/6E 123|Car A/.test(dcardOwn));
 check('...placed after the delegate card', /deskWhoCard\(user, reg, checkedIn, guest\),\n\s*deskFacultyCard\(guest\),/.test(js));
 vm.runInContext("canKeys = ['guests.view', 'guests.travel'];", dsb);
 check('a coordinator gets Travel & stay on the desk, even before details exist', /deskOpenFaculty\(5\)[^>]*>Travel &amp; stay</.test(dsb.card({ id: 5 })) || /deskOpenFaculty\(5\)[^>]*>Travel & stay</.test(dsb.card({ id: 5 })));
@@ -280,7 +305,7 @@ check('...its fields in one column on a phone', /grid grid-cols-1 sm:grid-cols-2
 console.log('\n== Whatever is entered is shown ==');
 const psb = { String, Number, Date, Math };
 vm.createContext(psb);
-vm.runInContext([grabT('esc'), grabT('formatFullDate'), js.match(/const SHORT_MONTHS = [^\n]+/)[0], grabT('shortDateRange'), grabT('guestTime12'), grabT('guestWhen'), grabT('guestNights'), grabT('guestLegHtml'), grabT('guestStayHtml')].join('\n')
+vm.runInContext([grabT('esc'), grabT('formatFullDate'), js.match(/const SHORT_MONTHS = [^\n]+/)[0], grabT('shortDateRange'), grabT('guestTime12'), grabT('guestWhen'), grabT('guestNights'), grabT('transferNotRequired'), grabT('guestLegHtml'), grabT('guestStayHtml')].join('\n')
   + `\nconst nightsLabel = ${js.match(/const nightsLabel = ([^;]+);/)[1]};\nglobalThis.leg = guestLegHtml; globalThis.stayOf = guestStayHtml; globalThis.range = shortDateRange;`, psb);
 const datesOnly = psb.stayOf({ checkin_date: '2026-11-20', checkout_date: '2026-11-22' });
 check('stay dates with no guesthouse yet are shown, with the nights', /20 - 22 Nov 2026 · 2 nights/.test(datesOnly) && !/Not set/.test(datesOnly), datesOnly);

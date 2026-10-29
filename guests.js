@@ -91,9 +91,28 @@ const DEFAULT_LISTS = {
   overall_status: ['Invited', 'Confirmed', 'Arrived', 'Departed', 'Cancelled'],
 };
 const CANCELLED = 'Cancelled';
+// A pickup or drop marked "Not required": only the date and time of that
+// leg are kept in use (they still say when the person is here); the mode,
+// flight/train number, point and vehicle are not collected. Any entered
+// before are kept, unused, and return if the status is changed back.
+const NOT_REQUIRED = 'Not required';
+const LEG_DETAILS = {
+  pickup_status: ['arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle'],
+  drop_status: ['departure_mode', 'departure_number', 'departure_point', 'drop_vehicle'],
+};
+const transferNotRequired = (status) => String(status == null ? '' : status).trim().toLowerCase() === NOT_REQUIRED.toLowerCase();
+// The guest as the board reads them: set-aside leg details blanked.
+function travelInUse(g) {
+  const out = { ...g };
+  for (const [statusField, fields] of Object.entries(LEG_DETAILS)) {
+    if (transferNotRequired(g[statusField])) fields.forEach((f) => { out[f] = null; });
+  }
+  return out;
+}
 // Values the app's own rules read. They cannot be switched off or removed,
-// or "Cancelled" guests would quietly start counting again.
-const PROTECTED_VALUES = { overall_status: [CANCELLED] };
+// or "Cancelled" guests would quietly start counting again, and a pickup
+// "Not required" would start asking for a vehicle.
+const PROTECTED_VALUES = { overall_status: [CANCELLED], transfer_status: [NOT_REQUIRED] };
 
 const DEFAULT_SETTINGS = { alertDays: 2, slotBounds: [6, 12, 18], clashMinutes: 60 };
 const SLOT_NAMES = ['Night', 'Morning', 'Afternoon', 'Evening'];
@@ -343,7 +362,9 @@ function slotLabels(bounds) {
 function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settings = DEFAULT_SETTINGS, today }) {
   const ordered = [...guests].sort((a, b) => a.id - b.id);
   const isCancelled = (g) => norm(g.overall_status) === norm(CANCELLED);
-  const live = ordered.filter((g) => !isCancelled(g));
+  // Rows keep every value (the editor needs the set-aside ones); trips,
+  // warnings, counts and schedules read only the details in use.
+  const live = ordered.filter((g) => !isCancelled(g)).map(travelInUse);
   const windowEnd = addDays(today, settings.alertDays);
   const roomKey = (acc, no) => (blank(acc) || blank(no) ? null : `${norm(acc)}|${norm(no)}`);
 
@@ -410,7 +431,7 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
       cancelled,
       flags: {
         // Orange: arriving within the alert window, and nobody to meet them.
-        pickupAlert: arrivingSoon && blank(g.pickup_vehicle),
+        pickupAlert: arrivingSoon && blank(g.pickup_vehicle) && !transferNotRequired(g.pickup_status),
         // Red: nowhere to stay.
         noAccommodation: !cancelled && needsStay(g) && !blank(g.name) && blank(g.accommodation),
         ownStay: !needsStay(g),
@@ -442,7 +463,8 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
     return [...m].map(([value, count]) => ({ value, count }));
   };
   const labels = slotLabels(settings.slotBounds);
-  const movement = (dateF, timeF, pointF) => {
+  // Points count only the people being met or seen off.
+  const movement = (dateF, timeF, pointF, statusF) => {
     const dated = live.filter((g) => !blank(g[dateF]));
     const bySlot = labels.map((label, i) => ({
       value: label, count: dated.filter((g) => !blank(g[timeF]) && slotOf(g[timeF], settings.slotBounds) === i).length,
@@ -451,7 +473,7 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
     return {
       total: dated.length,
       byDate: tally(dated, (g) => g[dateF]).sort((a, b) => a.value.localeCompare(b.value)),
-      byPoint: countBy(dated, pointF, lists.point || []).filter((r) => r.value != null || r.count),
+      byPoint: countBy(dated.filter((g) => !transferNotRequired(g[statusF])), pointF, lists.point || []).filter((r) => r.value != null || r.count),
       bySlot,
     };
   };
@@ -488,7 +510,7 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
 
   // Schedules: who to meet and who to see off, in order. Undated last; on a
   // date, untimed after the timed ones.
-  const schedule = (dateF, timeF) => [...rows.filter((g) => !g.cancelled)].sort((a, b) => {
+  const schedule = (dateF, timeF) => rows.filter((g) => !g.cancelled).map(travelInUse).sort((a, b) => {
     if (blank(a[dateF]) !== blank(b[dateF])) return blank(a[dateF]) ? 1 : -1;
     if (a[dateF] !== b[dateF]) return String(a[dateF]).localeCompare(String(b[dateF]));
     if (blank(a[timeF]) !== blank(b[timeF])) return blank(a[timeF]) ? 1 : -1;
@@ -516,14 +538,15 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
     byPickupStatus: countBy(live, 'pickup_status', lists.transfer_status || []),
     byDropStatus: countBy(live, 'drop_status', lists.transfer_status || []),
     ownStay: live.length - staying.length,
-    alert: { days: settings.alertDays, from: today, to: windowEnd, arriving: soon.length, noVehicle: soon.filter((g) => blank(g.pickup_vehicle)).length },
+    alert: { days: settings.alertDays, from: today, to: windowEnd, arriving: soon.length,
+      noVehicle: soon.filter((g) => blank(g.pickup_vehicle) && !transferNotRequired(g.pickup_status)).length },
     noAccommodation: rows.filter((g) => g.flags.noAccommodation).length,
     notRegistered: live.filter((g) => !Number(g.registered)).length,
     notSignedUp: live.filter((g) => !g.linked).length,
     sharedRooms: [...byRoom.values()].filter((gs) => gs.length > 1).length,
     vehicleClashes: clashes.length,
-    arrivals: movement('arrival_date', 'arrival_time', 'arrival_point'),
-    departures: movement('departure_date', 'departure_time', 'departure_point'),
+    arrivals: movement('arrival_date', 'arrival_time', 'arrival_point', 'pickup_status'),
+    departures: movement('departure_date', 'departure_time', 'departure_point', 'drop_status'),
     perAccommodation,
   };
 
@@ -542,7 +565,7 @@ const CSV_COLUMNS = [
   ...['arrival_date', 'arrival_time', 'arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle', 'pickup_status',
     'departure_date', 'departure_time', 'departure_mode', 'departure_number', 'departure_point', 'drop_vehicle', 'drop_status',
     'accommodation', 'room_no', 'checkin_date', 'checkout_date']
-    .map((f) => [FIELD_LABELS[f], (g) => (TIME_FIELDS.has(f) ? to12h(g[f]) : g[f])]),
+    .map((f) => [FIELD_LABELS[f], (g) => (TIME_FIELDS.has(f) ? to12h(g[f]) : travelInUse(g)[f])]),
   ['Nights', (g) => (g.nights == null ? '' : g.nights)],
   ...['room_type', 'special_needs'].map((f) => [FIELD_LABELS[f], (g) => g[f]]),
   ['Transport Volunteer', (g) => g.transport_coordinator_name], ['Accommodation Volunteer', (g) => g.accommodation_coordinator_name],
@@ -677,6 +700,7 @@ module.exports = {
   TRAVEL_FIELDS, STAY_FIELDS, GENERAL_FIELDS, ALL_FIELDS, FIELD_PERMISSION, FIELD_LABELS, FIELD_LISTS,
   TRAVEL_NOTIFY_FIELDS, STAY_NOTIFY_FIELDS,
   LIST_LABELS, DEFAULT_LISTS, PROTECTED_VALUES, CANCELLED, DEFAULT_SETTINGS, SLOT_NAMES,
+  NOT_REQUIRED, LEG_DETAILS, transferNotRequired, travelInUse,
   naturalCompare,
   validDate, validTime, addDays, joinDateTime, to12h, dateTime12, slotOf, slotLabels,
   validateGuestFields, forbiddenChanges, changedFields, validateVehicle, validateRoom, validateSettings,

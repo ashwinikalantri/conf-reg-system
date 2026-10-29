@@ -173,6 +173,36 @@ check('a leading zero is kept as text', G.guestsCsv([{ ...b.guests[0], phone: '0
 check('a value that would run as a formula is neutralised', G.guestsCsv([{ ...b.guests[0], remarks: '=HYPERLINK("x")' }]).includes(`"'=HYPERLINK(""x"")"`));
 check('warnings are spelled out', /No accommodation/.test(csv[4]));
 
+console.log('\n== Pickup or drop not required ==');
+// Only the date and time are in use: the mode, number, point and vehicle
+// stay on the record but no rule reads them.
+const nr = [
+  guest('Own Way In', { arrival_date: '2026-11-20', arrival_time: '09:00', arrival_mode: 'Flight', arrival_number: '6E 1', arrival_point: 'Nagpur Airport',
+    pickup_vehicle: 'Innova 1', pickup_status: 'Not required', departure_date: '2026-11-22', departure_time: '18:00', departure_point: 'Nagpur Airport',
+    drop_vehicle: 'Innova 1', drop_status: 'not required ', accommodation: 'Yatri Nivas', room_no: '102', overall_status: 'Confirmed' }),
+  guest('Met', { arrival_date: '2026-11-20', arrival_time: '09:20', arrival_point: 'Nagpur Airport', pickup_vehicle: 'Innova 1', pickup_status: 'Assigned',
+    accommodation: 'Yatri Nivas', room_no: '102', overall_status: 'Confirmed' }),
+  guest('Own Way No Car', { arrival_date: '2026-11-20', arrival_time: '11:00', pickup_status: 'Not required', accommodation: 'MGIMS Guesthouse', overall_status: 'Confirmed' }),
+];
+const nrBoard = G.buildBoard({ guests: nr, vehicles, rooms, lists, settings, today });
+const nby = (n) => nrBoard.guests.find((g) => g.name === n);
+check('the record keeps what was entered (the editor needs it)', nby('Own Way In').arrival_mode === 'Flight' && nby('Own Way In').pickup_vehicle === 'Innova 1');
+check('arriving soon with no vehicle is no warning when the pickup is not required', nby('Own Way No Car').flags.pickupAlert === false
+  && nrBoard.dashboard.alert.noVehicle === 0 && nrBoard.dashboard.alert.arriving === 3);
+check('a set-aside vehicle makes no trip: no clash with the car 20 minutes later', nrBoard.clashes.length === 0 && nby('Met').flags.vehicleClash.length === 0);
+check('...and is not counted against the vehicle', nrBoard.vehicles.find((x) => x.label === 'Innova 1').pickups === 1 && nrBoard.vehicles.find((x) => x.label === 'Innova 1').drops === 0);
+const np = nrBoard.pickups.find((p) => p.name === 'Own Way In');
+check('the pickup schedule keeps their date and time, without the rest', np.at === '2026-11-20 09:00' && !np.mode && !np.number && !np.point && !np.vehicle && np.status === 'Not required');
+check('...the drop too (status matched without regard to case or spaces)', !nrBoard.drops.find((p) => p.name === 'Own Way In').vehicle && nrBoard.drops.find((p) => p.name === 'Own Way In').at === '2026-11-22 18:00');
+check('arrivals still count them by date; points only those being met',
+  nrBoard.dashboard.arrivals.total === 3 && JSON.stringify(nrBoard.dashboard.arrivals.byPoint) === JSON.stringify([{ value: 'Nagpur Airport', count: 1 }]), nrBoard.dashboard.arrivals.byPoint);
+const ncsv = G.guestsCsv(nrBoard.guests).split('\r\n');
+const col = (name) => ncsv[0].split(',').indexOf(name);
+const cells = ncsv[1].split(',');
+check('the CSV leaves the set-aside details out, keeps date, time and status',
+  cells[col('Arrival Mode')] === '' && cells[col('Pickup Vehicle/Driver')] === '' && cells[col('Arrival Date')] === '2026-11-20' && cells[col('Pickup Status')] === 'Not required');
+check('"Not required" cannot be switched off or removed from the list', G.PROTECTED_VALUES.transfer_status.includes('Not required') && G.DEFAULT_LISTS.transfer_status.includes(G.NOT_REQUIRED));
+
 console.log('\n== Own stay ==');
 check('"accommodation not needed" is yes/no, whatever the client sends', v({ stay_not_needed: true }).values.stay_not_needed === 1
   && v({ stay_not_needed: 'on' }).values.stay_not_needed === 1 && v({ stay_not_needed: false }).values.stay_not_needed === 0);
