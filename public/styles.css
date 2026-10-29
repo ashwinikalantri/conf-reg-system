@@ -156,4 +156,9 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
 
 /* The delegate's tab bar (#dash-tabs) is fixed to the bottom: room for it
    below the page, so the last card is never under it. */
-body.has-tabs { padding-bottom: calc(5.5rem + env(safe-area-inset-bottom)); }
+@media (max-width: 767px) { body.has-tabs { padding-bottom: calc(5.5rem + env(safe-area-inset-bottom)); } }
+
+/* Sign in on a desktop: the conference's half, its words centred down the
+   card's height. Only while shown -- a display rule on the element itself
+   would override .hidden on the delegate's pages. */
+@media (min-width: 1024px) { #portal-hero:not(.hidden) { display: flex; flex-direction: column; justify-content: center; } }

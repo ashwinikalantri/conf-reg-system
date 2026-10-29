@@ -1,21 +1,25 @@
     <!-- SETTINGS: GENERAL (SMS / Email / UPI) -->
     <section id="section-general" class="hidden space-y-6">
+      <!-- A desktop: the jump buttons are a side menu that stays in view and
+           marks the card on screen (watchSettingsJump); a phone: a row. -->
+      <div class="space-y-6 lg:space-y-0 lg:grid lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-6 lg:items-start">
       <!-- Quick jump: this is the longest settings page by far (8 stacked
            cards), so a plain scroll makes "find Backups" a real chore.
            scrollIntoView rather than real #anchors -- this page's own
            routing already owns the URL hash (see switchBackendTab's
            history.replaceState), and real anchor links would fight it. -->
-      <div class="flex flex-wrap gap-2 sticky top-0 z-10 bg-slate-100/95 backdrop-blur-sm py-2 -mx-1 px-1">
-        <button type="button" onclick="document.getElementById('gs-card-conference').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Conference</button>
-        <button type="button" id="gs-jump-halls" onclick="document.getElementById('gs-card-halls').scrollIntoView({behavior:'smooth',block:'start'})" class="hidden px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Halls</button>
-        <button type="button" onclick="document.getElementById('gs-card-sms').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">SMS</button>
-        <button type="button" onclick="document.getElementById('gs-card-email').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Email</button>
-        <button type="button" onclick="document.getElementById('gs-card-payment').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Payment</button>
-        <button type="button" onclick="document.getElementById('gs-card-maintenance').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Maintenance</button>
-        <button type="button" onclick="document.getElementById('gs-card-notifications').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Notifications</button>
-        <button type="button" onclick="document.getElementById('gs-card-backups').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Backups</button>
-        <button type="button" onclick="document.getElementById('gs-card-env').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600">Other Env Vars</button>
-      </div>
+      <nav id="gs-jump" aria-label="Conference setup" class="flex flex-wrap gap-2 sticky top-0 z-10 bg-slate-100/95 backdrop-blur-sm py-2 -mx-1 px-1 lg:flex-col lg:flex-nowrap lg:gap-0.5 lg:top-4 lg:bg-white lg:backdrop-blur-none lg:rounded-2xl lg:border lg:border-slate-200 lg:p-2 lg:mx-0 lg:shadow-sm">
+        <button type="button" data-target="gs-card-conference" onclick="document.getElementById('gs-card-conference').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Conference</button>
+        <button type="button" id="gs-jump-halls" data-target="gs-card-halls" onclick="document.getElementById('gs-card-halls').scrollIntoView({behavior:'smooth',block:'start'})" class="hidden px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Halls</button>
+        <button type="button" data-target="gs-card-sms" onclick="document.getElementById('gs-card-sms').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">SMS</button>
+        <button type="button" data-target="gs-card-email" onclick="document.getElementById('gs-card-email').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Email</button>
+        <button type="button" data-target="gs-card-payment" onclick="document.getElementById('gs-card-payment').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Payment</button>
+        <button type="button" data-target="gs-card-maintenance" onclick="document.getElementById('gs-card-maintenance').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Maintenance</button>
+        <button type="button" data-target="gs-card-notifications" onclick="document.getElementById('gs-card-notifications').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Notifications</button>
+        <button type="button" data-target="gs-card-backups" onclick="document.getElementById('gs-card-backups').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Backups</button>
+        <button type="button" data-target="gs-card-env" onclick="document.getElementById('gs-card-env').scrollIntoView({behavior:'smooth',block:'start'})" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Other Env Vars</button>
+      </nav>
+      <div class="space-y-6 min-w-0">
 
       <!-- Conference Details -->
       <div id="gs-card-conference" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
@@ -358,5 +362,7 @@
           <p id="gs-env-nodeenv" class="text-sm font-mono text-slate-700">—</p>
           <p class="text-[10px] text-slate-400 mt-1">Read-only — set via the NODE_ENV environment variable when the process is launched (pm2 / the shell), not editable from here.</p>
         </div>
+      </div>
+      </div>
       </div>
     </section>

@@ -64,7 +64,7 @@ const prog = { halls, sessions, mine: [], now: { date: '2026-11-22', minutes: 10
 const confirmed = { bank_status: 'BANK_VERIFIED', registration_number: 'NQOCN20261234', category_label: 'Delegate' };
 
 console.log('\n== The tab bar ==');
-check('Home, Programme, Map, Badge, fixed to the bottom', /<nav id="dash-tabs" aria-label="Main" class="hidden fixed bottom-0/.test(dash)
+check('Home, Programme, Map, Badge, fixed to the bottom', /<nav id="dash-tabs" aria-label="Main" class="hidden md:hidden fixed bottom-0/.test(dash)
   && ['home', 'programme', 'map', 'badge'].every((t) => new RegExp(`id="dash-tab-${t}"`).test(dash)) && /id="dash-tab-badge" onclick="openBadgeFullScreen\(\)"/.test(dash));
 check('...with room kept for it below the page', /body\.has-tabs \{ padding-bottom: calc\(5\.5rem/.test(css));
 check('the menu keeps what is used now and then: profile, admin, password, log out', /aria-label="More: profile, password, log out"/.test(dash)

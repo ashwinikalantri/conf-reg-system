@@ -272,7 +272,12 @@ function updateDashTabs(pageId) {
   if (!bar) return;
   const on = Object.prototype.hasOwnProperty.call(DASH_TAB_OF_PAGE, dashTabsPage);
   bar.classList.toggle('hidden', !on);
-  if (document.body && document.body.classList) document.body.classList.toggle('has-tabs', on);
+  if (document.body && document.body.classList) {
+    document.body.classList.toggle('has-tabs', on);
+    // The delegate's pages start at the top; sign-in stays centred.
+    document.body.classList.toggle('justify-center', !on);
+    document.body.classList.toggle('justify-start', on);
+  }
   const has = {
     home: true,
     programme: !!(programmeData && (programmeData.sessions || []).length),
@@ -289,6 +294,19 @@ function updateDashTabs(pageId) {
     btn.classList.toggle('text-navy', here);
     btn.classList.toggle('font-bold', here);
     btn.classList.toggle('text-slate-600', !here);
+  }
+  // The same tabs as links in each page's navy header, from tablet width up.
+  const links = document.querySelectorAll ? document.querySelectorAll('.dash-nav-link') : [];
+  for (const link of links) {
+    const tab = link.dataset ? link.dataset.tab : null;
+    const here = DASH_TAB_OF_PAGE[dashTabsPage] === tab;
+    link.classList.toggle('hidden', !has[tab]);
+    if (link.setAttribute) link.setAttribute('aria-current', here ? 'page' : 'false');
+    link.classList.toggle('bg-white/10', here);
+    link.classList.toggle('text-white', here);
+    link.classList.toggle('font-bold', here);
+    link.classList.toggle('shadow-[inset_0_-2px_0_#d6b46a]', here);
+    link.classList.toggle('text-white/80', !here);
   }
 }
 
@@ -1274,6 +1292,15 @@ function openProgrammePage() {
   if (now && now.scrollIntoView) now.scrollIntoView({ block: 'center' });
 }
 
+if (window.matchMedia) {
+  const desk = window.matchMedia('(min-width: 1024px)');
+  const redraw = () => {
+    const page = document.getElementById('programme-page');
+    if (page && !page.classList.contains('hidden') && programmeData) renderProgrammePage();
+  };
+  if (desk.addEventListener) desk.addEventListener('change', redraw);
+}
+
 function closeProgrammePage() {
   navigateTo('dashboard-page');
   window.scrollTo(0, 0);
@@ -1323,25 +1350,15 @@ function renderProgrammePage() {
       ? `<button type="button" onclick="openMapPage(${Number(it.hallIds[0])})" aria-label="${label} on the campus map" class="${cls} inline-flex items-center gap-1 hover:bg-indigo-100"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg>${label}</button>`
       : `<span class="${cls}">${label}</span>`;
   };
-  document.getElementById('prog-page-list').innerHTML = slots.map((start) => {
-    const at = items.filter((it) => it.start === start);
-    const breaks = at.filter(progIsBreak);
-    const talks = at.filter((it) => !progIsBreak(it))
-      .sort((a, b) => Number(myWorkshops.has(b.optionId)) - Number(myWorkshops.has(a.optionId)));
-    const divider = breaks.length && !talks.length
-      ? `<div class="ml-[4.5rem] my-3 border-t border-dashed border-slate-300 pt-1.5 text-sm text-slate-500">${esc(guestTime12(breaks[0].start))} – ${esc(guestTime12(breaks[0].end))} · ${esc(breaks.map((b) => b.title).filter((t, i, a) => a.indexOf(t) === i).join(', '))}</div>` : '';
-    if (!talks.length) return divider;
-    const [time, ampm] = guestTime12(start).split(' ');
-    return `<div class="grid grid-cols-[3.75rem_minmax(0,1fr)] gap-3 mt-3">
-      <div class="pt-3 text-right"><p class="text-lg font-bold text-navy leading-none tabular-nums">${esc(time)}</p><p class="text-xs text-slate-500 mt-0.5">${esc(ampm || '')}</p></div>
-      <div class="space-y-2">${talks.map((it) => {
-        const now = it.halls.length && it.ids.some((id) => progIsNow({ ...it, id }));
-        const was = it.ids.some((id) => mine.has(id));
-        const yours = myWorkshops.has(it.optionId);
-        return `<article data-now="${now ? 1 : 0}" class="bg-white rounded-xl border ${now ? 'border-2 border-gold-500' : 'border-slate-200'} px-4 py-3">
+  // A talk's card, in the list (a phone) and in the timetable (a desktop).
+  const card = (it, showHall = true) => {
+    const now = it.halls.length && it.ids.some((id) => progIsNow({ ...it, id }));
+    const was = it.ids.some((id) => mine.has(id));
+    const yours = myWorkshops.has(it.optionId);
+    return `<article data-now="${now ? 1 : 0}" class="bg-white rounded-xl border ${now ? 'border-2 border-gold-500' : 'border-slate-200'} px-4 py-3 h-full">
           <div class="flex items-start justify-between gap-2">
             <p class="text-xs font-bold tracking-wide text-navy uppercase">${esc(it.label || '')}${yours ? ' · <span class="text-gold-700">Your workshop</span>' : ''}</p>
-            ${hallTag(it)}
+            ${showHall ? hallTag(it) : ''}
           </div>
           ${now ? `<p class="text-xs font-bold text-gold-700 mt-0.5">On now${was ? ' · you are marked present' : ''}</p>` : (was ? '<p class="text-xs font-bold text-emerald-700 mt-0.5">✓ You were marked present</p>' : '')}
           <h4 class="text-[17px] font-semibold text-slate-900 leading-snug mt-1">${esc(it.title)}</h4>
@@ -1349,7 +1366,55 @@ function renderProgrammePage() {
           ${it.chairs ? `<p class="text-sm text-slate-500 mt-1">Chair: ${esc(it.chairs)}</p>` : ''}
           <p class="text-xs text-slate-400 mt-1.5 tabular-nums">${esc(guestTime12(it.start))} – ${esc(guestTime12(it.end))}</p>
         </article>`;
-      }).join('')}</div>
+  };
+  const breakLine = (breaks) => `${esc(guestTime12(breaks[0].start))} – ${esc(guestTime12(breaks[0].end))} · ${esc(breaks.map((b) => b.title).filter((t, i, a) => a.indexOf(t) === i).join(', '))}`;
+  // A desktop, a day of two to four halls with talks, every hall shown: a
+  // timetable -- a column per hall, a row per time; a talk in every hall
+  // spans the row, a break is a line across it.
+  const wide = !!(window.matchMedia && window.matchMedia('(min-width: 1024px)').matches);
+  const grid = wide && !programmeHall && hallsWithTalks.length >= 2 && hallsWithTalks.length <= 4;
+  const page = document.getElementById('programme-page');
+  if (page) page.classList.toggle('lg:max-w-6xl', grid);
+  if (grid) {
+    const cols = hallsWithTalks;
+    const hallId = (name) => { const s = day.find((x) => x.hall === name); return s ? s.hallId : null; };
+    const head = cols.map((h) => {
+      const id = hallId(h);
+      return id != null && onMap.has(id)
+        ? `<button type="button" onclick="openMapPage(${Number(id)})" class="text-left rounded-lg bg-navy text-white font-bold px-3 py-2 hover:bg-indigo-700" aria-label="${esc(h)} on the campus map">${esc(h)}</button>`
+        : `<p class="rounded-lg bg-navy text-white font-bold px-3 py-2">${esc(h)}</p>`;
+    }).join('');
+    const rows = slots.map((start) => {
+      const at = items.filter((it) => it.start === start);
+      const breaks = at.filter(progIsBreak);
+      const talks = at.filter((it) => !progIsBreak(it));
+      const [time, ampm] = guestTime12(start).split(' ');
+      const timeCell = `<div class="pt-3 text-right"><p class="text-lg font-bold text-navy leading-none tabular-nums">${esc(time)}</p><p class="text-xs text-slate-500 mt-0.5">${esc(ampm || '')}</p></div>`;
+      if (!talks.length) return `<div class="pt-1 text-right text-sm text-slate-500 tabular-nums">${esc(guestTime12(start))}</div><div style="grid-column: 2 / -1" class="border-t border-dashed border-slate-300 pt-1.5 text-sm text-slate-500">${breakLine(breaks)}</div>`;
+      const everywhere = talks.find((it) => cols.every((h) => it.halls.includes(h)));
+      if (everywhere) return `${timeCell}<div style="grid-column: 2 / -1">${card(everywhere, false)}</div>`;
+      return timeCell + cols.map((h) => {
+        const here = talks.filter((it) => it.halls[0] === h);
+        return `<div class="space-y-2">${here.map((it) => card(it, it.halls.length > 1)).join('')}</div>`;
+      }).join('');
+    }).join('');
+    document.getElementById('prog-page-list').innerHTML = slots.length
+      ? `<div class="grid gap-2.5 mt-3" style="grid-template-columns: 4.5rem repeat(${cols.length}, minmax(0, 1fr))"><div></div>${head}${rows}</div>`
+      : '<p class="mt-6 text-center text-slate-500">Nothing on this day.</p>';
+    return;
+  }
+  document.getElementById('prog-page-list').innerHTML = slots.map((start) => {
+    const at = items.filter((it) => it.start === start);
+    const breaks = at.filter(progIsBreak);
+    const talks = at.filter((it) => !progIsBreak(it))
+      .sort((a, b) => Number(myWorkshops.has(b.optionId)) - Number(myWorkshops.has(a.optionId)));
+    const divider = breaks.length && !talks.length
+      ? `<div class="ml-[4.5rem] my-3 border-t border-dashed border-slate-300 pt-1.5 text-sm text-slate-500">${breakLine(breaks)}</div>` : '';
+    if (!talks.length) return divider;
+    const [time, ampm] = guestTime12(start).split(' ');
+    return `<div class="grid grid-cols-[3.75rem_minmax(0,1fr)] gap-3 mt-3">
+      <div class="pt-3 text-right"><p class="text-lg font-bold text-navy leading-none tabular-nums">${esc(time)}</p><p class="text-xs text-slate-500 mt-0.5">${esc(ampm || '')}</p></div>
+      <div class="space-y-2">${talks.map((it) => card(it)).join('')}</div>
     </div>${divider}`;
   }).join('') || '<p class="mt-6 text-center text-slate-500">Nothing on this day.</p>';
 }
@@ -8176,11 +8241,35 @@ async function requestBackupNow() {
   await renderBackupStatus();
 }
 
+// Conference setup's side menu (a desktop): the card on screen is marked.
+let settingsJumpWatched = false;
+function watchSettingsJump() {
+  if (settingsJumpWatched || typeof IntersectionObserver !== 'function') return;
+  const buttons = [...document.querySelectorAll('#gs-jump .gs-jump-btn')];
+  if (!buttons.length) return;
+  settingsJumpWatched = true;
+  const mark = (id) => buttons.forEach((b) => {
+    const on = b.dataset.target === id;
+    b.classList.toggle('lg:bg-gold-50', on);
+    b.classList.toggle('lg:text-navy', on);
+    b.classList.toggle('lg:font-bold', on);
+    if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+  });
+  const seen = new Map();
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => seen.set(e.target.id, e.isIntersecting ? e.intersectionRatio : 0));
+    const first = buttons.map((b) => b.dataset.target).find((id) => (seen.get(id) || 0) > 0);
+    if (first) mark(first);
+  }, { rootMargin: '-15% 0px -55% 0px', threshold: [0, 0.01] });
+  buttons.forEach((b) => { const card = document.getElementById(b.dataset.target); if (card) io.observe(card); });
+}
+
 async function renderGeneralSettings() {
   // Independent of the settings fetch below, so a backup-status hiccup can't
   // stop the rest of the tab rendering.
   renderBackupStatus();
   loadHallsCard();
+  watchSettingsJump();
   const res = await fetch('/api/admin/general-settings');
   if (!res.ok) return;
   const data = await res.json();
@@ -11582,14 +11671,12 @@ function renderGuestList() {
     return `<button type="button" onclick="sortGuests('${key}')" class="font-bold uppercase tracking-wide hover:text-slate-800 ${on ? 'text-slate-800' : ''}">${esc(label)}${on ? (guestSort.dir > 0 ? ' ▲' : ' ▼') : ''}</button>`;
   };
   thead.innerHTML = `<tr>
-    <th class="p-3 text-left w-10">${th('sr_no', 'Sr')}</th>
-    <th class="p-3 text-left">${th('name', 'Faculty')}</th>
+    <th class="p-3 text-left w-10 sticky left-0 z-20 bg-slate-50">${th('sr_no', 'Sr')}</th>
+    <th class="p-3 text-left sticky left-10 z-20 bg-slate-50 shadow-[1px_0_0_#e2e8f0]">${th('name', 'Faculty')}</th>
     <th class="p-3 text-left">${th('arrival_at', 'Arrival · Pickup')}</th>
     <th class="p-3 text-left">${th('departure_at', 'Departure · Drop')}</th>
     <th class="p-3 text-left">${th('accommodation', 'Stay')}</th>
-    <th class="p-3 text-left">Volunteers</th>
     <th class="p-3 text-left">${th('overall_status', 'Status')}</th>
-    <th class="p-3 text-left">Needs · Remarks</th>
     <th class="p-3"></th>
   </tr>`;
   const rows = filteredGuests();
@@ -11605,29 +11692,25 @@ function renderGuestList() {
   const notSet = '<span class="text-xs text-slate-400">Not set</span>';
   const travel = (...leg) => guestLegHtml(...leg) || notSet;
   tbody.innerHTML = rows.length ? rows.map((g) => `
-    <tr class="${guestRowTint(g)} align-top">
-      <td class="p-3 text-xs text-slate-400 font-mono">${esc(g.sr_no)}</td>
-      <td class="p-3">
+    <tr class="${guestRowTint(g) || 'bg-white'} align-top">
+      <td class="p-3 w-10 text-xs text-slate-400 font-mono sticky left-0 z-10 bg-inherit">${esc(g.sr_no)}</td>
+      <td class="p-3 sticky left-10 z-10 bg-inherit shadow-[1px_0_0_#e2e8f0]">
         <div class="w-56 break-words">
           <p class="font-semibold ${g.cancelled ? 'line-through' : 'text-slate-800'}">${esc(g.name)}</p>
           ${g.designation ? `<p class="text-xs text-slate-500 line-clamp-2" title="${esc(g.designation)}">${esc(g.designation)}</p>` : ''}
           <p class="text-xs text-slate-500 font-mono">${esc(g.phone || '')}</p>
           <div class="flex flex-wrap gap-1 mt-1">${guestFlagChips(g)}</div>
+          ${g.special_needs ? `<p class="text-[11px] font-semibold text-rose-700 mt-1" title="${esc(g.special_needs)}">Special needs: see the editor</p>` : ''}
           ${(g.sessions || []).length ? `<p class="text-[11px] font-semibold text-indigo-700 mt-1">${g.sessions.length} session${g.sessions.length === 1 ? '' : 's'} in the programme</p>` : ''}
         </div>
       </td>
       <td class="p-3">${travel(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status)}</td>
       <td class="p-3">${travel(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status)}</td>
       <td class="p-3">${guestStayHtml(g) || notSet}</td>
-      <td class="p-3 text-xs text-slate-600">
-        <p><span class="text-slate-400">Transport:</span> ${esc(g.transport_coordinator_name || '—')}</p>
-        <p><span class="text-slate-400">Stay:</span> ${esc(g.accommodation_coordinator_name || '—')}</p>
-      </td>
       <td class="p-3">${guestStatusBadge(g.overall_status)}</td>
-      <td class="p-3 text-xs text-slate-600 max-w-[14rem]">${g.special_needs ? `<p><b>Needs:</b> ${esc(g.special_needs)}</p>` : ''}${g.remarks ? `<p class="text-slate-500">${esc(g.remarks)}</p>` : ''}</td>
       <td class="p-3 text-right"><button type="button" onclick="openGuestEditor(${esc(g.id)})" class="px-3 py-1.5 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold rounded-lg">${can('guests.edit') || guestVolunteerOf(g).mineT || guestVolunteerOf(g).mineS ? 'Edit' : 'View'}</button></td>
     </tr>`).join('')
-    : `<tr><td colspan="9" class="p-8 text-center text-slate-400 text-sm">${guestData.guests.length ? 'No one matches these filters.' : 'No faculty yet. Mark a delegate as faculty to start.'}</td></tr>`;
+    : `<tr><td colspan="7" class="p-8 text-center text-slate-400 text-sm">${guestData.guests.length ? 'No one matches these filters.' : 'No faculty yet. Mark a delegate as faculty to start.'}</td></tr>`;
   // A card per person, for a phone (the table is hidden there).
   const cards = document.getElementById('guests-cards');
   if (cards) {

@@ -345,7 +345,7 @@ check('...red and orange as a coloured edge', /border-l-rose-400[^>]*>[\s\S]*?Br
 check('...with a phone to tap and call', /<a href="tel:\+919800000001"/.test(cardsHtml));
 check('...and a full-width Edit button', /class="mt-3 w-full h-10[^"]*"[^>]*>Edit</.test(cardsHtml) || /onclick="openGuestEditor\(\d+\)" class="mt-3 w-full h-10/.test(cardsHtml));
 const ejsAll = ejs;
-check('cards on a phone, the table from tablet up', /id="guests-cards" class="md:hidden/.test(ejsAll) && /class="hidden md:block bg-white rounded-2xl[^"]*overflow-x-auto">\s*<table class="w-full text-sm min-w-\[72rem\]">/.test(ejsAll));
+check('cards on a phone, the table from tablet up', /id="guests-cards" class="md:hidden/.test(ejsAll) && /class="hidden md:block bg-white rounded-2xl[^"]*overflow-x-auto">\s*<table class="w-full text-sm min-w-\[56rem\]">/.test(ejsAll));
 check('a Sort select stands in for the column headers', /id="guests-sort-mobile" onchange="setGuestSort\(this\.value\)"/.test(ejsAll));
 check('the tabs are one row that swipes', /id="guests-subnav" role="tablist" class="flex gap-1\.5 overflow-x-auto sm:flex-wrap/.test(ejsAll) && /guest-subtab shrink-0 whitespace-nowrap/.test(ejsAll));
 check('the colour key folds away on a phone', /<details class="md:hidden mb-3">\s*<summary[^>]*>Colour key<\/summary>\s*<div id="guests-legend-mobile"/.test(ejsAll)
