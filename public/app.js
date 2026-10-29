@@ -1348,11 +1348,27 @@ function campusPlaces(halls) {
     const key = `${Number(h.lat).toFixed(6)},${Number(h.lng).toFixed(6)}`;
     let p = places.find((x) => x.key === key);
     if (!p) { p = { key, n: places.length + 1, lat: Number(h.lat), lng: Number(h.lng), halls: [] }; places.push(p); }
-    p.halls.push({ id: h.id, name: h.name });
+    p.halls.push({ id: h.id, name: h.name, floor: h.floor || '' });
   }
   return places;
 }
+// "Pediatrics Seminar Hall, 2nd floor" -- the floor only where one is set.
+const campusHallName = (h) => (h.floor ? `${h.name}, ${h.floor}` : h.name);
 const campusDirectionsUrl = (p) => `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}&travelmode=walking`;
+
+// Metres between two places (haversine), to tell the campus from a field
+// visit miles off.
+function campusDistance(a, b) {
+  const rad = (d) => (d * Math.PI) / 180;
+  const h = Math.sin(rad(b.lat - a.lat) / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(rad(b.lng - a.lng) / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(h));
+}
+// The campus: the places within 2 km of the first (the main venue). One
+// further off -- a village on a field visit -- keeps its pin and directions,
+// but the map opens on the campus, not zoomed out to take it in.
+const CAMPUS_RADIUS_M = 2000;
+const campusCore = (places) => (places.length ? places.filter((p) => campusDistance(places[0], p) <= CAMPUS_RADIUS_M) : []);
+const campusAway = (places, p) => (places.length && campusDistance(places[0], p) > CAMPUS_RADIUS_M ? campusDistance(places[0], p) : 0);
 
 // What is on in a building now, or next today -- breaks aside.
 function campusPlaceNow(place) {
@@ -1369,11 +1385,14 @@ function campusListHtml(places, chosen) {
   return places.map((p) => {
     const [first, ...rest] = p.halls;
     const now = campusPlaceNow(p);
+    const away = campusAway(places, p);
     return `<div class="flex items-center gap-3 px-4 py-3 ${p.n === chosen ? 'bg-gold-50' : ''}">
       <button type="button" onclick="focusCampusPlace(${p.n})" class="flex items-center gap-3 flex-1 min-w-0 text-left">
         <span class="campus-pin shrink-0 ${p.n === chosen ? 'is-chosen' : ''}" aria-hidden="true">${p.n}</span>
         <span class="min-w-0"><span class="block font-semibold text-navy leading-snug">${esc(first.name)}</span>
-          ${rest.length ? `<span class="block text-xs text-slate-500">Same building: ${esc(rest.map((h) => h.name).join(', '))}</span>` : ''}
+          ${first.floor ? `<span class="block text-xs font-semibold text-slate-600">${esc(first.floor)}</span>` : ''}
+          ${rest.length ? `<span class="block text-xs text-slate-500">Same building: ${esc(rest.map(campusHallName).join('; '))}</span>` : ''}
+          ${away ? `<span class="block text-xs text-slate-500">Off campus, about ${esc(Math.round(away / 1000))} km away</span>` : ''}
           ${now ? `<span class="block text-xs font-semibold text-gold-700 truncate">${esc(now)}</span>` : ''}</span>
       </button>
       <a href="${esc(campusDirectionsUrl(p))}" target="_blank" rel="noopener" class="shrink-0 px-3 py-1.5 rounded-lg border border-slate-300 text-sm font-semibold text-navy hover:bg-slate-50">Directions</a>
@@ -1409,7 +1428,7 @@ async function openMapPage(hallId) {
 
 const campusIcon = (L, p) => L.divIcon({ className: '', html: `<span class="campus-pin ${p.n === campusChosen ? 'is-chosen' : ''}">${p.n}</span>`,
   iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -16] });
-const campusPopupHtml = (p) => `<p style="margin:0 0 6px;font-weight:700;color:#1c3549">${esc(p.halls.map((h) => h.name).join(' · '))}</p>
+const campusPopupHtml = (p) => `<p style="margin:0 0 6px;font-weight:700;color:#1c3549">${p.halls.map((h) => esc(campusHallName(h))).join('<br>')}</p>
   <a href="${esc(campusDirectionsUrl(p))}" target="_blank" rel="noopener" style="font-weight:600;color:#8a6d2b">Walking directions</a>`;
 
 function renderCampusMap(L) {
@@ -1433,9 +1452,8 @@ function renderCampusMap(L) {
     campusMarkers.set(p.n, m);
   }
   campusMap.invalidateSize();
-  if (campusPlacesList.length) {
-    campusMap.fitBounds(L.latLngBounds(campusPlacesList.map((p) => [p.lat, p.lng])), { padding: [48, 48], maxZoom: 18 });
-  }
+  const core = campusCore(campusPlacesList);
+  if (core.length) campusMap.fitBounds(L.latLngBounds(core.map((p) => [p.lat, p.lng])), { padding: [48, 48], maxZoom: 18 });
 }
 
 function focusCampusPlace(n, scroll = true) {
@@ -1446,7 +1464,8 @@ function focusCampusPlace(n, scroll = true) {
   const p = campusPlacesList.find((x) => x.n === n);
   const m = campusMarkers.get(n);
   if (p && m) {
-    campusMap.setView([p.lat, p.lng], Math.max(campusMap.getZoom(), 18));
+    // Close in on a building; a village needs its surroundings.
+    campusMap.setView([p.lat, p.lng], campusAway(campusPlacesList, p) ? 16 : Math.max(campusMap.getZoom(), 18));
     m.openPopup();
   }
   if (scroll) document.getElementById('campus-map').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1487,7 +1506,7 @@ function onCampusLocation(e) {
   }
   if (!campusLocateFirst) return;
   campusLocateFirst = false;
-  const pts = campusPlacesList.map((p) => [p.lat, p.lng]);
+  const pts = campusCore(campusPlacesList).map((p) => [p.lat, p.lng]);
   const nearest = pts.length ? Math.min(...pts.map((pt) => campusMap.distance(pt, e.latlng))) : 0;
   if (nearest > 5000) {
     showToast(`You are about ${Math.round(nearest / 1000)} km from the campus.`);
@@ -12664,6 +12683,8 @@ async function renderProgramme() {
       <input value="${esc(h.name)}" data-hall="${esc(h.id)}" aria-label="Hall name" class="prog-hall-name flex-1 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
       <input value="${h.lat != null && h.lng != null ? esc(`${h.lat}, ${h.lng}`) : ''}" data-hall="${esc(h.id)}" aria-label="Map location" placeholder="Map location: 20.741279, 78.662397"
         title="For the delegates' campus map. In Google Maps, press and hold the spot, then copy the numbers shown." class="prog-hall-loc sm:w-56 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none tabular-nums">
+      <input value="${esc(h.floor || '')}" data-hall="${esc(h.id)}" aria-label="Floor" maxlength="60" placeholder="Floor (if it helps)"
+        title="Shown with the hall on the delegates' campus map, e.g. 2nd floor. Leave blank where it is obvious." class="prog-hall-floor sm:w-36 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
       <div class="flex flex-wrap gap-1.5">
         <button type="button" onclick="saveHall(${Number(h.id)})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save</button>
         <a href="/api/admin/programme/posters.pdf?hall=${encodeURIComponent(h.id)}" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50">QR poster</a>
@@ -12759,6 +12780,7 @@ function saveHall(id) {
   putHall(id, {
     name: document.querySelector(`.prog-hall-name[data-hall="${id}"]`).value,
     location: document.querySelector(`.prog-hall-loc[data-hall="${id}"]`).value,
+    floor: document.querySelector(`.prog-hall-floor[data-hall="${id}"]`).value,
   });
 }
 async function newHallCode(id) {

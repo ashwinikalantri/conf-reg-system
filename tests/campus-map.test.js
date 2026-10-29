@@ -71,6 +71,15 @@ function load() {
   const prog = (await call('GET', '/api/programme', null, admin)).body;
   const mine = prog.halls.find((h) => h.id === id);
   check('the delegate programme carries each hall\'s location', mine && mine.lat === 20.741 && mine.lng === 78.6624);
+  check('a floor can be given, where it helps', (await put({ floor: ' 2nd   floor ' })).body.success === true
+    && (await db.get('SELECT floor FROM halls WHERE id = ?', [id])).floor === '2nd floor');
+  check('...is in the delegate programme', (await call('GET', '/api/programme', null, admin)).body.halls.find((h) => h.id === id).floor === '2nd floor');
+  check('...is logged', /2nd floor/.test((await db.get("SELECT new_value FROM audit_log WHERE action = 'HALL_UPDATED' AND entity_id = ? ORDER BY id DESC LIMIT 1", [String(id)])).new_value));
+  check('...is cleared by leaving it blank, and kept when only the name changes', (await put({ name: 'Map Test Hall floor' })).body.success === true
+    && (await db.get('SELECT floor FROM halls WHERE id = ?', [id])).floor === '2nd floor'
+    && (await put({ floor: '' })).body.success === true && (await db.get('SELECT floor FROM halls WHERE id = ?', [id])).floor === null);
+  check('...and kept short', (await put({ floor: 'x'.repeat(61) })).status === 400);
+  check('the editor has a floor box, saved with the rest', /class="prog-hall-floor /.test(js) && /floor: document\.querySelector\(`\.prog-hall-floor/.test(js));
   check('blank clears it', (await put({ location: '' })).body.success === true && JSON.stringify(await row()) === JSON.stringify({ lat: null, lng: null }));
   check('the editor has a location box on each hall, saved with the name', /class="prog-hall-loc /.test(js)
     && /location: document\.querySelector\(`\.prog-hall-loc\[data-hall="\$\{id\}"\]`\)\.value/.test(js));
@@ -84,7 +93,7 @@ function load() {
     { id: 2, name: 'Hall A', lat: 20.74101, lng: 78.662377 },
     { id: 9, name: 'Digital Library', lat: null, lng: null },
     { id: 7, name: 'Obstetrics and Gynaecology Seminar Hall', lat: 20.740149, lng: 78.659761 },
-    { id: 6, name: 'Pediatrics Seminar Hall', lat: 20.740149, lng: 78.659761 },
+    { id: 6, name: 'Pediatrics Seminar Hall', lat: 20.740149, lng: 78.659761, floor: '2nd floor' },
   ];
   const places = sb.__f.campusPlaces(halls);
   check('halls without a location are left off', places.length === 3 && !places.some((p) => p.halls.some((h) => h.id === 9)));
@@ -99,11 +108,21 @@ function load() {
   const list = sb.__f.campusListHtml(places, 3);
   check('the list numbers each place as its pin', (list.match(/class="campus-pin shrink-0/g) || []).length === 3);
   check('a shared building names its other halls', /Obstetrics and Gynaecology Seminar Hall<\/span>\s*<span class="block text-xs text-slate-500">Same building: Pediatrics Seminar Hall/.test(list));
+  check('a floor shows with its hall; none where none is set', /Same building: Pediatrics Seminar Hall, 2nd floor/.test(list)
+    && !/Main Auditorium<\/span>\s*<span class="block text-xs font-semibold text-slate-600">/.test(list));
+  const solo = sb.__f.campusPlaces([{ id: 4, name: 'Sarojini Naidu Hall', lat: 20.739344, lng: 78.660126, floor: 'Ground floor' }]);
+  check('...under the name, for a hall on its own', /Sarojini Naidu Hall<\/span>\s*<span class="block text-xs font-semibold text-slate-600">Ground floor<\/span>/.test(sb.__f.campusListHtml(solo, 0)));
   check('what is on now, or next today, in that building', /On now: Quality as a Strategy/.test(list) && /Next, 2:30 PM: Neonatal QI/.test(list));
   check('...a break is not "on"', !/Tea/.test(list));
   check('each has Directions, opening outside the portal', (list.match(/target="_blank" rel="noopener"[^>]*>Directions</g) || []).length === 3);
   check('the chosen place is marked', /bg-gold-50/.test(list) && /campus-pin shrink-0 is-chosen" aria-hidden="true">3</.test(list));
   check('nothing on the map: says so', /No halls are on the map yet/.test(sb.__f.campusListHtml([], 0)));
+  const withVillage = sb.__f.campusPlaces([...halls, { id: 18, name: 'Madni Village (field visit)', lat: 20.685862, lng: 78.747389 }]);
+  const core = vm.runInContext(`campusCore(${JSON.stringify(withVillage)})`, sb);
+  check('the map opens on the campus: a village 10 km off is not in the view it fits', core.length === 3 && !core.some((p) => p.halls[0].id === 18));
+  check('...but keeps its pin, and the list says how far it is', withVillage.length === 4
+    && /Madni Village \(field visit\)<\/span>[\s\S]*?Off campus, about 11 km away/.test(sb.__f.campusListHtml(withVillage, 0)));
+  check('...a campus hall says nothing of the sort', !/Off campus/.test(sb.__f.campusListHtml(places, 0)));
 
   console.log('\n== In the portal ==');
   check('the menu has Map, hidden until a hall has a location', /id="dash-menu-map" onclick="dashGo\('map'\)" class="hidden /.test(dash)
