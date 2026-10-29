@@ -36,7 +36,6 @@ const attendanceLib = require('./attendance');
 const councilsLib = require('./councils');
 const certificatePdfLib = require('./certificate-pdf');
 const { renderAbstractPdf } = require('./abstract-pdf');
-const https = require('https');
 const QRCode = require('qrcode');
 // Shared with scripts/daily-digest.js -- see the note there about why the
 // email chrome is not just the app's own CSS.
@@ -390,15 +389,6 @@ const maskSecret = (v) => v ? `••••${String(v).slice(-4)}` : null;
 // key (like every credential here) persists to .env via writeEnvVar(), never
 // to the database, and the browser is only ever told whether it is set, never
 // any of its bytes.
-// Flight look-up for the Faculty tab: AeroDataBox, through RapidAPI. The key
-// is set in Settings -> General and kept in .env like the other credentials;
-// without one the Fetch buttons simply do not appear.
-const FLIGHTS = {
-  apiKey: process.env.AERODATABOX_API_KEY || '',
-  host: 'aerodatabox.p.rapidapi.com',
-};
-const flightLookupEnabled = () => !!FLIGHTS.apiKey;
-
 const SMS = {
   apiKey: process.env.SMS_API_KEY || '',
   url: process.env.SMS_URL || 'https://api.vynttra.in/index.php/sms/json',
@@ -1859,17 +1849,6 @@ db.serialize(() => {
       text TEXT,
       word_count INTEGER,
       status TEXT DEFAULT 'UNDER_REVIEW'
-    )
-  `);
-
-  // Flight look-ups already made, so the same flight and date is not paid for
-  // twice in a few hours. See GET /api/guests/flight.
-  db.run(`
-    CREATE TABLE IF NOT EXISTS flight_lookups (
-      lookup_key TEXT PRIMARY KEY,
-      fetched_at INTEGER NOT NULL,
-      http_status INTEGER NOT NULL,
-      body TEXT
     )
   `);
 
@@ -11557,8 +11536,6 @@ app.get('/api/admin/general-settings', requirePermission('system.settings_view')
       bank: { accountName: BANK.accountName, accountNumber: BANK.accountNumber, ifsc: BANK.ifsc, branch: BANK.branch },
       conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym, startDate: CONFERENCE.startDate, endDate: CONFERENCE.endDate, location: CONFERENCE.location, regPrefix: CONFERENCE.regPrefix, abstractDeadline: CONFERENCE.abstractDeadline, abstractSubmissionOpen: abstractSubmissionOpen() },
       maintenance: { enabled: maintenance.enabled, message: maintenance.message },
-      // Whether a flight look-up key is set, never any of it.
-      flights: { hasApiKey: flightLookupEnabled() },
       otherEnvVars: await describeOtherEnvVars(),
     });
   } catch (err) {
@@ -11568,7 +11545,7 @@ app.get('/api/admin/general-settings', requirePermission('system.settings_view')
 
 app.put('/api/admin/general-settings', requirePermission('system.settings_edit'), async (req, res, next) => {
   try {
-    const { sms, email, upi, bank, conference, notify, maintenance: maintenanceBody, otherEnv, flights } = req.body || {};
+    const { sms, email, upi, bank, conference, notify, maintenance: maintenanceBody, otherEnv } = req.body || {};
 
     // Reject line breaks in the credential fields up front, before anything is
     // persisted, so a bad paste can't inject extra .env lines and a malformed
@@ -11576,7 +11553,6 @@ app.put('/api/admin/general-settings', requirePermission('system.settings_edit')
     // returns a clean 400 instead of a generic 500.)
     for (const [label, raw] of [
       ['SMS API key', sms && sms.apiKey], ['AWS Access Key ID', email && email.awsAccessKeyId], ['AWS Secret Access Key', email && email.awsSecretAccessKey],
-      ['Flight look-up key', flights && flights.apiKey],
     ]) {
       if (raw !== undefined && raw !== null && /[\r\n]/.test(String(raw))) {
         return res.status(400).json({ success: false, error: `${label} must not contain line breaks.` });
@@ -11737,14 +11713,6 @@ app.put('/api/admin/general-settings', requirePermission('system.settings_edit')
         writeEnvVar('SMS_API_KEY', val);
         changes.push('SMS API key changed');
         credsChanged = true;
-      }
-    }
-    if (flights && flights.apiKey !== undefined && String(flights.apiKey).trim()) {
-      const val = String(flights.apiKey).trim();
-      if (val !== FLIGHTS.apiKey) {
-        FLIGHTS.apiKey = val;
-        writeEnvVar('AERODATABOX_API_KEY', val);
-        changes.push('Flight look-up key changed');
       }
     }
     if (email && email.awsAccessKeyId !== undefined && String(email.awsAccessKeyId).trim()) {
@@ -13693,7 +13661,6 @@ app.get('/api/guests', requirePermission('guests.view'), async (req, res, next) 
       listLabels: guestLib.LIST_LABELS,
       settings,
       coordinators: await guestCoordinatorPool(),
-      flightLookup: flightLookupEnabled(),
       today: istDateString(),
     });
   } catch (err) {
@@ -13880,84 +13847,6 @@ app.put('/api/guests/:id/unlink', requirePermission('guests.edit'), async (req, 
     await recordAudit({ req, entityType: 'guest', entityId: String(g.id), action: 'GUEST_UNLINKED', oldValue: accountName,
       newValue: `unlinked from ${accountName}'s account; now ${name}, not signed up` });
     res.json({ success: true, name });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// --- flight look-up ---
-// Ask the flight data service for a flight's scheduled times on a date.
-// Answers are kept for a few hours (an unknown flight for less), since the
-// free allowance is a few hundred look-ups a month. Nothing is saved to the
-// faculty record here: the coordinator sees the result and fills it in.
-const FLIGHT_CACHE_MS = { found: 6 * 3600e3, notFound: 3600e3 };
-
-function aeroDataBoxGet(path) {
-  return new Promise((resolve, reject) => {
-    const r = https.get({ host: FLIGHTS.host, path, timeout: 10000,
-      headers: { 'X-RapidAPI-Key': FLIGHTS.apiKey, 'X-RapidAPI-Host': FLIGHTS.host, Accept: 'application/json' } }, (resp) => {
-      let body = '';
-      resp.setEncoding('utf8');
-      resp.on('data', (c) => { body += c; if (body.length > 2e6) r.destroy(new Error('response too large')); });
-      resp.on('end', () => resolve({ status: resp.statusCode, body }));
-    });
-    r.on('timeout', () => r.destroy(new Error('timeout')));
-    r.on('error', reject);
-  });
-}
-
-app.get('/api/guests/flight', requirePermission('guests.travel'), async (req, res, next) => {
-  try {
-    if (!flightLookupEnabled()) {
-      return res.status(503).json({ success: false, code: 'NOT_CONFIGURED', error: 'Flight look-up is not set up. A Super Admin can add the key in Settings → General.' });
-    }
-    const number = guestLib.normaliseFlightNumber(req.query.number);
-    if (!number) return res.status(400).json({ success: false, error: 'That does not look like a flight number (e.g. 6E 123).' });
-    const date = String(req.query.date || '');
-    if (!guestLib.validDate(date)) return res.status(400).json({ success: false, error: 'Enter the date first.' });
-    const leg = req.query.leg === 'departure' ? 'departure' : 'arrival';
-    const key = `${number}|${date}|${leg}`;
-
-    let hit = await dbGet('SELECT * FROM flight_lookups WHERE lookup_key = ?', [key]);
-    const fresh = hit && (Date.now() - hit.fetched_at) < (hit.http_status === 200 ? FLIGHT_CACHE_MS.found : FLIGHT_CACHE_MS.notFound);
-    if (!fresh) {
-      // dateLocalRole: the date is the arrival date when meeting them, the
-      // departure date when seeing them off -- which is what makes an
-      // overnight flight come out right.
-      const path = `/flights/number/${encodeURIComponent(number)}/${date}?withAircraftImage=false&withLocation=false&dateLocalRole=${leg === 'arrival' ? 'Arrival' : 'Departure'}`;
-      let out;
-      try {
-        out = await aeroDataBoxGet(path);
-      } catch (err) {
-        return res.status(502).json({ success: false, error: 'The flight service did not answer. Try again in a moment.' });
-      }
-      if (out.status === 401 || out.status === 403) {
-        return res.status(502).json({ success: false, error: 'The flight service refused the key. Check it in Settings → General.' });
-      }
-      if (out.status === 429) {
-        return res.status(502).json({ success: false, error: 'The flight look-up allowance is used up for now. Enter the time by hand.' });
-      }
-      if (![200, 204, 404].includes(out.status)) {
-        return res.status(502).json({ success: false, error: `The flight service answered with an error (${out.status}). Enter the time by hand.` });
-      }
-      await dbRun(`INSERT INTO flight_lookups (lookup_key, fetched_at, http_status, body) VALUES (?, ?, ?, ?)
-                   ON CONFLICT(lookup_key) DO UPDATE SET fetched_at = excluded.fetched_at, http_status = excluded.http_status, body = excluded.body`,
-        [key, Date.now(), out.status, out.status === 200 ? out.body : null]);
-      hit = { http_status: out.status, body: out.status === 200 ? out.body : null };
-    }
-
-    if (hit.http_status !== 200) {
-      return res.json({ success: true, number, date, leg, flights: [], suggestion: null, message: `No flight ${number} found ${leg === 'arrival' ? 'arriving' : 'departing'} on ${date}.` });
-    }
-    let json;
-    try { json = JSON.parse(hit.body); } catch (e) { json = null; }
-    const points = activeGuestLists(await guestListRows()).point;
-    const nagpur = points.find((p) => /nagpur airport/i.test(p)) || null;
-    const read = guestLib.readFlightLookup(json, leg, nagpur);
-    if (!read.flights.length) {
-      return res.json({ success: true, number, date, leg, flights: [], suggestion: null, message: 'The flight service answered, but its reply could not be read. Enter the time by hand.' });
-    }
-    res.json({ success: true, number, date, leg, ...read });
   } catch (err) {
     next(err);
   }

@@ -598,56 +598,6 @@ function guestsCsv(rows) {
     .map((r) => r.map(cell).join(',')).join('\r\n');
 }
 
-// --- flight look-up --------------------------------------------------------
-// A flight number as airlines print it: a two-character IATA code (6E, AI,
-// UK) or a three-letter ICAO one, then up to four digits and an optional
-// suffix. Spaces and case do not matter.
-function normaliseFlightNumber(raw) {
-  const n = String(raw || '').replace(/[\s-]+/g, '').toUpperCase();
-  // The airline code has at least one letter (6E, G8, AI) -- which is also
-  // what tells a flight from a five-digit train number.
-  return /^([A-Z]{2}|[A-Z][0-9]|[0-9][A-Z]|[A-Z]{3})\d{1,4}[A-Z]?$/.test(n) ? n : null;
-}
-
-// Read the flight data service's answer (AeroDataBox: a list of flight
-// segments, each with departure/arrival airport and scheduled times). Written
-// to accept the field names it has used -- scheduledTime.local and the older
-// scheduledTimeLocal -- and to come back empty, not wrong, on anything else.
-//
-//   leg: 'arrival' (meeting them: their time at the arrival end) or
-//        'departure' (seeing them off: their time at the departure end)
-//   nagpurPoint: the point list's value for Nagpur's airport, if any
-function readFlightLookup(json, leg, nagpurPoint) {
-  const list = Array.isArray(json) ? json : json && typeof json === 'object' ? [json] : [];
-  const when = (end) => {
-    if (!end) return null;
-    const t = (end.scheduledTime && end.scheduledTime.local) || end.scheduledTimeLocal
-      || (end.revisedTime && end.revisedTime.local) || null;
-    const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/.exec(String(t || ''));
-    return m ? { date: m[1], time: m[2] } : null;
-  };
-  const place = (end) => {
-    const a = (end && end.airport) || {};
-    return { iata: a.iata || null, name: a.shortName || a.name || null, city: a.municipalityName || null };
-  };
-  const flights = list.map((f) => ({
-    number: f.number || null,
-    airline: (f.airline && f.airline.name) || null,
-    status: f.status || null,
-    from: place(f.departure), to: place(f.arrival),
-    departs: when(f.departure), arrives: when(f.arrival),
-  })).filter((f) => f.departs || f.arrives);
-  // A flight number can fly several legs in a day; the one that matters is
-  // the one landing at (or leaving) Nagpur.
-  const atNagpur = (f) => (leg === 'arrival' ? f.to.iata : f.from.iata) === 'NAG';
-  const pick = flights.find(atNagpur) || (flights.length === 1 ? flights[0] : null);
-  const at = pick && (leg === 'arrival' ? pick.arrives : pick.departs);
-  return {
-    flights,
-    suggestion: at ? { date: at.date, time: at.time, mode: 'Flight', point: atNagpur(pick) && nagpurPoint ? nagpurPoint : null } : null,
-  };
-}
-
 // The guests table. phone_number is the linked account, NULL until linked
 // (SQLite lets UNIQUE hold any number of NULLs).
 const GUEST_TABLE_SQL = (name) => `
@@ -703,7 +653,7 @@ async function migrateGuestsTable(run, all) {
 }
 
 module.exports = {
-  normaliseFlightNumber, readFlightLookup, VOLUNTEER_FIELDS, mayEditField,
+  VOLUNTEER_FIELDS, mayEditField,
   GUEST_TABLE_SQL, migrateGuestsTable, IDENTITY_FIELDS, BOOL_FIELDS, displayValue,
   TRAVEL_FIELDS, STAY_FIELDS, GENERAL_FIELDS, ALL_FIELDS, FIELD_PERMISSION, FIELD_LABELS, FIELD_LISTS,
   TRAVEL_NOTIFY_FIELDS, STAY_NOTIFY_FIELDS,

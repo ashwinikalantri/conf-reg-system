@@ -129,7 +129,6 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     // Super Admin and the two new coordinator roles; no existing role gains any.
     'GET /api/guests': 'The Guests tab: every faculty guest with their travel and stay, flags, schedules, vehicles, rooms and dashboard. guests.view.',
     'GET /api/guests/export.csv': 'The guest list as CSV. guests.view -- what the tab already shows.',
-    'GET /api/guests/flight': 'Looks up a flight\'s scheduled times by number and date, for filling in arrival or departure. guests.travel, like editing travel; nothing is saved by it.',
     'GET /api/guests/candidates': 'Type-ahead for marking a delegate as faculty: delegates only, at most 8, two characters minimum. guests.edit.',
     'POST /api/guests': 'Marks a delegate as faculty, adding them to the guest list. guests.edit, held by both coordinators.',
     'PUT /api/guests/:id': 'Edits a faculty member. guests.view to reach it; within it each field needs its own key -- travel guests.travel, stay guests.stay, the rest guests.edit -- or, for a volunteer, guests.travel_assigned / guests.stay_assigned and being the volunteer assigned to that faculty member. A change to a field this person may not edit is refused.',

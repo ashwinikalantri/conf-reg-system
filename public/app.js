@@ -8354,7 +8354,6 @@ async function renderGeneralSettings() {
   // DOM. The AWS Access Key ID isn't a bearer secret, so a last-4 preview is
   // shown to help confirm which key is active.
   setText('gs-sms-apikey-hint', data.sms.hasApiKey ? '(configured)' : '(not set)');
-  setText('gs-flights-apikey-hint', data.flights && data.flights.hasApiKey ? '(configured)' : '(not set)');
   setText('gs-email-accesskey-hint', data.email.accessKeyMasked ? `(current: ${data.email.accessKeyMasked})` : '(not set)');
   setText('gs-email-secretkey-hint', data.email.hasSecretKey ? '(configured)' : '(not set)');
 
@@ -8451,11 +8450,6 @@ async function saveGeneralSettings(e, group) {
       id: document.getElementById('gs-upi-id').value,
       payeeName: document.getElementById('gs-upi-payeename').value,
     } };
-  } else if (group === 'flights') {
-    const apiKey = document.getElementById('gs-flights-apikey').value.trim();
-    if (!apiKey) return showToast('Paste the key to save it.');
-    body = { flights: { apiKey } };
-    credentialInputs = ['gs-flights-apikey'];
   } else if (group === 'bank') {
     body = { bank: {
       accountName: document.getElementById('gs-bank-accountname').value,
@@ -11875,17 +11869,6 @@ function setTime12Error(el, msg) {
   if (box) { box.textContent = msg; box.classList.toggle('hidden', !msg); }
   el.classList.toggle('border-rose-400', !!msg);
 }
-// Set a time from code (the flight look-up), in both boxes.
-function setGuestTime(form, name, hhmm) {
-  const hidden = form.querySelector(`input[type="hidden"][name="${name}"]`);
-  const shown = form.querySelector(`[data-time12="${name}"]`);
-  if (!hidden || !shown || shown.disabled) return;
-  hidden.value = hhmm;
-  shown.value = guestTime12(hhmm);
-  shown.dataset.invalid = '';
-  setTime12Error(shown, '');
-}
-
 // The form follows what is chosen: the Flight/Train No field takes its
 // name from the mode (and goes for Road), and ticking "accommodation not
 // needed" hides the stay details -- kept, not deleted, so unticking brings
@@ -11898,10 +11881,8 @@ function syncGuestModeFields(leg) {
   const wrap = form.querySelector(`[data-number-for="${leg}"]`);
   if (!wrap) return;
   const label = wrap.querySelector('[data-number-label]');
-  const checks = wrap.querySelector('[data-flight-checks]');
   wrap.classList.toggle('hidden', mode === 'road');
   if (label) label.textContent = mode === 'flight' ? 'Flight No' : mode === 'train' ? 'Train No' : 'Flight/Train No';
-  if (checks) checks.classList.toggle('hidden', mode === 'train');
 }
 // Nights between the check-in and check-out in the form, as they change.
 function guestNights(checkin, checkout) {
@@ -12012,19 +11993,8 @@ function openGuestEditor(id) {
       <input type="text" data-time12="${name}" value="${esc(guestTime12(g[name]))}" ${enabled ? '' : 'disabled'} autocomplete="off" placeholder="e.g. 9:30 AM"
         class="${cls}" oninput="onTime12Input(this)" onblur="onTime12Blur(this)">
       <p data-time12-error class="hidden text-[11px] text-rose-700 mt-1"></p>`;
-  // Flight look-up, when a key is set: fills the time (and Nagpur as the
-  // point) from the flight number and date, for the coordinator to check
-  // and save. See GET /api/guests/flight.
-  const canFetch = travel && guestData.flightLookup;
-  const fetchBtn = (leg) => `<span data-flight-checks class="mt-1 flex flex-wrap gap-x-2 text-[11px]">
-      ${canFetch ? `<button type="button" onclick="fetchGuestFlight('${leg}')" class="font-semibold text-indigo-700 hover:text-indigo-900 underline">Fetch flight times</button>` : ''}
-      <span class="text-slate-500">Check flight:
-        <button type="button" onclick="openFlightCheck('${leg}', 'google')" class="font-semibold text-indigo-700 hover:text-indigo-900 underline">Google</button> ·
-        <button type="button" onclick="openFlightCheck('${leg}', 'fr24')" class="font-semibold text-indigo-700 hover:text-indigo-900 underline">Flightradar24</button></span>
-    </span>`;
-  const flightPanel = (leg) => (canFetch ? `<div id="guest-flight-${leg}" class="hidden col-span-full"></div>` : '');
   // The flight or train number, named after the mode (see syncGuestModeFields).
-  const numberField = (leg) => `<label class="block min-w-0" data-number-for="${leg}"><span data-number-label class="block text-[11px] font-semibold text-slate-600 mb-1">Flight/Train No</span>${input(`${leg}_number`, 'text', travel)}${fetchBtn(leg)}</label>`;
+  const numberField = (leg) => `<label class="block min-w-0" data-number-for="${leg}"><span data-number-label class="block text-[11px] font-semibold text-slate-600 mb-1">Flight/Train No</span>${input(`${leg}_number`, 'text', travel)}</label>`;
   const modeSelect = (leg) => select(`${leg}_mode`, 'mode', travel, `onchange="syncGuestModeFields('${leg}')"`);
   // A pickup or drop "Not required" asks only for the date and time: the
   // rest of the leg is hidden (syncGuestTransferFields), and still saved
@@ -12078,8 +12048,7 @@ function openGuestEditor(id) {
         field('arrival_mode', 'Mode', modeSelect('arrival'))
         + numberField('arrival')
         + field('arrival_point', 'Point', select('arrival_point', 'point', travel))
-        + field('pickup_vehicle', 'Pickup Vehicle/Driver', input('pickup_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off"'))
-        + flightPanel('arrival'))),
+        + field('pickup_vehicle', 'Pickup Vehicle/Driver', input('pickup_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off"')))),
     group('Departure', travel, mineT ? 'As their transport volunteer you can update the drop; the itinerary is the coordinator\'s.' : 'Only a transport coordinator can change travel.',
       field('departure_date', 'Date', input('departure_date', 'date', travel))
       + field('departure_time', 'Time', time('departure_time', travel))
@@ -12089,8 +12058,7 @@ function openGuestEditor(id) {
         field('departure_mode', 'Mode', modeSelect('departure'))
         + numberField('departure')
         + field('departure_point', 'Point', select('departure_point', 'point', travel))
-        + field('drop_vehicle', 'Drop Vehicle/Driver', input('drop_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off"'))
-        + flightPanel('departure'))),
+        + field('drop_vehicle', 'Drop Vehicle/Driver', input('drop_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off"')))),
     group('Stay', stay, mineS ? 'As their accommodation volunteer you can update the stay details.' : 'Only an accommodation coordinator can change the stay.',
       `<label class="col-span-full flex items-center gap-2 text-sm text-slate-700 ${stay ? 'cursor-pointer' : 'opacity-60'}">
         <input type="checkbox" name="stay_not_needed" ${Number(g.stay_not_needed) ? 'checked' : ''} ${stay ? '' : 'disabled'} onchange="syncGuestStayFields()"> Accommodation not needed — they arrange their own stay</label>
@@ -12129,84 +12097,6 @@ function openGuestEditor(id) {
   const remove = document.getElementById('guest-remove-btn');
   if (remove) remove.classList.toggle('hidden', !can('guests.manage'));
   openModal('modal-guest-edit');
-}
-
-// Check a flight by hand: no key, no allowance. The same reading of a flight
-// number as the server's (guests.js normaliseFlightNumber) -- a train number
-// gets no link.
-function flightNumberOf(raw) {
-  const n = String(raw || '').replace(/[\s-]+/g, '').toUpperCase();
-  return /^([A-Z]{2}|[A-Z][0-9]|[0-9][A-Z]|[A-Z]{3})\d{1,4}[A-Z]?$/.test(n) ? n : null;
-}
-function flightCheckUrl(site, number, date) {
-  const n = flightNumberOf(number);
-  if (!n) return null;
-  if (site === 'fr24') return `https://www.flightradar24.com/data/flights/${encodeURIComponent(n.toLowerCase())}`;
-  const when = date ? ` ${formatFullDate(date)}` : '';
-  return `https://www.google.com/search?q=${encodeURIComponent(`${n} flight${when}`)}`;
-}
-// From the editor: whatever is typed right now.
-function openFlightCheck(leg, site) {
-  const form = document.getElementById('guest-edit-form');
-  if (!form) return;
-  const number = form.querySelector(`[name="${leg}_number"]`).value;
-  const date = form.querySelector(`[name="${leg}_date"]`).value;
-  const url = flightCheckUrl(site, number, date);
-  if (!url) return showToast('Enter a flight number first (e.g. 6E 123).');
-  window.open(url, '_blank', 'noopener');
-}
-// A flight number in a schedule, as a link to its Google flight card.
-function flightNumberLink(number, date) {
-  const url = flightCheckUrl('google', number, date);
-  return url ? `<a href="${esc(url)}" target="_blank" rel="noopener" class="text-indigo-700 hover:underline" title="Check this flight">${esc(number)}</a>` : esc(number || '—');
-}
-
-// What the flight service said, per leg, until the coordinator uses it.
-const guestFlightResults = {};
-async function fetchGuestFlight(leg) {
-  const form = document.getElementById('guest-edit-form');
-  const panel = document.getElementById(`guest-flight-${leg}`);
-  if (!form || !panel) return;
-  const number = form.querySelector(`[name="${leg}_number"]`).value.trim();
-  const date = form.querySelector(`[name="${leg}_date"]`).value;
-  const show = (html, tone = 'bg-slate-50 border-slate-200 text-slate-700') => {
-    panel.className = `col-span-full text-xs rounded-lg border px-3 py-2 ${tone}`;
-    panel.innerHTML = html;
-  };
-  if (!number || !date) return show(`Enter the ${leg} date and the flight number first.`, 'bg-amber-50 border-amber-200 text-amber-900');
-  show('Looking up the flight…');
-  const res = await fetch(`/api/guests/flight?number=${encodeURIComponent(number)}&date=${encodeURIComponent(date)}&leg=${leg}`);
-  const data = await res.json().catch(() => ({}));
-  if (!data.success) return show(esc(data.error || 'The look-up failed.'), 'bg-rose-50 border-rose-200 text-rose-800');
-  if (!data.flights.length) return show(esc(data.message || 'No such flight found.'), 'bg-amber-50 border-amber-200 text-amber-900');
-  guestFlightResults[leg] = data;
-  const line = (f) => {
-    const end = (p, t) => `${esc(p.iata || '')}${p.city || p.name ? ` ${esc(p.city || p.name)}` : ''} ${t ? `<b>${esc(guestTime12(t.time))}</b>${t.date !== date ? ` (${esc(formatFullDate(t.date))})` : ''}` : ''}`;
-    return `<p>${esc([f.airline, f.number].filter(Boolean).join(' '))} · ${end(f.from, f.departs)} → ${end(f.to, f.arrives)}${f.status ? ` · ${esc(f.status)}` : ''}</p>`;
-  };
-  const s = data.suggestion;
-  show(`${data.flights.map(line).join('')}
-    ${s ? `<button type="button" onclick="useGuestFlight('${leg}')" class="mt-1.5 px-2.5 py-1 bg-navy hover:bg-indigo-700 text-white text-[11px] font-semibold rounded-md">Use ${esc(guestTime12(s.time))}${s.point ? ` · ${esc(s.point)}` : ''}</button>`
-      : '<p class="mt-1 text-slate-500">Several legs, none at Nagpur — enter the time by hand.</p>'}`, 'bg-indigo-50 border-indigo-200 text-slate-800');
-}
-function useGuestFlight(leg) {
-  const data = guestFlightResults[leg];
-  const form = document.getElementById('guest-edit-form');
-  if (!data || !data.suggestion || !form) return;
-  const s = data.suggestion;
-  const setIf = (name, v) => {
-    const el = form.querySelector(`[name="${name}"]`);
-    if (!el || el.disabled || v == null) return;
-    // A select only takes a value it offers.
-    if (el.tagName === 'SELECT' && ![...el.options].some((o) => o.value === v)) return;
-    el.value = v;
-  };
-  setGuestTime(form, `${leg}_time`, s.time);
-  setIf(`${leg}_mode`, s.mode);
-  setIf(`${leg}_point`, s.point);
-  syncGuestModeFields(leg);
-  const panel = document.getElementById(`guest-flight-${leg}`);
-  if (panel) panel.insertAdjacentHTML('beforeend', '<p class="mt-1 font-semibold text-emerald-700">Filled in. Save to keep it.</p>');
 }
 
 async function saveGuest(ev) {
@@ -12416,7 +12306,7 @@ function renderGuestSchedule(kind) {
         </div>
         <button type="button" onclick="openGuestEditor(${esc(r.id)})" class="mt-1 font-semibold text-indigo-700 text-left">${esc(r.name)}</button>
         ${r.phone ? `<p class="text-xs font-mono">${telLink(r.phone)}</p>` : ''}
-        <p class="text-xs text-slate-600 mt-1">${[esc(r.mode || ''), r.number ? flightNumberLink(r.number, r.at ? r.at.slice(0, 10) : '') : '', esc(r.point || '')].filter(Boolean).join(' · ') || '—'}</p>
+        <p class="text-xs text-slate-600 mt-1">${[esc(r.mode || ''), esc(r.number || ''), esc(r.point || '')].filter(Boolean).join(' · ') || '—'}</p>
         <p class="text-xs mt-1">${driverLine(r)}</p>
         ${r.clash.map((c) => `<p class="text-[11px] text-amber-800 mt-1">${esc(c)}</p>`).join('')}
       </article>`).join('') : '<p class="p-8 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">No one to schedule yet.</p>'}</div>
@@ -12432,7 +12322,7 @@ function renderGuestSchedule(kind) {
             <td class="p-3 whitespace-nowrap font-semibold ${r.at ? 'text-slate-800' : 'text-slate-400'}">${esc(r.at ? guestWhen(r.at.slice(0, 10), r.at.slice(11)) : 'Not set')}</td>
             <td class="p-3"><button type="button" onclick="openGuestEditor(${esc(r.id)})" class="font-semibold text-indigo-700 hover:underline text-left">${esc(r.name)}</button></td>
             <td class="p-3 font-mono text-xs">${telLink(r.phone)}</td>
-            <td class="p-3">${esc(r.mode || '—')}</td><td class="p-3">${flightNumberLink(r.number, r.at ? r.at.slice(0, 10) : '')}</td><td class="p-3">${esc(r.point || '—')}</td>
+            <td class="p-3">${esc(r.mode || '—')}</td><td class="p-3">${esc(r.number || '—')}</td><td class="p-3">${esc(r.point || '—')}</td>
             <td class="p-3">${r.vehicle ? `<p>${esc(r.vehicle)}</p>${r.driverPhone ? `<p class="text-xs text-slate-500 font-mono">${telLink(r.driverPhone, 'text-slate-500 hover:underline')}</p>` : ''}` : noVehicle(r, 'None')}
               ${r.clash.map((c) => `<p class="text-[11px] text-amber-800 mt-1">${esc(c)}</p>`).join('')}</td>
             <td class="p-3">${r.status ? guestPill('bg-white text-slate-600 border-slate-300', r.status) : '<span class="text-xs text-slate-400">Not set</span>'}</td>

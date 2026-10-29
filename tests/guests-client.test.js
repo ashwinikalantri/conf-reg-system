@@ -292,20 +292,10 @@ check('the pickup schedule shows a dash, not "No vehicle"', !/No vehicle|>None</
 Object.assign(legRow, { pickup_status: null, arrival_mode: null, arrival_point: null, pickup_vehicle: null });
 sb.__set(data);
 
-console.log('\n== Checking a flight by hand ==');
-const fsb = { String, encodeURIComponent };
-vm.createContext(fsb);
-const grabFn = (n) => { const i = js.indexOf(`function ${n}(`); return js.slice(i, js.indexOf('\n}', i) + 2); };
-vm.runInContext([grabFn('esc'), grabFn('formatFullDate'), grabFn('flightNumberOf'), grabFn('flightCheckUrl'), grabFn('flightNumberLink')].join('\n')
-  + '\nglobalThis.url = flightCheckUrl; globalThis.link = flightNumberLink;', fsb);
-check('Google: the flight number and the day', fsb.url('google', '6e 5172', '2026-11-20') === 'https://www.google.com/search?q=6E5172%20flight%2020%20November%202026');
-check('Flightradar24: the flight\'s page', fsb.url('fr24', 'AI-629', '2026-11-20') === 'https://www.flightradar24.com/data/flights/ai629');
-check('a train number gets no link', fsb.url('google', '12951', '2026-11-20') === null && !/<a /.test(fsb.link('12951', '2026-11-20')));
-check('in a schedule the flight number is a link that opens in a new tab', /<a href="https:\/\/www\.google\.com\/search\?q=6E5172[^"]*" target="_blank" rel="noopener"[^>]*>6E 5172<\/a>/.test(fsb.link('6E 5172', '2026-11-20')));
+console.log('\n== No flight look-up or check links ==');
 sb.__g.openGuestEditor(rows[0].id);
-check('the editor offers Check flight for arrival and departure, without a key', /openFlightCheck\('arrival', 'google'\)/.test(el('guest-edit-body').innerHTML)
-  && /openFlightCheck\('departure', 'fr24'\)/.test(el('guest-edit-body').innerHTML) && !/fetchGuestFlight/.test(el('guest-edit-body').innerHTML));
-check('...even to someone who may only look', /openFlightCheck\('arrival', 'google'\)/.test((() => { stay.sb.__g.openGuestEditor(rows[0].id); return stay.el('guest-edit-body').innerHTML; })()));
+check('the editor has no flight look-up or check links', !/fetchGuestFlight|openFlightCheck|data-flight-checks|guest-flight-/.test(el('guest-edit-body').innerHTML));
+check('...and the code for them is gone', !/function (fetchGuestFlight|useGuestFlight|openFlightCheck|flightCheckUrl|flightNumberLink)\(|\/api\/guests\/flight|flightradar24/i.test(js));
 
 console.log('\n== Volunteers and the Front Desk ==');
 check('the dropdowns are Transport Volunteer and Accommodation Volunteer', />Transport Volunteer</.test(adminView.el('guest-edit-body').innerHTML)

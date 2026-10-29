@@ -294,7 +294,6 @@ const ROUTE_PERMISSIONS = {
   'GET /api/guests': 'guests.view',
   'GET /api/guests/export.csv': 'guests.view',
   'GET /api/guests/candidates': 'guests.edit',
-  'GET /api/guests/flight': 'guests.travel',
   'POST /api/guests': 'guests.edit',
   // Reached with guests.view; each field is then checked -- a coordinator's
   // permission, or a volunteer's for faculty assigned to them.
