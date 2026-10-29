@@ -6617,7 +6617,7 @@ const ACTIVITY_ACTION_LABELS = {
   PAYMENT_MODE_CORRECTION: 'Mode Fix', ADMIN_ENROLL: 'Roster +', ADMIN_UNENROLL: 'Roster −',
   BANK_TXN_LINK: 'Linked', BANK_TXN_UNLINK: 'Unlinked', PAYMENT_ADMIN_ADDED: 'Payment Added', ABSTRACT_STATUS_CHANGE: 'Status', ABSTRACT_ALLOCATION: 'Allotted',
   ABSTRACT_EXTENSION_GRANT: 'Late Submission Allowed', ABSTRACT_EXTENSION_REVOKE: 'Late Submission Withdrawn',
-  GUEST_ADDED: 'Marked Faculty', GUEST_UPDATED: 'Faculty Updated', GUEST_REMOVED: 'Faculty Removed', GUEST_LINKED: 'Faculty Linked',
+  GUEST_ADDED: 'Marked Faculty', GUEST_UPDATED: 'Faculty Updated', GUEST_REMOVED: 'Faculty Removed', GUEST_LINKED: 'Faculty Linked', GUEST_UNLINKED: 'Faculty Unlinked',
   GUEST_VEHICLE_ADDED: 'Vehicle Added', GUEST_VEHICLE_UPDATED: 'Vehicle Updated', GUEST_VEHICLE_DELETED: 'Vehicle Deleted',
   GUEST_ROOM_ADDED: 'Room Added', GUEST_ROOM_UPDATED: 'Room Updated', GUEST_ROOM_DELETED: 'Room Deleted',
   GUEST_LIST_VALUE_ADDED: 'List Value Added', GUEST_LIST_VALUE_ON: 'List Value On', GUEST_LIST_VALUE_OFF: 'List Value Off',
@@ -11484,8 +11484,14 @@ function openGuestEditor(id) {
         <input id="guest-link-search" autocomplete="off" oninput="searchGuestLink(this.value)" placeholder="Find their account: name, mobile, email or ID" class="w-full h-9 px-3 border border-sky-200 rounded-lg text-sm bg-white outline-none">
         <div id="guest-link-results" class="mt-2 space-y-1.5"></div>
       </div>` : '');
+  // Linked to the wrong person's account: unlink, and the entry is "not
+  // signed up" again (PUT /api/guests/:id/unlink).
+  const linkedTo = g.linked && shared ? `<div class="flex flex-wrap items-center justify-between gap-2 border border-slate-200 bg-slate-50 rounded-xl px-3 py-2.5">
+      <p class="text-xs text-slate-600 min-w-0">Linked to their account: name, designation, phone and email come from it.</p>
+      <button type="button" onclick="unlinkGuest(${esc(g.id)})" class="shrink-0 px-2.5 py-1 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-[11px] font-semibold rounded-md">Unlink from this account</button>
+    </div><div class="h-4"></div>` : '';
   document.getElementById('guest-edit-flags').innerHTML = `${guestStatusBadge(g.overall_status)} ${guestFlagChips(g)}`;
-  document.getElementById('guest-edit-body').innerHTML = vehicles + identity + (identity ? '<div class="h-4"></div>' : '') + [
+  document.getElementById('guest-edit-body').innerHTML = vehicles + identity + linkedTo + (identity ? '<div class="h-4"></div>' : '') + [
     group('Arrival', travel, mineT ? 'As their transport volunteer you can update the pickup; the itinerary is the coordinator\'s.' : 'Only a transport coordinator can change travel.',
       field('arrival_date', 'Date', input('arrival_date', 'date', travel))
       + field('arrival_time', 'Time', time('arrival_time', travel))
@@ -11759,6 +11765,17 @@ async function linkGuest(id, phone) {
   showToast((data.registered ? 'Linked to their account.' : 'Linked to their account. They have not registered yet.') + localTransferNote(data), 'success');
   closeModal('modal-guest-edit');
   renderGuests();
+}
+
+async function unlinkGuest(id) {
+  const g = guestData && guestData.guests.find((x) => x.id === id);
+  if (!g) return;
+  if (!(await showConfirm(`Unlink this faculty entry from ${g.name}'s account? Use this when the account is a different person's. The entry, with its travel and stay, stays on the list as "not signed up"; then check the name and add their phone and email.`))) return;
+  const data = await (await fetch(`/api/guests/${encodeURIComponent(id)}/unlink`, { method: 'PUT', headers: { 'Content-Type': 'application/json' } })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not unlink.');
+  showToast('Unlinked. They are now "not signed up": check their details, and link the right account if they have one.', 'success');
+  await renderGuests();
+  openGuestEditor(id);
 }
 
 // --- dashboard ---

@@ -146,6 +146,12 @@ check('...and a search to find another', /id="guest-link-search"/.test(uform));
 check('...and the header says they are not signed up', /Not signed up yet/.test(el('guest-edit-who').textContent));
 sb.__g.openGuestEditor(rows[0].id);
 check('a linked guest has none of that', !/name="guest_name"/.test(el('guest-edit-body').innerHTML) && !/guest-link-search/.test(el('guest-edit-body').innerHTML));
+check('...but can be unlinked, if the account is someone else\'s', /onclick="unlinkGuest\(\d+\)"[^>]*>Unlink from this account</.test(el('guest-edit-body').innerHTML));
+check('a guest not linked has no Unlink', !/unlinkGuest/.test(uform));
+const roView = load(['guests.view']);
+roView.sb.__set(data);
+roView.sb.__g.openGuestEditor(rows[0].id);
+check('...nor does someone who may not link', !/unlinkGuest/.test(roView.el('guest-edit-body').innerHTML));
 
 console.log('\n== The other views ==');
 sb.__g.renderGuestSchedule('pickups');

@@ -13693,6 +13693,31 @@ app.put('/api/guests/:id/link', requirePermission('guests.edit'), async (req, re
   }
 });
 
+// Unlink a guest from an account that turned out to be someone else's. The
+// faculty entry stays, with its travel and stay, and is "not signed up"
+// again: who they are goes back to what was typed in. If nothing was typed
+// (they were marked from their account), the account's name is kept so the
+// entry has one -- but not its designation, phone or email, which may be the
+// other person's. Link them to the right account afterwards, if they have one.
+app.put('/api/guests/:id/unlink', requirePermission('guests.edit'), async (req, res, next) => {
+  try {
+    const g = await dbGet('SELECT * FROM guests WHERE id = ?', [req.params.id]);
+    if (!g) return res.status(404).json({ success: false, error: 'Faculty member not found.' });
+    if (!g.phone_number) return res.status(409).json({ success: false, error: 'They are not linked to an account.' });
+    const u = await dbGet('SELECT salutation, full_name FROM users WHERE phone_number = ?', [g.phone_number]);
+    const accountName = (u && [u.salutation, u.full_name].filter(Boolean).join(' ')) || g.phone_number;
+    const name = blankValue(g.guest_name) ? accountName : g.guest_name;
+    const by = req.session.name || req.session.phone;
+    await dbRun('UPDATE guests SET phone_number = NULL, linked_at = NULL, linked_by = NULL, guest_name = ?, updated_at = ?, updated_by = ? WHERE id = ?',
+      [name, Date.now(), by, g.id]);
+    await recordAudit({ req, entityType: 'guest', entityId: String(g.id), action: 'GUEST_UNLINKED', oldValue: accountName,
+      newValue: `unlinked from ${accountName}'s account; now ${name}, not signed up` });
+    res.json({ success: true, name });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- flight look-up ---
 // Ask the flight data service for a flight's scheduled times on a date.
 // Answers are kept for a few hours (an unknown flight for less), since the

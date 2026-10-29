@@ -100,6 +100,25 @@ const P = { tc: `86${N}`, existing: `87${N}` };
     check('the link is in the activity log', !!(await db.get("SELECT 1 FROM audit_log WHERE action = 'GUEST_LINKED' AND entity_id = ?", [String(a.body.id)])));
     const desk = (await call('GET', `/api/desk/delegate/${accountPhone}`, null, admin)).body;
     check('the Front Desk now shows them as faculty', desk.guest && desk.guest.id === a.body.id);
+
+    console.log('\n== Unlinking: the account was someone else ==');
+    check('the front desk cannot unlink', (await call('PUT', `/api/guests/${a.body.id}/unlink`, {}, await loginPassword('9000000006', ADMIN_PW))).status === 403);
+    const un = await call('PUT', `/api/guests/${a.body.id}/unlink`, {}, tc);
+    check('a coordinator unlinks them', un.body.success === true && un.body.name === 'Nalini New', un.body);
+    const g4 = (await board(tc)).guests.find((x) => x.id === a.body.id);
+    check('...back to "not signed up", under the name typed in before', g4.linked === false && g4.flags.notSignedUp === true && g4.name === 'Nalini New', g4.name);
+    check('...with their travel kept', g4.arrival_date === '2026-11-20');
+    check('the account is no longer faculty', !(await call('GET', `/api/desk/delegate/${accountPhone}`, null, admin)).body.guest);
+    check('unlinking twice is refused', (await call('PUT', `/api/guests/${a.body.id}/unlink`, {}, tc)).status === 409);
+    const fromAccount = await call('POST', '/api/guests', { phone: P.existing }, tc);
+    made.push(fromAccount.body.id);
+    const un2 = await call('PUT', `/api/guests/${fromAccount.body.id}/unlink`, {}, tc);
+    const row2 = await db.get('SELECT phone_number, guest_name, guest_designation, guest_phone, guest_email FROM guests WHERE id = ?', [fromAccount.body.id]);
+    check('marked from an account, nothing typed: keeps the account\'s name, not its phone or email',
+      un2.body.success === true && row2.phone_number === null && row2.guest_name === 'Esha Existing' && !row2.guest_phone && !row2.guest_email, row2);
+    const unLog = await db.get("SELECT old_value, new_value FROM audit_log WHERE action = 'GUEST_UNLINKED' AND entity_id = ?", [String(a.body.id)]);
+    check('the unlink is in the activity log, naming the account', unLog && unLog.old_value === 'Nalini Newcomer' && /not signed up/.test(unLog.new_value), unLog);
+    check('...under its own label', /GUEST_UNLINKED: 'Faculty Unlinked'/.test(require('fs').readFileSync(require('./harness').appFile('public', 'app.js'), 'utf8')));
   } finally {
     for (const id of made) await db.run('DELETE FROM guests WHERE id = ?', [id]);
     await db.run('DELETE FROM users WHERE phone_number IN (?, ?, ?)', [P.tc, P.existing, accountPhone]);

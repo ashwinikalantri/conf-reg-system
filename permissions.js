@@ -299,6 +299,7 @@ const ROUTE_PERMISSIONS = {
   // permission, or a volunteer's for faculty assigned to them.
   'PUT /api/guests/:id': 'guests.view',
   'PUT /api/guests/:id/link': 'guests.edit',
+  'PUT /api/guests/:id/unlink': 'guests.edit',
   'DELETE /api/guests/:id': 'guests.manage',
   'PUT /api/guests/settings': 'guests.manage',
   'POST /api/guests/vehicles': 'guests.travel',

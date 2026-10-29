@@ -135,6 +135,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'PUT /api/guests/:id': 'Edits a faculty member. guests.view to reach it; within it each field needs its own key -- travel guests.travel, stay guests.stay, the rest guests.edit -- or, for a volunteer, guests.travel_assigned / guests.stay_assigned and being the volunteer assigned to that faculty member. A change to a field this person may not edit is refused.',
     'DELETE /api/guests/:id': 'Removes a guest permanently. guests.manage, Super Admin only.',
     'PUT /api/guests/:id/link': 'Links a guest who was added by name to their account once they sign up. guests.edit, like adding them.',
+    'PUT /api/guests/:id/unlink': 'Undoes a link to an account that is a different person\'s; the entry stays, not signed up. guests.edit, like linking.',
     'PUT /api/guests/settings': 'The alert window, time slots and vehicle clash window. guests.manage.',
     'POST /api/guests/vehicles': 'Adds a vehicle. guests.travel.',
     'PUT /api/guests/vehicles/:id': 'Edits a vehicle (a new label carries onto its guests). guests.travel.',
