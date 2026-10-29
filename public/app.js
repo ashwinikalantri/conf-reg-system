@@ -7979,6 +7979,7 @@ async function renderGeneralSettings() {
   // Independent of the settings fetch below, so a backup-status hiccup can't
   // stop the rest of the tab rendering.
   renderBackupStatus();
+  loadHallsCard();
   const res = await fetch('/api/admin/general-settings');
   if (!res.ok) return;
   const data = await res.json();
@@ -12700,13 +12701,24 @@ async function removeAttendance(id) {
   renderAttendanceView();
 }
 
-// --- PROGRAMME (admin) ---
-async function renderProgramme() {
+// --- HALLS (Conference setup) ---
+// Each hall: its name, map location, floor and building; its QR poster, a new
+// QR, on or off. Shown to whoever may edit the programme.
+async function loadHallsCard() {
+  const card = document.getElementById('gs-card-halls');
+  const jump = document.getElementById('gs-jump-halls');
+  const allowed = can('programme.manage');
+  if (card) card.classList.toggle('hidden', !allowed);
+  if (jump) jump.classList.toggle('hidden', !allowed);
+  if (!allowed) return;
   const res = await fetch('/api/admin/programme');
   if (!res.ok) return;
-  const p = await res.json();
-  attState.programme = p;
-  document.getElementById('prog-halls').innerHTML = p.halls.map((h) => `
+  renderHalls((await res.json()).halls);
+}
+function renderHalls(halls) {
+  const box = document.getElementById('prog-halls');
+  if (!box) return;
+  box.innerHTML = halls.map((h) => `
     <div class="py-2 flex flex-col sm:flex-row sm:items-center gap-2 ${h.active ? '' : 'opacity-60'}">
       <input value="${esc(h.name)}" data-hall="${esc(h.id)}" aria-label="Hall name" class="prog-hall-name flex-1 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
       <input value="${h.lat != null && h.lng != null ? esc(`${h.lat}, ${h.lng}`) : ''}" data-hall="${esc(h.id)}" aria-label="Map location" placeholder="Map location: 20.741279, 78.662397"
@@ -12722,6 +12734,14 @@ async function renderProgramme() {
         <button type="button" onclick="putHall(${Number(h.id)}, { active: ${h.active ? 'false' : 'true'} })" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">${h.active ? 'Turn off' : 'Turn on'}</button>
       </div>
     </div>`).join('') || '<p class="py-4 text-sm text-slate-400">No halls yet.</p>';
+}
+
+// --- PROGRAMME (admin) ---
+async function renderProgramme() {
+  const res = await fetch('/api/admin/programme');
+  if (!res.ok) return;
+  const p = await res.json();
+  attState.programme = p;
   const days = [...new Set([...p.sessions.map((s) => s.date), conferenceInfo.startDate, conferenceInfo.endDate].filter(Boolean))].sort();
   const daySel = document.getElementById('prog-day');
   const keep = daySel.value;
@@ -12937,7 +12957,7 @@ async function putHall(id, body) {
   })).json();
   if (!data.success) { showToast(data.error || 'Could not save.'); return; }
   showToast('Saved.', 'success');
-  renderProgramme();
+  loadHallsCard();
 }
 function saveHall(id) {
   putHall(id, {
@@ -12959,7 +12979,7 @@ async function addHall(e) {
   })).json();
   if (!data.success) return showToast(data.error || 'Could not add it.');
   document.getElementById('prog-new-hall').value = '';
-  renderProgramme();
+  loadHallsCard();
 }
 
 // --- The Attendance page's views (the Programme is its own Settings page) ---

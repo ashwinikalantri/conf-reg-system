@@ -48,7 +48,7 @@ function page(cookie, perms) {
     myPermissions = new Set(${JSON.stringify(perms)});
     conferenceInfo = { name: 'Fixture Conference', acronym: 'FIXCON', location: 'Sevagram', startDate: '2026-11-21', endDate: '2026-11-22' };
     showToast = (m, t) => globalThis.__toasts.push([m, t]);
-    globalThis.__f = { renderAttendance, attendanceSignIn, renderBackendPrograms, loadAttendanceCard, saveCertificateDetails, switchAttendanceView, renderProgramme,
+    globalThis.__f = { renderAttendance, attendanceSignIn, renderBackendPrograms, loadAttendanceCard, saveCertificateDetails, switchAttendanceView, renderProgramme, loadHallsCard,
       renderProgrammeSessions, editProgrammeSession, loadProgrammeCard, renderBadge, showAbstractCard,
       openProgrammePage, renderHomeHero, applyRegistrationState, openProfilePage, renderBadgeBack, flipBadge, dashGo };
     globalThis.__setReg = (r) => { currentRegistration = r; };
@@ -89,8 +89,10 @@ function page(cookie, perms) {
     check('a role that only watches gets the counts, not the scanner', viewer.el('att-take').classList.contains('hidden') && !viewer.el('att-summary-card').classList.contains('hidden'));
 
     console.log('\n== The programme ==');
+    await A.f.loadHallsCard(); // in Conference setup, for whoever may edit the programme
+    check('the halls, each with its poster', A.el('prog-halls').innerHTML.includes(`Client Hall ${N}`) && new RegExp(`posters\\.pdf\\?hall=${hallId}`).test(A.el('prog-halls').innerHTML)
+      && !A.el('gs-card-halls').classList.contains('hidden'));
     await A.f.renderProgramme(); // its own Settings page, no longer a view of Attendance
-    check('the halls, each with its poster', A.el('prog-halls').innerHTML.includes(`Client Hall ${N}`) && new RegExp(`posters\\.pdf\\?hall=${hallId}`).test(A.el('prog-halls').innerHTML));
     A.el('prog-day').value = today;
     A.f.renderProgrammeSessions();
     check('the day\'s sessions, a workshop\'s named', A.el('prog-sessions').innerHTML.includes(`Client Talk ${N}`) && A.el('prog-sessions').innerHTML.includes(`Workshop: ${option.name}`));

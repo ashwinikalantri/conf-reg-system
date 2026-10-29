@@ -188,8 +188,11 @@ const S = (id, date, start, end, extra = {}) => ({ id, session_date: date, start
     check('the admin tab: a hall, what is on, scan; counts; who was present', ['id="att-hall"', 'id="att-now"', 'onclick="openAttendanceScanner()"', 'id="att-summary"', 'id="att-roster"'].every((x) => view.includes(x)));
     const programmePage = fs.readFileSync(appFile('views', 'admin', 'sections', 'programme.ejs'), 'utf8');
     check('the programme is its own Settings page, not a view of Attendance',
-      ['id="section-programme"', 'id="prog-halls"', 'id="prog-sessions"', 'posters.pdf'].every((x) => programmePage.includes(x))
-      && !view.includes('id="prog-sessions"'));
+      ['id="section-programme"', 'id="prog-sessions"'].every((x) => programmePage.includes(x)) && !view.includes('id="prog-sessions"'));
+    const setup = fs.readFileSync(appFile('views', 'admin', 'sections', 'general.ejs'), 'utf8');
+    check('the halls and their QR posters are in Conference setup, for whoever may edit the programme',
+      ['id="gs-card-halls"', 'id="prog-halls"', 'posters.pdf', 'onsubmit="addHall(event)"', 'id="gs-jump-halls"'].every((x) => setup.includes(x))
+      && !programmePage.includes('id="prog-halls"') && /const allowed = can\('programme\.manage'\);/.test(js) && /renderBackupStatus\(\);\n  loadHallsCard\(\);/.test(js));
     check('the camera stays open, counting one badge once', /now - attState\.lastScan\.at < 4000/.test(js));
     check('the portal keeps a hall code until login, and takes it out of the address',
       /storageSet\('session', 'nqocn_hall', code\);\n\s*window\.history\.replaceState/.test(js) && /markFromHallCode\(\)\.then/.test(js));

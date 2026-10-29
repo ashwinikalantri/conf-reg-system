@@ -4,21 +4,9 @@
     <section id="section-programme" class="hidden space-y-5">
     <!-- PROGRAMME: the halls (each with its door QR) and the sessions. -->
     <div class="space-y-5">
-      <div class="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 class="text-lg font-bold text-slate-800">Programme</h2>
-          <p class="text-xs text-slate-500">Each hall's QR marks attendance at the session on there. Breaks, meals and registration take none.</p>
-        </div>
-        <a href="/api/admin/programme/posters.pdf" target="_blank" rel="noopener" class="w-full sm:w-auto text-center px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-sm rounded-xl shadow-md">Print all hall QR posters</a>
-      </div>
-      <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
-        <h3 class="text-sm font-bold text-slate-800">Halls</h3>
-        <p class="text-xs text-slate-500 mb-3">A hall with a map location shows on the delegates' campus map. Halls in one building can share a location; they share a pin.</p>
-        <div id="prog-halls" class="divide-y divide-slate-100"></div>
-        <form onsubmit="addHall(event)" class="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row gap-2">
-          <input id="prog-new-hall" maxlength="80" placeholder="New hall, e.g. Hall D" class="flex-1 h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-          <button type="submit" class="h-10 px-4 bg-slate-700 hover:bg-slate-800 text-white font-semibold text-sm rounded-lg">Add hall</button>
-        </form>
+      <div>
+        <h2 class="text-lg font-bold text-slate-800">Programme</h2>
+        <p class="text-xs text-slate-500">Each hall's QR marks attendance at the session on there. Breaks, meals and registration take none. The halls themselves -- names, QR posters, map locations -- are in Conference setup.</p>
       </div>
       <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
