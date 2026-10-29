@@ -1012,6 +1012,9 @@ function renderBadge(reg) {
   setText('badge-designation', d.designation || '');
   setText('badge-institution', d.institution || d.institute || '');
   document.getElementById('desk-pass-qr').src = `/api/qr/${encodeURIComponent(reg.registration_number)}.png`;
+  // The full-screen badge's QR, loaded now so tapping Badge shows it at once.
+  const fullQr = document.getElementById('badge-full-qr');
+  if (fullQr) fullQr.src = `/api/qr/${encodeURIComponent(reg.registration_number)}.png`;
   setText('badge-reg', reg.registration_number);
   setText('badge-category', reg.category_label || '');
   const acr = (c.acronym || '').toUpperCase();
@@ -1292,15 +1295,6 @@ function openProgrammePage() {
   if (now && now.scrollIntoView) now.scrollIntoView({ block: 'center' });
 }
 
-if (window.matchMedia) {
-  const desk = window.matchMedia('(min-width: 1024px)');
-  const redraw = () => {
-    const page = document.getElementById('programme-page');
-    if (page && !page.classList.contains('hidden') && programmeData) renderProgrammePage();
-  };
-  if (desk.addEventListener) desk.addEventListener('change', redraw);
-}
-
 function closeProgrammePage() {
   navigateTo('dashboard-page');
   window.scrollTo(0, 0);
@@ -1350,7 +1344,8 @@ function renderProgrammePage() {
       ? `<button type="button" onclick="openMapPage(${Number(it.hallIds[0])})" aria-label="${label} on the campus map" class="${cls} inline-flex items-center gap-1 hover:bg-indigo-100"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg>${label}</button>`
       : `<span class="${cls}">${label}</span>`;
   };
-  // A talk's card, in the list (a phone) and in the timetable (a desktop).
+  // A talk's card. On a desktop the talks that start together sit side by
+  // side, two or three to a row, each the row's height.
   const card = (it, showHall = true) => {
     const now = it.halls.length && it.ids.some((id) => progIsNow({ ...it, id }));
     const was = it.ids.some((id) => mine.has(id));
@@ -1368,41 +1363,6 @@ function renderProgrammePage() {
         </article>`;
   };
   const breakLine = (breaks) => `${esc(guestTime12(breaks[0].start))} – ${esc(guestTime12(breaks[0].end))} · ${esc(breaks.map((b) => b.title).filter((t, i, a) => a.indexOf(t) === i).join(', '))}`;
-  // A desktop, a day of two to four halls with talks, every hall shown: a
-  // timetable -- a column per hall, a row per time; a talk in every hall
-  // spans the row, a break is a line across it.
-  const wide = !!(window.matchMedia && window.matchMedia('(min-width: 1024px)').matches);
-  const grid = wide && !programmeHall && hallsWithTalks.length >= 2 && hallsWithTalks.length <= 4;
-  const page = document.getElementById('programme-page');
-  if (page) page.classList.toggle('lg:max-w-6xl', grid);
-  if (grid) {
-    const cols = hallsWithTalks;
-    const hallId = (name) => { const s = day.find((x) => x.hall === name); return s ? s.hallId : null; };
-    const head = cols.map((h) => {
-      const id = hallId(h);
-      return id != null && onMap.has(id)
-        ? `<button type="button" onclick="openMapPage(${Number(id)})" class="text-left rounded-lg bg-navy text-white font-bold px-3 py-2 hover:bg-indigo-700" aria-label="${esc(h)} on the campus map">${esc(h)}</button>`
-        : `<p class="rounded-lg bg-navy text-white font-bold px-3 py-2">${esc(h)}</p>`;
-    }).join('');
-    const rows = slots.map((start) => {
-      const at = items.filter((it) => it.start === start);
-      const breaks = at.filter(progIsBreak);
-      const talks = at.filter((it) => !progIsBreak(it));
-      const [time, ampm] = guestTime12(start).split(' ');
-      const timeCell = `<div class="pt-3 text-right"><p class="text-lg font-bold text-navy leading-none tabular-nums">${esc(time)}</p><p class="text-xs text-slate-500 mt-0.5">${esc(ampm || '')}</p></div>`;
-      if (!talks.length) return `<div class="pt-1 text-right text-sm text-slate-500 tabular-nums">${esc(guestTime12(start))}</div><div style="grid-column: 2 / -1" class="border-t border-dashed border-slate-300 pt-1.5 text-sm text-slate-500">${breakLine(breaks)}</div>`;
-      const everywhere = talks.find((it) => cols.every((h) => it.halls.includes(h)));
-      if (everywhere) return `${timeCell}<div style="grid-column: 2 / -1">${card(everywhere, false)}</div>`;
-      return timeCell + cols.map((h) => {
-        const here = talks.filter((it) => it.halls[0] === h);
-        return `<div class="space-y-2">${here.map((it) => card(it, it.halls.length > 1)).join('')}</div>`;
-      }).join('');
-    }).join('');
-    document.getElementById('prog-page-list').innerHTML = slots.length
-      ? `<div class="grid gap-2.5 mt-3" style="grid-template-columns: 4.5rem repeat(${cols.length}, minmax(0, 1fr))"><div></div>${head}${rows}</div>`
-      : '<p class="mt-6 text-center text-slate-500">Nothing on this day.</p>';
-    return;
-  }
   document.getElementById('prog-page-list').innerHTML = slots.map((start) => {
     const at = items.filter((it) => it.start === start);
     const breaks = at.filter(progIsBreak);
@@ -1414,7 +1374,7 @@ function renderProgrammePage() {
     const [time, ampm] = guestTime12(start).split(' ');
     return `<div class="grid grid-cols-[3.75rem_minmax(0,1fr)] gap-3 mt-3">
       <div class="pt-3 text-right"><p class="text-lg font-bold text-navy leading-none tabular-nums">${esc(time)}</p><p class="text-xs text-slate-500 mt-0.5">${esc(ampm || '')}</p></div>
-      <div class="space-y-2">${talks.map((it) => card(it)).join('')}</div>
+      <div class="grid gap-2 ${talks.length > 1 ? 'lg:grid-cols-2' : ''} ${talks.length > 2 ? 'xl:grid-cols-3' : ''}">${talks.map((it) => card(it)).join('')}</div>
     </div>${divider}`;
   }).join('') || '<p class="mt-6 text-center text-slate-500">Nothing on this day.</p>';
 }

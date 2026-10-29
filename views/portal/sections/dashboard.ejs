@@ -214,13 +214,6 @@
     </div>
 
     <!-- The badge, large, for a volunteer to scan. -->
-    <div id="badge-full" class="hidden fixed inset-0 z-50 bg-white flex flex-col items-center justify-center p-6 text-center" onclick="closeBadgeFullScreen()">
-      <p id="badge-full-role" class="text-sm font-extrabold tracking-[0.35em] text-[#2f5673]"></p>
-      <p id="badge-full-name" class="text-3xl font-extrabold text-slate-900 mt-2 text-balance"></p>
-      <img id="badge-full-qr" alt="Your badge QR code" class="mt-6 w-[min(80vw,60vh)] h-[min(80vw,60vh)]">
-      <p id="badge-full-reg" class="font-mono text-xl font-bold text-slate-800 tracking-widest mt-2"></p>
-      <p class="text-sm text-slate-400 mt-6">Tap anywhere to close</p>
-    </div>
   </section>
 
   <!-- PAGE: THE PROGRAMME, for reading. One day at a time; start times in a
@@ -228,7 +221,7 @@
        breaks as thin dividers; a session common to several halls shown once.
        Filter by hall. On the day it opens at what is on now. Filled by
        renderProgrammePage() in app.js. -->
-  <section id="programme-page" class="hidden w-full max-w-2xl">
+  <section id="programme-page" class="hidden w-full max-w-2xl lg:max-w-5xl">
     <header class="rounded-2xl bg-navy text-white px-5 py-4 flex items-center gap-3 shadow-card">
       <div class="min-w-0">
         <p id="prog-page-acronym" class="text-xs tracking-[0.3em] font-semibold text-gold-300"></p>
@@ -250,7 +243,7 @@
        "Where am I" (the phone's location, never sent anywhere); and walking
        directions in Google Maps. Leaflet is loaded only when this opens.
        openMapPage() / renderCampusMap() in app.js. -->
-  <section id="map-page" class="hidden w-full max-w-2xl lg:max-w-6xl">
+  <section id="map-page" class="hidden w-full max-w-2xl lg:max-w-5xl">
     <header class="rounded-2xl bg-navy text-white px-5 py-4 flex items-center gap-3 shadow-card">
       <div class="min-w-0">
         <p id="map-page-acronym" class="text-xs tracking-[0.3em] font-semibold text-gold-300"></p>
@@ -368,3 +361,13 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-[22px] h-[22px]" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2"/><circle cx="12" cy="10" r="2.5"/><path d="M9 16h6"/></svg>Badge</button>
     </div>
   </nav>
+
+  <!-- The badge, full screen, for the volunteer to scan: outside the pages so
+       the Badge tab opens it from any of them. openBadgeFullScreen(). -->
+  <div id="badge-full" class="hidden fixed inset-0 z-50 bg-white flex flex-col items-center justify-center p-6 text-center" onclick="closeBadgeFullScreen()">
+      <p id="badge-full-role" class="text-sm font-extrabold tracking-[0.35em] text-[#2f5673]"></p>
+      <p id="badge-full-name" class="text-3xl font-extrabold text-slate-900 mt-2 text-balance"></p>
+      <img id="badge-full-qr" alt="Your badge QR code" class="mt-6 w-[min(80vw,60vh)] h-[min(80vw,60vh)]">
+      <p id="badge-full-reg" class="font-mono text-xl font-bold text-slate-800 tracking-widest mt-2"></p>
+      <p class="text-sm text-slate-400 mt-6">Tap anywhere to close</p>
+    </div>

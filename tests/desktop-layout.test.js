@@ -87,21 +87,23 @@ console.log('\n== Delegate: the programme on a desktop ==');
   sb.__set(prog, null);
   sb.__f.renderProgrammePage();
   const html = el('prog-page-list').innerHTML;
-  check('a timetable: a column per hall', /grid-template-columns: 4\.5rem repeat\(3, minmax\(0, 1fr\)\)/.test(html) && el('programme-page').classList.contains('lg:max-w-6xl'));
-  check('...the halls head the columns, those on the map opening it', /onclick="openMapPage\(1\)"[^>]*aria-label="Main Auditorium on the campus map">Main Auditorium</.test(html) && /<p class="rounded-lg bg-navy[^"]*">Hall B</.test(html));
-  check('...a talk in every hall spans the row; parallel talks read across', /style="grid-column: 2 \/ -1"><article[\s\S]*?Plenary/.test(html) && html.indexOf('Financing Quality') < html.indexOf('Transforming Healthcare') && html.indexOf('Transforming Healthcare') < html.indexOf('Community Health Workers'));
-  check('...a break is a line across', /style="grid-column: 2 \/ -1" class="border-t border-dashed[^"]*">1:00 PM – 2:00 PM · Lunch/.test(html));
+  check('as wide as the home page (no narrow column, no jump between tabs)', /<section id="programme-page" class="hidden w-full max-w-2xl lg:max-w-5xl">/.test(dash)
+    && /<section id="map-page" class="hidden w-full max-w-2xl lg:max-w-5xl">/.test(dash));
+  check('talks that start together sit side by side, two or three to a row', /<div class="grid gap-2 lg:grid-cols-2 xl:grid-cols-3">[\s\S]*?Financing Quality[\s\S]*?Transforming Healthcare[\s\S]*?Community Health Workers/.test(html));
+  check('...each card the row\'s height', /px-4 py-3 h-full">/.test(html));
+  check('no hall-column timetable left (real days have 6-13 halls)', !/grid-template-columns: 4\.5rem/.test(js) && !/lg:max-w-6xl/.test(js));
 }
+
+console.log('\n== Delegate: the badge ==');
 {
-  const { sb, el } = load(false);
-  sb.__set(prog, null);
-  sb.__f.renderProgrammePage();
-  check('on a phone it stays the list', !/grid-template-columns: 4\.5rem/.test(el('prog-page-list').innerHTML) && /grid-cols-\[3\.75rem_minmax\(0,1fr\)\]/.test(el('prog-page-list').innerHTML));
+  const home = dash.slice(dash.indexOf('<section id="dashboard-page"'), dash.indexOf('</section>', dash.indexOf('<section id="dashboard-page"')));
+  check('the full-screen badge is outside the pages, so the Badge tab opens it from any of them', /<div id="badge-full"/.test(dash) && !/id="badge-full"/.test(home)
+    && dash.indexOf('id="badge-full"') > dash.lastIndexOf('</section>'));
+  check('...its QR loaded with the badge, not on the tap', /const fullQr = document\.getElementById\('badge-full-qr'\);\s*if \(fullQr\) fullQr\.src = `\/api\/qr\//.test(js));
 }
 
 console.log('\n== Delegate: map and sign-in ==');
-check('the map: the list beside the map, the map taller', /<section id="map-page" class="hidden w-full max-w-2xl lg:max-w-6xl">/.test(dash)
-  && /lg:grid lg:grid-cols-\[minmax\(0,1fr\)_22rem\]/.test(dash) && /lg:h-\[70vh\]/.test(dash));
+check('the map: the list beside the map, the map taller', /lg:grid lg:grid-cols-\[minmax\(0,1fr\)_22rem\]/.test(dash) && /lg:h-\[70vh\]/.test(dash));
 check('sign-in: the conference and the form side by side on a desktop', /<div id="portal-front" class="w-full flex flex-col items-center lg:flex-row lg:items-stretch lg:justify-center">\s*<%- include\('portal\/partials\/hero'\) %>\s*<%- include\('portal\/sections\/auth'\) %>\s*<\/div>/.test(index)
   && /lg:max-w-\[440px\][^"]*lg:rounded-r-none/.test(hero) && /lg:max-w-\[520px\][^"]*lg:rounded-l-none/.test(auth));
 check('...the conference\'s half carries no description, only the conference', !/<ul\b|<li>/.test(hero));
