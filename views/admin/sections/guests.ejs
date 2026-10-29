@@ -44,6 +44,9 @@
             <option value="ownStay">Arranging their own stay</option>
           </select>
           <select id="guests-filter-acc" onchange="renderGuestList()" class="min-w-0 h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
+          <!-- Where they are from, as their account says (fillGuestFilters). -->
+          <select id="guests-filter-institution" onchange="renderGuestList()" aria-label="Institute" class="min-w-0 md:max-w-[16rem] h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
+          <select id="guests-filter-district" onchange="renderGuestList()" aria-label="District" class="min-w-0 md:max-w-[14rem] h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
           <!-- On a phone there are no column headers to sort by. -->
           <select id="guests-sort-mobile" onchange="setGuestSort(this.value)" aria-label="Sort" class="md:hidden min-w-0 h-10 px-2 border border-slate-300 rounded-lg text-sm bg-white">
             <option value="sr_no">Sort: Sr No</option>

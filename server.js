@@ -13431,7 +13431,7 @@ async function guestCoordinatorPool() {
 
 async function guestRowsJoined(where = '', params = []) {
   const rows = await dbAll(
-    `SELECT g.*, u.salutation, u.full_name, u.designation, u.institution, u.phone, u.email,
+    `SELECT g.*, u.salutation, u.full_name, u.designation, u.institution, u.district, u.state, u.phone, u.email,
             COALESCE(r.registration_number, u.registration_number) AS registration_number, r.category_label,
             (r.id IS NOT NULL AND COALESCE(r.bank_status, '') != 'REJECTED') AS registered,
             tc.salutation AS tc_salutation, tc.full_name AS tc_name,

@@ -209,6 +209,34 @@ stayRow.stay_not_needed = 0;
 stay.sb.__g.openGuestEditor(stayRow.id);
 check('unticked: the stay details are asked for', /id="guest-stay-fields" class="col-span-full/.test(stay.el('guest-edit-body').innerHTML));
 
+console.log('\n== Institute and district filters ==');
+const placeOf = { 'Alpha Arriving': ['MGIMS, Sevagram', 'Wardha', 'Maharashtra'], 'Bravo Homeless': ['mgims,  sevagram', 'Wardha', 'Maharashtra'],
+  'Charlie Cancelled': ['AIIMS, Nagpur', 'Aurangabad', 'Bihar'], 'Delta Roommate': ['GMC Aurangabad', 'Aurangabad', 'Maharashtra'] };
+data.guests.forEach((x) => { const p = placeOf[x.name] || [null, null, null]; [x.institution, x.district, x.state] = p; });
+sb.__set(data);
+sb.__g.fillGuestFilters();
+const instOpts = el('guests-filter-institution').innerHTML;
+const distOpts = el('guests-filter-district').innerHTML;
+check('the institute filter lists each institute once, with how many, case and spacing aside', /<option value="">Any institute<\/option>/.test(instOpts)
+  && /<option value="mgims, sevagram">MGIMS, Sevagram \(2\)<\/option>/.test(instOpts) && (instOpts.match(/sevagram/gi) || []).length === 2, instOpts);
+check('...and those with none recorded (not signed up)', /<option value="__none">Institute not recorded \(1\)<\/option>/.test(instOpts));
+check('the district filter keeps districts of the same name in different states apart', /value="aurangabad\|bihar">Aurangabad, Bihar \(1\)/.test(distOpts)
+  && /value="aurangabad\|maharashtra">Aurangabad, Maharashtra \(1\)/.test(distOpts) && /Wardha, Maharashtra \(2\)/.test(distOpts), distOpts);
+const listed = () => ['Alpha Arriving', 'Bravo Homeless', 'Charlie Cancelled', 'Delta Roommate', 'Echo Typed'].filter((n) => el('guests-tbody').innerHTML.includes(`>${n}<`));
+el('guests-filter-institution').value = 'mgims, sevagram';
+sb.__g.renderGuestList();
+check('filtering by institute', listed().join() === 'Alpha Arriving,Bravo Homeless', listed());
+el('guests-filter-institution').value = '';
+el('guests-filter-district').value = 'aurangabad|maharashtra';
+sb.__g.renderGuestList();
+check('filtering by district', listed().join() === 'Delta Roommate', listed());
+el('guests-filter-district').value = '__none';
+sb.__g.renderGuestList();
+check('...or by none recorded', listed().join() === 'Echo Typed', listed());
+el('guests-filter-district').value = '';
+sb.__g.renderGuestList();
+check('the server sends district and state with each faculty member', /u\.institution, u\.district, u\.state/.test(fs.readFileSync(appFile('server.js'), 'utf8')));
+
 console.log('\n== Pickup or drop not required ==');
 const legRow = data.guests.find((x) => x.name === 'Alpha Arriving');
 Object.assign(legRow, { pickup_status: 'Not required', arrival_mode: 'Flight', arrival_point: 'Nagpur Airport', pickup_vehicle: 'Car A' });

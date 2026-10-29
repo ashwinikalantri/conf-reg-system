@@ -11027,6 +11027,30 @@ function fillGuestFilters() {
       + '<option value="__none">No accommodation</option>';
     acc.value = was;
   }
+  // Institute and district: the values on the list, each once (spelling as
+  // first seen, case and spacing aside), with how many. Someone not signed
+  // up has neither -- the account is where these come from.
+  const places = (id, anyLabel, noneLabel, keyOf, labelOf) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const was = keep(id);
+    const seen = new Map();
+    let none = 0;
+    for (const g of guestData.guests) {
+      const k = keyOf(g);
+      if (!k) { none++; continue; }
+      if (!seen.has(k)) seen.set(k, { label: labelOf(g), n: 0 });
+      seen.get(k).n++;
+    }
+    const opts = [...seen].sort((a, b) => a[1].label.localeCompare(b[1].label));
+    el.innerHTML = `<option value="">${esc(anyLabel)}</option>`
+      + opts.map(([k, o]) => `<option value="${esc(k)}">${esc(o.label)} (${o.n})</option>`).join('')
+      + (none ? `<option value="__none">${esc(noneLabel)} (${none})</option>` : '');
+    // Keep the choice across a refresh, unless that place has left the list.
+    el.value = seen.has(was) || (was === '__none' && none) ? was : '';
+  };
+  places('guests-filter-institution', 'Any institute', 'Institute not recorded', guestInstitutionKey, (g) => guestPlaceText(g.institution));
+  places('guests-filter-district', 'Any district', 'District not recorded', guestDistrictKey, (g) => [g.district, g.state].map(guestPlaceText).filter(Boolean).join(', '));
   const legendHtml = [
     ...guestData.lists.overall_status.map((v) => guestStatusBadge(v)),
     guestPill(GUEST_FLAG_STYLES.pickupAlert, `Orange: arriving within ${guestData.settings.alertDays} day(s), no pickup vehicle`),
@@ -11063,12 +11087,22 @@ function telLink(phone, cls = 'text-indigo-700 hover:underline') {
   return href.replace(/\D/g, '').length >= 6 ? `<a href="tel:${esc(href)}" class="${cls}">${esc(phone)}</a>` : esc(phone);
 }
 
+// Institute and district as filter keys: case and spacing do not split one
+// place in two. A district is keyed with its state (Aurangabad, Bihar is not
+// Aurangabad, Maharashtra).
+const guestPlaceText = (s) => String(s || '').trim().replace(/\s+/g, ' ');
+const guestInstitutionKey = (g) => guestPlaceText(g.institution).toLowerCase();
+const guestDistrictKey = (g) => (guestPlaceText(g.district) ? `${guestPlaceText(g.district)}|${guestPlaceText(g.state)}`.toLowerCase() : '');
 function filteredGuests() {
   const q = String((document.getElementById('guests-search') || {}).value || '').trim().toLowerCase();
   const status = (document.getElementById('guests-filter-status') || {}).value || '';
   const flag = (document.getElementById('guests-filter-flag') || {}).value || '';
   const acc = (document.getElementById('guests-filter-acc') || {}).value || '';
+  const institution = (document.getElementById('guests-filter-institution') || {}).value || '';
+  const district = (document.getElementById('guests-filter-district') || {}).value || '';
   return guestData.guests.filter((g) => {
+    if (institution && guestInstitutionKey(g) !== (institution === '__none' ? '' : institution)) return false;
+    if (district && guestDistrictKey(g) !== (district === '__none' ? '' : district)) return false;
     if (q && ![g.name, g.phone, g.designation, g.registration_number, g.arrival_number, g.departure_number, g.pickup_vehicle,
       g.drop_vehicle, g.room_no, g.accommodation, g.remarks, g.special_needs].some((v) => String(v || '').toLowerCase().includes(q))) return false;
     if (status === '__live' && g.cancelled) return false;
