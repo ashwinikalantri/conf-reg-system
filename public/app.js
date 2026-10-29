@@ -11656,6 +11656,11 @@ async function searchFacultyCandidates(q) {
         : `<button type="button" onclick="markFaculty(${i})" class="shrink-0 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Mark as faculty</button>`}
     </div>`).join('') : '<p class="text-xs text-slate-400 p-2">No delegate matches.</p>';
 }
+// From MGIMS or Sevagram (guests.js isLocalFaculty): the server set their
+// pickup and drop to "Not required".
+function localTransferNote(data) {
+  return data && data.local ? ' From MGIMS/Sevagram, so pickup and drop are set to not required.' : '';
+}
 async function markFaculty(i, phoneOverride) {
   const phone = phoneOverride || (facultyCandidates[i] && facultyCandidates[i].phone_number);
   if (!phone) return;
@@ -11663,8 +11668,8 @@ async function markFaculty(i, phoneOverride) {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }),
   })).json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not mark them as faculty.');
-  showToast(data.registered ? 'Marked as faculty. They are on the faculty list.'
-    : 'Marked as faculty. They have not registered yet; the faculty list flags it until they do.', 'success');
+  showToast((data.registered ? 'Marked as faculty. They are on the faculty list.'
+    : 'Marked as faculty. They have not registered yet; the faculty list flags it until they do.') + localTransferNote(data), 'success');
   if (!phoneOverride) closeModal('modal-guest-add');
   if (guestData || currentBackendTab === 'faculty') renderGuests();
   return data;
@@ -11688,7 +11693,7 @@ async function addUnlinkedGuest(ev) {
     return;
   }
   if (!data.success) { note.textContent = data.error || 'Could not add them.'; note.classList.remove('hidden'); return; }
-  showToast('Added. Link them to their account once they sign up.', 'success');
+  showToast('Added. Link them to their account once they sign up.' + localTransferNote(data), 'success');
   f.reset();
   closeModal('modal-guest-add');
   renderGuests();
@@ -11717,7 +11722,7 @@ async function linkGuest(id, phone) {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }),
   })).json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not link.');
-  showToast(data.registered ? 'Linked to their account.' : 'Linked to their account. They have not registered yet.', 'success');
+  showToast((data.registered ? 'Linked to their account.' : 'Linked to their account. They have not registered yet.') + localTransferNote(data), 'success');
   closeModal('modal-guest-edit');
   renderGuests();
 }

@@ -109,6 +109,14 @@ function travelInUse(g) {
   }
   return out;
 }
+// Faculty from MGIMS or Sevagram are already here: no pickup or drop. Read
+// from the institution and designation (an account's, or what was typed in)
+// and an @mgims.ac.in email. "Kasturba" alone is not enough -- Kasturba
+// Medical College is in Manipal; Kasturba Nursing College says Sevagram.
+const LOCAL_PLACE = /\bmgims\b|sevagram|mahatma gandhi institute of medical sciences/i;
+function isLocalFaculty({ institution, designation, email } = {}) {
+  return /@mgims\.ac\.in\s*$/i.test(String(email || '')) || LOCAL_PLACE.test([institution, designation].filter(Boolean).join(' '));
+}
 // Values the app's own rules read. They cannot be switched off or removed,
 // or "Cancelled" guests would quietly start counting again, and a pickup
 // "Not required" would start asking for a vehicle.
@@ -700,7 +708,7 @@ module.exports = {
   TRAVEL_FIELDS, STAY_FIELDS, GENERAL_FIELDS, ALL_FIELDS, FIELD_PERMISSION, FIELD_LABELS, FIELD_LISTS,
   TRAVEL_NOTIFY_FIELDS, STAY_NOTIFY_FIELDS,
   LIST_LABELS, DEFAULT_LISTS, PROTECTED_VALUES, CANCELLED, DEFAULT_SETTINGS, SLOT_NAMES,
-  NOT_REQUIRED, LEG_DETAILS, transferNotRequired, travelInUse,
+  NOT_REQUIRED, LEG_DETAILS, transferNotRequired, travelInUse, isLocalFaculty,
   naturalCompare,
   validDate, validTime, addDays, joinDateTime, to12h, dateTime12, slotOf, slotLabels,
   validateGuestFields, forbiddenChanges, changedFields, validateVehicle, validateRoom, validateSettings,

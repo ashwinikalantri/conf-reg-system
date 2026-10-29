@@ -13596,6 +13596,8 @@ app.get('/api/guests/candidates', requirePermission('guests.edit'), async (req, 
 // Either way the same person is not entered twice: an account already at the
 // typed phone or email is offered instead, and a guest already typed in with
 // it is pointed to.
+const LOCAL_TRANSFER_NOTE = '; from MGIMS/Sevagram, so pickup and drop not required';
+const blankValue = (v) => v == null || String(v).trim() === '';
 app.post('/api/guests', requirePermission('guests.edit'), async (req, res, next) => {
   try {
     const body = req.body || {};
@@ -13623,16 +13625,20 @@ app.post('/api/guests', requirePermission('guests.edit'), async (req, res, next)
       }
       const twin = await unlinkedGuestMatching(values.guest_phone, values.guest_email);
       if (twin) return res.status(409).json({ success: false, code: 'GUEST_EXISTS', error: `${twin.guest_name} is already on the faculty list with that phone or email.`, guestId: twin.id });
+      // From MGIMS or Sevagram: no pickup or drop (guests.js isLocalFaculty).
+      const local = guestLib.isLocalFaculty({ designation: values.guest_designation, email: values.guest_email });
+      const transfer = local ? guestLib.NOT_REQUIRED : null;
       const r = await dbRun(
-        `INSERT INTO guests (guest_name, guest_designation, guest_phone, guest_email, overall_status, created_at, created_by, updated_at, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [values.guest_name, values.guest_designation || null, values.guest_phone || null, values.guest_email || null, invited, now, by, now, by]);
-      await recordAudit({ req, entityType: 'guest', entityId: String(r.lastID), action: 'GUEST_ADDED', oldValue: null, newValue: `${values.guest_name} added as faculty (not signed up)` });
-      return res.json({ success: true, id: r.lastID, registered: false, linked: false });
+        `INSERT INTO guests (guest_name, guest_designation, guest_phone, guest_email, pickup_status, drop_status, overall_status, created_at, created_by, updated_at, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [values.guest_name, values.guest_designation || null, values.guest_phone || null, values.guest_email || null, transfer, transfer, invited, now, by, now, by]);
+      await recordAudit({ req, entityType: 'guest', entityId: String(r.lastID), action: 'GUEST_ADDED', oldValue: null,
+        newValue: `${values.guest_name} added as faculty (not signed up)${local ? LOCAL_TRANSFER_NOTE : ''}` });
+      return res.json({ success: true, id: r.lastID, registered: false, linked: false, local });
     }
 
     const phone = String(body.phone || '');
-    const u = await dbGet('SELECT phone_number, salutation, full_name, role, phone, email FROM users WHERE phone_number = ?', [phone]);
+    const u = await dbGet('SELECT phone_number, salutation, full_name, role, phone, email, institution, designation FROM users WHERE phone_number = ?', [phone]);
     if (!u || !u.role) return res.status(404).json({ success: false, error: 'Account not found.' });
     if (await dbGet('SELECT id FROM guests WHERE phone_number = ?', [phone])) {
       return res.status(409).json({ success: false, error: 'They are already on the faculty list.' });
@@ -13642,13 +13648,15 @@ app.post('/api/guests', requirePermission('guests.edit'), async (req, res, next)
       return res.status(409).json({ success: false, code: 'GUEST_EXISTS', guestId: twin.id,
         error: `${twin.guest_name} is already on the faculty list with this phone or email, not yet linked. Link them to this account instead.` });
     }
+    const local = guestLib.isLocalFaculty(u);
+    const transfer = local ? guestLib.NOT_REQUIRED : null;
     const r = await dbRun(
-      'INSERT INTO guests (phone_number, overall_status, created_at, created_by, updated_at, updated_by, linked_at, linked_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [phone, invited, now, by, now, by, now, by]);
+      'INSERT INTO guests (phone_number, pickup_status, drop_status, overall_status, created_at, created_by, updated_at, updated_by, linked_at, linked_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [phone, transfer, transfer, invited, now, by, now, by, now, by]);
     const name = [u.salutation, u.full_name].filter(Boolean).join(' ');
-    await recordAudit({ req, entityType: 'guest', entityId: String(r.lastID), action: 'GUEST_ADDED', oldValue: null, newValue: `${name} marked as faculty` });
+    await recordAudit({ req, entityType: 'guest', entityId: String(r.lastID), action: 'GUEST_ADDED', oldValue: null, newValue: `${name} marked as faculty${local ? LOCAL_TRANSFER_NOTE : ''}` });
     const registered = !!(await dbGet(`SELECT ${authorRegisteredSql('?')} AS yes`, [phone])).yes;
-    res.json({ success: true, id: r.lastID, registered, linked: true });
+    res.json({ success: true, id: r.lastID, registered, linked: true, local });
   } catch (err) {
     next(err);
   }
@@ -13663,17 +13671,23 @@ app.put('/api/guests/:id/link', requirePermission('guests.edit'), async (req, re
     if (!g) return res.status(404).json({ success: false, error: 'Faculty member not found.' });
     if (g.phone_number) return res.status(409).json({ success: false, error: 'They are already linked to an account.' });
     const phone = String((req.body && req.body.phone) || '');
-    const u = await dbGet('SELECT phone_number, salutation, full_name, role FROM users WHERE phone_number = ?', [phone]);
+    const u = await dbGet('SELECT phone_number, salutation, full_name, role, email, institution, designation FROM users WHERE phone_number = ?', [phone]);
     if (!u || !u.role) return res.status(404).json({ success: false, error: 'Account not found.' });
     if (await dbGet('SELECT id FROM guests WHERE phone_number = ?', [phone])) {
       return res.status(409).json({ success: false, error: 'That account is already on the faculty list as someone else.' });
     }
-    await dbRun('UPDATE guests SET phone_number = ?, linked_at = ?, linked_by = ?, updated_at = ?, updated_by = ? WHERE id = ?',
-      [phone, Date.now(), req.session.name || req.session.phone, Date.now(), req.session.name || req.session.phone, g.id]);
+    // The account may show them to be from MGIMS or Sevagram: a pickup or
+    // drop nobody has set yet becomes "Not required". One already set stays.
+    const local = guestLib.isLocalFaculty(u);
+    const pickup = local && blankValue(g.pickup_status) ? guestLib.NOT_REQUIRED : g.pickup_status;
+    const drop = local && blankValue(g.drop_status) ? guestLib.NOT_REQUIRED : g.drop_status;
+    await dbRun('UPDATE guests SET phone_number = ?, pickup_status = ?, drop_status = ?, linked_at = ?, linked_by = ?, updated_at = ?, updated_by = ? WHERE id = ?',
+      [phone, pickup, drop, Date.now(), req.session.name || req.session.phone, Date.now(), req.session.name || req.session.phone, g.id]);
     const name = [u.salutation, u.full_name].filter(Boolean).join(' ');
-    await recordAudit({ req, entityType: 'guest', entityId: String(g.id), action: 'GUEST_LINKED', oldValue: g.guest_name, newValue: `linked to ${name}'s account` });
+    const changedTransfer = pickup !== g.pickup_status || drop !== g.drop_status;
+    await recordAudit({ req, entityType: 'guest', entityId: String(g.id), action: 'GUEST_LINKED', oldValue: g.guest_name, newValue: `linked to ${name}'s account${changedTransfer ? LOCAL_TRANSFER_NOTE : ''}` });
     const registered = !!(await dbGet(`SELECT ${authorRegisteredSql('?')} AS yes`, [phone])).yes;
-    res.json({ success: true, registered });
+    res.json({ success: true, registered, local: changedTransfer });
   } catch (err) {
     next(err);
   }
