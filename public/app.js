@@ -10974,10 +10974,11 @@ async function renderGuests() {
   if (addBtn) addBtn.classList.toggle('hidden', !can('guests.edit'));
   const settingsTab = document.getElementById('guests-settings-tab');
   if (settingsTab) settingsTab.classList.toggle('hidden', !can('guests.manage'));
-  // The tab badge: what needs doing now -- orange and red rows.
-  const urgent = guestData.guests.filter((g) => g.flags.pickupAlert || g.flags.noAccommodation).length;
-  const badge = document.getElementById('badge-guest-alerts');
-  if (badge) { badge.textContent = String(urgent); badge.classList.toggle('hidden', !urgent); }
+  // The tab badge: how many faculty there are, Cancelled aside (what needs
+  // doing is the "Needs attention" filter and the orange and red rows).
+  const facultyCount = guestData.dashboard.listed;
+  const badge = document.getElementById('badge-faculty-count');
+  if (badge) { badge.textContent = String(facultyCount); badge.classList.toggle('hidden', !facultyCount); }
   fillGuestFilters();
   switchGuestView(guestCurrentView());
 }
@@ -11386,6 +11387,30 @@ function syncGuestTransferFields(leg) {
   if (note) note.classList.toggle('hidden', !off);
 }
 
+// Room No: the rooms on the Rooms list at the chosen accommodation, with
+// their type and how many beds are taken (this person included, if they are
+// in it). A room no longer on the list stays offered to whoever has it --
+// keepUnlisted -- but is not offered once the accommodation changes.
+function guestRoomOptionsHtml(accommodation, current, keepUnlisted) {
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  if (!norm(accommodation)) return '<option value="">Choose the accommodation first</option>';
+  const rooms = ((guestData && guestData.rooms) || []).filter((r) => norm(r.accommodation) === norm(accommodation));
+  const listed = rooms.some((r) => norm(r.room_no) === norm(current));
+  const label = (r) => [r.room_no, r.room_type, `${r.occupied} of ${r.beds} bed${r.beds === 1 ? '' : 's'} taken`].filter(Boolean).join(' · ')
+    + (r.occupied >= r.beds && norm(r.room_no) !== norm(current) ? ' (full)' : '');
+  return '<option value="">—</option>'
+    + rooms.map((r) => `<option value="${esc(r.room_no)}" ${norm(r.room_no) === norm(current) ? 'selected' : ''}>${esc(label(r))}</option>`).join('')
+    + (current && !listed && keepUnlisted ? `<option value="${esc(current)}" selected>${esc(current)} (not on the Rooms list)</option>` : '')
+    + (rooms.length ? '' : '<option value="" disabled>No rooms listed here yet: add them under Rooms</option>');
+}
+function syncGuestRoomOptions() {
+  const form = document.getElementById('guest-edit-form');
+  const acc = form && form.querySelector('[name="accommodation"]');
+  const room = form && form.querySelector('[name="room_no"]');
+  if (!acc || !room) return;
+  room.innerHTML = guestRoomOptionsHtml(acc.value, room.value, false);
+}
+
 function syncGuestStayFields() {
   const form = document.getElementById('guest-edit-form');
   const tickEl = form && form.querySelector('[name="stay_not_needed"]');
@@ -11519,8 +11544,8 @@ function openGuestEditor(id) {
         <input type="checkbox" name="stay_not_needed" ${Number(g.stay_not_needed) ? 'checked' : ''} ${stay ? '' : 'disabled'} onchange="syncGuestStayFields()"> Accommodation not needed — they arrange their own stay</label>
       <p id="guest-stay-note" class="${Number(g.stay_not_needed) ? '' : 'hidden'} col-span-full text-[11px] text-slate-500 -mt-1">No stay details needed.${g.accommodation ? ' Those entered earlier are kept, unused, and return if you untick this.' : ''}</p>
       <div id="guest-stay-fields" class="${Number(g.stay_not_needed) ? 'hidden ' : ''}col-span-full grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">`
-      + field('accommodation', 'Accommodation', select('accommodation', 'accommodation', stayOk))
-      + field('room_no', 'Room No', input('room_no', 'text', stayOk))
+      + field('accommodation', 'Accommodation', select('accommodation', 'accommodation', stayOk, 'onchange="syncGuestRoomOptions()"'))
+      + field('room_no', 'Room No', `<select name="room_no" ${stayOk ? '' : 'disabled'} class="${cls}">${guestRoomOptionsHtml(g.accommodation, g.room_no, true)}</select>`)
       + field('checkin_date', 'Check-in Date', input('checkin_date', 'date', stayOk, 'onchange="syncGuestNights()"'))
       + field('checkout_date', 'Check-out Date', input('checkout_date', 'date', stayOk, 'onchange="syncGuestNights()"'))
       + field('room_type', 'Room Type', select('room_type', 'room_type', stayOk))

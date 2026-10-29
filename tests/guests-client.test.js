@@ -243,6 +243,32 @@ el('guests-filter-district').value = '';
 sb.__g.renderGuestList();
 check('the server sends district and state with each faculty member', /u\.institution, u\.district, u\.state/.test(fs.readFileSync(appFile('server.js'), 'utf8')));
 
+console.log('\n== Room No ==');
+const roomData = { ...data, rooms: [
+  { id: 1, accommodation: 'Yatri Nivas', room_no: '2', room_type: 'Double', beds: 2, occupied: 1 },
+  { id: 2, accommodation: 'Yatri Nivas', room_no: '10', room_type: 'Single', beds: 1, occupied: 1 },
+  { id: 3, accommodation: 'MGIMS Guesthouse', room_no: '7', beds: 2, occupied: 0 }] };
+const roomGuest = { ...data.guests[0], id: 9001, accommodation: 'Yatri Nivas', room_no: '2', stay_not_needed: 0 };
+stay.sb.__set({ ...roomData, guests: [...data.guests, roomGuest] });
+stay.sb.__g.openGuestEditor(9001);
+const rh = stay.el('guest-edit-body').innerHTML;
+const roomSelect = (rh.match(/<select name="room_no"[\s\S]*?<\/select>/) || [''])[0];
+check('Room No is a drop-down, not typed', !!roomSelect && !/<input name="room_no"/.test(rh));
+check('...of the rooms listed at their accommodation, with type and beds taken', /<option value="2" selected>2 · Double · 1 of 2 beds taken<\/option>/.test(roomSelect)
+  && /<option value="10" >10 · Single · 1 of 1 bed taken \(full\)<\/option>/.test(roomSelect) && !/value="7"/.test(roomSelect), roomSelect);
+check('...and changes with the accommodation', /name="accommodation"[^>]*onchange="syncGuestRoomOptions\(\)"/.test(rh));
+const optHtml = (acc, cur, keep) => vm.runInContext(`guestRoomOptionsHtml(${JSON.stringify(acc)}, ${JSON.stringify(cur)}, ${keep})`, stay.sb);
+check('a room no longer listed stays offered to whoever has it', /<option value="99" selected>99 \(not on the Rooms list\)<\/option>/.test(optHtml('Yatri Nivas', '99', true)));
+check('...but not once the accommodation is changed', !/value="99"/.test(optHtml('MGIMS Guesthouse', '99', false)));
+check('no accommodation chosen: asks for it first', /Choose the accommodation first/.test(optHtml('', '', false)));
+check('an accommodation with no rooms listed says where to add them', /No rooms listed here yet: add them under Rooms/.test(optHtml('Hindi University Guesthouse', '', false)));
+check('the transport coordinator cannot change it', /<select name="room_no" disabled/.test((() => { sb.__set({ ...roomData, guests: [...data.guests, roomGuest] }); sb.__g.openGuestEditor(9001); return el('guest-edit-body').innerHTML; })()));
+sb.__set(data); stay.sb.__set(data);
+
+console.log('\n== The tab badge ==');
+check('the Faculty tab shows how many faculty there are, Cancelled aside', /const facultyCount = guestData\.dashboard\.listed;/.test(js)
+  && /id="badge-faculty-count" class="hidden bg-slate-100 text-slate-700/.test(fs.readFileSync(appFile('views', 'admin', 'partials', 'nav-tabs.ejs'), 'utf8')) && !/badge-guest-alerts/.test(js));
+
 console.log('\n== Pickup or drop not required ==');
 const legRow = data.guests.find((x) => x.name === 'Alpha Arriving');
 Object.assign(legRow, { pickup_status: 'Not required', arrival_mode: 'Flight', arrival_point: 'Nagpur Airport', pickup_vehicle: 'Car A' });
