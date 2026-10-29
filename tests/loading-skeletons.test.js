@@ -36,9 +36,9 @@ check('the portal hero conference name', /id="conf-name-h1" class="skeleton/.tes
 check('the admin header conference name', /id="conf-name-h1"[^>]*class="skeleton/.test(adminHdr));
 check('the delegate name', /id="user-display-name" class="skeleton/.test(dash));
 check('the payment status chip', /id="payment-status-tag" class="skeleton/.test(dash));
-check('all six payment metric cards',
-  (payments.match(/<p id="metric-[a-z-]+" class="skeleton /g) || []).length === 6,
-  (payments.match(/<p id="metric-[a-z-]+" class="skeleton /g) || []).length);
+check('all six payment metric values (the counts are the filters now)',
+  (payments.match(/<(?:p|span) id="metric-[a-z-]+" class="skeleton /g) || []).length === 6,
+  (payments.match(/<(?:p|span) id="metric-[a-z-]+" class="skeleton /g) || []).length);
 
 console.log('\n== setText clears it, so every value it sets stops on its own ==');
 function sandboxWith(elements) {

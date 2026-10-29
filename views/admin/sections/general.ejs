@@ -38,7 +38,7 @@
             <input id="gs-conf-regprefix" required pattern="[A-Za-z0-9]{1,20}" placeholder="e.g. CONF2026" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
             <p class="text-[10px] text-slate-400 mt-1">Letters/numbers only. Prefixed to every new registration number going forward (e.g. CONF20261188) — changing it does <b>not</b> renumber existing registrations.</p>
           </div>
-          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Conference Details</button></div>
+          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Conference Details</button></div>
         </form>
       </div>
 
@@ -49,13 +49,13 @@
       <div id="gs-card-halls" class="hidden bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <div class="flex flex-wrap items-start justify-between gap-3 mb-1">
           <h3 class="text-lg font-bold text-slate-800"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M3 21h18"/><path d="M5 21V8l7-4 7 4v13"/><path d="M9 21v-6h6v6"/></svg>Halls</h3>
-          <a href="/api/admin/programme/posters.pdf" target="_blank" rel="noopener" class="w-full sm:w-auto text-center px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-sm rounded-xl shadow-md">Print all hall QR posters</a>
+          <a href="/api/admin/programme/posters.pdf" target="_blank" rel="noopener" class="w-full sm:w-auto text-center px-4 py-2 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-xl shadow-md">Print all hall QR posters</a>
         </div>
         <p class="text-xs text-slate-500 mb-3">Where the sessions are held. Each hall's QR marks attendance at the session on there. A hall with a map location shows on the delegates' campus map; halls in one building can share a location, and share a pin.</p>
         <div id="prog-halls" class="divide-y divide-slate-100"></div>
         <form onsubmit="addHall(event)" class="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row gap-2">
           <input id="prog-new-hall" maxlength="80" placeholder="New hall, e.g. Hall D" class="flex-1 h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-          <button type="submit" class="h-10 px-4 bg-slate-700 hover:bg-slate-800 text-white font-semibold text-sm rounded-lg">Add hall</button>
+          <button type="submit" class="h-10 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Add hall</button>
         </form>
       </div>
 
@@ -84,7 +84,7 @@
             <input id="gs-sms-apikey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
             <p class="text-[10px] text-slate-400 mt-1">Stored in the server's .env file, never in the database. Only entered when changing it.</p>
           </div>
-          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save SMS Settings</button></div>
+          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save SMS Settings</button></div>
         </form>
       </div>
 
@@ -99,7 +99,7 @@
             <input id="gs-flights-apikey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current key" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
             <p class="text-[10px] text-slate-400 mt-1">Stored in the server's .env file, never in the database. Only entered when changing it.</p>
           </div>
-          <button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Flight Look-up Key</button>
+          <button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Flight Look-up Key</button>
         </form>
       </div>
 
@@ -129,7 +129,7 @@
             <input id="gs-email-secretkey" type="password" autocomplete="new-password" placeholder="Leave blank to keep current" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono">
           </div>
           <p class="text-[10px] text-slate-400 sm:col-span-2">Credentials are stored in the server's .env file, never in the database. Only entered when changing them.</p>
-          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Email Settings</button></div>
+          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Email Settings</button></div>
         </form>
       </div>
 
@@ -146,7 +146,7 @@
           <form onsubmit="saveGeneralSettings(event, 'upi')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">UPI ID (VPA)</label><input id="gs-upi-id" placeholder="name@bank" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono"></div>
             <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Payee Name</label><input id="gs-upi-payeename" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
-            <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save UPI Settings</button></div>
+            <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save UPI Settings</button></div>
           </form>
         </div>
 
@@ -157,7 +157,7 @@
             <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Account Number</label><input id="gs-bank-accountnumber" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono"></div>
             <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">IFSC Code</label><input id="gs-bank-ifsc" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none font-mono uppercase"></div>
             <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Branch</label><input id="gs-bank-branch" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
-            <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Bank Transfer Settings</button></div>
+            <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Bank Transfer Settings</button></div>
           </form>
         </div>
       </div>
@@ -181,7 +181,7 @@
             <textarea id="gs-maintenance-message" rows="2" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white outline-none"></textarea>
             <p class="text-[10px] text-slate-400 mt-1">Leave blank to restore the default wording.</p>
           </div>
-          <div class="pt-1"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Message</button></div>
+          <div class="pt-1"><button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Message</button></div>
         </form>
       </div>
 
@@ -210,7 +210,7 @@
             </div>
             <div id="gs-digest-chips" class="flex flex-wrap gap-2 mt-2"></div>
           </div>
-          <div class="pt-1"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Notification Settings</button></div>
+          <div class="pt-1"><button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save Notification Settings</button></div>
         </form>
       </div>
 
@@ -224,7 +224,7 @@
         <p class="text-xs text-slate-500 mb-3">A backup runs automatically every night at 02:00 and is copied to Google Drive, which keeps the most recent 14.</p>
         <div id="backup-status" class="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-3 mb-3">Checking…</div>
         <div class="flex flex-wrap items-center gap-2">
-          <button type="button" id="backup-now-btn" onclick="requestBackupNow()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm rounded-xl shadow-md">
+          <button type="button" id="backup-now-btn" onclick="requestBackupNow()" class="px-4 py-2.5 bg-navy hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm rounded-xl shadow-md">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M5 3h11l3 3v15H5z"/><rect x="8" y="3" width="7" height="5"/><rect x="8" y="14" width="8" height="6"/></svg>Back Up Now
           </button>
           <span class="text-[11px] text-slate-500">Queues a backup; it starts within about five minutes.</span>
@@ -241,8 +241,8 @@
               <button type="button" id="drive-check-btn" onclick="checkDriveLink()" class="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg">Test connection</button>
               <!-- Shown only once an OAuth client exists; without one Google
                    has nowhere to send the browser back to. -->
-              <a id="drive-connect-btn" href="/api/admin/backup/drive-oauth/start" class="hidden px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Connect Google Drive</a>
-              <button type="button" id="drive-setup-toggle" onclick="toggleDriveSetupForm()" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg">Set up sign-in</button>
+              <a id="drive-connect-btn" href="/api/admin/backup/drive-oauth/start" class="hidden px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Connect Google Drive</a>
+              <button type="button" id="drive-setup-toggle" onclick="toggleDriveSetupForm()" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Set up sign-in</button>
               <button type="button" id="drive-link-toggle" onclick="toggleDriveLinkForm()" class="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-600 text-xs font-semibold rounded-lg">Paste a token</button>
             </div>
           </div>
@@ -278,7 +278,7 @@
               </div>
             </div>
             <div class="flex flex-wrap items-center gap-2">
-              <button type="button" id="drive-oauth-save-btn" onclick="saveDriveOauthClient()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-xs rounded-lg shadow-sm">Save &amp; enable the button</button>
+              <button type="button" id="drive-oauth-save-btn" onclick="saveDriveOauthClient()" class="px-4 py-2 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-xs rounded-lg shadow-sm">Save &amp; enable the button</button>
               <button type="button" onclick="toggleDriveSetupForm()" class="px-3 py-2 border border-slate-300 text-slate-600 text-xs font-semibold rounded-lg">Cancel</button>
             </div>
           </div>
@@ -309,7 +309,7 @@
               </div>
             </details>
             <div class="flex flex-wrap items-center gap-2">
-              <button type="button" id="drive-link-btn" onclick="submitDriveLink()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-xs rounded-lg shadow-sm">Link Drive</button>
+              <button type="button" id="drive-link-btn" onclick="submitDriveLink()" class="px-4 py-2 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-xs rounded-lg shadow-sm">Link Drive</button>
               <button type="button" onclick="toggleDriveLinkForm()" class="px-3 py-2 border border-slate-300 text-slate-600 text-xs font-semibold rounded-lg">Cancel</button>
               <span class="text-[11px] text-slate-500">Applied within about five minutes, then tested automatically.</span>
             </div>
@@ -351,7 +351,7 @@
             </label>
             <p class="text-[10px] text-rose-700 mt-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>Development convenience only — when ON, OTP codes are returned directly in the login API response instead of only via SMS. Applies immediately. Never leave this on in production.</p>
           </div>
-          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save</button></div>
+          <div class="sm:col-span-2"><button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-md">Save</button></div>
         </form>
         <div class="mt-4 pt-3 border-t border-slate-100">
           <p class="text-[10px] font-semibold text-slate-500 uppercase mb-1">Node Environment</p>

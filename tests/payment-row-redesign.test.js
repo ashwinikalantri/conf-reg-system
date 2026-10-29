@@ -75,7 +75,7 @@ check('Registered took its place', (view.match(/>Registered</g) || []).length ==
 check('Checks is a column too', (view.match(/>Checks</g) || []).length === 4);
 check('no status pill is rendered any more', !/statusPill/.test(js));
 check('the empty-state colspan matches the new column count',
-  /colspan="5"[^>]*>\s*Nothing awaiting a decision/.test(js));
+  /colspan="5"[^>]*>[\s\S]{0,700}?Nothing awaiting a decision/.test(js));
 
 console.log('\n== Registered shows the registration time, not the signup time ==');
 check('it reads from submitted_at, the registration timestamp', /fmtRegisteredAt\(p\.submitted_at\)/.test(js));

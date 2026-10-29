@@ -4146,7 +4146,7 @@ function paymentRowHtml(p) {
   const rejectionDetail = p.bank_status === 'REJECTED' && p.rejection_note
     ? `<p class="text-[11px] text-rose-700 mt-1">${esc(p.rejection_note)}</p>`
     : '';
-  const reviewBtn = `<button class="review-btn px-3 py-1.5 ${p.is_flagged ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white font-semibold rounded-lg text-xs shadow-sm" data-id="${esc(p.id)}">${p.is_flagged ? 'Review (Force Verify)' : 'Review'}</button>`;
+  const reviewBtn = `<button class="review-btn px-3 py-1.5 ${p.is_flagged ? 'bg-red-600 hover:bg-red-700' : 'bg-navy hover:bg-indigo-700'} text-white font-semibold rounded-lg text-xs shadow-sm" data-id="${esc(p.id)}">${p.is_flagged ? 'Review (Force Verify)' : 'Review'}</button>`;
   // The delegate's own receipt, opened in a new tab -- the exact document
   // they see, so the desk can answer "what does my receipt say" and reprint
   // one without reading it off their phone. Only on verified rows: a receipt
@@ -4274,6 +4274,38 @@ async function rescanFlaggedPayments(all = false) {
 // The endpoints would 403 anyway; hiding the card as well means a finance
 // admin is not shown an empty "Abstracts to review" box they can do nothing
 // about and cannot verify.
+// The Overview's "Now": each session open for attendance this minute, its
+// hall and how many are marked present. One that started ten minutes ago
+// with nobody marked is flagged -- the door may have no one scanning.
+function renderOverviewNow(summary) {
+  const box = document.getElementById('overview-now');
+  const halls = document.getElementById('overview-now-halls');
+  if (!box || !halls) return;
+  const open = summary && Array.isArray(summary.sessions) ? summary.sessions.filter((s) => s.window && s.window.open) : [];
+  box.classList.toggle('hidden', !open.length);
+  if (!open.length) { halls.innerHTML = ''; return; }
+  const ist = new Date(Date.now() + 5.5 * 3600e3);
+  const nowMin = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  const toMin = (t) => { const [h, m] = String(t || '0:0').split(':').map(Number); return h * 60 + m; };
+  setText('overview-now-when', `· ${ist.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })}, ${guestTime12(`${String(ist.getUTCHours()).padStart(2, '0')}:${String(ist.getUTCMinutes()).padStart(2, '0')}`)}`);
+  halls.innerHTML = open.map((s) => {
+    const quiet = s.present === 0 && nowMin >= toMin(s.start) + 10;
+    return `<div class="rounded-xl border ${quiet ? 'border-amber-300 bg-amber-50' : 'border-slate-200'} p-3.5">
+      <p class="text-sm font-bold ${quiet ? 'text-amber-900' : 'text-slate-600'}">${esc(s.hall)} · until ${esc(guestTime12(s.end))}</p>
+      <p class="font-semibold text-slate-900 leading-snug mt-0.5">${esc(s.title)}</p>
+      ${quiet ? '<p class="text-sm font-bold text-amber-900 mt-1.5">No one marked yet: check the door volunteer</p>'
+        : `<p class="mt-1.5 text-2xl font-bold text-navy tabular-nums">${esc(s.present)} <span class="text-sm font-semibold text-slate-600">marked present${s.enrolled != null ? ` of ${esc(s.enrolled)} enrolled` : ''}</span></p>`}
+    </div>`;
+  }).join('');
+}
+
+// From the Overview's faculty cards: the Faculty tab, filtered.
+let pendingGuestFlag = null;
+function openFacultyFlag(flag) {
+  pendingGuestFlag = flag;
+  switchBackendTab('faculty');
+}
+
 async function renderBackendOverview() {
   const host = document.getElementById('section-overview');
   if (!host) return;
@@ -4281,6 +4313,8 @@ async function renderBackendOverview() {
   const seesPayments = canSee('payments');
   const seesStatement = canSee('statement');
   const seesAbstracts = canSee('abstracts');
+  const seesFaculty = can('guests.view');
+  const seesAttendance = can('attendance.view');
   // Conference-wide money is its own permission: working the approval queue
   // and seeing what the conference has taken are different disclosures.
   const seesTotals = can('payments.view_totals');
@@ -4301,12 +4335,15 @@ async function renderBackendOverview() {
     } catch (e) { return null; }
   };
 
-  const [regs, abstracts, statement, totals] = await Promise.all([
+  const [regs, abstracts, statement, totals, faculty, attendance] = await Promise.all([
     seesPayments ? getJson('/api/registrations') : Promise.resolve(null),
     seesAbstracts ? getJson('/api/abstracts') : Promise.resolve(null),
     seesStatement ? getJson('/api/admin/bank-statement/reconcile') : Promise.resolve(null),
     seesTotals ? getJson('/api/admin/finance-summary') : Promise.resolve(null),
+    seesFaculty ? getJson('/api/guests') : Promise.resolve(null),
+    seesAttendance ? getJson('/api/attendance/summary') : Promise.resolve(null),
   ]);
+  renderOverviewNow(attendance);
 
   let pending = 0;
   let balanceCount = 0;
@@ -4376,6 +4413,24 @@ async function renderBackendOverview() {
     setText('ov-abstracts-sub', `${list.length} submitted · ${accepted} accepted`);
   }
 
+  // Faculty: rooms to assign, pickups to decide, accounts to link.
+  let noRoom = 0;
+  let undecided = 0;
+  let notSignedUp = 0;
+  if (faculty && faculty.dashboard) {
+    const live = (faculty.guests || []).filter((g) => !g.cancelled);
+    noRoom = Number(faculty.dashboard.noAccommodation) || 0;
+    undecided = live.filter((g) => !String(g.pickup_status || '').trim()).length;
+    notSignedUp = Number(faculty.dashboard.notSignedUp) || 0;
+    setText('ov-rooms', noRoom);
+    setText('ov-pickups', undecided);
+    setText('ov-signup', notSignedUp);
+  }
+  show('ov-q-rooms', seesFaculty && noRoom > 0);
+  show('ov-q-pickups', seesFaculty && undecided > 0);
+  show('ov-q-signup', seesFaculty && notSignedUp > 0);
+  show('overview-queues-faculty', seesFaculty && noRoom + undecided + notSignedUp > 0);
+
   // A queue card earns its place by being reachable AND having something in
   // it. An overview of four zeroes tells the desk less than one sentence.
   show('ov-q-payments', seesPayments && pending > 0);
@@ -4387,23 +4442,65 @@ async function renderBackendOverview() {
   // everyone, and the line in particular claimed nothing was waiting ANYWHERE
   // -- said to someone who can see only abstracts while a payments queue was
   // piling up behind a tab they cannot open.
-  const anySection = seesPayments || seesStatement || seesAbstracts;
+  const anySection = seesPayments || seesStatement || seesAbstracts || seesFaculty;
   show('overview-attention', anySection);
 
   const anyQueue = (seesPayments && (pending > 0 || balanceCount > 0))
-    || (seesStatement && unmatched > 0) || (seesAbstracts && underReview > 0);
+    || (seesStatement && unmatched > 0) || (seesAbstracts && underReview > 0)
+    || (seesFaculty && noRoom + undecided + notSignedUp > 0);
   show('overview-all-clear', anySection && !anyQueue);
   // Say which sections the all-clear covers, so it is a claim about the
   // viewer's own work rather than about the conference.
   if (anySection && !anyQueue) {
     const mine = [seesPayments && 'registrations', seesStatement && 'the bank statement',
-      seesAbstracts && 'abstracts'].filter(Boolean);
+      seesAbstracts && 'abstracts', seesFaculty && 'faculty'].filter(Boolean);
     const list = mine.length > 1 ? `${mine.slice(0, -1).join(', ')} or ${mine[mine.length - 1]}` : mine[0];
     setText('overview-all-clear', `Nothing is waiting on a decision in ${list} right now.`);
   }
 
   setText('overview-updated', `Updated ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`);
   settleSkeletons(host);
+}
+
+// Registration › Approval: the counts are the filters. 'pending' is the
+// worklist, with balance due and rejected below it ("Still needs a hand");
+// each other shows just its own list. Verified opens the settled list for
+// whoever may un-approve, else Reports.
+let paymentFilter = 'pending';
+let paymentCounts = { pending: 0, balance: 0, rejected: 0, verified: 0, canUnapprove: false };
+function setPaymentFilter(key) {
+  if (key === 'verified' && !paymentCounts.canUnapprove) return switchBackendTab('reports');
+  paymentFilter = key;
+  applyPaymentFilter();
+}
+function applyPaymentFilter() {
+  const key = paymentFilter;
+  const c = paymentCounts;
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.classList.toggle('hidden', !on); };
+  const open = (id, on) => { const el = document.getElementById(id); if (el) el.open = !!on; };
+  show('pay-main', key === 'pending');
+  show('pay-main-note', key === 'pending');
+  show('balance-section', c.balance > 0 && (key === 'pending' || key === 'balance'));
+  show('rejected-section', c.rejected > 0 && (key === 'pending' || key === 'rejected'));
+  show('verified-section', c.canUnapprove && c.verified > 0 && key === 'verified');
+  open('balance-section', key === 'balance');
+  open('rejected-section', key === 'rejected');
+  open('verified-section', key === 'verified');
+  show('pay-needs-hand', key === 'pending' && c.balance + c.rejected > 0);
+  const none = key !== 'pending' && !c[key];
+  show('pay-filter-empty', none);
+  setText('pay-filter-empty', none ? { balance: 'No one has a balance due.', rejected: 'No rejected registrations.', verified: 'No verified registrations yet.' }[key] : '');
+  // Selected: navy. The delegate's-turn counts in rose while they hold anyone.
+  for (const k of ['pending', 'balance', 'rejected', 'verified']) {
+    const btn = document.getElementById(`pay-filter-${k}`);
+    if (!btn) continue;
+    const on = k === key;
+    const urgent = (k === 'balance' || k === 'rejected') && c[k] > 0;
+    btn.className = `pay-filter h-10 px-3.5 rounded-full border text-sm ${on ? 'bg-navy border-navy text-white font-bold'
+      : urgent ? 'bg-white border-rose-200 text-rose-800 font-semibold hover:bg-rose-50' : 'bg-white border-slate-300 text-slate-700 font-semibold hover:bg-slate-50'}`;
+    if (btn.setAttribute) btn.setAttribute('aria-selected', String(on));
+    if (k === 'verified' && !c.canUnapprove && btn.setAttribute) btn.setAttribute('title', 'The verified list is in Reports');
+  }
 }
 
 async function renderBackendPayments() {
@@ -4450,23 +4547,22 @@ async function renderBackendPayments() {
 
   tbody.innerHTML = needsDecision.map(paymentRowHtml).join('');
   if (!needsDecision.length) {
-    tbody.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-sm text-slate-400">Nothing awaiting a decision.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="p-8 text-center">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-8 h-8 mx-auto text-emerald-600" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></svg>
+      <p class="mt-2 text-base font-bold text-slate-800">All caught up</p>
+      <p class="text-sm text-slate-500">Nothing awaiting a decision. New submissions appear here as they arrive.</p></td></tr>`;
   }
 
-  const rejectedSection = document.getElementById('rejected-section');
   const rejectedBody = document.getElementById('rejected-table-body');
   setText('badge-rejected-count', rejected.length);
-  if (rejectedSection) rejectedSection.classList.toggle('hidden', rejected.length === 0);
   if (rejectedBody) rejectedBody.innerHTML = rejected.map(paymentRowHtml).join('');
 
   // Balance-due section: PARTIAL_PAYMENT delegates (e.g. after a category
   // change) who've been emailed to pay the difference. It's their turn, so
   // they live here instead of the main worklist -- finance can still track
   // and open them.
-  const balanceSection = document.getElementById('balance-section');
   const balanceBody = document.getElementById('balance-table-body');
   setText('badge-balance-count', partialAwaiting.length);
-  if (balanceSection) balanceSection.classList.toggle('hidden', partialAwaiting.length === 0);
   if (balanceBody) balanceBody.innerHTML = partialAwaiting.map(paymentRowHtml).join('');
 
   // The verified section is an entry point into already-verified
@@ -4474,11 +4570,12 @@ async function renderBackendPayments() {
   // for anyone who can't do that (finance admins never need to reach a
   // settled record here).
   const canUnapprove = can('payments.unapprove');
-  const verifiedSection = document.getElementById('verified-section');
   const verifiedBody = document.getElementById('verified-table-body');
   setText('badge-verified-count', verified.length);
-  if (verifiedSection) verifiedSection.classList.toggle('hidden', !canUnapprove || verified.length === 0);
   if (verifiedBody) verifiedBody.innerHTML = canUnapprove ? verified.map(paymentRowHtml).join('') : '';
+  // Which of the lists show is the filter's (the counts above).
+  paymentCounts = { pending: needsDecision.length, balance: partialAwaiting.length, rejected: rejected.length, verified: verified.length, canUnapprove };
+  applyPaymentFilter();
 
   // Each metric above clears its own skeleton through setText; this covers
   // anything the response had nothing to say about, so no part of the panel
@@ -5238,7 +5335,7 @@ async function renderReviewRefunds(p) {
          <div class="flex items-center gap-1">
            <input type="number" min="0.01" step="0.01" id="review-refund-amount" ${reviewRefundCandidates.length ? '' : 'disabled'} class="w-24 p-1 border rounded text-[10px]">
            <input type="text" placeholder="Reference / note (optional)" id="review-refund-note" ${reviewRefundCandidates.length ? '' : 'disabled'} class="flex-1 min-w-0 p-1 border rounded text-[10px]">
-           <button type="button" onclick="recordRefund()" ${reviewRefundCandidates.length ? '' : 'disabled'} class="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold rounded text-[10px]">Record Refund</button>
+           <button type="button" onclick="recordRefund()" ${reviewRefundCandidates.length ? '' : 'disabled'} class="shrink-0 px-2 py-1 bg-navy hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold rounded text-[10px]">Record Refund</button>
          </div>
        </div>`;
     reviewRefundOverpaid = overpaid;
@@ -5333,7 +5430,7 @@ function reviewTxnRowHtml(t) {
   // evidence for a payment is the same kind of act as opening the evidence
   // for a student ID, and it read as an afterthought as a text link.
   const slipBtn = t.has_screenshot
-    ? `<button type="button" class="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg" onclick="showTxnSlip(${esc(t.id)})">${ICON('document')}Payment Slip</button>`
+    ? `<button type="button" class="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-navy hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg" onclick="showTxnSlip(${esc(t.id)})">${ICON('document')}Payment Slip</button>`
     : `<span class="text-slate-400 text-[10px]">No slip on file</span>`;
   // The bank statement's own description of the credit this payment landed
   // as -- the bank's words, not the delegate's. The UTR shown here before was
@@ -5383,7 +5480,7 @@ async function toggleTxnCandidates(txnId) {
   box.innerHTML = rows.length ? rows.map((c) => `
     <div class="flex items-center justify-between gap-2 p-2 text-[10px]">
       <div class="min-w-0"><p class="font-semibold text-slate-700">${esc(c.post_date)} · ₹${inr(esc(c.remaining))}${c.remaining !== c.credit ? ` of ₹${inr(esc(c.credit))}` : ''} available</p><p class="text-slate-500 truncate">${esc(c.description)}</p></div>
-      <button type="button" class="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded" onclick="linkTxnToBank(${esc(txnId)}, ${esc(c.id)})">Link</button>
+      <button type="button" class="shrink-0 px-2 py-1 bg-navy hover:bg-indigo-700 text-white font-semibold rounded" onclick="linkTxnToBank(${esc(txnId)}, ${esc(c.id)})">Link</button>
     </div>`).join('') : '<p class="text-[10px] text-slate-400 p-2">No unused credits in the statement yet.</p>';
 }
 
@@ -5428,7 +5525,7 @@ async function toggleAdminAddPayment() {
       <div class="min-w-0"><p class="font-semibold text-slate-700">${esc(c.post_date)} · ₹${inr(esc(c.remaining))}${c.remaining !== c.credit ? ` of ₹${inr(esc(c.credit))}` : ''} available</p><p class="text-slate-500 truncate">${esc(c.description)}</p></div>
       <div class="flex items-center gap-1 shrink-0">
         <input type="number" min="0.01" max="${esc(c.remaining)}" step="0.01" value="${esc(c.remaining)}" id="admin-add-amount-${esc(c.id)}" class="w-20 p-1 border rounded text-[10px]">
-        <button type="button" class="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded" onclick="adminAddPayment(${esc(c.id)}, ${esc(c.remaining)})">Add</button>
+        <button type="button" class="px-2 py-1 bg-navy hover:bg-indigo-700 text-white font-semibold rounded" onclick="adminAddPayment(${esc(c.id)}, ${esc(c.remaining)})">Add</button>
       </div>
     </div>`).join('') : '<p class="text-[10px] text-slate-400 p-2">No unused credits in the statement yet.</p>';
 }
@@ -6338,7 +6435,7 @@ function renderUserDetail() {
       ${roleLocked ? `<option value="SUPER_ADMIN" selected>${esc(roleLabel('SUPER_ADMIN'))}</option>`
         : roleSelectOptionsHtml({ includeDelegate: 'first', selected: u.role })}
     </select>
-    <button type="button" onclick="saveUserDetailRole()" ${roleLocked ? 'disabled' : ''} class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:bg-slate-300 disabled:cursor-not-allowed">Save</button>
+    <button type="button" onclick="saveUserDetailRole()" ${roleLocked ? 'disabled' : ''} class="px-3 py-2 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:bg-slate-300 disabled:cursor-not-allowed">Save</button>
   </div>${roleLocked ? `<p class="text-[11px] text-slate-400 mt-1.5">Only a Super Admin can change another Super Admin's role.</p>` : ''}`;
 
   const editBtn = can('users.edit')
@@ -6442,7 +6539,7 @@ function contactRow(kind, label, value, verified) {
       ${verified ? `<p class="text-[11px] text-amber-700 mt-1">${ICON('warning')}This ${esc(label.toLowerCase())} is verified. Changing it withdraws that, and the delegate must prove the new one before it can receive a sign-in code.</p>` : ''}
       <div class="flex justify-end gap-2 mt-2">
         <button type="button" onclick="cancelContactEdit()" class="px-3 py-1.5 border rounded-lg text-xs font-semibold text-slate-600">Cancel</button>
-        <button type="button" onclick="saveContactEdit('${esc(kind)}')" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold">Save</button>
+        <button type="button" onclick="saveContactEdit('${esc(kind)}')" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white rounded-lg text-xs font-bold">Save</button>
       </div>
     </div>`;
   }
@@ -6541,7 +6638,7 @@ function userDetailEditForm(u) {
     </div>
     <div class="flex justify-end gap-2 pt-2">
       <button type="button" onclick="toggleUserDetailEdit()" class="px-4 py-2 border rounded-xl text-xs font-semibold text-slate-600">Cancel</button>
-      <button type="button" onclick="saveUserDetailEdit()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-md">Save changes</button>
+      <button type="button" onclick="saveUserDetailEdit()" class="px-4 py-2 bg-navy hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-md">Save changes</button>
     </div>
   </div>`;
 }
@@ -6614,7 +6711,7 @@ function userDetailExtraRolesHtml(u, canAssign) {
         <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
           <input type="checkbox" value="${esc(r.key)}" ${held.includes(r.key) ? 'checked' : ''}> ${esc(r.label)}
         </label>`).join('')}</div>
-      <button type="button" onclick="saveUserDetailExtraRoles()" class="mt-2 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Save additional roles</button>
+      <button type="button" onclick="saveUserDetailExtraRoles()" class="mt-2 px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Save additional roles</button>
     </div>`;
 }
 
@@ -6669,8 +6766,8 @@ async function renderBackendPrograms() {
       </div>
       <input type="number" min="0" value="${esc(o.capacity)}" title="Capacity" class="prog-capacity w-20 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
       <input type="number" min="0" step="0.01" value="${esc(o.fee)}" title="Fee (₹)" class="prog-fee w-24 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
-      <button class="prog-save px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Save</button>
-      <button class="prog-roster px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}" data-name="${esc(o.name)}">Roster</button>
+      <button class="prog-save px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Save</button>
+      <button class="prog-roster px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}" data-name="${esc(o.name)}">Roster</button>
       <button class="prog-toggle px-3 py-1.5 ${o.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}" data-active="${o.active ? 1 : 0}">${o.active ? 'Deactivate' : 'Activate'}</button>
       <button class="prog-delete px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Delete</button>
     </div>`;
@@ -6707,7 +6804,7 @@ async function renderBackendPrograms() {
           <label class="block text-[11px] font-semibold text-slate-600 mb-1">Fee (₹)</label>
           <input type="number" min="0" step="0.01" value="0" class="new-option-fee w-24 p-2 border rounded-lg text-sm">
         </div>
-        <button type="submit" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">+ Add</button>
+        <button type="submit" class="px-3 py-2 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">+ Add</button>
       </form>
       ${g.options.map(optionRow).join('') || '<p class="text-sm text-slate-400 py-2">No options yet.</p>'}
     </div>
@@ -6938,7 +7035,7 @@ async function renderBackendFees() {
         ? `<span class="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">${ICON('gradcap')}Required</span>`
         : '<span class="text-slate-400">—</span>'}</td>
       <td class="p-4 text-right whitespace-nowrap">
-        <button class="fee-edit px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(c.id)}">Edit</button>
+        <button class="fee-edit px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(c.id)}">Edit</button>
       </td>
     </tr>`).join('');
 }
@@ -7616,7 +7713,7 @@ function discountCodeRowHtml(c, catLabel, group, open) {
     <td class="p-4">${usedTxt}</td>
     <td class="p-4 text-slate-600">${discountExpiryCell(c)}</td>
     <td class="p-4 text-right whitespace-nowrap">
-      <button onclick="openShareDiscountModal(${esc(c.id)})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">${ICON('send')}Share</button>
+      <button onclick="openShareDiscountModal(${esc(c.id)})" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">${ICON('send')}Share</button>
     </td>
     <td class="p-4 text-right whitespace-nowrap">
       <button onclick="toggleDiscountCode(${esc(c.id)}, ${c.active ? 0 : 1})" class="px-3 py-1.5 ${c.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg">${c.active ? 'Deactivate' : 'Activate'}</button>
@@ -10129,7 +10226,7 @@ async function loadRegisterDelegateBankCandidates(targetAmount) {
   box.innerHTML = rows.length ? rows.map((t) => `
     <div class="flex items-center justify-between gap-2 p-2 text-[11px]">
       <div class="min-w-0"><p class="font-semibold text-slate-700">${esc(t.post_date)} · ₹${inr(t.remaining)}${t.remaining !== t.credit ? ` of ₹${inr(t.credit)}` : ''} available</p><p class="text-slate-500 truncate">${esc(t.description)}</p></div>
-      <button type="button" class="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded" onclick='selectRegisterDelegateBankTxn(${JSON.stringify(t).replace(/'/g, "&#39;")})'>Select</button>
+      <button type="button" class="shrink-0 px-2 py-1 bg-navy hover:bg-indigo-700 text-white font-semibold rounded" onclick='selectRegisterDelegateBankTxn(${JSON.stringify(t).replace(/'/g, "&#39;")})'>Select</button>
     </div>`).join('') : '<p class="text-[11px] text-slate-400 p-2">No unclaimed credits in the statement.</p>';
 }
 
@@ -10551,7 +10648,7 @@ function deskCard(title, bodyHtml, actionsHtml) {
 
 const deskBtn = (label, onclick, tone) => {
   const tones = {
-    primary: 'bg-indigo-600 hover:bg-indigo-700 text-white',
+    primary: 'bg-navy hover:bg-indigo-700 text-white',
     plain: 'border border-slate-300 hover:bg-slate-50 text-slate-700',
     good: 'bg-emerald-600 hover:bg-emerald-700 text-white',
   };
@@ -11328,6 +11425,11 @@ async function renderGuests() {
   const badge = document.getElementById('badge-faculty-count');
   if (badge) { badge.textContent = String(facultyCount); badge.classList.toggle('hidden', !facultyCount); }
   fillGuestFilters();
+  if (pendingGuestFlag !== null) {
+    const flagSel = document.getElementById('guests-filter-flag');
+    if (flagSel) flagSel.value = pendingGuestFlag;
+    pendingGuestFlag = null;
+  }
   switchGuestView(guestCurrentView());
 }
 
@@ -11988,7 +12090,7 @@ async function fetchGuestFlight(leg) {
   };
   const s = data.suggestion;
   show(`${data.flights.map(line).join('')}
-    ${s ? `<button type="button" onclick="useGuestFlight('${leg}')" class="mt-1.5 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold rounded-md">Use ${esc(guestTime12(s.time))}${s.point ? ` · ${esc(s.point)}` : ''}</button>`
+    ${s ? `<button type="button" onclick="useGuestFlight('${leg}')" class="mt-1.5 px-2.5 py-1 bg-navy hover:bg-indigo-700 text-white text-[11px] font-semibold rounded-md">Use ${esc(guestTime12(s.time))}${s.point ? ` · ${esc(s.point)}` : ''}</button>`
       : '<p class="mt-1 text-slate-500">Several legs, none at Nagpur — enter the time by hand.</p>'}`, 'bg-indigo-50 border-indigo-200 text-slate-800');
 }
 function useGuestFlight(leg) {
@@ -12072,7 +12174,7 @@ async function searchFacultyCandidates(q) {
         <p class="mt-1">${u.staff ? guestPill('bg-slate-100 text-slate-700 border-slate-300', 'Staff') + ' ' : ''}${u.registered ? guestPill('bg-emerald-100 text-emerald-800 border-emerald-300', 'Registered') : guestPill(GUEST_FLAG_STYLES.notRegistered, 'Not registered yet')}</p>
       </div>
       ${u.guestId ? '<span class="text-xs font-semibold text-slate-400 shrink-0">Already faculty</span>'
-        : `<button type="button" onclick="markFaculty(${i})" class="shrink-0 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Mark as faculty</button>`}
+        : `<button type="button" onclick="markFaculty(${i})" class="shrink-0 px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Mark as faculty</button>`}
     </div>`).join('') : '<p class="text-xs text-slate-400 p-2">No delegate matches.</p>';
 }
 // From MGIMS or Sevagram (guests.js isLocalFaculty): the server set their
@@ -12107,7 +12209,7 @@ async function addUnlinkedGuest(ev) {
     // They have an account after all: mark that, rather than typing them in twice.
     facultyCandidates = [{ phone_number: data.account.phone_number }];
     note.innerHTML = `${esc(data.error)}${data.account.guestId ? ''
-      : ' <button type="button" onclick="markFaculty(0)" class="ml-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold rounded-md">Mark as faculty</button>'}`;
+      : ' <button type="button" onclick="markFaculty(0)" class="ml-1 px-2.5 py-1 bg-navy hover:bg-indigo-700 text-white text-[11px] font-semibold rounded-md">Mark as faculty</button>'}`;
     note.classList.remove('hidden');
     return;
   }
@@ -12254,7 +12356,7 @@ function renderGuestVehicles() {
       <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Vehicle / Driver</span><input name="label" required maxlength="120" placeholder="e.g. Innova MH32 AB 1234 · Ramesh" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
       <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Driver Phone</span><input name="driverPhone" inputmode="tel" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
       <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Seats</span><input name="seats" type="number" min="1" max="99" step="1" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
-      <button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Save vehicle</button>
+      <button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Save vehicle</button>
       <button type="button" onclick="this.form.reset()" class="h-9 px-3 border border-slate-300 text-slate-600 text-sm rounded-lg">Clear</button>
     </form>` : ''}
     <div class="md:hidden space-y-2">${guestData.vehicles.length ? guestData.vehicles.map((v) => `
@@ -12321,7 +12423,7 @@ function renderGuestRooms() {
       <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Room No — or a range</span><input name="roomNo" required maxlength="400" placeholder="101, or 1-10, or 101-105, 110" title="One room, a range (1-10, A1-A12) or a list (101-105, 110). A range adds every room with the same details." class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
       <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Room Type</span><select name="roomType" class="w-full h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white">${opts('room_type', '—')}</select></label>
       <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Beds</span><input name="beds" type="number" required min="1" max="20" step="1" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
-      <button type="submit" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Save room</button>
+      <button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Save room</button>
       <button type="button" onclick="this.form.reset()" class="h-9 px-3 border border-slate-300 text-slate-600 text-sm rounded-lg">Clear</button>
     </form>` : ''}
     <div class="md:hidden space-y-2">${guestData.rooms.length ? guestData.rooms.map((r) => `
@@ -12403,7 +12505,7 @@ function renderGuestSettings() {
           <div class="flex gap-2">${s.slotBounds.map((h, i) => `<input name="slot${i}" type="number" min="1" max="23" step="1" value="${esc(h)}" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm">`).join('')}</div></div>
       </div>
       <p class="text-[11px] text-slate-500 mt-2">Now: ${esc(guestData.slotLabels.join(' · '))}.</p>
-      <button type="submit" class="mt-3 h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Save settings</button>
+      <button type="submit" class="mt-3 h-9 px-4 bg-navy hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Save settings</button>
     </form>
     <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-3">${Object.entries(guestData.listLabels).map(([key, label]) => `
       <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
@@ -12417,7 +12519,7 @@ function renderGuestSettings() {
         </li>`).join('')}</ul>
         <form onsubmit="addGuestListValue(event, '${esc(key)}')" class="flex gap-2 mt-2">
           <input name="newValue" maxlength="80" required placeholder="Add a value" class="flex-1 h-8 px-2.5 border border-slate-300 rounded-lg text-sm">
-          <button type="submit" class="h-8 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Add</button>
+          <button type="submit" class="h-8 px-3 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Add</button>
         </form>
       </div>`).join('')}</div>
     <p class="text-xs text-slate-500 mt-2">Switching a value off stops it being offered; anyone who already has it keeps it. A value in use cannot be removed.</p>`;
@@ -12832,7 +12934,7 @@ function renderHalls(halls) {
       <input value="${esc(h.building || '')}" data-hall="${esc(h.id)}" aria-label="Building" maxlength="80" placeholder="Building (if shared)"
         title="Where several halls share a building and a map location: its name heads them on the delegates' campus map." class="prog-hall-building sm:w-44 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
       <div class="flex flex-wrap gap-1.5">
-        <button type="button" onclick="saveHall(${Number(h.id)})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save</button>
+        <button type="button" onclick="saveHall(${Number(h.id)})" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save</button>
         <a href="/api/admin/programme/posters.pdf?hall=${encodeURIComponent(h.id)}" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50">QR poster</a>
         <button type="button" onclick="newHallCode(${Number(h.id)})" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">New QR</button>
         <button type="button" onclick="putHall(${Number(h.id)}, { active: ${h.active ? 'false' : 'true'} })" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">${h.active ? 'Turn off' : 'Turn on'}</button>
@@ -12998,7 +13100,7 @@ function startNewFaculty(role, i) {
         <input id="ps-new-email-${role}" type="email" maxlength="120" placeholder="Email" class="${field}"></div>
       <p class="text-[11px] text-slate-500">A phone or email helps: if they have an account, it is used instead, and nobody is added twice.</p>
       <p id="ps-new-msg-${role}" class="hidden text-xs text-amber-900"></p>
-      <div class="flex gap-1.5"><button type="button" onclick="submitNewFaculty('${role}', ${i == null ? 'null' : Number(i)})" class="h-8 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Add to faculty list</button>
+      <div class="flex gap-1.5"><button type="button" onclick="submitNewFaculty('${role}', ${i == null ? 'null' : Number(i)})" class="h-8 px-3 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Add to faculty list</button>
         <button type="button" onclick="renderSessionPeople('${role}')" class="h-8 px-3 border border-slate-300 text-slate-700 text-xs font-semibold rounded-lg">Cancel</button></div>
     </div>`;
 }
@@ -13293,7 +13395,7 @@ async function renderCertificateSettings() {
       <div class="flex flex-wrap gap-1.5">
         <label class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer">Signature
           <input type="file" accept="image/png,image/jpeg" class="hidden" onchange="uploadSignature(${Number(s.id)}, this)"></label>
-        <button type="button" onclick="saveSignatory(${Number(s.id)})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save</button>
+        <button type="button" onclick="saveSignatory(${Number(s.id)})" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save</button>
         <button type="button" onclick="toggleSignatory(${Number(s.id)}, ${s.active ? 0 : 1})" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">${s.active ? 'Turn off' : 'Turn on'}</button>
       </div>
     </div>`).join('');
@@ -13317,7 +13419,7 @@ async function renderCertificateSettings() {
         <div class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">${d.signatories.filter((s) => s.active).map((s) => `<label class="flex items-center gap-1.5">
           <input type="checkbox" class="cs-tsig" value="${esc(s.id)}" ${t.signatories.includes(Number(s.id)) ? 'checked' : ''}> ${esc(s.designation)}</label>`).join('')}</div>
       </div>
-      <button type="button" onclick="saveCertificateTemplate('${esc(kind)}')" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Save wording</button>
+      <button type="button" onclick="saveCertificateTemplate('${esc(kind)}')" class="px-4 py-2 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Save wording</button>
     </div>`).join('');
 }
 
@@ -13632,7 +13734,7 @@ async function loadReconciliation() {
         <td class="p-3 hidden sm:table-cell">${esc(t.description)}</td>
         <td class="p-3 font-semibold hidden sm:table-cell">₹${inr(esc(t.credit))}</td>
         <td class="p-3 text-right hidden sm:table-cell">
-          <button type="button" onclick="markNonRegistration(${esc(t.id)}, false)" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Unmark</button>
+          <button type="button" onclick="markNonRegistration(${esc(t.id)}, false)" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Unmark</button>
         </td>
       </tr>`).join('') : `<tr><td colspan="4" class="p-4 text-center text-slate-400 text-xs">No transactions marked non-registration.</td></tr>`;
   }

@@ -124,8 +124,8 @@ console.log('\n== 1. The ledger row button ==');
    bank_txn_id:518,bank_txn_date:'2026-08-20',bank_txn_credit:750,
    bank_txn_description:'UPI/RRN 128217278187/UPI_PRIYANKA',submitted_at:Date.now(),has_screenshot:1});
  check('it is a button, not a text link', /<button[^>]*><svg[\s\S]*?<\/svg>Payment Slip<\/button>/.test(withSlip));
- check('styled like View ID Card (indigo, rounded)',
-   /bg-indigo-600[^"]*hover:bg-indigo-700/.test(withSlip) && /rounded-lg/.test(withSlip));
+ check('styled like View ID Card (navy, rounded)',
+   /bg-navy[^"]*hover:bg-indigo-700/.test(withSlip) && /rounded-lg/.test(withSlip));
  check('no longer an underlined link', !/hover:underline[^"]*"[^>]*onclick="showTxnSlip/.test(withSlip));
  // It shares the reconciliation row instead of owning one: alone on its own
  // row it was right-aligned against an empty half-row, which read as a gap.

@@ -8,7 +8,7 @@
             <label class="block text-xs font-semibold text-slate-600 mb-1">Statement file</label>
             <input type="file" id="statement-file" accept=".xls,.xlsx" required class="p-2 border rounded-lg text-sm bg-white outline-none">
           </div>
-          <button type="submit" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md">Upload &amp; Import</button>
+          <button type="submit" class="px-4 py-2.5 bg-navy hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-md">Upload &amp; Import</button>
           <span id="statement-upload-result" class="text-xs font-semibold"></span>
         </form>
       </div>
@@ -16,23 +16,23 @@
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
           <p class="text-xs font-bold text-slate-500 uppercase">Registrations with a Payment Ref</p>
-          <p id="rec-metric-total" class="text-2xl font-black text-slate-800 mt-1">0</p>
+          <p id="rec-metric-total" class="text-2xl font-bold text-slate-800 mt-1">0</p>
         </div>
         <div class="bg-white rounded-2xl p-5 border border-emerald-200 bg-emerald-50/30 shadow-sm">
           <p class="text-xs font-bold text-emerald-600 uppercase">Matched in Statement</p>
-          <p id="rec-metric-matched" class="text-2xl font-black text-emerald-700 mt-1">0</p>
+          <p id="rec-metric-matched" class="text-2xl font-bold text-emerald-700 mt-1">0</p>
         </div>
         <div class="bg-white rounded-2xl p-5 border border-rose-200 bg-rose-50/30 shadow-sm">
           <p class="text-xs font-bold text-rose-600 uppercase">Not Found in Statement</p>
-          <p id="rec-metric-unmatched" class="text-2xl font-black text-rose-700 mt-1">0</p>
+          <p id="rec-metric-unmatched" class="text-2xl font-bold text-rose-700 mt-1">0</p>
         </div>
         <div class="bg-white rounded-2xl p-5 border border-amber-200 bg-amber-50/30 shadow-sm">
           <p class="text-xs font-bold text-amber-600 uppercase">Unmatched Credits in Bank</p>
-          <p id="rec-metric-credits" class="text-2xl font-black text-amber-700 mt-1">0</p>
+          <p id="rec-metric-credits" class="text-2xl font-bold text-amber-700 mt-1">0</p>
         </div>
         <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
           <p class="text-xs font-bold text-slate-500 uppercase">Marked Non-Registration</p>
-          <p id="rec-metric-nonreg" class="text-2xl font-black text-slate-600 mt-1">0</p>
+          <p id="rec-metric-nonreg" class="text-2xl font-bold text-slate-600 mt-1">0</p>
         </div>
       </div>
 

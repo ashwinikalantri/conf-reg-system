@@ -108,7 +108,7 @@
                    making the reviewer hunt for the small tab on the left --
                    the exact document this whole block is asking them to
                    judge. See setReviewImage. -->
-              <button type="button" onclick="setReviewImage('idcard')" class="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M6 16c0-1.7 1.3-3 3-3s3 1.3 3 3"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="13" x2="18" y2="13"/></svg>View ID Card</button>
+              <button type="button" onclick="setReviewImage('idcard')" class="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-navy hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M6 16c0-1.7 1.3-3 3-3s3 1.3 3 3"/><line x1="14" y1="9" x2="18" y2="9"/><line x1="14" y1="13" x2="18" y2="13"/></svg>View ID Card</button>
             </div>
             <label class="flex items-start gap-2 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-2.5 cursor-pointer">
               <input type="checkbox" id="review-idverify-checkbox" class="mt-0.5 shrink-0" onchange="reviewSetIdVerified(this.checked)">
@@ -195,7 +195,7 @@
                 </div>
                 <div class="flex items-center gap-2">
                   <select id="review-category-select" class="flex-1 p-2 border rounded-lg text-sm bg-white outline-none"></select>
-                  <button type="button" id="review-category-lock-btn" onclick="reviewLockCategory()" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shrink-0">Lock</button>
+                  <button type="button" id="review-category-lock-btn" onclick="reviewLockCategory()" class="px-3 py-2 bg-navy hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shrink-0">Lock</button>
                   <button type="button" id="review-category-unlock-btn" onclick="reviewUnlockCategory()" class="hidden px-3 py-2 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 rounded-lg text-xs font-semibold shrink-0">Unlock</button>
                 </div>
                 <p class="text-[11px] text-slate-500 mt-1">Locking recalculates the fee and prevents the delegate from changing category.</p>
@@ -230,7 +230,7 @@
                     <input id="review-adjust-amount" type="number" min="0" step="1" placeholder="New fee (₹)"
                            class="flex-1 p-2 border rounded-lg text-sm bg-white outline-none">
                     <button type="button" onclick="reviewAdjustFee()"
-                            class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shrink-0">Adjust</button>
+                            class="px-3 py-2 bg-navy hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shrink-0">Adjust</button>
                   </div>
                   <input id="review-adjust-reason" type="text" placeholder="Reason — recorded against this registration"
                          class="w-full mt-2 p-2 border rounded-lg text-sm bg-white outline-none">
