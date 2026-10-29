@@ -1,0 +1,121 @@
+// The delegates' campus map.
+//
+//   * A hall's map location is set in Programme settings as Google Maps
+//     copies it ("20.741279, 78.662397"), cleared by leaving it blank, and
+//     refused when it is not a place; the change is logged.
+//   * The delegate programme carries each hall's location.
+//   * Halls at one spot are one building: one pin, numbered as in the list.
+//   * Each place has walking directions in Google Maps and, on the day, what
+//     is on there now or next.
+//   * The menu offers the map only once a hall is on it; Leaflet is fetched
+//     when the page opens, not with the portal; a hall in the programme opens
+//     the map at its pin.
+const { call, check, report, adminLogin, openDb, appFile } = require('./harness');
+const fs = require('fs');
+const vm = require('vm');
+
+const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
+const dash = fs.readFileSync(appFile('views', 'portal', 'sections', 'dashboard.ejs'), 'utf8');
+const index = fs.readFileSync(appFile('views', 'index.ejs'), 'utf8');
+
+function load() {
+  const els = new Map();
+  const el = (id) => {
+    if (!els.has(id)) {
+      const s = new Set(['hidden']);
+      els.set(id, { id, value: '', innerHTML: '', textContent: '', dataset: {}, style: {},
+        classList: { add: (...c) => c.forEach((x) => s.add(x)), remove: (...c) => c.forEach((x) => s.delete(x)),
+          toggle: (c, on) => { const w = on === undefined ? !s.has(c) : !!on; if (w) s.add(c); else s.delete(c); return w; }, contains: (c) => s.has(c) },
+        setAttribute() {}, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], scrollIntoView() {} });
+    }
+    return els.get(id);
+  };
+  const sb = {
+    document: { getElementById: el, querySelector: () => null, querySelectorAll: () => [], addEventListener() {},
+      createElement: () => el(`tmp${Math.random()}`), head: el('head'), body: el('body'), documentElement: el('html'), readyState: 'loading', cookie: '' },
+    window: { addEventListener() {}, location: { href: '', hash: '', pathname: '/', search: '', origin: 'https://x' },
+      matchMedia: () => ({ matches: false, addEventListener() {} }), history: { replaceState() {} }, scrollTo() {} },
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { userAgent: 'node' }, fetch: () => Promise.reject(new Error('no network')),
+    console: { log() {}, warn() {}, error() {}, info() {} },
+    setTimeout, clearTimeout, setInterval: () => 0, clearInterval, URL, Intl, Date, Math, JSON, Promise, requestAnimationFrame: () => 0,
+  };
+  sb.window.document = sb.document; sb.self = sb; sb.globalThis = sb;
+  vm.createContext(sb);
+  vm.runInContext(`${js}
+    globalThis.__set = (d) => { programmeData = d; programmeDay = d.now ? d.now.date : null; };
+    globalThis.__f = { campusPlaces, campusDirectionsUrl, campusListHtml, renderProgrammePage, openMapPage };`, sb);
+  return { sb, el };
+}
+
+(async () => {
+  console.log('\n== Setting a hall\'s location ==');
+  const admin = await adminLogin();
+  const db = openDb();
+  const added = await call('POST', '/api/admin/programme/halls', { name: `Map Test Hall ${Date.now() % 100000}` }, admin);
+  const id = added.body.id;
+  const put = (body) => call('PUT', `/api/admin/programme/halls/${id}`, body, admin);
+  const row = () => db.get('SELECT lat, lng FROM halls WHERE id = ?', [id]);
+  check('as Google Maps copies it: latitude, longitude', (await put({ location: '20.741279, 78.662397' })).body.success === true
+    && JSON.stringify(await row()) === JSON.stringify({ lat: 20.741279, lng: 78.662397 }));
+  check('...or with a space between them', (await put({ location: ' 20.7410 78.6624 ' })).body.success === true && (await row()).lat === 20.741);
+  for (const bad of ['near the canteen', '200, 78.66', '20.74', '20.74, 78.66, 3']) {
+    const r = await put({ location: bad });
+    check(`"${bad}" is refused, with how to write it`, r.status === 400 && /latitude, longitude/.test(r.body.error), r.body);
+  }
+  check('...and nothing changed', (await row()).lat === 20.741);
+  check('renaming leaves the location alone', (await put({ name: 'Map Test Hall renamed' })).body.success === true && (await row()).lat === 20.741);
+  const log = await db.get("SELECT old_value, new_value FROM audit_log WHERE action = 'HALL_UPDATED' AND entity_id = ? ORDER BY id DESC LIMIT 1 OFFSET 1", [String(id)]);
+  check('a location change is logged, from and to', log && /20\.741279, 78\.662397/.test(log.old_value) && /20\.741, 78\.6624/.test(log.new_value), log);
+  const prog = (await call('GET', '/api/programme', null, admin)).body;
+  const mine = prog.halls.find((h) => h.id === id);
+  check('the delegate programme carries each hall\'s location', mine && mine.lat === 20.741 && mine.lng === 78.6624);
+  check('blank clears it', (await put({ location: '' })).body.success === true && JSON.stringify(await row()) === JSON.stringify({ lat: null, lng: null }));
+  check('the editor has a location box on each hall, saved with the name', /class="prog-hall-loc /.test(js)
+    && /location: document\.querySelector\(`\.prog-hall-loc\[data-hall="\$\{id\}"\]`\)\.value/.test(js));
+  await put({ active: false });
+  db.close();
+
+  console.log('\n== One pin per building ==');
+  const { sb, el } = load();
+  const halls = [
+    { id: 1, name: 'Main Auditorium', lat: 20.741279, lng: 78.662397 },
+    { id: 2, name: 'Hall A', lat: 20.74101, lng: 78.662377 },
+    { id: 9, name: 'Digital Library', lat: null, lng: null },
+    { id: 7, name: 'Obstetrics and Gynaecology Seminar Hall', lat: 20.740149, lng: 78.659761 },
+    { id: 6, name: 'Pediatrics Seminar Hall', lat: 20.740149, lng: 78.659761 },
+  ];
+  const places = sb.__f.campusPlaces(halls);
+  check('halls without a location are left off', places.length === 3 && !places.some((p) => p.halls.some((h) => h.id === 9)));
+  check('halls at the same spot share a pin, in programme order', places[2].n === 3 && places[2].halls.map((h) => h.id).join() === '7,6');
+  check('directions: Google Maps, walking, to the spot', sb.__f.campusDirectionsUrl(places[0])
+    === 'https://www.google.com/maps/dir/?api=1&destination=20.741279,78.662397&travelmode=walking');
+  sb.__set({ halls, now: { date: '2026-11-22', minutes: 10 * 60 + 15 }, mine: [], sessions: [
+    { id: 11, hallId: 1, hall: 'Main Auditorium', date: '2026-11-22', start: '10:00', end: '11:00', title: 'Quality as a Strategy', speakers: 'A', counts: true },
+    { id: 12, hallId: 6, hall: 'Pediatrics Seminar Hall', date: '2026-11-22', start: '14:30', end: '15:30', title: 'Neonatal QI', speakers: 'B', counts: true },
+    { id: 13, hallId: 2, hall: 'Hall A', date: '2026-11-22', start: '10:00', end: '10:30', title: 'Tea', counts: false },
+  ] });
+  const list = sb.__f.campusListHtml(places, 3);
+  check('the list numbers each place as its pin', (list.match(/class="campus-pin shrink-0/g) || []).length === 3);
+  check('a shared building names its other halls', /Obstetrics and Gynaecology Seminar Hall<\/span>\s*<span class="block text-xs text-slate-500">Same building: Pediatrics Seminar Hall/.test(list));
+  check('what is on now, or next today, in that building', /On now: Quality as a Strategy/.test(list) && /Next, 2:30 PM: Neonatal QI/.test(list));
+  check('...a break is not "on"', !/Tea/.test(list));
+  check('each has Directions, opening outside the portal', (list.match(/target="_blank" rel="noopener"[^>]*>Directions</g) || []).length === 3);
+  check('the chosen place is marked', /bg-gold-50/.test(list) && /campus-pin shrink-0 is-chosen" aria-hidden="true">3</.test(list));
+  check('nothing on the map: says so', /No halls are on the map yet/.test(sb.__f.campusListHtml([], 0)));
+
+  console.log('\n== In the portal ==');
+  check('the menu has Map, hidden until a hall has a location', /id="dash-menu-map" onclick="dashGo\('map'\)" class="hidden /.test(dash)
+    && /menuMap\.classList\.toggle\('hidden', !campusPlaces\(programmeData\.halls\)\.length\)/.test(js));
+  check('the page: map, street or satellite, Where am I, the list', /<section id="map-page"/.test(dash) && /id="campus-map"/.test(dash)
+    && /id="campus-map-satellite"/.test(dash) && /onclick="locateOnCampusMap\(\)"/.test(dash) && /id="campus-map-list"/.test(dash));
+  check('Leaflet is fetched when the map opens, not with the portal', !/leaflet/i.test(index) && /cdnjs\.cloudflare\.com\/ajax\/libs\/leaflet\/1\.9\.4\/leaflet\.min/.test(js));
+  check('following their location stops when they leave the map', /if \(pageId !== 'map-page'\) stopCampusLocate\(\);/.test(js));
+  sb.__f.renderProgrammePage();
+  const progList = el('prog-page-list').innerHTML;
+  check('in the programme, a hall on the map opens the map at it', /onclick="openMapPage\(1\)" aria-label="Main Auditorium on the campus map"/.test(progList), progList.slice(0, 400));
+  sb.__f.openMapPage(6).catch(() => {});
+  check('...at that hall\'s building', /campus-pin shrink-0 is-chosen" aria-hidden="true">3</.test(el('campus-map-list').innerHTML));
+  report();
+})();

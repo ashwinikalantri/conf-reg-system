@@ -253,7 +253,9 @@ function navigateTo(pageId) {
   // The dashboard and the programme carry the conference in their own navy
   // header; the title above the sign-in page would only repeat it.
   const hero = document.getElementById('portal-hero');
-  if (hero) hero.classList.toggle('hidden', ['dashboard-page', 'programme-page', 'profile-page'].includes(pageId));
+  if (hero) hero.classList.toggle('hidden', ['dashboard-page', 'programme-page', 'profile-page', 'map-page'].includes(pageId));
+  // Off the map: stop following their location.
+  if (pageId !== 'map-page') stopCampusLocate();
   // The backend button is only for admins on the dashboard; hide it elsewhere.
   updateAdminNav(pageId === 'dashboard-page' && isAdminUser());
 }
@@ -1050,6 +1052,7 @@ function dashGo(where) {
   const menu = document.getElementById('dash-menu');
   if (menu) menu.classList.add('hidden');
   if (where === 'programme') return openProgrammePage();
+  if (where === 'map') return openMapPage();
   if (where === 'profile') return openProfilePage();
   navigateTo('dashboard-page');
   window.scrollTo(0, 0);
@@ -1185,9 +1188,10 @@ function programmeItems(sessions) {
   const byKey = new Map();
   for (const s of sessions) {
     const key = [s.date, s.start, s.end, s.label, s.title].join('|');
-    if (!byKey.has(key)) byKey.set(key, { ...s, halls: [], ids: [] });
+    if (!byKey.has(key)) byKey.set(key, { ...s, halls: [], ids: [], hallIds: [] });
     byKey.get(key).halls.push(s.hall);
     byKey.get(key).ids.push(s.id);
+    byKey.get(key).hallIds.push(s.hallId);
   }
   return [...byKey.values()];
 }
@@ -1201,6 +1205,8 @@ async function loadProgrammeCard() {
   const card = document.getElementById('programme-card');
   if (!card) return;
   try { programmeData = await (await fetch('/api/programme')).json(); } catch (e) { return; }
+  const menuMap = document.getElementById('dash-menu-map');
+  if (menuMap) menuMap.classList.toggle('hidden', !campusPlaces(programmeData.halls).length);
   const sessions = programmeData.sessions || [];
   card.classList.toggle('hidden', !sessions.length);
   const regProg = document.getElementById('reg-programme-btn');
@@ -1268,6 +1274,15 @@ function renderProgrammePage() {
   const items = programmeItems(shown);
   const myWorkshops = new Set((attendanceMeData && attendanceMeData.workshops || []).map((w) => w.optionId));
   const slots = [...new Set(items.map((it) => it.start))].sort();
+  // A talk in one hall that is on the campus map: its hall opens the map there.
+  const onMap = new Set(campusPlaces(programmeData.halls).flatMap((p) => p.halls.map((h) => h.id)));
+  const hallTag = (it) => {
+    const label = esc(hallsLabel(it.halls, allHalls));
+    const cls = 'shrink-0 text-xs font-semibold rounded-md px-2 py-0.5 bg-indigo-50 text-navy';
+    return it.hallIds.length === 1 && onMap.has(it.hallIds[0])
+      ? `<button type="button" onclick="openMapPage(${Number(it.hallIds[0])})" aria-label="${label} on the campus map" class="${cls} inline-flex items-center gap-1 hover:bg-indigo-100"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg>${label}</button>`
+      : `<span class="${cls}">${label}</span>`;
+  };
   document.getElementById('prog-page-list').innerHTML = slots.map((start) => {
     const at = items.filter((it) => it.start === start);
     const breaks = at.filter(progIsBreak);
@@ -1286,7 +1301,7 @@ function renderProgrammePage() {
         return `<article data-now="${now ? 1 : 0}" class="bg-white rounded-xl border ${now ? 'border-2 border-gold-500' : 'border-slate-200'} px-4 py-3">
           <div class="flex items-start justify-between gap-2">
             <p class="text-xs font-bold tracking-wide text-indigo-700 uppercase">${esc(it.label || '')}${yours ? ' · <span class="text-gold-700">Your workshop</span>' : ''}</p>
-            <span class="shrink-0 text-xs font-semibold rounded-md px-2 py-0.5 bg-indigo-50 text-navy">${esc(hallsLabel(it.halls, allHalls))}</span>
+            ${hallTag(it)}
           </div>
           ${now ? `<p class="text-xs font-bold text-gold-700 mt-0.5">On now${was ? ' · you are marked present' : ''}</p>` : (was ? '<p class="text-xs font-bold text-emerald-700 mt-0.5">✓ You were marked present</p>' : '')}
           <h4 class="text-[17px] font-semibold text-slate-900 leading-snug mt-1">${esc(it.title)}</h4>
@@ -1297,6 +1312,193 @@ function renderProgrammePage() {
       }).join('')}</div>
     </div>${divider}`;
   }).join('') || '<p class="mt-6 text-center text-slate-500">Nothing on this day.</p>';
+}
+
+// --- The campus map, for the delegate ---
+// The halls with a map location (Programme settings), one pin per building,
+// numbered as in the list under the map. Street or satellite tiles; "Where am
+// I" follows the phone's location while the page is open (it goes nowhere);
+// Directions opens Google Maps walking there. Leaflet is fetched the first
+// time the page opens, not with the portal.
+const LEAFLET_URL = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min';
+let leafletLoading = null;
+function loadLeaflet() {
+  if (window.L && window.L.map) return Promise.resolve(window.L);
+  if (!leafletLoading) {
+    leafletLoading = new Promise((resolve, reject) => {
+      const css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = `${LEAFLET_URL}.css`;
+      document.head.appendChild(css);
+      const js = document.createElement('script');
+      js.src = `${LEAFLET_URL}.js`;
+      js.onload = () => resolve(window.L);
+      js.onerror = () => { leafletLoading = null; reject(new Error('Leaflet did not load')); };
+      document.head.appendChild(js);
+    });
+  }
+  return leafletLoading;
+}
+
+// Halls at the same spot are one building: one pin, its halls listed.
+function campusPlaces(halls) {
+  const places = [];
+  for (const h of halls || []) {
+    if (h.lat == null || h.lng == null) continue;
+    const key = `${Number(h.lat).toFixed(6)},${Number(h.lng).toFixed(6)}`;
+    let p = places.find((x) => x.key === key);
+    if (!p) { p = { key, n: places.length + 1, lat: Number(h.lat), lng: Number(h.lng), halls: [] }; places.push(p); }
+    p.halls.push({ id: h.id, name: h.name });
+  }
+  return places;
+}
+const campusDirectionsUrl = (p) => `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}&travelmode=walking`;
+
+// What is on in a building now, or next today -- breaks aside.
+function campusPlaceNow(place) {
+  if (!programmeData || !programmeData.now) return '';
+  const ids = new Set(place.halls.map((h) => h.id));
+  const today = (programmeData.sessions || []).filter((s) => ids.has(s.hallId) && s.date === programmeData.now.date && !progIsBreak(s));
+  const now = today.find(progIsNow);
+  if (now) return `On now: ${now.title}`;
+  const next = today.filter((s) => progToMin(s.start) > programmeData.now.minutes).sort((a, b) => progToMin(a.start) - progToMin(b.start))[0];
+  return next ? `Next, ${guestTime12(next.start)}: ${next.title}` : '';
+}
+
+function campusListHtml(places, chosen) {
+  return places.map((p) => {
+    const [first, ...rest] = p.halls;
+    const now = campusPlaceNow(p);
+    return `<div class="flex items-center gap-3 px-4 py-3 ${p.n === chosen ? 'bg-gold-50' : ''}">
+      <button type="button" onclick="focusCampusPlace(${p.n})" class="flex items-center gap-3 flex-1 min-w-0 text-left">
+        <span class="campus-pin shrink-0 ${p.n === chosen ? 'is-chosen' : ''}" aria-hidden="true">${p.n}</span>
+        <span class="min-w-0"><span class="block font-semibold text-navy leading-snug">${esc(first.name)}</span>
+          ${rest.length ? `<span class="block text-xs text-slate-500">Same building: ${esc(rest.map((h) => h.name).join(', '))}</span>` : ''}
+          ${now ? `<span class="block text-xs font-semibold text-gold-700 truncate">${esc(now)}</span>` : ''}</span>
+      </button>
+      <a href="${esc(campusDirectionsUrl(p))}" target="_blank" rel="noopener" class="shrink-0 px-3 py-1.5 rounded-lg border border-slate-300 text-sm font-semibold text-navy hover:bg-slate-50">Directions</a>
+    </div>`;
+  }).join('') || '<p class="p-4 text-sm text-slate-500">No halls are on the map yet.</p>';
+}
+
+let campusMap = null;
+let campusLayers = null;
+let campusMarkers = new Map();
+let campusPlacesList = [];
+let campusChosen = 0;
+let campusMe = null;
+let campusLocateFirst = false;
+
+async function openMapPage(hallId) {
+  setText('map-page-acronym', (conferenceInfo.acronym || '').toUpperCase());
+  navigateTo('map-page');
+  window.scrollTo(0, 0);
+  campusPlacesList = campusPlaces(programmeData && programmeData.halls);
+  const target = hallId ? campusPlacesList.find((p) => p.halls.some((h) => h.id === hallId)) : null;
+  campusChosen = target ? target.n : 0;
+  document.getElementById('campus-map-list').innerHTML = campusListHtml(campusPlacesList, campusChosen);
+  let L;
+  try { L = await loadLeaflet(); } catch (e) {
+    document.getElementById('campus-map-error').classList.remove('hidden');
+    return;
+  }
+  document.getElementById('campus-map-error').classList.add('hidden');
+  renderCampusMap(L);
+  if (target) focusCampusPlace(target.n, false);
+}
+
+const campusIcon = (L, p) => L.divIcon({ className: '', html: `<span class="campus-pin ${p.n === campusChosen ? 'is-chosen' : ''}">${p.n}</span>`,
+  iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -16] });
+const campusPopupHtml = (p) => `<p style="margin:0 0 6px;font-weight:700;color:#1c3549">${esc(p.halls.map((h) => h.name).join(' · '))}</p>
+  <a href="${esc(campusDirectionsUrl(p))}" target="_blank" rel="noopener" style="font-weight:600;color:#8a6d2b">Walking directions</a>`;
+
+function renderCampusMap(L) {
+  if (!campusMap) {
+    campusMap = L.map('campus-map');
+    campusLayers = {
+      street: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }),
+      satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom: 19, maxNativeZoom: 18, attribution: 'Imagery &copy; Esri' }),
+    };
+    campusLayers.street.addTo(campusMap);
+    campusMap.on('locationfound', onCampusLocation);
+    campusMap.on('locationerror', () => showToast('Your location is off. Allow location for this site to see where you are.'));
+  }
+  campusMarkers.forEach((m) => m.remove());
+  campusMarkers = new Map();
+  for (const p of campusPlacesList) {
+    const m = L.marker([p.lat, p.lng], { icon: campusIcon(L, p), title: p.halls.map((h) => h.name).join(', '), riseOnHover: true })
+      .addTo(campusMap).bindPopup(campusPopupHtml(p));
+    m.on('click', () => focusCampusPlace(p.n, false));
+    campusMarkers.set(p.n, m);
+  }
+  campusMap.invalidateSize();
+  if (campusPlacesList.length) {
+    campusMap.fitBounds(L.latLngBounds(campusPlacesList.map((p) => [p.lat, p.lng])), { padding: [48, 48], maxZoom: 18 });
+  }
+}
+
+function focusCampusPlace(n, scroll = true) {
+  campusChosen = n;
+  document.getElementById('campus-map-list').innerHTML = campusListHtml(campusPlacesList, n);
+  if (!campusMap || !window.L) return;
+  campusMarkers.forEach((m, k) => m.setIcon(campusIcon(window.L, campusPlacesList.find((x) => x.n === k))));
+  const p = campusPlacesList.find((x) => x.n === n);
+  const m = campusMarkers.get(n);
+  if (p && m) {
+    campusMap.setView([p.lat, p.lng], Math.max(campusMap.getZoom(), 18));
+    m.openPopup();
+  }
+  if (scroll) document.getElementById('campus-map').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function setCampusMapStyle(style) {
+  if (!campusMap || !campusLayers) return;
+  for (const [name, layer] of Object.entries(campusLayers)) {
+    if (name === style) layer.addTo(campusMap); else layer.remove();
+    const btn = document.getElementById(`campus-map-${name}`);
+    if (btn) {
+      btn.setAttribute('aria-pressed', String(name === style));
+      btn.className = `px-3 py-1.5 ${name === style ? 'bg-navy text-white' : 'text-slate-600'}`;
+    }
+  }
+}
+
+function locateOnCampusMap() {
+  if (!campusMap) return;
+  if (!navigator.geolocation) return showToast('This browser cannot share your location.');
+  campusLocateFirst = true;
+  campusMap.locate({ watch: true, enableHighAccuracy: true, setView: false });
+}
+
+// Their dot, and how sure the phone is of it. The first fix brings the
+// campus and them into view -- or, far away, says how far.
+function onCampusLocation(e) {
+  const L = window.L;
+  if (!campusMe) {
+    campusMe = {
+      ring: L.circle(e.latlng, { radius: e.accuracy, color: '#2f80ed', weight: 1, fillOpacity: 0.1, interactive: false }).addTo(campusMap),
+      dot: L.marker(e.latlng, { icon: L.divIcon({ className: '', html: '<span class="campus-me" style="display:block"></span>', iconSize: [16, 16], iconAnchor: [8, 8] }),
+        interactive: false, zIndexOffset: 1000 }).addTo(campusMap),
+    };
+  } else {
+    campusMe.dot.setLatLng(e.latlng);
+    campusMe.ring.setLatLng(e.latlng).setRadius(e.accuracy);
+  }
+  if (!campusLocateFirst) return;
+  campusLocateFirst = false;
+  const pts = campusPlacesList.map((p) => [p.lat, p.lng]);
+  const nearest = pts.length ? Math.min(...pts.map((pt) => campusMap.distance(pt, e.latlng))) : 0;
+  if (nearest > 5000) {
+    showToast(`You are about ${Math.round(nearest / 1000)} km from the campus.`);
+    campusMap.setView(e.latlng, 14);
+  } else {
+    campusMap.fitBounds(L.latLngBounds([...pts, e.latlng]), { padding: [48, 48], maxZoom: 18 });
+  }
+}
+
+function stopCampusLocate() {
+  if (campusMap) campusMap.stopLocate();
 }
 
 // --- The home screen ---
@@ -12460,6 +12662,8 @@ async function renderProgramme() {
   document.getElementById('prog-halls').innerHTML = p.halls.map((h) => `
     <div class="py-2 flex flex-col sm:flex-row sm:items-center gap-2 ${h.active ? '' : 'opacity-60'}">
       <input value="${esc(h.name)}" data-hall="${esc(h.id)}" aria-label="Hall name" class="prog-hall-name flex-1 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+      <input value="${h.lat != null && h.lng != null ? esc(`${h.lat}, ${h.lng}`) : ''}" data-hall="${esc(h.id)}" aria-label="Map location" placeholder="Map location: 20.741279, 78.662397"
+        title="For the delegates' campus map. In Google Maps, press and hold the spot, then copy the numbers shown." class="prog-hall-loc sm:w-56 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none tabular-nums">
       <div class="flex flex-wrap gap-1.5">
         <button type="button" onclick="saveHall(${Number(h.id)})" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save</button>
         <a href="/api/admin/programme/posters.pdf?hall=${encodeURIComponent(h.id)}" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50">QR poster</a>
@@ -12552,7 +12756,10 @@ async function putHall(id, body) {
   renderProgramme();
 }
 function saveHall(id) {
-  putHall(id, { name: document.querySelector(`.prog-hall-name[data-hall="${id}"]`).value });
+  putHall(id, {
+    name: document.querySelector(`.prog-hall-name[data-hall="${id}"]`).value,
+    location: document.querySelector(`.prog-hall-loc[data-hall="${id}"]`).value,
+  });
 }
 async function newHallCode(id) {
   if (!(await showConfirm('Give this hall a new QR code? Its printed poster stops working -- print the new one and replace it.', 'New QR code'))) return;

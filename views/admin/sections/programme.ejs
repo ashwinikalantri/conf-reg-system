@@ -12,7 +12,8 @@
         <a href="/api/admin/programme/posters.pdf" target="_blank" rel="noopener" class="w-full sm:w-auto text-center px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-sm rounded-xl shadow-md">Print all hall QR posters</a>
       </div>
       <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
-        <h3 class="text-sm font-bold text-slate-800 mb-3">Halls</h3>
+        <h3 class="text-sm font-bold text-slate-800">Halls</h3>
+        <p class="text-xs text-slate-500 mb-3">A hall with a map location shows on the delegates' campus map. Halls in one building can share a location; they share a pin.</p>
         <div id="prog-halls" class="divide-y divide-slate-100"></div>
         <form onsubmit="addHall(event)" class="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row gap-2">
           <input id="prog-new-hall" maxlength="80" placeholder="New hall, e.g. Hall D" class="flex-1 h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none">

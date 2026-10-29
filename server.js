@@ -1903,6 +1903,9 @@ db.serialize(() => {
       created_at INTEGER NOT NULL
     )
   `);
+  // Where the hall is, for the delegates' campus map. Both or neither.
+  db.run('ALTER TABLE halls ADD COLUMN lat REAL', () => {});
+  db.run('ALTER TABLE halls ADD COLUMN lng REAL', () => {});
   db.run(`
     CREATE TABLE IF NOT EXISTS programme_sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8927,7 +8930,8 @@ app.get('/api/programme', requireAuth, async (req, res, next) => {
     const sessions = await programmeSessions();
     const mine = (await dbAll("SELECT event_key FROM attendance WHERE phone_number = ? AND removed_at IS NULL AND event_key LIKE 's:%'", [req.session.phone]))
       .map((r) => Number(r.event_key.slice(2)));
-    const halls = await dbAll('SELECT id, name FROM halls WHERE active = 1 ORDER BY sort_order, id');
+    // With where each hall is, for the campus map (null where not set).
+    const halls = await dbAll('SELECT id, name, lat, lng FROM halls WHERE active = 1 ORDER BY sort_order, id');
     res.json({ halls, sessions: sessions.map(publicSession), mine, now: attendanceLib.istParts(Date.now()) });
   } catch (err) {
     next(err);
@@ -8937,7 +8941,7 @@ app.get('/api/programme', requireAuth, async (req, res, next) => {
 // --- The programme, for its editors ---
 app.get('/api/admin/programme', requirePermission('programme.manage'), async (req, res, next) => {
   try {
-    const halls = await dbAll('SELECT id, name, code, sort_order, active FROM halls ORDER BY sort_order, id');
+    const halls = await dbAll('SELECT id, name, code, sort_order, active, lat, lng FROM halls ORDER BY sort_order, id');
     const counts = new Map((await dbAll("SELECT event_key, COUNT(*) AS n FROM attendance WHERE removed_at IS NULL AND event_key LIKE 's:%' GROUP BY event_key"))
       .map((r) => [Number(r.event_key.slice(2)), r.n]));
     const options = await dbAll(`SELECT o.id, o.name, g.name AS group_name FROM program_options o JOIN program_groups g ON g.id = o.group_id
@@ -8965,8 +8969,24 @@ app.post('/api/admin/programme/halls', requirePermission('programme.manage'), as
   }
 });
 
-// Rename, turn off, or give a new code (a poster photographed and passed
-// around stops working; the hall's poster must be printed again).
+// A hall's map location as it is copied from Google Maps ("20.741279,
+// 78.662397"): { value: { lat, lng } }, { value: null } for blank (no
+// location), or { error }.
+function parseHallLocation(text) {
+  const s = String(text == null ? '' : text).trim();
+  if (!s) return { value: null };
+  const m = /^(-?\d{1,3}(?:\.\d+)?)\s*[,\s]\s*(-?\d{1,3}(?:\.\d+)?)$/.exec(s);
+  const lat = m ? Number(m[1]) : NaN;
+  const lng = m ? Number(m[2]) : NaN;
+  if (!m || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    return { error: 'Enter the location as latitude, longitude -- for example 20.741279, 78.662397 (in Google Maps, press and hold the spot to copy it).' };
+  }
+  return { value: { lat, lng } };
+}
+const hallLocationText = (lat, lng) => (lat == null || lng == null ? 'no location' : `${lat}, ${lng}`);
+
+// Rename, turn off, give a new code (a poster photographed and passed around
+// stops working; the hall's poster must be printed again), or set where it is.
 app.put('/api/admin/programme/halls/:id', requirePermission('programme.manage'), async (req, res, next) => {
   try {
     const h = await dbGet('SELECT * FROM halls WHERE id = ?', [req.params.id]);
@@ -8975,9 +8995,17 @@ app.put('/api/admin/programme/halls/:id', requirePermission('programme.manage'),
     if (!name || name.length > 80) return res.status(400).json({ success: false, error: 'Enter the hall\'s name.' });
     const active = req.body.active !== undefined ? (req.body.active ? 1 : 0) : h.active;
     const code = req.body.newCode ? newHallCode() : h.code;
-    await dbRun('UPDATE halls SET name = ?, active = ?, code = ? WHERE id = ?', [name, active, code, h.id]);
+    let { lat, lng } = h;
+    if (req.body.location !== undefined) {
+      const loc = parseHallLocation(req.body.location);
+      if (loc.error) return res.status(400).json({ success: false, error: loc.error });
+      ({ lat, lng } = loc.value || { lat: null, lng: null });
+    }
+    await dbRun('UPDATE halls SET name = ?, active = ?, code = ?, lat = ?, lng = ? WHERE id = ?', [name, active, code, lat, lng, h.id]);
+    const moved = hallLocationText(h.lat, h.lng) !== hallLocationText(lat, lng);
     await recordAudit({ req, entityType: 'hall', entityId: h.id, action: 'HALL_UPDATED',
-      oldValue: `${h.name}${h.active ? '' : ' (off)'}`, newValue: `${name}${active ? '' : ' (off)'}${req.body.newCode ? ' · new QR code' : ''}` });
+      oldValue: `${h.name}${h.active ? '' : ' (off)'}${moved ? ` · ${hallLocationText(h.lat, h.lng)}` : ''}`,
+      newValue: `${name}${active ? '' : ' (off)'}${req.body.newCode ? ' · new QR code' : ''}${moved ? ` · ${hallLocationText(lat, lng)}` : ''}` });
     res.json({ success: true });
   } catch (err) {
     next(err);
