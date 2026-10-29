@@ -256,10 +256,41 @@ function navigateTo(pageId) {
   if (hero) hero.classList.toggle('hidden', ['dashboard-page', 'programme-page', 'profile-page', 'map-page'].includes(pageId));
   // Off the map: stop following their location.
   if (pageId !== 'map-page') stopCampusLocate();
+  updateDashTabs(pageId);
   // The backend button is only for admins on the dashboard; hide it elsewhere.
   updateAdminNav(pageId === 'dashboard-page' && isAdminUser());
 }
 
+
+// The delegate's tab bar: on their own pages only, each tab when it has
+// something behind it, the page they are on marked.
+const DASH_TAB_OF_PAGE = { 'dashboard-page': 'home', 'programme-page': 'programme', 'map-page': 'map', 'profile-page': null };
+let dashTabsPage = null;
+function updateDashTabs(pageId) {
+  if (pageId !== undefined) dashTabsPage = pageId;
+  const bar = document.getElementById('dash-tabs');
+  if (!bar) return;
+  const on = Object.prototype.hasOwnProperty.call(DASH_TAB_OF_PAGE, dashTabsPage);
+  bar.classList.toggle('hidden', !on);
+  if (document.body && document.body.classList) document.body.classList.toggle('has-tabs', on);
+  const has = {
+    home: true,
+    programme: !!(programmeData && (programmeData.sessions || []).length),
+    map: !!(programmeData && campusPlaces(programmeData.halls).length),
+    badge: !!(currentRegistration && currentRegistration.bank_status === 'BANK_VERIFIED'),
+  };
+  for (const [tab, shown] of Object.entries(has)) {
+    const btn = document.getElementById(`dash-tab-${tab}`);
+    if (!btn) continue;
+    const here = DASH_TAB_OF_PAGE[dashTabsPage] === tab;
+    btn.classList.toggle('hidden', !shown);
+    if (btn.setAttribute) btn.setAttribute('aria-current', here ? 'page' : 'false');
+    btn.classList.toggle('bg-gold-50', here);
+    btn.classList.toggle('text-navy', here);
+    btn.classList.toggle('font-bold', here);
+    btn.classList.toggle('text-slate-600', !here);
+  }
+}
 
 function toggleAuth(view) {
   const regForm = document.getElementById('register-form');
@@ -1205,14 +1236,11 @@ async function loadProgrammeCard() {
   const card = document.getElementById('programme-card');
   if (!card) return;
   try { programmeData = await (await fetch('/api/programme')).json(); } catch (e) { return; }
-  const menuMap = document.getElementById('dash-menu-map');
-  if (menuMap) menuMap.classList.toggle('hidden', !campusPlaces(programmeData.halls).length);
+  updateDashTabs();
   const sessions = programmeData.sessions || [];
   card.classList.toggle('hidden', !sessions.length);
   const regProg = document.getElementById('reg-programme-btn');
   if (regProg) regProg.classList.toggle('hidden', !sessions.length);
-  const menuProg = document.getElementById('dash-menu-programme');
-  if (menuProg) menuProg.classList.toggle('hidden', !sessions.length);
   if (!sessions.length) return;
   const days = [...new Set(sessions.map((s) => s.date))].sort();
   if (!days.includes(programmeDay)) programmeDay = days.includes(programmeData.now.date) ? programmeData.now.date : days[0];
@@ -1255,9 +1283,11 @@ function renderProgrammePage() {
   const sessions = programmeData.sessions || [];
   const days = [...new Set(sessions.map((s) => s.date))].sort();
   const weekday = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', timeZone: 'UTC' });
-  document.getElementById('prog-page-days').innerHTML = days.map((d, i) => `
+  const dayTabs = document.getElementById('prog-page-days');
+  dayTabs.style.gridTemplateColumns = `repeat(${Math.max(1, days.length)}, minmax(0, 1fr))`;
+  dayTabs.innerHTML = days.map((d, i) => `
     <button type="button" onclick="programmeDay='${esc(d)}'; programmeHall=''; renderProgrammePage()" role="tab" aria-selected="${d === programmeDay}"
-      class="flex-1 px-3 py-2.5 rounded-xl text-[15px] font-semibold border ${d === programmeDay ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-indigo-700 border-slate-300'}">
+      class="min-h-[44px] px-2 py-2 rounded-lg text-[15px] ${d === programmeDay ? 'bg-navy text-white font-bold' : 'text-navy font-semibold hover:bg-slate-50'}">
       Day ${i + 1} · ${esc(weekday(d))} ${esc(shortDateRange(d, d).replace(/ \d{4}$/, ''))}</button>`).join('');
   const day = sessions.filter((s) => s.date === programmeDay);
   const allHalls = [...new Set(day.map((s) => s.hall))];
@@ -1268,7 +1298,17 @@ function renderProgrammePage() {
   if (!chips || (programmeHall && !hallsWithTalks.includes(programmeHall))) programmeHall = '';
   document.getElementById('prog-page-halls').innerHTML = chips ? ['', ...hallsWithTalks].map((h) => `
     <button type="button" onclick="programmeHall='${esc(h)}'; renderProgrammePage()"
-      class="shrink-0 px-3.5 py-1.5 rounded-full text-sm font-semibold border ${h === programmeHall ? 'bg-indigo-50 border-indigo-600 text-indigo-800' : 'bg-white border-slate-300 text-slate-600'}">${esc(h || 'All halls')}</button>`).join('') : '';
+      class="shrink-0 px-3.5 py-1.5 rounded-full text-sm font-semibold border ${h === programmeHall ? 'bg-navy border-navy text-white' : 'bg-white border-slate-300 text-slate-600'}">${esc(h || 'All halls')}</button>`).join('') : '';
+  // On the day: what is on now, pinned above the list, with how far it has run.
+  const nowBox = document.getElementById('prog-page-now');
+  if (nowBox) {
+    const live = programmeDay === programmeData.now.date ? programmeItems(day.filter((s) => progIsNow(s) && !progIsBreak(s))) : [];
+    nowBox.classList.toggle('hidden', !live.length);
+    nowBox.innerHTML = live.length ? `<div class="rounded-2xl border-2 border-gold-500 bg-white px-4 py-3 shadow-sm space-y-3">${live.map((it, i) => `<div>
+        <div class="flex items-center justify-between gap-2">${i === 0 ? '<p class="text-xs font-bold tracking-[0.15em] text-gold-700 uppercase">On now</p>' : '<span></span>'}<p class="text-sm text-slate-600">${esc(hallsLabel(it.halls, allHalls))} · until ${esc(guestTime12(it.end))}</p></div>
+        <p class="font-bold text-slate-900 leading-snug mt-0.5">${esc(it.title)}</p>
+        <div class="mt-1.5 h-1.5 rounded-full bg-gold-100 overflow-hidden" role="img" aria-label="${progElapsed(it)}% of the session gone"><div class="h-1.5 bg-gold-500" style="width:${progElapsed(it)}%"></div></div></div>`).join('')}</div>` : '';
+  }
   const mine = new Set(programmeData.mine || []);
   const shown = day.filter((s) => !programmeHall || s.hall === programmeHall);
   const items = programmeItems(shown);
@@ -1300,7 +1340,7 @@ function renderProgrammePage() {
         const yours = myWorkshops.has(it.optionId);
         return `<article data-now="${now ? 1 : 0}" class="bg-white rounded-xl border ${now ? 'border-2 border-gold-500' : 'border-slate-200'} px-4 py-3">
           <div class="flex items-start justify-between gap-2">
-            <p class="text-xs font-bold tracking-wide text-indigo-700 uppercase">${esc(it.label || '')}${yours ? ' · <span class="text-gold-700">Your workshop</span>' : ''}</p>
+            <p class="text-xs font-bold tracking-wide text-navy uppercase">${esc(it.label || '')}${yours ? ' · <span class="text-gold-700">Your workshop</span>' : ''}</p>
             ${hallTag(it)}
           </div>
           ${now ? `<p class="text-xs font-bold text-gold-700 mt-0.5">On now${was ? ' · you are marked present' : ''}</p>` : (was ? '<p class="text-xs font-bold text-emerald-700 mt-0.5">✓ You were marked present</p>' : '')}
@@ -1574,8 +1614,9 @@ function renderHomeHero() {
   const first = days[0] || conferenceInfo.startDate;
   const last = days[days.length - 1] || conferenceInfo.endDate;
   const kicker = (t) => `<p class="text-xs font-bold tracking-[0.15em] text-gold-700 uppercase">${esc(t)}</p>`;
-  const primary = (label, onclick) => `<button type="button" onclick="${onclick}" class="mt-4 w-full sm:w-auto px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg">${esc(label)}</button>`;
-  const secondary = (label, onclick) => `<button type="button" onclick="${onclick}" class="mt-2 sm:mt-4 sm:ml-2 w-full sm:w-auto px-5 py-3 border border-indigo-600 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg">${esc(label)}</button>`;
+  const primary = (label, onclick) => `<button type="button" onclick="${onclick}" class="mt-4 w-full sm:w-auto px-5 py-3 bg-navy hover:bg-indigo-700 text-white font-semibold rounded-lg">${esc(label)}</button>`;
+  const next = document.getElementById('home-next');
+  let nextHtml = '';
   // Registering, being verified and registered are the registration panel's
   // to say; this leads only on the days and after.
   let html = '';
@@ -1583,25 +1624,87 @@ function renderHomeHero() {
     html = '';
   } else if (reg.bank_status === 'BANK_VERIFIED' && myCertificates.length) {
     html = `${kicker('Your certificates')}<h3 class="text-xl font-bold text-slate-900 mt-1">Thank you for attending</h3>
-      <div class="mt-3 flex flex-col sm:flex-row sm:flex-wrap gap-2">${myCertificates.map((m) => `<a href="/api/certificates/mine/${encodeURIComponent(m.id)}.pdf" class="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-center">Download: ${esc(m.label)}</a>`).join('')}</div>`;
+      <div class="mt-3 flex flex-col sm:flex-row sm:flex-wrap gap-2">${myCertificates.map((m) => `<a href="/api/certificates/mine/${encodeURIComponent(m.id)}.pdf" class="px-5 py-3 bg-navy hover:bg-indigo-700 text-white font-semibold rounded-lg text-center">Download: ${esc(m.label)}</a>`).join('')}</div>`;
   } else if (reg.bank_status === 'BANK_VERIFIED' && first && today >= first && today <= last) {
-    const live = programmeData ? programmeItems((programmeData.sessions || []).filter((s) => progIsNow(s) && !progIsBreak(s))) : [];
-    const allHalls = programmeData ? [...new Set(programmeData.sessions.map((s) => s.hall))] : [];
+    const sessions = programmeData ? programmeData.sessions || [] : [];
+    const live = programmeItems(sessions.filter((s) => progIsNow(s) && !progIsBreak(s)));
+    const allHalls = [...new Set(sessions.map((s) => s.hall))];
     const parts = attendanceMeData && attendanceMeData.completion ? attendanceMeData.completion.parts : [];
-    html = `${kicker(live.length ? 'On now' : 'Today')}
-      ${live.length ? live.slice(0, 3).map((it) => `<div class="mt-2"><p class="text-sm font-semibold text-indigo-700">${esc(hallsLabel(it.halls, allHalls))} · until ${esc(guestTime12(it.end))}</p>
-        <p class="text-lg font-bold text-slate-900 leading-snug">${esc(it.title)}</p>${it.speakers ? `<p class="text-[15px] text-slate-600">${esc(it.speakers)}</p>` : ''}</div>`).join('')
-        : '<h3 class="text-xl font-bold text-slate-900 mt-1">Nothing is on right now</h3>'}
-      ${parts.length ? `<div class="mt-3 flex flex-wrap gap-2">${parts.map((p) => `<span class="text-sm font-semibold px-3 py-1 rounded-full border ${p.done ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-slate-50 border-slate-300 text-slate-600'}">${p.done ? '✓' : '○'} ${esc(p.label.replace(/^\d+ \w+, /, ''))}</span>`).join('')}</div>` : ''}
-      <p class="text-sm text-slate-600 mt-3">To mark your attendance, scan the QR code at the hall door, or show your badge to the volunteer.</p>
-      ${primary('Show my badge', 'openBadgeFullScreen()')}${secondary('Full programme', 'openProgrammePage()')}`;
+    html = `${live.length ? live.slice(0, 3).map((it, i) => homeLiveHtml(it, allHalls, i === 0)).join('<div class="my-4 border-t border-gold-100"></div>')
+        : `${kicker('Today')}<h3 class="text-xl font-bold text-slate-900 mt-1">Nothing is on right now</h3>`}
+      ${primary('Show my badge to mark attendance', 'openBadgeFullScreen()').replace('sm:w-auto ', '')}
+      ${parts.length ? `<div class="mt-3 flex flex-wrap gap-2">${parts.map((p) => `<span class="text-sm font-semibold px-3 py-1 rounded-full border ${p.done ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-white border-slate-300 text-slate-600'}">${p.done ? '✓' : '○'} ${esc(p.label.replace(/^\d+ \w+, /, ''))}${p.done ? ' marked' : ''}</span>`).join('')}</div>` : ''}
+      <p class="text-sm text-slate-600 mt-2">Or scan the QR code at the hall door.</p>`;
+    nextHtml = homeNextHtml(sessions, allHalls);
   } else if (reg.bank_status === 'BANK_VERIFIED' && last && today > last) {
     html = `${kicker('Thank you for attending')}<h3 class="text-xl font-bold text-slate-900 mt-1">Your certificates will be ready here soon</h3>
       <p class="text-[15px] text-slate-600 mt-1">We will email you when they are. Meanwhile, check the name your certificate will carry in your Profile.</p>
-      <button type="button" onclick="openProfilePage()" class="mt-4 w-full sm:w-auto px-5 py-3 border border-indigo-600 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg">Open my profile</button>`;
+      <button type="button" onclick="openProfilePage()" class="mt-4 w-full sm:w-auto px-5 py-3 border border-navy text-navy hover:bg-indigo-50 font-semibold rounded-lg">Open my profile</button>`;
   }
   box.innerHTML = html;
   box.classList.toggle('hidden', !html);
+  if (next) { next.innerHTML = nextHtml; next.classList.toggle('hidden', !nextHtml); }
+  // Once this leads, registration is one line.
+  setRegistrationCompact(!!html);
+}
+
+// A talk on now: how far it has run, and its hall -- on the map, if it is.
+const MAP_PIN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 shrink-0" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg>';
+function progElapsed(it) {
+  const a = progToMin(it.start);
+  const b = progToMin(it.end);
+  return Math.max(0, Math.min(100, Math.round(((programmeData.now.minutes - a) / Math.max(1, b - a)) * 100)));
+}
+function homeLiveHtml(it, allHalls, first) {
+  const places = new Map(campusPlaces(programmeData.halls).flatMap((p) => p.halls.map((h) => [h.id, { place: p, hall: h }])));
+  const loc = it.hallIds && it.hallIds.length === 1 ? places.get(it.hallIds[0]) : null;
+  const where = loc
+    ? `<button type="button" onclick="openMapPage(${Number(it.hallIds[0])})" class="mt-3 w-full flex items-center gap-2.5 text-left rounded-xl bg-gold-50 hover:bg-gold-100 px-3 py-2.5 text-navy">${MAP_PIN_SVG}
+        <span class="min-w-0"><span class="block font-bold">${esc(it.halls[0])}</span><span class="block text-sm text-slate-600">${esc([loc.place.building, loc.hall.floor].filter(Boolean).join(' · ') || 'Campus map')} · Map and directions</span></span></button>`
+    : `<p class="mt-2 text-sm font-semibold text-navy">${esc(hallsLabel(it.halls, allHalls))}</p>`;
+  return `<div class="flex items-center justify-between gap-2">${first ? '<p class="text-xs font-bold tracking-[0.15em] text-gold-700 uppercase">On now</p>' : '<span></span>'}
+      <p class="text-sm text-slate-600">until ${esc(guestTime12(it.end))}</p></div>
+    <p class="text-lg font-bold text-slate-900 leading-snug mt-1">${esc(it.title)}</p>
+    ${it.speakers ? `<p class="text-[15px] text-slate-600">${esc(it.speakers)}</p>` : ''}
+    <div class="mt-2 h-1.5 rounded-full bg-gold-100 overflow-hidden" role="img" aria-label="${progElapsed(it)}% of the session gone"><div class="h-1.5 bg-gold-500" style="width:${progElapsed(it)}%"></div></div>
+    ${where}`;
+}
+// The next talk today, if any: when, what, where.
+function homeNextHtml(sessions, allHalls) {
+  const now = programmeData && programmeData.now;
+  if (!now) return '';
+  const upcoming = sessions.filter((s) => s.date === now.date && !progIsBreak(s) && progToMin(s.start) > now.minutes)
+    .sort((a, b) => progToMin(a.start) - progToMin(b.start));
+  if (!upcoming.length) return '';
+  const slot = programmeItems(upcoming.filter((s) => s.start === upcoming[0].start));
+  const it = slot[0];
+  return `<p class="text-xs font-bold tracking-[0.12em] text-slate-500 uppercase">Next · ${esc(guestTime12(it.start))}</p>
+    <p class="text-base font-semibold text-slate-900 leading-snug mt-0.5">${esc(it.title)}</p>
+    <p class="text-sm text-slate-600">${esc([hallsLabel(it.halls, allHalls), it.speakers].filter(Boolean).join(' · '))}</p>
+    ${slot.length > 1 ? `<button type="button" onclick="openProgrammePage()" class="mt-1 text-sm font-semibold text-navy underline">and ${slot.length - 1} more at the same time</button>` : ''}`;
+}
+
+// Registration as one line (the conference is on, or over): the number and
+// category; tapping it opens the whole panel.
+let registrationExpanded = false;
+function setRegistrationCompact(on) {
+  const row = document.getElementById('registration-row');
+  const card = document.getElementById('registration-card');
+  if (!row || !card) return;
+  const reg = currentRegistration || {};
+  row.classList.toggle('hidden', !on);
+  if (on) {
+    setText('registration-row-number', reg.registration_number || '—');
+    setText('registration-row-line', [reg.category_label, registrationExpanded ? 'Hide details' : 'Receipt and details'].filter(Boolean).join(' · '));
+  }
+  card.classList.toggle('hidden', on && !registrationExpanded);
+  row.setAttribute('aria-expanded', String(on && registrationExpanded));
+  const chev = document.getElementById('registration-row-chevron');
+  if (chev) chev.classList.toggle('rotate-90', on && registrationExpanded);
+}
+function toggleRegistrationDetails() {
+  registrationExpanded = !registrationExpanded;
+  setRegistrationCompact(true);
 }
 
 async function saveCertificateDetails(e) {
@@ -1642,6 +1745,7 @@ function applyRegistrationState(reg) {
   const confirmedBlock = document.getElementById('confirmed-block');
 
   currentRegistration = reg;
+  updateDashTabs();
 
   // Registration number, receipt, and the chosen workshop / QI practice are
   // revealed only once the payment is verified. The register/edit action and
@@ -1808,7 +1912,7 @@ async function renderGroupSection() {
       <p class="text-xs mb-3">${statusLine}</p>
       <div class="bg-white rounded-lg border border-indigo-100 px-3 py-1 mb-3">${rows}</div>
       <div class="flex flex-wrap gap-2">
-        ${g.isLeader ? `<button onclick="openAddGroupMember()" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">+ Add member</button>` : ''}
+        ${g.isLeader ? `<button onclick="openAddGroupMember()" class="px-3 py-2 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">+ Add member</button>` : ''}
         <button onclick="leaveGroup()" class="px-3 py-2 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-lg">Leave group</button>
         ${GROUP_HELP_LINK}
       </div>
@@ -1836,7 +1940,7 @@ async function renderGroupSection() {
       <select id="group-start-cat" class="h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
         ${eligible.map((c) => `<option value="${esc(c.category_key)}">${esc(c.label)} — ${c.discount_type === 'PERCENT' ? esc(c.discount_value) + '%' : '₹' + inr(c.discount_value)} off for ${esc(c.min_size)}+</option>`).join('')}
       </select>
-      <button onclick="startGroup()" class="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Start a group</button>
+      <button onclick="startGroup()" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Start a group</button>
       ${GROUP_HELP_LINK}
     </div>`;
   box.classList.remove('hidden');

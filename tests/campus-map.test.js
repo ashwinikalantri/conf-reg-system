@@ -145,8 +145,8 @@ function load() {
   check('...a campus hall says nothing of the sort', !/Off campus/.test(sb.__f.campusListHtml(places, 0)));
 
   console.log('\n== In the portal ==');
-  check('the menu has Map, hidden until a hall has a location', /id="dash-menu-map" onclick="dashGo\('map'\)" class="hidden /.test(dash)
-    && /menuMap\.classList\.toggle\('hidden', !campusPlaces\(programmeData\.halls\)\.length\)/.test(js));
+  check('the tab bar has Map, shown once a hall has a location', /id="dash-tab-map" onclick="dashGo\('map'\)" class="hidden /.test(dash)
+    && /map: !!\(programmeData && campusPlaces\(programmeData\.halls\)\.length\)/.test(js));
   check('the page: map, street or satellite, Where am I, the list', /<section id="map-page"/.test(dash) && /id="campus-map"/.test(dash)
     && /id="campus-map-satellite"/.test(dash) && /onclick="locateOnCampusMap\(\)"/.test(dash) && /id="campus-map-list"/.test(dash));
   check('Leaflet is fetched when the map opens, not with the portal', !/leaflet/i.test(index) && /cdnjs\.cloudflare\.com\/ajax\/libs\/leaflet\/1\.9\.4\/leaflet\.min/.test(js));

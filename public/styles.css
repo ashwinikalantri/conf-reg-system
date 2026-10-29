@@ -153,3 +153,7 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
   background: #1c3549; color: #d6b46a; font: 700 13px/1 system-ui, sans-serif; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
 .campus-pin.is-chosen { background: #b08d3c; color: #fff; }
 .campus-me { width: 16px; height: 16px; border-radius: 9999px; background: #2f80ed; border: 3px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.2); }
+
+/* The delegate's tab bar (#dash-tabs) is fixed to the bottom: room for it
+   below the page, so the last card is never under it. */
+body.has-tabs { padding-bottom: calc(5.5rem + env(safe-area-inset-bottom)); }

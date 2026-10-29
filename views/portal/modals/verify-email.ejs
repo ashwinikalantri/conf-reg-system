@@ -19,7 +19,7 @@
                  address being confirmed is unambiguously the one it was sent
                  to. "Use a different address" clears the code and unlocks. -->
             <input type="email" id="verify-email-value" autocomplete="email" required class="flex-1 p-2.5 border rounded-lg text-sm outline-none disabled:bg-slate-100 disabled:text-slate-500">
-            <button type="button" id="verify-email-send-btn" onclick="requestVerifyEmailOTP()" class="px-3 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shrink-0">Send Code</button>
+            <button type="button" id="verify-email-send-btn" onclick="requestVerifyEmailOTP()" class="px-3 py-2.5 bg-navy hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shrink-0">Send Code</button>
           </div>
           <p id="verify-email-change-hint" class="text-[11px] text-slate-400 mt-1">Not the right address? Change it here — the code goes to whatever you enter.</p>
           <button type="button" id="verify-email-change-btn" onclick="unlockVerifyEmailAddress()" class="hidden text-[11px] text-indigo-600 font-semibold hover:underline mt-1">Use a different address</button>
@@ -31,7 +31,7 @@
             <span id="verify-email-hint" class="text-[11px] text-indigo-600 font-mono font-bold"></span>
           </div>
           <input type="text" id="verify-email-otp" maxlength="6" placeholder="e.g. 123456" class="w-full p-2.5 border rounded-lg text-center font-mono tracking-widest text-lg outline-none">
-          <button type="submit" id="verify-email-submit-btn" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm">Verify Email</button>
+          <button type="submit" id="verify-email-submit-btn" class="w-full py-2.5 bg-navy hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm">Verify Email</button>
         </div>
       </form>
 
