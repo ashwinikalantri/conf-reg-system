@@ -104,7 +104,7 @@ check('the map: the list beside the map, the map taller', /<section id="map-page
   && /lg:grid lg:grid-cols-\[minmax\(0,1fr\)_22rem\]/.test(dash) && /lg:h-\[70vh\]/.test(dash));
 check('sign-in: the conference and the form side by side on a desktop', /<div id="portal-front" class="w-full flex flex-col items-center lg:flex-row lg:items-stretch lg:justify-center">\s*<%- include\('portal\/partials\/hero'\) %>\s*<%- include\('portal\/sections\/auth'\) %>\s*<\/div>/.test(index)
   && /lg:max-w-\[440px\][^"]*lg:rounded-r-none/.test(hero) && /lg:max-w-\[520px\][^"]*lg:rounded-l-none/.test(auth));
-check('...what the portal is for, on the conference\'s half', /<ul class="hidden lg:block[^"]*">\s*<li>Register and pay/.test(hero));
+check('...the conference\'s half carries no description, only the conference', !/<ul\b|<li>/.test(hero));
 check('...centred only while shown (never undoing .hidden on the delegate\'s pages)', /#portal-hero:not\(\.hidden\) \{ display: flex;/.test(css) && !/lg:flex/.test(hero));
 
 console.log('\n== Admin: settings and the faculty list ==');
