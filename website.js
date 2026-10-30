@@ -3,8 +3,8 @@
 // What the portal already knows is read live, so it is never typed twice:
 // the programme (sessions, halls, times, speakers and chairs), the workshops
 // and QI practices with their seats and coordinators, the fees and their
-// dates, the abstract deadline, the conference's name and dates, and the
-// halls on the campus map. Everything else -- about, team, faculty, partners,
+// dates, the abstract deadline, and the conference's name and dates.
+// Everything else -- about, team, faculty, partners,
 // hotels, travel -- is website-content.js.
 //
 // Only public facts: names and titles. No phone number, email or anything
@@ -266,18 +266,9 @@ module.exports = function mountWebsite(app, d) {
 
     async team() { return {}; },
 
-    async visit() {
-      // Halls with a location, one pin per spot -- as on the portal's map.
-      const halls = await d.dbAll('SELECT name, lat, lng, floor, building FROM halls WHERE active = 1 AND lat IS NOT NULL AND lng IS NOT NULL ORDER BY sort_order, id');
-      const byPlace = new Map();
-      for (const h of halls) {
-        const key = `${Number(h.lat).toFixed(5)},${Number(h.lng).toFixed(5)}`;
-        if (!byPlace.has(key)) byPlace.set(key, { lat: Number(h.lat), lng: Number(h.lng), name: h.building || h.name, halls: [] });
-        byPlace.get(key).halls.push(h.floor ? `${h.name} (${h.floor})` : h.name);
-      }
-      const places = [...byPlace.values()].map((p, i) => ({ ...p, n: i + 1, list: p.halls.join(', ') }));
-      return { places };
-    },
+    // The campus map is for delegates, in the portal; the site gives
+    // directions to the campus only.
+    async visit() { return {}; },
 
     async about() { return {}; },
   };

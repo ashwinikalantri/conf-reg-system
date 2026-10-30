@@ -72,6 +72,7 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     const mobiles = all.match(/(?<![\d+])[6-9]\d{9}(?!\d)/g) || [];
     check('no bare mobile number on any page', mobiles.length === 0, mobiles.slice(0, 3));
     check('no hall code (the QR secret) is sent', !/\?hall=[A-Z0-9]{8}\b/.test(all));
+    check('the campus map stays in the delegate portal, not on the site', !/campus-map|leaflet/i.test(got.visit) && /Directions to MGIMS/.test(got.visit));
   } finally {
     for (const id of sessions.filter(Boolean)) await db.run('DELETE FROM programme_sessions WHERE id = ?', [id]);
     if (hallId) await db.run('DELETE FROM halls WHERE id = ?', [hallId]);

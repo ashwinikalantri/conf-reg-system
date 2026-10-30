@@ -1,9 +1,10 @@
-<%- include('partials/head', { title: 'Getting here and where to stay', extraHead: places.length ? '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">' : '' }) %>
+<%- include('partials/head', { title: 'Getting here and where to stay' }) %>
 
 <section class="band-navy page-head">
   <div class="wrap">
     <h1>Getting here and where to stay</h1>
     <p>The conference is on the campus of the <%= content.venue.name %>, near Wardha in Maharashtra, on the Pune–Nagpur corridor.</p>
+    <a class="btn btn-ghost" style="align-self: flex-start; min-height: 44px; font-size: 15px" href="https://www.google.com/maps/dir/?api=1&amp;destination=<%= content.venue.lat %>,<%= content.venue.lng %>" target="_blank" rel="noopener">Directions to MGIMS in Google Maps</a>
   </div>
 </section>
 
@@ -17,23 +18,6 @@
         <p class="lead" style="font-size: 16px"><%= r.text %></p>
       </article>
     <% }) %>
-  </div>
-</section>
-
-<section class="band-tint">
-  <div class="wrap section split">
-    <div class="stack" style="gap: 14px">
-      <h2 class="h2">On the campus</h2>
-      <% if (places.length) { %>
-        <div id="campus-map" class="map" role="region" aria-label="Campus map, with a pin for each building the conference uses"></div>
-      <% } %>
-      <a class="btn btn-outline" style="align-self: flex-start" href="https://www.google.com/maps/dir/?api=1&amp;destination=<%= content.venue.lat %>,<%= content.venue.lng %>" target="_blank" rel="noopener">Directions in Google Maps</a>
-    </div>
-    <% if (places.length) { %>
-    <ol class="places">
-      <% places.forEach((p) => { %><li><span class="n"><%= p.n %></span><div style="min-width: 0"><p style="font-weight: 700"><%= p.name %></p><p class="muted" style="font-size: 15px"><%= p.list %></p></div></li><% }) %>
-    </ol>
-    <% } %>
   </div>
 </section>
 
@@ -53,26 +37,5 @@
     </div>
   </div>
 </section>
-
-<% if (places.length) { %>
-<script type="application/json" id="campus-places"><%- JSON.stringify(places.map((p) => ({ n: p.n, lat: p.lat, lng: p.lng, name: p.name, list: p.list }))).replace(/</g, '\\u003c') %></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script>
-(function () {
-  if (!window.L) return;
-  var places = JSON.parse(document.getElementById('campus-places').textContent);
-  var map = L.map('campus-map', { scrollWheelZoom: false });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
-  var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
-  var bounds = [];
-  places.forEach(function (p) {
-    var icon = L.divIcon({ className: '', html: '<div class="pin">' + p.n + '</div>', iconSize: [28, 28], iconAnchor: [14, 14] });
-    L.marker([p.lat, p.lng], { icon: icon, title: p.name }).addTo(map).bindPopup('<b>' + esc(p.name) + '</b><br>' + esc(p.list));
-    bounds.push([p.lat, p.lng]);
-  });
-  if (bounds.length === 1) map.setView(bounds[0], 17); else map.fitBounds(bounds, { padding: [30, 30], maxZoom: 17 });
-})();
-</script>
-<% } %>
 
 <%- include('partials/foot') %>
