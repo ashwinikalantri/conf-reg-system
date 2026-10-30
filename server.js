@@ -9048,6 +9048,13 @@ async function programmeSessions() {
        FROM programme_sessions s JOIN halls h ON h.id = s.hall_id
        LEFT JOIN program_options o ON o.id = s.option_id LEFT JOIN program_groups g ON g.id = o.group_id
       ORDER BY s.session_date, s.start_time, h.sort_order, h.id, s.id`);
+  // A session for a workshop or practice is called what the workshop is
+  // called (Workshops tab): one name, so renaming it there renames it here.
+  // What was typed as the session's own title stays stored, as own_title.
+  for (const s of sessions) {
+    s.own_title = s.title;
+    if (s.option_id && s.option_name) s.title = s.option_name;
+  }
   sessions.sort(programmeOrder);
   const people = await sessionPeople();
   for (const s of sessions) {
@@ -9267,8 +9274,15 @@ async function sessionInput(b, current = {}) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(out.session_date)) return { error: 'Enter the date.' };
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(out.start_time) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(out.end_time)) return { error: 'Enter the start and end times.' };
   if (out.end_time <= out.start_time) return { error: 'The end time must be after the start time.' };
+  // Linked to a workshop or practice: shown under the workshop's name (see
+  // programmeSessions), so no title of its own is needed; one typed before
+  // is kept as it was.
+  if (out.option_id) {
+    const opt = await dbGet('SELECT name FROM program_options WHERE id = ?', [out.option_id]);
+    if (!opt) return { error: 'That workshop or practice is not in Programs.' };
+    if (!out.title) out.title = opt.name;
+  }
   if (!out.title || out.title.length > 300) return { error: 'Enter the title.' };
-  if (out.option_id && !(await dbGet('SELECT id FROM program_options WHERE id = ?', [out.option_id]))) return { error: 'That workshop or practice is not in Programs.' };
   // The faculty lists, when the editor sends them: they make the lines.
   let people;
   if (b.people !== undefined) {
@@ -13770,9 +13784,10 @@ async function guestRowsJoined(where = '', params = []) {
   // Their sessions in the programme, as speaker/facilitator or chair, in time
   // order -- for the coordinators to set travel by.
   const theirs = await dbAll(
-    `SELECT f.guest_id, f.role, s.id, s.label, s.title, s.session_date, s.start_time, h.sort_order AS hall_sort,
+    `SELECT f.guest_id, f.role, s.id, s.label, COALESCE(o.name, s.title) AS title, s.session_date, s.start_time, h.sort_order AS hall_sort,
             s.session_date AS date, s.start_time AS start, s.end_time AS end, h.name AS hall
        FROM programme_session_faculty f JOIN programme_sessions s ON s.id = f.session_id JOIN halls h ON h.id = s.hall_id
+       LEFT JOIN program_options o ON o.id = s.option_id
       WHERE f.guest_id IS NOT NULL`);
   theirs.sort(programmeOrder);
   for (const g of out) {

@@ -3872,7 +3872,8 @@ function setupAdminDelegation() {
       if (save) {
         const capInput = programsBox.querySelector(`.prog-capacity[data-id="${save.dataset.id}"]`);
         const feeInput = programsBox.querySelector(`.prog-fee[data-id="${save.dataset.id}"]`);
-        return saveProgramOption(save.dataset.id, parseInt(capInput.value, 10), parseFloat(feeInput.value) || 0);
+        const nameInput = programsBox.querySelector(`.prog-name[data-id="${save.dataset.id}"]`);
+        return saveProgramOption(save.dataset.id, parseInt(capInput.value, 10), parseFloat(feeInput.value) || 0, nameInput ? nameInput.value : undefined);
       }
       const toggle = e.target.closest('.prog-toggle');
       if (toggle) return toggleProgram(toggle.dataset.id, toggle.dataset.active === '1' ? 0 : 1);
@@ -6997,9 +6998,9 @@ async function renderBackendPrograms() {
     const facultyCount = Number(o.faculty_count) || 0;
     return `
     <div class="flex flex-wrap items-center gap-3 py-3 border-b border-slate-100 ${o.active ? '' : 'opacity-60'}">
-      <div class="flex-1 min-w-[180px]">
-        <p class="font-semibold text-sm text-slate-800">${esc(o.name)}${Number(o.fee) > 0 ? ` <span class="text-[11px] font-normal text-indigo-600">+₹${inr(o.fee)}</span>` : ''}</p>
-        <p class="text-[11px] text-slate-500">Enrolled ${Number(o.enrolled)} / ${Number(o.capacity)} · ${remaining} left${facultyCount ? ` · ${facultyCount} faculty` : ''}${o.active ? '' : ' · inactive'}</p>
+      <div class="flex-1 min-w-[220px]">
+        <input type="text" value="${esc(o.name)}" maxlength="200" aria-label="Name" title="Name — the programme shows this name too" class="prog-name w-full p-1.5 border border-slate-300 rounded text-sm font-semibold text-slate-800" data-id="${esc(o.id)}">
+        <p class="text-[11px] text-slate-500 mt-1">${Number(o.fee) > 0 ? `<span class="text-indigo-600">+₹${inr(o.fee)}</span> · ` : ''}Enrolled ${Number(o.enrolled)} / ${Number(o.capacity)} · ${remaining} left${facultyCount ? ` · ${facultyCount} faculty` : ''}${o.active ? '' : ' · inactive'}</p>
       </div>
       <input type="number" min="0" value="${esc(o.capacity)}" title="Capacity" class="prog-capacity w-20 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
       <input type="number" min="0" step="0.01" value="${esc(o.fee)}" title="Fee (₹)" class="prog-fee w-24 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
@@ -7098,11 +7099,16 @@ async function handleAddProgramOption(e, form) {
   renderBackendPrograms();
 }
 
-async function saveProgramOption(id, capacity, fee) {
+// Name, capacity and fee. A new name is the workshop's everywhere: the
+// registration form, the programme (see programmeSessions) and the badge.
+async function saveProgramOption(id, capacity, fee, name) {
+  if (name !== undefined && !String(name).trim()) return showToast('Enter a name.');
   const data = await (await fetch(`/api/admin/program-options/${encodeURIComponent(id)}`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ capacity, fee }),
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ capacity, fee, ...(name !== undefined ? { name: String(name).trim() } : {}) }),
   })).json();
   if (!data.success) showToast(data.error || 'Update failed.');
+  else showToast('Saved.', 'success');
   renderBackendPrograms();
 }
 
@@ -13323,6 +13329,9 @@ function editProgrammeSession(id) {
   set('ps-start', s ? s.start : '');
   set('ps-end', s ? s.end : '');
   set('ps-label', s ? s.label : '');
+  const titleBox = document.getElementById('ps-title');
+  titleBox.disabled = false;
+  delete titleBox.dataset.typed;
   set('ps-title', s ? s.title : '');
   // The faculty lists; a session typed before them comes with a proposal.
   const copy = (list) => (list || []).map((x) => ({ ...x }));
@@ -13334,19 +13343,44 @@ function editProgrammeSession(id) {
   renderSessionPeople('speakers');
   renderSessionPeople('chairs');
   set('ps-option', s && s.optionId ? s.optionId : '');
+  syncSessionTitleField();
   document.getElementById('ps-counts').checked = s ? s.counts : true;
   document.getElementById('ps-delete').classList.toggle('hidden', !s);
   document.getElementById('prog-session-form').classList.remove('hidden');
   document.getElementById('ps-title').focus();
 }
 
+// A session for a workshop or practice is called what the workshop is
+// called: its title box shows that name, locked, and is not sent -- the
+// server keeps whatever title was stored. Rename it in Workshops.
+function syncSessionTitleField() {
+  const optSel = document.getElementById('ps-option');
+  const title = document.getElementById('ps-title');
+  const note = document.getElementById('ps-title-note');
+  if (!optSel || !title) return;
+  const p = attState.programme;
+  const opt = optSel.value && p ? (p.options || []).find((o) => String(o.id) === String(optSel.value)) : null;
+  if (opt) {
+    if (!title.disabled) title.dataset.typed = title.value;
+    title.value = opt.name;
+    title.disabled = true;
+  } else if (title.disabled) {
+    title.disabled = false;
+    title.value = title.dataset.typed || '';
+  }
+  title.classList.toggle('bg-slate-50', !!opt);
+  title.classList.toggle('text-slate-500', !!opt);
+  if (note) note.classList.toggle('hidden', !opt);
+}
+
 async function saveProgrammeSession(e) {
   e.preventDefault();
   const id = document.getElementById('ps-id').value;
   const v = (k) => document.getElementById(k).value;
+  const linked = !!v('ps-option');
   const body = {
     hallId: Number(v('ps-hall')), date: v('ps-date'), start: v('ps-start'), end: v('ps-end'), label: v('ps-label'),
-    title: v('ps-title'), optionId: v('ps-option') ? Number(v('ps-option')) : null,
+    title: linked ? undefined : v('ps-title'), optionId: linked ? Number(v('ps-option')) : null,
     people: Object.fromEntries(['speakers', 'chairs'].map((role) => [role,
       psPeople[role].map((p) => (p.guestId != null ? { guestId: p.guestId } : { text: p.text }))])),
     counts: document.getElementById('ps-counts').checked,
