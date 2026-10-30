@@ -9026,13 +9026,15 @@ const hallUrl = (code) => `${String(PORTAL_URL).replace(/\/+$/, '')}/?hall=${cod
 // A session with a faculty list has its speakers and chairs lines made from
 // it, names as the faculty list has them now; one typed before keeps its
 // words. `people` is the list ({ speakers, chairs }), or null.
+// In time order, then by the event's name -- not its hall -- so talks that
+// start together read alphabetically wherever they are.
 async function programmeSessions() {
   const sessions = await dbAll(
     `SELECT s.*, h.name AS hall, o.name AS option_name,
             CASE WHEN s.option_id IS NOT NULL AND ${groupTakesAttendanceSql('g')} = 1 THEN 1 ELSE 0 END AS workshop
        FROM programme_sessions s JOIN halls h ON h.id = s.hall_id
        LEFT JOIN program_options o ON o.id = s.option_id LEFT JOIN program_groups g ON g.id = o.group_id
-      ORDER BY s.session_date, s.start_time, h.sort_order, h.id, s.id`);
+      ORDER BY s.session_date, s.start_time, s.title COLLATE NOCASE, COALESCE(s.label, '') COLLATE NOCASE, h.sort_order, h.id, s.id`);
   const people = await sessionPeople();
   for (const s of sessions) {
     const p = people.get(s.id) || null;
@@ -13756,7 +13758,7 @@ async function guestRowsJoined(where = '', params = []) {
   const theirs = await dbAll(
     `SELECT f.guest_id, f.role, s.title, s.session_date AS date, s.start_time AS start, s.end_time AS end, h.name AS hall
        FROM programme_session_faculty f JOIN programme_sessions s ON s.id = f.session_id JOIN halls h ON h.id = s.hall_id
-      WHERE f.guest_id IS NOT NULL ORDER BY s.session_date, s.start_time, s.id`);
+      WHERE f.guest_id IS NOT NULL ORDER BY s.session_date, s.start_time, s.title COLLATE NOCASE, s.id`);
   for (const g of out) {
     g.sessions = theirs.filter((t) => t.guest_id === g.id)
       .map((t) => ({ role: t.role === 'chair' ? 'Chair' : 'Speaker', title: t.title, date: t.date, start: t.start, end: t.end, hall: t.hall }));

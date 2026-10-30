@@ -92,6 +92,17 @@ check('...the same person once; blank words dropped', JSON.stringify(P.cleanPeop
     check('the editor gets a proposal: the faculty member linked, the rest as words', prop.proposed === true
       && prop.speakers[0].guestId === a.body.id && prop.speakers[1].text === `Dr Not Faculty ${N}` && prop.speakers[2].text === 'and Team', prop);
 
+    console.log('\n== In time order, then by event name ==');
+    // A later hall (higher in the hall order) with a talk at the same time
+    // whose name comes first: it is listed first.
+    const later = (await call('POST', '/api/admin/programme/halls', { name: `Order Hall ${N}` }, admin)).body.id;
+    const first = await call('POST', '/api/admin/programme/sessions', { ...base, hallId: later, title: `Aardvark talk ${N}` }, admin);
+    madeSessions.push(first.body.id);
+    const ids = (await call('GET', '/api/programme', null, admin)).body.sessions.map((x) => x.id);
+    check('two talks at the same time are in name order, not hall order', ids.indexOf(first.body.id) > -1 && ids.indexOf(first.body.id) < ids.indexOf(s.body.id), [ids.indexOf(first.body.id), ids.indexOf(s.body.id)]);
+    const admins = (await call('GET', '/api/admin/programme', null, admin)).body.sessions.map((x) => x.id);
+    check('...in the admin programme too', admins.indexOf(first.body.id) < admins.indexOf(s.body.id));
+
     console.log('\n== Removing a faculty member ==');
     await call('DELETE', `/api/guests/${a.body.id}`, null, admin);
     madeGuests.shift();
@@ -104,7 +115,7 @@ check('...the same person once; blank words dropped', JSON.stringify(P.cleanPeop
     for (const id of madeGuests) await db.run('DELETE FROM guests WHERE id = ?', [id]);
     await db.run('DELETE FROM guests WHERE phone_number = ?', [account]);
     await db.run('DELETE FROM users WHERE phone_number = ?', [account]);
-    await db.run("DELETE FROM halls WHERE name = ?", [`Panel Hall ${N}`]);
+    await db.run("DELETE FROM halls WHERE name IN (?, ?)", [`Panel Hall ${N}`, `Order Hall ${N}`]);
   }
   db.close();
 
