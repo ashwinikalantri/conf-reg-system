@@ -9026,15 +9026,29 @@ const hallUrl = (code) => `${String(PORTAL_URL).replace(/\/+$/, '')}/?hall=${cod
 // A session with a faculty list has its speakers and chairs lines made from
 // it, names as the faculty list has them now; one typed before keeps its
 // words. `people` is the list ({ speakers, chairs }), or null.
-// In time order, then by the event's name -- not its hall -- so talks that
-// start together read alphabetically wherever they are.
+// In time order, then by the event's name -- not its hall. The name is the
+// label the cards lead with ("Workshop 5", "Session 1"), or the title when
+// there is none, compared with numbers as numbers (Workshop 2 before
+// Workshop 10); the title, then the hall, break a tie.
+const programmeNameOrder = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+function programmeOrder(a, b) {
+  const name = (s) => String(s.label || s.title || '').trim();
+  return String(a.session_date).localeCompare(String(b.session_date))
+    || String(a.start_time).localeCompare(String(b.start_time))
+    || programmeNameOrder.compare(name(a), name(b))
+    || programmeNameOrder.compare(String(a.title || ''), String(b.title || ''))
+    || (Number(a.hall_sort) || 0) - (Number(b.hall_sort) || 0)
+    || a.id - b.id;
+}
+
 async function programmeSessions() {
   const sessions = await dbAll(
-    `SELECT s.*, h.name AS hall, o.name AS option_name,
+    `SELECT s.*, h.name AS hall, h.sort_order AS hall_sort, o.name AS option_name,
             CASE WHEN s.option_id IS NOT NULL AND ${groupTakesAttendanceSql('g')} = 1 THEN 1 ELSE 0 END AS workshop
        FROM programme_sessions s JOIN halls h ON h.id = s.hall_id
        LEFT JOIN program_options o ON o.id = s.option_id LEFT JOIN program_groups g ON g.id = o.group_id
-      ORDER BY s.session_date, s.start_time, s.title COLLATE NOCASE, COALESCE(s.label, '') COLLATE NOCASE, h.sort_order, h.id, s.id`);
+      ORDER BY s.session_date, s.start_time, h.sort_order, h.id, s.id`);
+  sessions.sort(programmeOrder);
   const people = await sessionPeople();
   for (const s of sessions) {
     const p = people.get(s.id) || null;
@@ -13756,9 +13770,11 @@ async function guestRowsJoined(where = '', params = []) {
   // Their sessions in the programme, as speaker/facilitator or chair, in time
   // order -- for the coordinators to set travel by.
   const theirs = await dbAll(
-    `SELECT f.guest_id, f.role, s.title, s.session_date AS date, s.start_time AS start, s.end_time AS end, h.name AS hall
+    `SELECT f.guest_id, f.role, s.id, s.label, s.title, s.session_date, s.start_time, h.sort_order AS hall_sort,
+            s.session_date AS date, s.start_time AS start, s.end_time AS end, h.name AS hall
        FROM programme_session_faculty f JOIN programme_sessions s ON s.id = f.session_id JOIN halls h ON h.id = s.hall_id
-      WHERE f.guest_id IS NOT NULL ORDER BY s.session_date, s.start_time, s.title COLLATE NOCASE, s.id`);
+      WHERE f.guest_id IS NOT NULL`);
+  theirs.sort(programmeOrder);
   for (const g of out) {
     g.sessions = theirs.filter((t) => t.guest_id === g.id)
       .map((t) => ({ role: t.role === 'chair' ? 'Chair' : 'Speaker', title: t.title, date: t.date, start: t.start, end: t.end, hall: t.hall }));

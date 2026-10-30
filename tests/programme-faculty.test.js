@@ -95,9 +95,15 @@ check('...the same person once; blank words dropped', JSON.stringify(P.cleanPeop
     console.log('\n== In time order, then by event name ==');
     // A later hall (higher in the hall order) with a talk at the same time
     // whose name comes first: it is listed first.
+    // The name is the label the cards lead with, numbers compared as numbers.
     const later = (await call('POST', '/api/admin/programme/halls', { name: `Order Hall ${N}` }, admin)).body.id;
-    const first = await call('POST', '/api/admin/programme/sessions', { ...base, hallId: later, title: `Aardvark talk ${N}` }, admin);
+    const first = await call('POST', '/api/admin/programme/sessions', { ...base, hallId: later, label: 'Workshop 2', title: `Zebra talk ${N}` }, admin);
     madeSessions.push(first.body.id);
+    const tenth = await call('POST', '/api/admin/programme/sessions', { ...base, label: 'Workshop 10', title: `Aardvark talk ${N}` }, admin);
+    madeSessions.push(tenth.body.id);
+    const order = (await call('GET', '/api/programme', null, admin)).body.sessions.map((x) => x.id);
+    check('by label, Workshop 2 before Workshop 10, whatever the title or hall', order.indexOf(first.body.id) > -1 && order.indexOf(first.body.id) < order.indexOf(tenth.body.id));
+    await call('PUT', `/api/admin/programme/sessions/${s.body.id}`, { ...base, label: 'Workshop 3', people: { speakers: [{ guestId: a.body.id }, { text: 'and Team' }], chairs: [{ guestId: marked.body.id }] } }, admin);
     const ids = (await call('GET', '/api/programme', null, admin)).body.sessions.map((x) => x.id);
     check('two talks at the same time are in name order, not hall order', ids.indexOf(first.body.id) > -1 && ids.indexOf(first.body.id) < ids.indexOf(s.body.id), [ids.indexOf(first.body.id), ids.indexOf(s.body.id)]);
     const admins = (await call('GET', '/api/admin/programme', null, admin)).body.sessions.map((x) => x.id);
