@@ -8,8 +8,8 @@
       <p class="theme"><%= content.theme %></p>
       <p class="hosts">Hosted by the <%= content.host %>, and co-hosted by the <%= content.coHost %>.</p>
       <div class="hero-actions">
-        <% if (fee.phase !== 'spot') { %><a class="btn btn-gold" href="/">Register now</a><% } %>
-        <a class="btn btn-ghost" href="/website/programme">See the programme</a>
+        <% if (fee.phase !== 'spot') { %><a class="btn btn-gold" href="<%= portal %>">Register now</a><% } %>
+        <a class="btn btn-ghost" href="<%= base %>/programme">See the programme</a>
       </div>
       <p class="note"><%= fee.note %></p>
     </div>
@@ -68,7 +68,7 @@
       <p class="kicker"><%= plenary.label %> · <%= plenary.when %></p>
       <h2 style="font-size: 25px"><%= plenary.title %></h2>
       <% if (plenary.speakers) { %><p class="lead"><%= plenary.speakers %><% if (plenary.chairs) { %>, moderated by <%= plenary.chairs %><% } %>.</p><% } %>
-      <a class="arrow-link" href="/website/programme?day=<%= plenary.session_date %>" style="margin-top: auto">See who is speaking when →</a>
+      <a class="arrow-link" href="<%= base %>/programme?day=<%= plenary.session_date %>" style="margin-top: auto">See who is speaking when →</a>
     </article>
     <% } %>
   </div>
@@ -80,7 +80,7 @@
     <div class="stack" style="gap: 12px">
       <h2 class="h2" style="font-size: 28px">About NQOCN</h2>
       <p class="lead"><%= content.about.nqocn[0] %></p>
-      <a class="arrow-link" href="/website/about">More about NQOCN and MGIMS →</a>
+      <a class="arrow-link" href="<%= base %>/about">More about NQOCN and MGIMS →</a>
     </div>
     <div class="stack" style="gap: 12px">
       <h2 class="h2" style="font-size: 28px">About MGIMS, Sevagram</h2>
@@ -93,7 +93,7 @@
   <div class="wrap section stack" style="gap: 20px">
     <p id="partners-h" class="kicker" style="color: var(--muted)">With our partners</p>
     <div class="partners">
-      <% content.partners.forEach((p) => { %><div class="partner"><img src="/website/img/<%= p.file %>" alt="<%= p.name %>" loading="lazy"></div><% }) %>
+      <% content.partners.forEach((p) => { %><div class="partner"><img src="<%= assets %>/img/<%= p.file %>" alt="<%= p.name %>" loading="lazy"></div><% }) %>
     </div>
   </div>
 </section>

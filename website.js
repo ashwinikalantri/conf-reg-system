@@ -16,12 +16,26 @@ const crypto = require('crypto');
 const content = require('./website-content');
 const peopleLib = require('./programme-people');
 
-const NAV = [
-  ['programme', 'Programme'], ['workshops', 'Workshops'], ['registration', 'Registration'], ['abstracts', 'Abstracts'],
-  ['faculty', 'Faculty'], ['team', 'Organising team'], ['visit', 'Getting here'], ['about', 'About'],
+// The menu: three groups that open to their pages, and two plain links.
+// [page, label, what it is] -- the last shown in the desktop drop-downs.
+const MENU = [
+  { label: 'Programme', items: [
+    ['programme', 'Programme', 'Day by day, by hall: every session, speaker and chair'],
+    ['workshops', 'Workshops and QI in practice', 'Pre-conference workshops, seats left, and the exposure visits'],
+  ] },
+  { label: 'Registration', items: [
+    ['registration', 'Registration and fees', 'The fee table, and which fee applies today'],
+    ['abstracts', 'Abstract guidelines', 'Eligibility, review, awards and presentation rules'],
+    ['sample-abstract', 'Sample abstract', 'A model structured abstract, to follow its format'],
+  ] },
+  { label: 'People', items: [
+    ['faculty', 'International faculty', 'Who is coming, and when they speak'],
+    ['team', 'Organising team', 'Patrons, committees and secretaries'],
+  ] },
+  { key: 'visit', label: 'Getting here' },
+  { key: 'about', label: 'About' },
 ];
-// Pages reached from other pages rather than from the menu.
-const PAGES = new Set(['', ...NAV.map(([k]) => k), 'sample-abstract']);
+const PAGES = new Set(['', ...MENU.flatMap((m) => (m.items ? m.items.map(([k]) => k) : [m.key]))]);
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -70,7 +84,7 @@ function sessionNames(s) {
   return list;
 }
 
-module.exports = function mountWebsite(app, d) {
+module.exports = function mountWebsite(app, d, { base = '/website', portal = '/' } = {}) {
   // d: { dbAll, dbGet, CONFERENCE, programmeSessions, fetchProgramGroups,
   //      getFeeConfig, currentPhase, istDateString, abstractSubmissionOpen,
   //      formatConferenceDates }
@@ -84,7 +98,13 @@ module.exports = function mountWebsite(app, d) {
     const start = parseDate(C.startDate);
     const daysToGo = start ? Math.round((start - parseDate(today)) / 86400000) : null;
     return {
-      nav: NAV,
+      menu: MENU,
+      base,
+      home: base || '/',
+      // The delegate portal: Sign in and Register.
+      portal,
+      // Images and the stylesheet: public/website, wherever the pages are.
+      assets: '/website',
       cssVersion,
       content,
       conf: {
@@ -159,7 +179,7 @@ module.exports = function mountWebsite(app, d) {
             ? `${workshops.length} hands-on workshops across the MGIMS campus, in small groups, for the whole day.`
             : `${talks.length} sessions across ${new Set(talks.flatMap((s) => s.halls)).size} halls: talks, panels, the NQOCN Oration, award papers, orals and posters.`,
           lines: sortLines(lines).slice(0, 5),
-          link: workshops.length ? '/website/workshops' : `/website/programme?day=${date}`,
+          link: workshops.length ? `${base}/workshops` : `${base}/programme?day=${date}`,
           linkText: workshops.length ? 'All workshops' : 'Full programme',
         };
       });
@@ -191,7 +211,7 @@ module.exports = function mountWebsite(app, d) {
         }
         for (const b of breaks) rows.push({ kind: 'break', text: `${timeRange(b)} · ${b.title}${b.halls.length === 1 ? `, ${b.halls[0]}` : ''}` });
       }
-      const link = (q) => `/website/programme?${new URLSearchParams(q).toString()}`;
+      const link = (q) => `${base}/programme?${new URLSearchParams(q).toString()}`;
       return {
         day, dayLabel: dayLong(day),
         days: dates.map((x) => ({ date: x, label: dayShort(x), href: link({ day: x }), current: x === day })),
@@ -259,7 +279,7 @@ module.exports = function mountWebsite(app, d) {
           for (const n of sessionNames(s)) {
             if (peopleLib.normName(n.name) !== key) continue;
             const part = n.role === 'chair' ? `${chairLabel(s).replace(/s$/, '')}: ` : '';
-            theirs.push({ title: `${part}${s.title}`, when: `${dayLong(s.session_date)}, ${time12(s.start_time)} · ${s.halls.join(', ')}`, href: `/website/programme?day=${s.session_date}` });
+            theirs.push({ title: `${part}${s.title}`, when: `${dayLong(s.session_date)}, ${time12(s.start_time)} · ${s.halls.join(', ')}`, href: `${base}/programme?day=${s.session_date}` });
           }
         }
         return { ...f, sessions: theirs.filter((x, i, a) => a.findIndex((y) => y.title === x.title && y.when === x.when) === i) };
@@ -291,15 +311,14 @@ module.exports = function mountWebsite(app, d) {
     try {
       const data = await builders[key](req);
       res.set('Cache-Control', 'public, max-age=60');
-      // The sample abstract sits under Abstracts in the menu.
-      res.render(`website/${key || 'home'}`, { ...(await common()), page: key === 'sample-abstract' ? 'abstracts' : key, ...data });
+      res.render(`website/${key || 'home'}`, { ...(await common()), page: key, ...data });
     } catch (err) {
       next(err);
     }
   }
 
-  app.get(['/website', '/website/'], (req, res, next) => render(req, res, next, ''));
-  app.get('/website/:page', async (req, res, next) => {
+  app.get(base ? [base, `${base}/`] : ['/'], (req, res, next) => render(req, res, next, ''));
+  app.get(`${base}/:page`, async (req, res, next) => {
     const key = String(req.params.page || '');
     if (PAGES.has(key) && key) return render(req, res, next, key);
     try {
@@ -310,4 +329,4 @@ module.exports = function mountWebsite(app, d) {
   });
 };
 
-module.exports.NAV = NAV;
+module.exports.MENU = MENU;

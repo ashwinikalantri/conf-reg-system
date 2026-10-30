@@ -19,8 +19,8 @@
           </ul>
         </div>
       <% }) %>
-      <% if (abstract.open) { %><a class="btn btn-navy" href="/" style="align-self: flex-start">Submit in the portal</a><% } else { %>
-        <p class="lead">Already submitted? Add every co-author, in order, from the Abstract card in the <a href="/">portal</a>.</p>
+      <% if (abstract.open) { %><a class="btn btn-navy" href="<%= portal %>" style="align-self: flex-start">Submit in the portal</a><% } else { %>
+        <p class="lead">Already submitted? Add every co-author, in order, from the Abstract card in the <a href="<%= portal %>">portal</a>.</p>
       <% } %>
     </div>
     <aside class="stack" style="gap: 16px">
@@ -28,7 +28,7 @@
         <p class="kicker">Sample structured abstract</p>
         <h2 style="font-size: 20px">Quality improvement in Kangaroo Mother Care: learning from a teaching hospital</h2>
         <p class="lead" style="font-size: 16px">A model of the format: title, category, authors, institution, then Background, Aim, Methods, Results and Conclusions in 316 words.</p>
-        <a class="btn btn-outline" href="/website/sample-abstract" style="align-self: flex-start">Read the sample abstract</a>
+        <a class="btn btn-outline" href="<%= base %>/sample-abstract" style="align-self: flex-start">Read the sample abstract</a>
       </div>
       <div class="facts">
         <% content.abstracts.rules.forEach(([b, s]) => { %><div class="fact"><b><%= b %></b><span><%= s %></span></div><% }) %>

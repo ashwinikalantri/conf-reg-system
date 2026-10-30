@@ -3,7 +3,7 @@
 
 <section class="band-navy page-head">
   <div class="wrap">
-    <p class="kicker"><a href="/website/abstracts" style="color: inherit; text-decoration: none">Abstract guidelines</a> · For reference only</p>
+    <p class="kicker"><a href="<%= base %>/abstracts" style="color: inherit; text-decoration: none">Abstract guidelines</a> · For reference only</p>
     <h1>Sample structured abstract</h1>
     <p>A model of the format to follow: the details first, then Background, Aim, Methods, Results and Conclusions, in no more than 400 words.</p>
   </div>
@@ -32,7 +32,7 @@
       <div class="facts" style="grid-template-columns: minmax(0, 1fr)">
         <% content.abstracts.rules.slice(0, 2).forEach(([b, s]) => { %><div class="fact" style="background: #fff"><b><%= b %></b><span><%= s %></span></div><% }) %>
       </div>
-      <a class="arrow-link" href="/website/abstracts">Back to the abstract guidelines →</a>
+      <a class="arrow-link" href="<%= base %>/abstracts">Back to the abstract guidelines →</a>
     </aside>
   </div>
 </section>

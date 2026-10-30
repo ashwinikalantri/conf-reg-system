@@ -11,7 +11,7 @@
   <div class="wrap section grid grid-2" style="gap: 20px">
     <% people.forEach((f) => { %>
       <article class="faculty-card">
-        <img src="/website/img/<%= f.photo %>" alt="<%= f.name %>" width="160" height="160" loading="lazy">
+        <img src="<%= assets %>/img/<%= f.photo %>" alt="<%= f.name %>" width="160" height="160" loading="lazy">
         <div class="body">
           <h2><%= f.name %></h2>
           <p class="lead" style="font-size: 16px"><%= f.role %></p>

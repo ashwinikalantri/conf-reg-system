@@ -15,7 +15,7 @@
         <div class="team-grid">
           <% g.people.forEach((p) => { %>
             <figure class="person">
-              <img src="/website/img/<%= p.photo %>" alt="<%= p.name %>" width="144" height="144" loading="lazy">
+              <img src="<%= assets %>/img/<%= p.photo %>" alt="<%= p.name %>" width="144" height="144" loading="lazy">
               <figcaption class="stack" style="gap: 2px"><b><%= p.name %></b><% if (p.role) { %><span><%= p.role %></span><% } %></figcaption>
             </figure>
           <% }) %>

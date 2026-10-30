@@ -8,36 +8,56 @@
 <meta property="og:title" content="<%= conf.name %>">
 <meta property="og:description" content="<%= conf.dates %> · <%= content.venue.name %> · <%= content.theme %>">
 <meta property="og:type" content="website">
-<meta property="og:image" content="/website/img/nqocn-mgims-logo.png">
-<link rel="icon" href="/website/img/nqocn-mgims-logo.png">
+<meta property="og:image" content="<%= assets %>/img/nqocn-mgims-logo.png">
+<link rel="icon" href="<%= assets %>/img/nqocn-mgims-logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/website/site.css?v=<%= cssVersion %>">
+<link rel="stylesheet" href="<%= assets %>/site.css?v=<%= cssVersion %>">
 <% if (typeof extraHead !== 'undefined') { %><%- extraHead %><% } %>
 </head>
 <body>
 <a class="skip" href="#main">Skip to the content</a>
 <header class="site-header">
   <div class="wrap">
-    <a class="brand" href="/website" aria-label="<%= conf.acronym || 'NQOCN 2026' %> home"><img src="/website/img/nqocn-mgims-logo.png" alt="NQOCN, Nationwide Quality of Care Network, with MGIMS Sevagram" width="1021" height="203"></a>
+    <a class="brand" href="<%= home %>" aria-label="<%= conf.acronym || 'NQOCN 2026' %> home"><img src="<%= assets %>/img/nqocn-mgims-logo.png" alt="NQOCN, Nationwide Quality of Care Network, with MGIMS Sevagram" width="1021" height="203"></a>
     <nav class="nav" aria-label="Main">
-      <% nav.forEach(([key, label]) => { %><a href="/website/<%= key %>"<% if (page === key) { %> aria-current="page"<% } %>><%= label %></a>
-      <% }) %>
+      <% menu.forEach((m, mi) => { if (m.items) { const here = m.items.some(([k]) => k === page); %>
+        <details class="dd">
+          <summary<% if (here) { %> class="here"<% } %>><%= m.label %><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></summary>
+          <div class="dd-panel">
+            <% m.items.forEach(([key, label, note]) => { %><a href="<%= base %>/<%= key %>"<% if (page === key) { %> aria-current="page"<% } %>><b><%= label %></b><span><%= note %></span></a><% }) %>
+          </div>
+        </details>
+      <% } else { %>
+        <a class="top" href="<%= base %>/<%= m.key %>"<% if (page === m.key) { %> aria-current="page"<% } %>><%= m.label %></a>
+      <% } }) %>
     </nav>
     <div class="header-actions">
-      <a class="signin" href="/">Sign in</a>
-      <a class="btn btn-navy" href="/">Register</a>
+      <a class="signin" href="<%= portal %>">Sign in</a>
+      <a class="btn btn-navy" href="<%= portal %>">Register</a>
       <details class="menu">
         <summary aria-label="Menu"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></summary>
         <nav class="menu-panel" aria-label="Main">
-          <a href="/website"<% if (page === '') { %> aria-current="page"<% } %>>Home</a>
-          <% nav.forEach(([key, label]) => { %><a href="/website/<%= key %>"<% if (page === key) { %> aria-current="page"<% } %>><%= label %></a>
-          <% }) %>
-          <a href="/">Sign in</a>
+          <a href="<%= home %>"<% if (page === '') { %> aria-current="page"<% } %>>Home</a>
+          <% menu.forEach((m) => { if (m.items) { %>
+            <p class="menu-group"><%= m.label %></p>
+            <% m.items.forEach(([key, label]) => { %><a href="<%= base %>/<%= key %>"<% if (page === key) { %> aria-current="page"<% } %>><%= label %></a><% }) %>
+          <% } }) %>
+          <hr>
+          <% menu.filter((m) => !m.items).forEach((m) => { %><a href="<%= base %>/<%= m.key %>"<% if (page === m.key) { %> aria-current="page"<% } %>><%= m.label %></a><% }) %>
+          <a href="<%= portal %>">Sign in</a>
         </nav>
       </details>
     </div>
   </div>
 </header>
+<script>
+(function () {
+  var dds = Array.prototype.slice.call(document.querySelectorAll('details.dd, details.menu'));
+  dds.forEach(function (d) { d.addEventListener('toggle', function () { if (d.open) dds.forEach(function (o) { if (o !== d) o.open = false; }); }); });
+  document.addEventListener('click', function (e) { dds.forEach(function (d) { if (d.open && !d.contains(e.target)) d.open = false; }); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') dds.forEach(function (d) { if (d.open) { d.open = false; var s = d.querySelector('summary'); if (s) s.focus(); } }); });
+})();
+</script>
 <main id="main">

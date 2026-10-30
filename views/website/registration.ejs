@@ -6,7 +6,7 @@
       <h1>Registration and fees</h1>
       <p>Every delegate registers, whatever their category. <%= fee.note %></p>
     </div>
-    <% if (fee.phase !== 'spot') { %><a class="btn btn-gold" href="/">Register now</a><% } %>
+    <% if (fee.phase !== 'spot') { %><a class="btn btn-gold" href="<%= portal %>">Register now</a><% } %>
   </div>
 </section>
 
@@ -47,7 +47,7 @@
       <% if (abstract.deadline) { %><p class="chip<%= abstract.open ? ' chip-gold' : '' %>"><%= abstract.open ? `Submissions open until ${abstract.deadlineText}` : `Submission closed on ${abstract.deadlineText}` %></p><% } %>
       <p class="lead">Structured abstracts of up to 400 words on healthcare quality and patient safety, from registered delegates. The scientific committee reviews each one; its decision is final.</p>
       <p class="lead">Already submitted? Add every co-author, in order, from the Abstract card in the portal.</p>
-      <a class="arrow-link" href="/website/abstracts">Abstract guidelines and a sample abstract →</a>
+      <a class="arrow-link" href="<%= base %>/abstracts">Abstract guidelines and a sample abstract →</a>
     </div>
     <div class="facts">
       <% content.abstracts.rules.forEach(([b, s]) => { %><div class="fact" style="background: #fff"><b><%= b %></b><span><%= s %></span></div><% }) %>

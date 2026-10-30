@@ -30,6 +30,12 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     }
     check('every page has the menu and the MGIMS copyright', pages.every((p) => /href="\/website\/programme"/.test(got[p]) && /© Mahatma Gandhi Institute of Medical Sciences, Sevagram/.test(got[p])));
     check('...and links Register and Sign in to the portal', pages.every((p) => /class="btn btn-navy" href="\/"/.test(got[p])));
+    const groups = [...got[''].matchAll(/<details class="dd">\s*<summary[^>]*>([A-Za-z ]+)</g)].map((m) => m[1].trim());
+    check('the menu is three groups and two links', JSON.stringify(groups) === JSON.stringify(['Programme', 'Registration', 'People'])
+      && /class="top" href="\/website\/visit"/.test(got['']) && /class="top" href="\/website\/about"/.test(got['']), groups);
+    check('...each group holding its pages', /<details class="dd">[\s\S]*?href="\/website\/workshops"[\s\S]*?<\/details>/.test(got['']) && /href="\/website\/faculty"[\s\S]*?href="\/website\/team"/.test(got['']));
+    check('the group of the page you are on is marked', /<summary class="here">Programme/.test(got.workshops) && /<summary class="here">People/.test(got.team));
+    check('on a phone the same pages, under group headings', /<p class="menu-group">Registration<\/p>/.test(got['']));
     check('the stylesheet, logo and a team photo are served', (await call('GET', '/website/site.css', null, null)).status === 200
       && (await call('GET', '/website/img/nqocn-mgims-logo.png', null, null)).status === 200
       && (await call('GET', '/website/img/people/dr-vikram-datta.png', null, null)).status === 200);
@@ -67,7 +73,7 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     check('the sample abstract is a page of its own', sample.status === 200 && /Kangaroo Mother Care/.test(sample.raw || '')
       && ['Background', 'Aim statement', 'Methods', 'Results', 'Conclusions'].every((h) => (sample.raw || '').includes(`<h3>${h}</h3>`)));
     check('...linked from the guidelines, with no PDF', got.abstracts.includes('href="/website/sample-abstract"') && !/\.pdf/.test(got.abstracts));
-    check('...shown under Abstracts in the menu', /href="\/website\/abstracts" aria-current="page"/.test(sample.raw || ''));
+    check('...in the menu under Registration', /href="\/website\/sample-abstract" aria-current="page"/.test(sample.raw || '') && /<summary class="here">Registration/.test(sample.raw || ''));
 
     console.log('\n== Nothing private ==');
     const all = Object.values(got).join('\n');

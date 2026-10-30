@@ -26,7 +26,7 @@
   <div class="wrap section stack" style="gap: 20px">
     <h2 id="partners-h" class="h2" style="font-size: 26px">Our partners</h2>
     <div class="partners">
-      <% content.partners.forEach((p) => { %><div class="partner"><img src="/website/img/<%= p.file %>" alt="<%= p.name %>" loading="lazy"></div><% }) %>
+      <% content.partners.forEach((p) => { %><div class="partner"><img src="<%= assets %>/img/<%= p.file %>" alt="<%= p.name %>" loading="lazy"></div><% }) %>
     </div>
   </div>
 </section>

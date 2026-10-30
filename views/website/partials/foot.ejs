@@ -6,17 +6,17 @@
       <p><%= conf.dates %><br><%= content.venue.name %>, <%= content.venue.address %></p>
     </div>
     <nav class="links" aria-label="Footer">
-      <a href="/website/programme">Programme</a>
-      <a href="/website/workshops">Workshops</a>
-      <a href="/website/registration">Registration and fees</a>
-      <a href="/website/abstracts">Abstract guidelines</a>
-      <a href="/website/visit">Getting here and where to stay</a>
+      <a href="<%= base %>/programme">Programme</a>
+      <a href="<%= base %>/workshops">Workshops</a>
+      <a href="<%= base %>/registration">Registration and fees</a>
+      <a href="<%= base %>/abstracts">Abstract guidelines</a>
+      <a href="<%= base %>/visit">Getting here and where to stay</a>
     </nav>
     <div class="stack" style="gap: 8px">
       <b>Contact</b>
       <% if (content.contactEmail) { %><p>Email: <a href="mailto:<%= content.contactEmail %>"><%= content.contactEmail %></a></p><% } %>
       <p>At the venue: the Registration counter</p>
-      <p><a href="/">Delegate portal: sign in or register</a></p>
+      <p><a href="<%= portal %>">Delegate portal: sign in or register</a></p>
     </div>
   </div>
   <div class="wrap legal">© <%= content.copyright %>. All rights reserved.</div>
