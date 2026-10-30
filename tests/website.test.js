@@ -64,6 +64,11 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     const pdf = await call('GET', '/website/docs/sample-abstract.pdf', null, null);
     check('the sample abstract opens as a PDF', pdf.status === 200 && /application\/pdf/.test(pdf.headers['content-type'] || ''), pdf.headers && pdf.headers['content-type']);
     check('the registration page links to them', got.registration.includes('href="/website/abstracts"'));
+    const sample = await call('GET', '/website/sample-abstract', null, null);
+    check('the sample abstract is a page of its own', sample.status === 200 && /Kangaroo Mother Care/.test(sample.raw || '')
+      && ['Background', 'Aim statement', 'Methods', 'Results', 'Conclusions'].every((h) => (sample.raw || '').includes(`<h3>${h}</h3>`)));
+    check('...linked from the guidelines, which keep the PDF too', got.abstracts.includes('href="/website/sample-abstract"') && got.abstracts.includes('sample-abstract.pdf'));
+    check('...shown under Abstracts in the menu', /href="\/website\/abstracts" aria-current="page"/.test(sample.raw || ''));
 
     console.log('\n== Nothing private ==');
     const all = Object.values(got).join('\n');

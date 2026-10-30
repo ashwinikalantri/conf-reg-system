@@ -20,7 +20,8 @@ const NAV = [
   ['programme', 'Programme'], ['workshops', 'Workshops'], ['registration', 'Registration'], ['abstracts', 'Abstracts'],
   ['faculty', 'Faculty'], ['team', 'Organising team'], ['visit', 'Getting here'], ['about', 'About'],
 ];
-const PAGES = new Set(['', ...NAV.map(([k]) => k)]);
+// Pages reached from other pages rather than from the menu.
+const PAGES = new Set(['', ...NAV.map(([k]) => k), 'sample-abstract']);
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -247,6 +248,8 @@ module.exports = function mountWebsite(app, d) {
       return { abstract: abstractState() };
     },
 
+    async 'sample-abstract' () { return {}; },
+
     async faculty() {
       const all = await sessions();
       const people = content.internationalFaculty.map((f) => {
@@ -288,7 +291,8 @@ module.exports = function mountWebsite(app, d) {
     try {
       const data = await builders[key](req);
       res.set('Cache-Control', 'public, max-age=60');
-      res.render(`website/${key || 'home'}`, { ...(await common()), page: key, ...data });
+      // The sample abstract sits under Abstracts in the menu.
+      res.render(`website/${key || 'home'}`, { ...(await common()), page: key === 'sample-abstract' ? 'abstracts' : key, ...data });
     } catch (err) {
       next(err);
     }

@@ -205,6 +205,21 @@ table.fees thead .past { text-decoration: none; }
 .split > :first-child { flex: 1 1 520px; min-width: 0; }
 .split > :last-child { flex: 1 1 320px; min-width: 0; }
 
+/* Sample abstract: set like the page it models -- details, then run-in
+   section headings, as in a printed abstract. */
+.sample { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 28px 22px; display: flex; flex-direction: column; gap: 18px; max-width: 780px; box-shadow: 0 1px 2px rgba(19, 33, 45, 0.04); }
+@media (min-width: 720px) { .sample { padding: 44px 48px; } }
+.sample h2 { font-size: 24px; line-height: 1.25; }
+@media (min-width: 720px) { .sample h2 { font-size: 28px; } }
+.sample-details { margin: 0; display: flex; flex-direction: column; gap: 6px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+.sample-details div { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; }
+@media (min-width: 560px) { .sample-details div { grid-template-columns: 190px minmax(0, 1fr); gap: 12px; } }
+.sample-details dt { font-weight: 700; color: var(--ink); }
+.sample-details dd { margin: 0; color: var(--text); }
+.sample-section { line-height: 1.65; color: var(--text); max-width: 70ch; }
+.sample-section h3 { display: inline; font-family: var(--body); font-size: 17px; font-weight: 700; color: var(--navy); margin-right: 6px; }
+.sample-section p { display: inline; }
+
 /* About */
 .prose { display: flex; flex-direction: column; gap: 14px; color: var(--text); max-width: 68ch; }
 

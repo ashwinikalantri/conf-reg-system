@@ -108,12 +108,31 @@ module.exports = {
       ['Certificates', 'for every presenter; prizes for the best paper and poster'],
     ],
     sampleAbstract: 'docs/sample-abstract.pdf',
+    // The model abstract, as a page (/website/sample-abstract). For
+    // reference only: the format, not a submission.
+    sample: {
+      title: 'Quality improvement in Kangaroo Mother Care: learning from a teaching hospital',
+      details: [
+        ['Category', 'Oral / poster'],
+        ['Authors', 'Amol Joshi, Atul Londhe, Trupti Joshi, Laxmikant Deshmukh'],
+        ['Institution', 'Government Medical College, Aurangabad'],
+        ['Corresponding author', 'Email address and telephone number'],
+        ['Word count', '316 words (up to 400)'],
+      ],
+      sections: [
+        ['Background', 'Kangaroo Mother Care (KMC) is a low-resource, evidence-based, high-impact intervention for low-birth weight (LBW) care. Quality improvement in KMC requires meso-level, macro-level and micro-level interventions. Our institution, a public teaching hospital, hosts a level-II/III neonatal intensive care unit (NICU). The average demand for beds typically exceeds available capacity, with 60% occupancy attributed to LBW patients. There was low uptake of KMC practice at our unit.'],
+        ['Aim statement', 'In the initial phase, we aimed to improve the coverage of KMC in admitted eligible neonates from a baseline of 20%–80% within 15 days. After a period of complacency, we revised the aim statement with a target of improving the percentage of babies receiving 6-hour KMC from 30% to 80% in 12 weeks.'],
+        ['Methods', 'We report this quasi-experimental time-series study. With the Point of Care Quality Improvement methodology, we performed Plan-Do-Study-Act (PDSA) cycles to improve KMC practice. We involved all the healthcare workers, mothers and caregivers to customise various KMC tools (KMC book format, KMC bag, mother\u2019s gown) and minimise interruptions. Feedback from all levels guided our PDSA cycles.'],
+        ['Results', 'The percentage of babies receiving at least 1-hour KMC increased from 20% to 100% within 15 days of August 2017. In the improvement phase, baseline 6-hour KMC coverage of 30% increased to 80% within 12 weeks (October–December 2017). It sustained for more than 2 years (January 2018 till February 2020) at 76.5%±2.49%.'],
+        ['Conclusions', 'Quality improvement methods helped increase the coverage and percentage of babies receiving 6-hour KMC per day in our NICU. The duration specified KMC coverage should be adopted as the quality indicator of KMC. The training of healthcare workers and KMC provider should include hands-on sessions involving the mother and the baby. Maintaining data and providing suitable KMC tools are necessary elements for improving KMC. Minimising interruption is possible with family support and appropriate scheduling of activities. Having a designated KMC block helps in peer motivation.'],
+      ],
+    },
     sections: [
       { title: 'Eligibility and format', items: [
         'Only registered delegates may submit a paper or a poster.',
         'The conference theme is healthcare quality and patient safety.',
         'Submit a structured abstract — Background, Aim, Methods, Results, Conclusion — of no more than 400 words.',
-        'A model abstract shows the format: see the sample below.',
+        'A model abstract shows the format: see the sample abstract.',
       ] },
       { title: 'Review and presentation categories', items: [
         'An expert scientific committee evaluates every submission; its decision is final.',

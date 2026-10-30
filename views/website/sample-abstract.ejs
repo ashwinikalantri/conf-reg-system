@@ -1,0 +1,41 @@
+<%- include('partials/head', { title: 'Sample structured abstract' }) %>
+<% const sample = content.abstracts.sample; %>
+
+<section class="band-navy page-head">
+  <div class="wrap">
+    <p class="kicker"><a href="/website/abstracts" style="color: inherit; text-decoration: none">Abstract guidelines</a> · For reference only</p>
+    <h1>Sample structured abstract</h1>
+    <p>A model of the format to follow: the details first, then Background, Aim, Methods, Results and Conclusions, in no more than 400 words.</p>
+  </div>
+</section>
+
+<section class="band-tint">
+  <div class="wrap section split">
+    <article class="sample" aria-labelledby="sample-title">
+      <p class="kicker">Sample · for reference only</p>
+      <h2 id="sample-title"><%= sample.title %></h2>
+      <dl class="sample-details">
+        <% sample.details.forEach(([k, v]) => { %><div><dt><%= k %></dt><dd><%= v %></dd></div><% }) %>
+      </dl>
+      <% sample.sections.forEach(([h, text]) => { %>
+        <section class="sample-section">
+          <h3><%= h %></h3>
+          <p><%= text %></p>
+        </section>
+      <% }) %>
+    </article>
+    <aside class="stack" style="gap: 16px">
+      <div class="card">
+        <p class="kicker">How it maps to the portal</p>
+        <p class="lead" style="font-size: 16px">The portal's abstract form has the same five parts — Background, Aim, Methods, Results and Conclusion — with a live word count, then keywords. Authors are added in order, from the Abstract card.</p>
+      </div>
+      <div class="facts" style="grid-template-columns: minmax(0, 1fr)">
+        <% content.abstracts.rules.slice(0, 2).forEach(([b, s]) => { %><div class="fact" style="background: #fff"><b><%= b %></b><span><%= s %></span></div><% }) %>
+      </div>
+      <a class="arrow-link" href="/website/abstracts">Back to the abstract guidelines →</a>
+      <a class="arrow-link" href="/website/<%= content.abstracts.sampleAbstract %>" style="font-weight: 600; font-size: 15px">Download it as a PDF</a>
+    </aside>
+  </div>
+</section>
+
+<%- include('partials/foot') %>

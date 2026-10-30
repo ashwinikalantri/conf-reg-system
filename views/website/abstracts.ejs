@@ -28,7 +28,8 @@
         <p class="kicker">Sample structured abstract</p>
         <h2 style="font-size: 20px">Quality improvement in Kangaroo Mother Care: learning from a teaching hospital</h2>
         <p class="lead" style="font-size: 16px">A model of the format: title, category, authors, institution, then Background, Aim, Methods, Results and Conclusions in 316 words.</p>
-        <a class="btn btn-outline" href="/website/<%= content.abstracts.sampleAbstract %>" target="_blank" rel="noopener" style="align-self: flex-start">Open the sample (PDF)</a>
+        <a class="btn btn-outline" href="/website/sample-abstract" style="align-self: flex-start">Read the sample abstract</a>
+        <a href="/website/<%= content.abstracts.sampleAbstract %>" style="font-size: 15px; font-weight: 600">or download it as a PDF</a>
       </div>
       <div class="facts">
         <% content.abstracts.rules.forEach(([b, s]) => { %><div class="fact"><b><%= b %></b><span><%= s %></span></div><% }) %>
