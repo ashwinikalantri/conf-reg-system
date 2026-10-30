@@ -10,7 +10,17 @@
 //   * nothing typed by an admin is sent unescaped, and nothing private is
 //     shown: no email address, no mobile number;
 //   * an unknown page is a 404, in the site's own look.
-const { call, check, report, adminLogin, openDb } = require('./harness');
+const { call, check, report, adminLogin, openDb, HOST, PORT } = require('./harness');
+const http = require('http');
+
+// A request as if to the website's own address (nqocn2026.mgims.ac.in).
+const SITE = 'nqocn2026.mgims.ac.in';
+const asSite = (path, method = 'GET') => new Promise((resolve, reject) => {
+  const r = http.request({ host: HOST, port: PORT, path, method, headers: { Host: SITE } }, (res) => {
+    let raw = ''; res.on('data', (c) => { raw += c; }); res.on('end', () => resolve({ status: res.statusCode, location: res.headers.location, raw }));
+  });
+  r.on('error', reject); r.end();
+});
 
 const N = String(Date.now() % 100000000).padStart(8, '0');
 
@@ -74,6 +84,27 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
       && ['Background', 'Aim statement', 'Methods', 'Results', 'Conclusions'].every((h) => (sample.raw || '').includes(`<h3>${h}</h3>`)));
     check('...linked from the guidelines, with no PDF', got.abstracts.includes('href="/website/sample-abstract"') && !/\.pdf/.test(got.abstracts));
     check('...in the menu under Registration', /href="\/website\/sample-abstract" aria-current="page"/.test(sample.raw || '') && /<summary class="here">Registration/.test(sample.raw || ''));
+
+    console.log('\n== On its own address, at the root ==');
+    const home = await asSite('/');
+    check('nqocn2026.mgims.ac.in/ is the website home', home.status === 200 && /Two days at Sevagram/.test(home.raw), home.status);
+    check('...its links are at the root', /href="\/programme"/.test(home.raw) && !/href="\/website\/(programme|workshops|registration|abstracts|faculty|team|visit|about)/.test(home.raw));
+    check('...its images and stylesheet still load', /src="\/website\/img\/nqocn-mgims-logo\.png"/.test(home.raw) && /href="\/website\/site\.css/.test(home.raw));
+    check('...Register and Sign in go to the portal\'s address', /class="btn btn-navy" href="https?:\/\/[^"]+\/"/.test(home.raw) && !/class="btn btn-navy" href="\/"/.test(home.raw));
+    check('...and it names itself as the address to list', /<link rel="canonical" href="https:\/\/nqocn2026\.mgims\.ac\.in\/">/.test(home.raw));
+    check('every page opens there', (await Promise.all(['/programme', '/workshops', '/registration', '/abstracts', '/sample-abstract', '/faculty', '/team', '/visit', '/about'].map((x) => asSite(x)))).every((r) => r.status === 200));
+    const old = await asSite('/website/programme?day=2026-11-22');
+    check('an old /website link there moves to the root', old.status === 301 && old.location === '/programme?day=2026-11-22', [old.status, old.location]);
+    const aspx = await asSite('/Abstarct_Instructions.aspx');
+    check('the earlier site\'s pages move to their new ones', aspx.status === 301 && aspx.location === '/abstracts'
+      && (await asSite('/ScientificProgrammeDay2.aspx')).location === '/programme?day=2026-11-22', aspx.location);
+    const qr = await asSite('/?hall=ABCD2345');
+    check('a hall QR link goes to the portal', qr.status === 302 && /\/\?hall=ABCD2345$/.test(qr.location || '') && !/^\//.test(qr.location || ''), qr.location);
+    const adm = await asSite('/admin');
+    check('the admin panel goes to the portal', adm.status === 302 && /\/admin$/.test(adm.location || ''), adm.location);
+    check('the API is not served there', (await asSite('/api/conference')).status === 302);
+    check('an unknown page there is the site\'s 404', (await asSite('/no-such-page')).status === 404);
+    check('the portal\'s own address is unchanged: / is still the portal', !/Two days at Sevagram/.test((await call('GET', '/', null, null)).raw || ''));
 
     console.log('\n== Nothing private ==');
     const all = Object.values(got).join('\n');

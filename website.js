@@ -84,7 +84,23 @@ function sessionNames(s) {
   return list;
 }
 
-module.exports = function mountWebsite(app, d, { base = '/website', portal = '/' } = {}) {
+// The site is served twice: at /website on the portal's own address, and at
+// the root of its own address (`host`, nqocn2026.mgims.ac.in) once that is
+// pointed here. On its own address, anything meant for the portal -- sign
+// in, admin, a hall's QR link -- is sent to the portal (`portalUrl`).
+const hostOf = (req) => String(req.headers.host || '').split(':')[0].toLowerCase();
+
+// The earlier site's pages on that address (an ASP.NET site), each to its
+// page here, so old links and search results still land somewhere useful.
+const OLD_PAGES = {
+  'index.aspx': '/', 'orgteam.aspx': '/team', 'internationalfaculty.aspx': '/faculty',
+  'abstarct_instructions.aspx': '/abstracts', 'fees.aspx': '/registration', 'accommodationoption.aspx': '/visit',
+  'workshops.aspx': '/workshops', 'qipractice.aspx': '/workshops', 'gettinghere.aspx': '/visit',
+  'scientificprogrammeday1.aspx': '/programme?day=2026-11-21', 'scientificprogrammeday2.aspx': '/programme?day=2026-11-22',
+  'aboutmgims.aspx': '/about', 'aboutnqocn.aspx': '/about',
+};
+
+module.exports = function mountWebsite(app, d, { host = '', portalUrl = () => '' } = {}) {
   // d: { dbAll, dbGet, CONFERENCE, programmeSessions, fetchProgramGroups,
   //      getFeeConfig, currentPhase, istDateString, abstractSubmissionOpen,
   //      formatConferenceDates }
@@ -92,17 +108,21 @@ module.exports = function mountWebsite(app, d, { base = '/website', portal = '/'
     try { return crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'public', 'website', 'site.css'))).digest('hex').slice(0, 10); } catch (e) { return String(Date.now()); }
   })();
 
-  async function common() {
+  // ctx: { base, portal, path } -- where the pages are, where the portal is,
+  // and this page's own path.
+  async function common(ctx) {
     const C = d.CONFERENCE;
     const today = d.istDateString();
     const start = parseDate(C.startDate);
     const daysToGo = start ? Math.round((start - parseDate(today)) / 86400000) : null;
     return {
       menu: MENU,
-      base,
-      home: base || '/',
+      base: ctx.base,
+      home: ctx.base || '/',
       // The delegate portal: Sign in and Register.
-      portal,
+      portal: ctx.portal,
+      // The one address search engines should list, when the site has its own.
+      canonical: host ? `https://${host}${ctx.path}` : '',
       // Images and the stylesheet: public/website, wherever the pages are.
       assets: '/website',
       cssVersion,
@@ -143,7 +163,8 @@ module.exports = function mountWebsite(app, d, { base = '/website', portal = '/'
 
   // --- the pages ---
   const builders = {
-    async '' () {
+    async '' (req) {
+      const base = req.siteBase;
       const all = await sessions();
       const C = d.CONFERENCE;
       // Workshops a delegate can choose: not those by invitation.
@@ -188,6 +209,7 @@ module.exports = function mountWebsite(app, d, { base = '/website', portal = '/'
     },
 
     async programme(req) {
+      const base = req.siteBase;
       const all = await sessions();
       const dates = [...new Set(all.map((s) => s.session_date))].sort();
       const today = d.istDateString();
@@ -270,7 +292,8 @@ module.exports = function mountWebsite(app, d, { base = '/website', portal = '/'
 
     async 'sample-abstract' () { return {}; },
 
-    async faculty() {
+    async faculty(req) {
+      const base = req.siteBase;
       const all = await sessions();
       const people = content.internationalFaculty.map((f) => {
         const key = peopleLib.normName(f.name);
@@ -307,25 +330,55 @@ module.exports = function mountWebsite(app, d, { base = '/website', portal = '/'
     return { deadline, deadlineText: deadline ? dateLong(deadline) : '', open: d.abstractSubmissionOpen() };
   }
 
-  async function render(req, res, next, key) {
+  async function render(req, res, next, key, ctx) {
     try {
+      req.siteBase = ctx.base;
       const data = await builders[key](req);
       res.set('Cache-Control', 'public, max-age=60');
-      res.render(`website/${key || 'home'}`, { ...(await common()), page: key, ...data });
+      res.render(`website/${key || 'home'}`, { ...(await common({ ...ctx, path: key ? `/${key}` : '/' })), page: key, ...data });
+    } catch (err) {
+      next(err);
+    }
+  }
+  async function notFound(req, res, next, ctx) {
+    try {
+      res.status(404).render('website/notfound', { ...(await common({ ...ctx, path: req.path })), page: 'notfound' });
     } catch (err) {
       next(err);
     }
   }
 
-  app.get(base ? [base, `${base}/`] : ['/'], (req, res, next) => render(req, res, next, ''));
-  app.get(`${base}/:page`, async (req, res, next) => {
+  // On the website's own address, at its root.
+  if (host) {
+    app.use((req, res, next) => {
+      if (hostOf(req) !== host) return next();
+      const portal = portalUrl().replace(/\/+$/, '');
+      const toPortal = (code) => res.redirect(code, `${portal}${req.originalUrl}`);
+      if (req.method !== 'GET' && req.method !== 'HEAD') return toPortal(307);
+      const ctx = { base: '', portal: `${portal}/` };
+      const p = req.path;
+      const query = req.originalUrl.slice(req.path.length);
+      // A hall's QR code (/?hall=...) is for the portal's attendance.
+      if (p === '/' && req.query.hall) return toPortal(302);
+      if (p === '/') return render(req, res, next, '', ctx);
+      const page = /^\/([a-z-]+)\/?$/.exec(p);
+      if (page && PAGES.has(page[1])) return render(req, res, next, page[1], ctx);
+      // Old /website links, on this address: the same page at the root.
+      if (p === '/website' || p.startsWith('/website/')) return res.redirect(301, `${p.replace(/^\/website\/?/, '/')}${query}`);
+      const old = OLD_PAGES[p.replace(/^\//, '').toLowerCase()];
+      if (old) return res.redirect(301, old);
+      if (/^\/(api|admin|help|setup|auth|portal)(\/|$)/.test(p)) return toPortal(302);
+      return notFound(req, res, next, ctx);
+    });
+  }
+
+  // On the portal's own address, at /website.
+  const atPath = { base: '/website', portal: '/' };
+  app.get(['/website', '/website/'], (req, res, next) => render(req, res, next, '', atPath));
+  app.get('/website/:page', (req, res, next) => {
     const key = String(req.params.page || '');
-    if (PAGES.has(key) && key) return render(req, res, next, key);
-    try {
-      res.status(404).render('website/notfound', { ...(await common()), page: 'notfound' });
-    } catch (err) {
-      next(err);
-    }
+    if (PAGES.has(key) && key) return render(req, res, next, key, atPath);
+    return notFound(req, res, next, atPath);
   });
 };
 

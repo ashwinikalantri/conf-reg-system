@@ -3683,6 +3683,16 @@ app.use(express.static(path.join(__dirname, 'public'), { index: false, redirect:
 app.use(loadSession);
 app.use(maintenanceGate);
 
+// The public conference website (website.js): no sign-in, read only, built
+// from the portal's own programme, workshops, fees and dates plus
+// website-content.js. At /website here, and at the root of its own address,
+// WEBSITE_HOST, once that address is pointed at this server -- mounted this
+// early so that address's / is the website, not the portal.
+require('./website')(app, {
+  dbAll, dbGet, CONFERENCE, programmeSessions, fetchProgramGroups, getFeeConfig, currentPhase,
+  istDateString, abstractSubmissionOpen, formatConferenceDates,
+}, { host: String(process.env.WEBSITE_HOST || 'nqocn2026.mgims.ac.in').toLowerCase(), portalUrl: () => PORTAL_URL });
+
 // Public (pre-auth) maintenance state, so the login screen can show the
 // notice before anyone has a session. Never returns anything sensitive.
 app.get('/api/maintenance', (req, res) => {
@@ -5000,14 +5010,6 @@ app.get('/help/group-registration', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-});
-
-// The public conference website, at /website (website.js): no sign-in,
-// read only, built from the portal's own programme, workshops, fees and
-// dates plus website-content.js.
-require('./website')(app, {
-  dbAll, dbGet, CONFERENCE, programmeSessions, fetchProgramGroups, getFeeConfig, currentPhase,
-  istDateString, abstractSubmissionOpen, formatConferenceDates,
 });
 
 // Conference name/acronym/dates/location, for both the pre-login delegate
