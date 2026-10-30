@@ -1,0 +1,101 @@
+<%- include('partials/head', { title: '' }) %>
+
+<section class="band-navy hero">
+  <div class="wrap">
+    <div class="hero-main">
+      <p class="kicker"><%= conf.acronym || 'NQOCN 2026' %> · <%= conf.location || 'Sevagram, Wardha' %></p>
+      <h1><%= conf.name %></h1>
+      <p class="theme"><%= content.theme %></p>
+      <p class="hosts">Hosted by the <%= content.host %>, and co-hosted by the <%= content.coHost %>.</p>
+      <div class="hero-actions">
+        <% if (fee.phase !== 'spot') { %><a class="btn btn-gold" href="/">Register now</a><% } %>
+        <a class="btn btn-ghost" href="/website/programme">See the programme</a>
+      </div>
+      <p class="note"><%= fee.note %></p>
+    </div>
+    <div class="date-card" aria-label="When and where">
+      <% const dm = /^(\d+)(?:–(\d+))? (\w+) (\d{4})$/.exec(conf.dates || ''); %>
+      <% if (dm) { %>
+        <p class="big"><%= dm[2] ? `${dm[1]}–${dm[2]}` : dm[1] %></p>
+        <p class="month"><%= ({ Jan: 'January', Feb: 'February', Mar: 'March', Apr: 'April', May: 'May', Jun: 'June', Jul: 'July', Aug: 'August', Sep: 'September', Oct: 'October', Nov: 'November', Dec: 'December' })[dm[3]] || dm[3] %> <%= dm[4] %></p>
+      <% } else { %>
+        <p class="month"><%= conf.dates %></p>
+      <% } %>
+      <div class="petals" style="width: 100%" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+      <p class="where">MGIMS, <%= content.venue.address.replace(/\s*\d{6}$/, '') %></p>
+      <% if (conf.daysToGo > 0) { %><p class="togo"><%= conf.daysToGo %> <%= conf.daysToGo === 1 ? 'day' : 'days' %> to go</p><% } %>
+    </div>
+  </div>
+</section>
+
+<section class="band-tint">
+  <div class="wrap section stack" style="gap: 28px">
+    <div class="stack" style="gap: 12px">
+      <div class="petals" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+      <h2 class="h2">Two days at Sevagram</h2>
+    </div>
+    <div class="grid grid-2">
+      <% days.forEach((day) => { %>
+        <article class="card" style="padding: 28px; gap: 14px">
+          <p class="kicker">Day <%= day.n %> · <%= day.label %></p>
+          <h3 style="font-size: 25px"><%= day.title %></h3>
+          <p class="lead"><%= day.blurb %></p>
+          <% if (day.lines.length) { %>
+          <ul class="timeline">
+            <% day.lines.forEach((l) => { %><li><span class="t"><%= l.t %></span><span><%= l.text %></span></li><% }) %>
+          </ul>
+          <% } %>
+          <a class="arrow-link" href="<%= day.link %>" style="margin-top: auto; padding-top: 6px"><%= day.linkText %> →</a>
+        </article>
+      <% }) %>
+    </div>
+  </div>
+</section>
+
+<% if (oration || plenary) { %>
+<section>
+  <div class="wrap section feature">
+    <% if (oration) { %>
+    <article class="card card-gold" style="padding: 32px; gap: 12px">
+      <p class="kicker"><%= oration.label %> · <%= oration.when %></p>
+      <h2 class="oration-title"><%= oration.title.replace(/^NQOCN Oration:\s*/i, '') %></h2>
+      <% if (oration.speakers) { %><p style="font-size: 22px; font-weight: 600"><%= oration.speakers %></p><% } %>
+      <p class="muted"><%= oration.hall %><% if (oration.chairs) { %> · Chairs: <%= oration.chairs %><% } %></p>
+    </article>
+    <% } %>
+    <% if (plenary) { %>
+    <article class="card" style="padding: 32px; gap: 12px">
+      <p class="kicker"><%= plenary.label %> · <%= plenary.when %></p>
+      <h2 style="font-size: 25px"><%= plenary.title %></h2>
+      <% if (plenary.speakers) { %><p class="lead"><%= plenary.speakers %><% if (plenary.chairs) { %>, moderated by <%= plenary.chairs %><% } %>.</p><% } %>
+      <a class="arrow-link" href="/website/programme?day=<%= plenary.session_date %>" style="margin-top: auto">See who is speaking when →</a>
+    </article>
+    <% } %>
+  </div>
+</section>
+<% } %>
+
+<section id="about" class="band-tint">
+  <div class="wrap section grid grid-2" style="gap: 40px">
+    <div class="stack" style="gap: 12px">
+      <h2 class="h2" style="font-size: 28px">About NQOCN</h2>
+      <p class="lead"><%= content.about.nqocn[0] %></p>
+      <a class="arrow-link" href="/website/about">More about NQOCN and MGIMS →</a>
+    </div>
+    <div class="stack" style="gap: 12px">
+      <h2 class="h2" style="font-size: 28px">About MGIMS, Sevagram</h2>
+      <p class="lead"><%= content.about.mgims[0] %></p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="partners-h">
+  <div class="wrap section stack" style="gap: 20px">
+    <p id="partners-h" class="kicker" style="color: var(--muted)">With our partners</p>
+    <div class="partners">
+      <% content.partners.forEach((p) => { %><div class="partner"><img src="/website/img/<%= p.file %>" alt="<%= p.name %>" loading="lazy"></div><% }) %>
+    </div>
+  </div>
+</section>
+
+<%- include('partials/foot') %>

@@ -3676,7 +3676,10 @@ const ASSET_VERSION = (() => {
 })();
 app.locals.assetVersion = ASSET_VERSION;
 
-app.use(express.static(path.join(__dirname, 'public'), { index: false }));
+// redirect: false -- /website is both a folder here (the site's images and
+// stylesheet) and a page (website.js); without it the folder's trailing-slash
+// redirect answered first.
+app.use(express.static(path.join(__dirname, 'public'), { index: false, redirect: false }));
 app.use(loadSession);
 app.use(maintenanceGate);
 
@@ -4997,6 +5000,14 @@ app.get('/help/group-registration', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// The public conference website, at /website (website.js): no sign-in,
+// read only, built from the portal's own programme, workshops, fees and
+// dates plus website-content.js.
+require('./website')(app, {
+  dbAll, dbGet, CONFERENCE, programmeSessions, fetchProgramGroups, getFeeConfig, currentPhase,
+  istDateString, abstractSubmissionOpen, formatConferenceDates,
 });
 
 // Conference name/acronym/dates/location, for both the pre-login delegate

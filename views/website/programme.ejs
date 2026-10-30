@@ -1,0 +1,46 @@
+<%- include('partials/head', { title: 'Programme' }) %>
+
+<section class="band-navy page-head">
+  <div class="wrap">
+    <h1>Programme</h1>
+    <p>Every session, by time. Talks that run side by side sit next to each other; choose a hall to see only what is on there.</p>
+    <nav class="tabs" aria-label="Day">
+      <% days.forEach((x) => { %><a href="<%= x.href %>"<% if (x.current) { %> aria-current="page"<% } %>><%= x.label %></a><% }) %>
+    </nav>
+  </div>
+</section>
+
+<div class="wrap" style="padding-top: 24px; padding-bottom: 64px">
+  <h2 class="kicker" style="margin-bottom: 12px"><%= dayLabel %></h2>
+  <nav class="pills" aria-label="Hall">
+    <% halls.forEach((h) => { %><a href="<%= h.href %>"<% if (h.current) { %> aria-current="true"<% } %>><%= h.label %></a><% }) %>
+  </nav>
+
+  <% if (!rows.length) { %><p class="muted" style="padding: 32px 0">Nothing on this day yet.</p><% } %>
+  <% rows.forEach((r) => { %>
+    <% if (r.kind === 'break') { %>
+      <p class="break"><%= r.text %></p>
+    <% } else { %>
+      <div class="slot">
+        <div class="slot-time"><p class="t"><%= r.time.t %></p><p class="ap"><%= r.time.ap %></p></div>
+        <div class="talks">
+          <% r.items.forEach((it) => { %>
+            <article class="talk">
+              <div class="talk-top">
+                <p class="kicker"><%= it.label || 'Ceremony' %></p>
+                <span class="hall"><%= it.hall %></span>
+              </div>
+              <h2><%= it.title %></h2>
+              <% if (it.speakers) { %><p class="who"><%= it.speakers %></p><% } %>
+              <% if (it.chairs) { %><p class="chairs"><%= it.chairLabel %>: <%= it.chairs %></p><% } %>
+              <p class="when"><%= it.when %></p>
+            </article>
+          <% }) %>
+        </div>
+      </div>
+    <% } %>
+  <% }) %>
+  <p class="muted" style="margin-top: 32px; font-size: 15px">The programme may change; this page always shows the latest.</p>
+</div>
+
+<%- include('partials/foot') %>

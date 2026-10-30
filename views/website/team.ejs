@@ -1,0 +1,28 @@
+<%- include('partials/head', { title: 'Organising team' }) %>
+
+<section class="band-navy page-head">
+  <div class="wrap">
+    <h1>Organising team</h1>
+    <p>The patrons, chairs and coordinators steering NQOCN's <%= conf.name %>.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap section stack" style="gap: 44px">
+    <% content.team.forEach((g) => { %>
+      <div class="stack" style="gap: 18px">
+        <div class="group-head"><div class="petals short" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div><h2><%= g.title %></h2></div>
+        <div class="team-grid">
+          <% g.people.forEach((p) => { %>
+            <figure class="person">
+              <img src="/website/img/<%= p.photo %>" alt="<%= p.name %>" width="144" height="144" loading="lazy">
+              <figcaption class="stack" style="gap: 2px"><b><%= p.name %></b><% if (p.role) { %><span><%= p.role %></span><% } %></figcaption>
+            </figure>
+          <% }) %>
+        </div>
+      </div>
+    <% }) %>
+  </div>
+</section>
+
+<%- include('partials/foot') %>

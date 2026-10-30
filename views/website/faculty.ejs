@@ -1,0 +1,30 @@
+<%- include('partials/head', { title: 'International faculty' }) %>
+
+<section class="band-navy page-head">
+  <div class="wrap">
+    <h1>International faculty</h1>
+    <p>Experts in quality improvement and patient safety joining the conference from institutions across the world.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap section grid grid-2" style="gap: 20px">
+    <% people.forEach((f) => { %>
+      <article class="faculty-card">
+        <img src="/website/img/<%= f.photo %>" alt="<%= f.name %>" width="160" height="160" loading="lazy">
+        <div class="body">
+          <h2><%= f.name %></h2>
+          <p class="lead" style="font-size: 16px"><%= f.role %></p>
+          <% if (f.sessions.length) { %>
+            <div class="sessions">
+              <p class="kicker">At the conference</p>
+              <% f.sessions.forEach((s) => { %><a href="<%= s.href %>"><span><%= s.title %></span><span><%= s.when %></span></a><% }) %>
+            </div>
+          <% } %>
+        </div>
+      </article>
+    <% }) %>
+  </div>
+</section>
+
+<%- include('partials/foot') %>

@@ -1,0 +1,34 @@
+<%- include('partials/head', { title: 'About' }) %>
+
+<section class="band-navy page-head">
+  <div class="wrap">
+    <h1>About</h1>
+    <p>The conference is hosted by the <%= content.host %>, and co-hosted by the <%= content.coHost %>.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap section grid grid-2" style="gap: 48px">
+    <div class="stack" style="gap: 14px">
+      <div class="petals" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+      <h2 class="h2">NQOCN</h2>
+      <div class="prose"><% content.about.nqocn.forEach((p) => { %><p><%= p %></p><% }) %></div>
+    </div>
+    <div class="stack" style="gap: 14px">
+      <div class="petals" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+      <h2 class="h2">MGIMS, Sevagram</h2>
+      <div class="prose"><% content.about.mgims.forEach((p) => { %><p><%= p %></p><% }) %></div>
+    </div>
+  </div>
+</section>
+
+<section class="band-tint" aria-labelledby="partners-h">
+  <div class="wrap section stack" style="gap: 20px">
+    <h2 id="partners-h" class="h2" style="font-size: 26px">Our partners</h2>
+    <div class="partners">
+      <% content.partners.forEach((p) => { %><div class="partner"><img src="/website/img/<%= p.file %>" alt="<%= p.name %>" loading="lazy"></div><% }) %>
+    </div>
+  </div>
+</section>
+
+<%- include('partials/foot') %>

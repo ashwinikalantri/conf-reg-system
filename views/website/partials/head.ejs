@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title><%= locals.title ? `${locals.title} · ` : '' %><%= conf.acronym || 'NQOCN 2026' %></title>
+<meta name="description" content="<%= conf.name %>, <%= conf.dates %>, <%= content.venue.name %>. <%= content.theme %>.">
+<meta property="og:title" content="<%= conf.name %>">
+<meta property="og:description" content="<%= conf.dates %> · <%= content.venue.name %> · <%= content.theme %>">
+<meta property="og:type" content="website">
+<meta property="og:image" content="/website/img/nqocn-mgims-logo.png">
+<link rel="icon" href="/website/img/nqocn-mgims-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/website/site.css?v=<%= cssVersion %>">
+<% if (typeof extraHead !== 'undefined') { %><%- extraHead %><% } %>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/website" aria-label="<%= conf.acronym || 'NQOCN 2026' %> home"><img src="/website/img/nqocn-mgims-logo.png" alt="NQOCN, Nationwide Quality of Care Network, with MGIMS Sevagram" width="1021" height="203"></a>
+    <nav class="nav" aria-label="Main">
+      <% nav.forEach(([key, label]) => { %><a href="/website/<%= key %>"<% if (page === key) { %> aria-current="page"<% } %>><%= label %></a>
+      <% }) %>
+    </nav>
+    <div class="header-actions">
+      <a class="signin" href="/">Sign in</a>
+      <a class="btn btn-navy" href="/">Register</a>
+      <details class="menu">
+        <summary aria-label="Menu"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></summary>
+        <nav class="menu-panel" aria-label="Main">
+          <a href="/website"<% if (page === '') { %> aria-current="page"<% } %>>Home</a>
+          <% nav.forEach(([key, label]) => { %><a href="/website/<%= key %>"<% if (page === key) { %> aria-current="page"<% } %>><%= label %></a>
+          <% }) %>
+          <a href="/">Sign in</a>
+        </nav>
+      </details>
+    </div>
+  </div>
+</header>
+<main id="main">

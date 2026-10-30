@@ -1,0 +1,54 @@
+<%- include('partials/head', { title: 'Workshops' }) %>
+
+<section class="band-navy page-head">
+  <div class="wrap">
+    <h1>Workshops and QI in practice</h1>
+    <p>Hands-on pre-conference workshops, and visits to quality improvement at work. Each delegate chooses when registering; seats are limited, and the number left is shown here as it stands.</p>
+  </div>
+</section>
+
+<% open.forEach((g, gi) => { %>
+<section class="<%= gi % 2 ? 'band-tint' : '' %>">
+  <div class="wrap section stack" style="gap: 24px">
+    <div class="stack" style="gap: 10px">
+      <div class="petals" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+      <% if (g.when) { %><p class="kicker"><%= g.when %></p><% } %>
+      <h2 class="h2"><%= g.name %></h2>
+    </div>
+    <div class="grid grid-3">
+      <% g.options.forEach((o) => { %>
+        <article class="card">
+          <div class="talk-top">
+            <p class="kicker"><%= o.label %></p>
+            <% if (o.seats) { %><p style="font-size: 14px; font-weight: 700; color: <%= o.full ? '#9f1239' : 'var(--navy)' %>"><%= o.seats %></p><% } %>
+          </div>
+          <h3><%= o.name %></h3>
+          <% if (o.about) { %><p class="lead" style="font-size: 16px"><%= o.about %></p><% } %>
+          <% if (o.activities.length) { %><ul style="margin: 0; padding-left: 20px; font-size: 16px"><% o.activities.forEach((a) => { %><li><%= a %></li><% }) %></ul><% } %>
+          <% if (o.by) { %><p class="muted" style="font-size: 15px">Led by</p><p style="margin-top: -8px; font-size: 16px"><%= o.by %></p><% } %>
+          <% if (o.where || o.when) { %><p class="foot"><b style="color: var(--ink)"><%= o.where %></b><% if (o.when) { %><br><%= o.when %><% } %></p><% } %>
+        </article>
+      <% }) %>
+    </div>
+  </div>
+</section>
+<% }) %>
+
+<% if (invited.length) { %>
+<section>
+  <div class="wrap section stack" style="gap: 16px">
+    <% invited.forEach((g) => { %>
+      <div class="card card-gold" style="padding: 26px">
+        <p class="kicker">By invitation<% if (g.when) { %> · <%= g.when %><% } %></p>
+        <h2 class="h2" style="font-size: 24px"><%= g.name %></h2>
+        <ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px">
+          <% g.options.forEach((o) => { %><li><b><%= o.name %></b><% if (o.where) { %> · <%= o.where %>, <%= o.when %><% } %></li><% }) %>
+        </ul>
+        <p class="muted" style="font-size: 15px">For nominated participants; the organisers enrol them.</p>
+      </div>
+    <% }) %>
+  </div>
+</section>
+<% } %>
+
+<%- include('partials/foot') %>

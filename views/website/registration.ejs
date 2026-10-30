@@ -1,0 +1,58 @@
+<%- include('partials/head', { title: 'Registration and fees' }) %>
+
+<section class="band-navy page-head">
+  <div class="wrap" style="flex-direction: row; flex-wrap: wrap; align-items: flex-end; gap: 20px 40px">
+    <div class="stack" style="flex: 1 1 480px; min-width: 0; gap: 12px">
+      <h1>Registration and fees</h1>
+      <p>Every delegate registers, whatever their category. <%= fee.note %></p>
+    </div>
+    <% if (fee.phase !== 'spot') { %><a class="btn btn-gold" href="/">Register now</a><% } %>
+  </div>
+</section>
+
+<section>
+  <div class="wrap section stack" style="gap: 18px">
+    <h2 class="h2">Fees</h2>
+    <div class="table-box">
+      <table class="fees">
+        <caption>In rupees, by the date you register. The fee that applies today is highlighted.</caption>
+        <thead>
+          <tr>
+            <th scope="col">Category</th>
+            <% fee.phases.forEach((p) => { %><th scope="col" class="<%= p.state === 'now' ? 'now' : p.state === 'past' ? 'past' : '' %>"><%= p.label %><%= p.state === 'now' ? ' · now' : '' %><small><%= p.untilText %></small></th><% }) %>
+          </tr>
+        </thead>
+        <tbody>
+          <% rows.forEach((r) => { %>
+            <tr>
+              <th scope="row"><%= r.label %></th>
+              <% r.fees.forEach((f, i) => { const st = fee.phases[i].state; %><td class="<%= st === 'now' ? 'now' : st === 'past' ? 'past' : '' %>"><%= f %></td><% }) %>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+    <div class="notes">
+      <p><b>Students</b> upload their student ID card when registering.</p>
+      <% if (groupOffer) { %><p><b>Registering with colleagues?</b> A group can pay less — <a href="/help/group-registration">see how group registration works</a>.</p><% } %>
+      <p><b>Not refundable.</b> Fees, once paid, are not refunded for any reason.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band-tint">
+  <div class="wrap section split">
+    <div class="stack" style="gap: 14px">
+      <h2 class="h2">Papers and posters</h2>
+      <% if (abstract.deadline) { %><p class="chip<%= abstract.open ? ' chip-gold' : '' %>"><%= abstract.open ? `Submissions open until ${abstract.deadlineText}` : `Submission closed on ${abstract.deadlineText}` %></p><% } %>
+      <p class="lead">Structured abstracts of up to 400 words on healthcare quality and patient safety, from registered delegates. The scientific committee reviews each one; its decision is final.</p>
+      <p class="lead">Already submitted? Add every co-author, in order, from the Abstract card in the portal.</p>
+      <a class="arrow-link" href="/website/abstracts">Abstract guidelines and a sample abstract →</a>
+    </div>
+    <div class="facts">
+      <% content.abstracts.rules.forEach(([b, s]) => { %><div class="fact" style="background: #fff"><b><%= b %></b><span><%= s %></span></div><% }) %>
+    </div>
+  </div>
+</section>
+
+<%- include('partials/foot') %>
