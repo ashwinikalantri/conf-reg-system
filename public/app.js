@@ -10265,10 +10265,14 @@ let rdSelectedOptionIds = new Set();
 let rdMode = 'CASH';
 let rdSelectedBankTxn = null;
 let rdBankLinkLater = false;
+// The faculty member being registered free, opened from the Faculty tab
+// (registerFacultyFree), or null. Complimentary is offered only then.
+let rdFaculty = null;
 
-async function openRegisterDelegateModal(linkAccount) {
+async function openRegisterDelegateModal(linkAccount, faculty) {
   resetRegisterDelegateForm();
   if (linkAccount) linkRegisterDelegateAccount(linkAccount);
+  if (faculty) setRegisterDelegateFaculty(faculty);
   const [feesRes, groupsRes] = await Promise.all([fetch('/api/fees'), fetch('/api/program-options')]);
   const feesData = feesRes.ok ? await feesRes.json() : {};
   rdCategoriesCache = feesData.categories || [];
@@ -10292,6 +10296,46 @@ async function openRegisterDelegateModal(linkAccount) {
       || '<option value="">No front-desk staff configured</option>';
   }
   openModal('modal-register-delegate');
+}
+
+// Register someone on the Faculty list free: the Register Delegate form,
+// opened on them, with Complimentary chosen. Nothing is saved until it is
+// submitted -- and whether a faculty member is complimentary is the
+// organisers' decision, one person at a time.
+function registerFacultyFree(id) {
+  const g = guestData && guestData.guests.find((x) => x.id === id);
+  if (!g) return;
+  if (g.registered) return showToast(`${g.name} is already registered.`);
+  closeModal('modal-guest-edit');
+  openRegisterDelegateModal(null, g);
+}
+
+function setRegisterDelegateFaculty(g) {
+  rdFaculty = g;
+  const box = document.getElementById('rd-faculty');
+  if (box) box.classList.remove('hidden');
+  setText('register-delegate-heading', 'Register Faculty');
+  setText('rd-faculty-name', g.name || '');
+  if (g.linked) {
+    // Registered on their own account, which the server insists on too.
+    linkRegisterDelegateAccount({ phone_number: g.phone_number, salutation: g.salutation, full_name: g.full_name, email: g.email, phone: g.phone });
+    const change = document.querySelector('#rd-linked button');
+    if (change) change.classList.add('hidden');
+    setText('rd-faculty-note', 'Registered on their own account.');
+  } else {
+    // Not signed up: their account is made from these, typed as on their
+    // faculty record -- check them, and fill in what is missing.
+    const digits = String(g.guest_phone || '').replace(/\D/g, '').slice(-10);
+    const put = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+    put('rd-phone', digits);
+    put('rd-name', g.guest_name || g.name);
+    put('rd-email', g.guest_email);
+    put('rd-designation', g.guest_designation);
+    setText('rd-faculty-note', 'Not signed up yet: an account is made from the details below and linked to their faculty entry. Check the mobile and email.');
+  }
+  const compBtn = document.getElementById('rd-mode-comp-btn');
+  if (compBtn) compBtn.classList.toggle('hidden', !can('payments.complimentary'));
+  if (can('payments.complimentary')) setRegisterDelegateMode('COMPLIMENTARY');
 }
 
 // The signed-up account a walk-in is being registered against, or null for
@@ -10373,6 +10417,14 @@ function unlinkRegisterDelegateAccount() {
 
 function resetRegisterDelegateForm() {
   unlinkRegisterDelegateAccount();
+  rdFaculty = null;
+  const facultyBox = document.getElementById('rd-faculty');
+  if (facultyBox) facultyBox.classList.add('hidden');
+  const compBtn = document.getElementById('rd-mode-comp-btn');
+  if (compBtn) compBtn.classList.add('hidden');
+  const change = document.querySelector('#rd-linked button');
+  if (change) change.classList.remove('hidden');
+  setText('register-delegate-heading', 'Register Delegate');
   const form = document.getElementById('register-delegate-form');
   const result = document.getElementById('register-delegate-result');
   if (form) { form.reset(); form.classList.remove('hidden'); }
@@ -10513,6 +10565,12 @@ function updateRegisterDelegateFee() {
     return sum + (opt ? Number(opt.fee) || 0 : 0);
   }, 0);
   const discount = rdQuote && rdQuote.categoryKey === key ? rdQuote.discountAmount : 0;
+  // Complimentary: nothing is due; what is waived is said instead.
+  if (rdMode === 'COMPLIMENTARY') {
+    setText('rd-fee-display', '₹0');
+    setText('rd-comp-waived', key ? `₹${inr(base + optionsFee)} waived${optionsFee ? ' (category and workshops)' : ''}.` : 'Choose their category.');
+    return 0;
+  }
   const total = Math.max(0, base - discount) + optionsFee;
   setText('rd-fee-display', `₹${inr(total)}`);
   const cashInput = document.getElementById('rd-cash-amount');
@@ -10547,13 +10605,29 @@ function setRegisterDelegateMode(mode) {
   rdMode = mode;
   const cashBtn = document.getElementById('rd-mode-cash-btn');
   const bankBtn = document.getElementById('rd-mode-bank-btn');
+  const compBtn = document.getElementById('rd-mode-comp-btn');
   const cashBox = document.getElementById('rd-mode-cash');
   const bankBox = document.getElementById('rd-mode-bank');
+  const compBox = document.getElementById('rd-mode-comp');
   const isCash = mode === 'CASH';
-  if (cashBtn) cashBtn.className = `flex-1 py-2 rounded-md ${isCash ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`;
-  if (bankBtn) bankBtn.className = `flex-1 py-2 rounded-md ${!isCash ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`;
+  const isComp = mode === 'COMPLIMENTARY';
+  const tab = (on) => `flex-1 py-2 rounded-md ${on ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`;
+  if (cashBtn) cashBtn.className = tab(isCash);
+  if (bankBtn) bankBtn.className = tab(!isCash && !isComp);
+  if (compBtn) compBtn.className = `${tab(isComp)}${rdFaculty && can('payments.complimentary') ? '' : ' hidden'}`;
   if (cashBox) cashBox.classList.toggle('hidden', !isCash);
-  if (bankBox) bankBox.classList.toggle('hidden', isCash);
+  if (bankBox) bankBox.classList.toggle('hidden', isCash || isComp);
+  if (compBox) compBox.classList.toggle('hidden', !isComp);
+  // A promo code means nothing when the whole fee is waived.
+  const promo = document.getElementById('rd-promo-wrap');
+  if (promo) promo.classList.toggle('hidden', isComp);
+  if (isComp) {
+    const partialNote = document.getElementById('rd-partial-note');
+    if (partialNote) partialNote.classList.add('hidden');
+    setRegisterDelegateBankLinkLater(false);
+    updateRegisterDelegateFee();
+    return;
+  }
   // Either direction needs a fresh updateRegisterDelegateFee() call: bank
   // mode uses its return value to load candidates near that amount, and
   // cash mode needs it to re-evaluate the partial-due note (hidden in bank
@@ -10615,14 +10689,18 @@ async function handleRegisterDelegateSubmit(e) {
     institute: document.getElementById('rd-institute').value.trim(),
     email: document.getElementById('rd-email').value.trim(),
   };
+  const comp = rdMode === 'COMPLIMENTARY';
+  if (comp && !rdFaculty) return showToast('Complimentary is only for someone on the Faculty list.');
   Object.assign(payload, {
     categoryKey,
     optionIds: collectRegisterDelegateOptionIds(),
-    discountCode: document.getElementById('rd-discount-code').value.trim(),
+    discountCode: comp ? '' : document.getElementById('rd-discount-code').value.trim(),
     idVerifiedByAdmin: cat && cat.requiresStudentId ? true : undefined,
     paymentMode: rdMode,
   });
-  if (rdMode === 'CASH') {
+  if (comp) {
+    payload.guestId = rdFaculty.id;
+  } else if (rdMode === 'CASH') {
     payload.amount = Number(document.getElementById('rd-cash-amount').value);
     payload.collectedBy = document.getElementById('rd-cash-collected-by').value;
     if (!payload.collectedBy) return showToast('Record who collected the cash.');
@@ -10639,7 +10717,7 @@ async function handleRegisterDelegateSubmit(e) {
   const submitBtn = document.getElementById('rd-submit-btn');
   if (submitBtn) submitBtn.disabled = true;
   try {
-    const data = await (await fetch('/api/admin/registrations', {
+    const data = await (await fetch(comp ? '/api/admin/registrations/complimentary' : '/api/admin/registrations', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     })).json();
     if (!data.success) { showToast(data.error || 'Could not register this delegate.'); return; }
@@ -10655,9 +10733,11 @@ async function handleRegisterDelegateSubmit(e) {
     if (resultIcon) resultIcon.innerHTML = ICON(isPending ? 'clock' : 'check', 'w-9 h-9');
     const heading = document.getElementById('rd-result-heading');
     if (heading) heading.className = `font-bold mt-1 ${isPending ? 'text-amber-800' : 'text-emerald-800'}`;
-    setText('rd-result-heading', isPending ? 'Registered — payment pending bank-statement linkage' : 'Registration confirmed');
+    setText('rd-result-heading', isPending ? 'Registered — payment pending bank-statement linkage' : comp ? 'Registration confirmed — complimentary' : 'Registration confirmed');
     const balance = Math.max(0, Number(data.expectedAmount) - Number(data.paidAmount));
-    setText('rd-result-amount', isPending
+    setText('rd-result-amount', comp
+      ? `Faculty · ₹${inr(data.waivedAmount || 0)} waived, nothing to pay`
+      : isPending
       ? `₹${inr(data.paidAmount)} claimed — an admin will link it to the bank statement later`
       : balance > 0
         ? `₹${inr(data.paidAmount)} of ₹${inr(data.expectedAmount)} recorded · ₹${inr(balance)} balance due`
@@ -10670,6 +10750,7 @@ async function handleRegisterDelegateSubmit(e) {
       pwBox.classList.add('hidden');
     }
     renderBackendPayments();
+    if (comp && typeof renderGuests === 'function' && guestData) renderGuests();
   } finally {
     if (submitBtn) submitBtn.disabled = false;
   }
@@ -11756,6 +11837,7 @@ function guestFlagChips(g) {
   if (f.sharedRoom && f.sharedRoom.length) out.push(guestPill(GUEST_FLAG_STYLES.sharedRoom, `Shares room · ${f.sharedRoom.length + 1}`, `With ${f.sharedRoom.join(', ')}`));
   if (f.vehicleClash && f.vehicleClash.length) out.push(guestPill(GUEST_FLAG_STYLES.vehicleClash, 'Vehicle clash', f.vehicleClash.join('\n')));
   if (f.ownStay) out.push(guestPill(GUEST_FLAG_STYLES.own, 'Own stay'));
+  if (g.complimentary) out.push(guestPill('bg-gold-50 text-gold-700 border-gold-300', 'Complimentary'));
   if (f.notSignedUp) out.push(guestPill(GUEST_FLAG_STYLES.notRegistered, 'Not signed up'));
   else if (f.notRegistered) out.push(guestPill(GUEST_FLAG_STYLES.notRegistered, 'Not registered'));
   return out.join(' ');
@@ -12300,7 +12382,14 @@ function openGuestEditor(id) {
       <p class="text-xs font-bold text-slate-700 uppercase tracking-wide">In the programme</p>
       ${g.sessions.map((s) => `<p class="text-sm leading-snug"><span class="font-semibold text-indigo-800">${esc(s.role)}</span> · ${esc(guestWhen(s.date, s.start))} · ${esc(s.hall)}<span class="block text-slate-700">${esc(s.title)}</span></p>`).join('')}
     </div><div class="h-4"></div>` : '';
-  document.getElementById('guest-edit-body').innerHTML = vehicles + identity + linkedTo + (identity ? '<div class="h-4"></div>' : '') + theirSessions + [
+  // Not registered: a holder of payments.complimentary can register them
+  // free from here -- a choice made for this one person.
+  const registerFree = !g.registered && !g.cancelled && can('payments.complimentary')
+    ? `<div class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gold-300 bg-gold-50 px-3 py-2.5">
+        <p class="text-xs text-slate-700 min-w-0">Not registered yet. If their registration is complimentary, register them with the fee waived.</p>
+        <button type="button" onclick="registerFacultyFree(${esc(g.id)})" class="shrink-0 px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Register free</button>
+      </div><div class="h-4"></div>` : '';
+  document.getElementById('guest-edit-body').innerHTML = vehicles + registerFree + identity + linkedTo + (identity ? '<div class="h-4"></div>' : '') + theirSessions + [
     group('Arrival', travel, mineT ? 'As their transport volunteer you can update the pickup; the itinerary is the coordinator\'s.' : 'Only a transport coordinator can change travel.',
       field('arrival_date', 'Date', input('arrival_date', 'date', travel))
       + field('arrival_time', 'Time', time('arrival_time', travel))

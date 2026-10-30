@@ -79,6 +79,10 @@ const PERMISSIONS = [
   // holds payments.revise: correcting a category at a counter is desk work,
   // writing off a fee is not.
   ['payments.adjust_fee', 'payments', 'Adjust a fee', 'Reduce what a delegate owes — to honour a price they paid before a deadline, or as a discretionary discount with a recorded reason.'],
+  // Waiving a fee outright, for someone on the Faculty list. Its own key,
+  // held only by Super Admin until a role is given it: registering a walk-in
+  // (payments.desk_register) is desk work, deciding who pays nothing is not.
+  ['payments.complimentary', 'payments', 'Register faculty free', 'Register someone on the Faculty list with the whole fee waived — complimentary, confirmed at once, no payment.'],
   ['payments.rescan', 'payments', 'Re-run slip checks', 'Re-judge stored screenshots against the current OCR logic.'],
   // Conference-wide money, as opposed to one delegate's. Separate from
   // payments.view because they are different disclosures: working the
@@ -273,6 +277,7 @@ const ROUTE_PERMISSIONS = {
   'DELETE /api/registrations/:id/refund/:refundId': 'payments.refund',
   'PUT /api/registrations/:id/verify-id': 'payments.verify_id',
   'POST /api/admin/registrations': 'payments.desk_register',
+  'POST /api/admin/registrations/complimentary': 'payments.complimentary',
   'POST /api/admin/registrations/rescan-flagged': 'payments.rescan',
 
   // Bank statement

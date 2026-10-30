@@ -32,8 +32,8 @@ const vm = require('vm');
   const receipt = await call('GET', `/api/registrations/${verified.id}/receipt`, null, admin);
   check('the receipt carries it', receipt.status === 200 && receipt.raw.includes(`/api/qr/${encodeURIComponent(verified.registration_number)}.png`), receipt.status);
   const confirmedEmails = (src.match(/emailWrap\('Your registration is confirmed'[\s\S]*?\)\);/g) || []);
-  check('every "registration confirmed" email carries it', confirmedEmails.length === 3 && confirmedEmails.every((e) => /deskPassEmailHtml\(/.test(e)), confirmedEmails.length);
-  check('...and no other email', (src.match(/deskPassEmailHtml\(/g) || []).length === 3 + 0 && !/verification pending[\s\S]{0,400}deskPassEmailHtml/.test(src));
+  check('every "registration confirmed" email carries it', confirmedEmails.length === 4 && confirmedEmails.every((e) => /deskPassEmailHtml\(/.test(e)), confirmedEmails.length);
+  check('...and no other email', (src.match(/deskPassEmailHtml\(/g) || []).length === 4 + 0 && !/verification pending[\s\S]{0,400}deskPassEmailHtml/.test(src));
   check('...served from the portal\'s own address (email clients block inline images)', /src="\$\{escapeHtml\(String\(PORTAL_URL\)/.test(src));
   check('the dashboard shows it with the registration number', /id="desk-pass" class="hidden/.test(dash) && /desk-pass-qr'\)\.src = `\/api\/qr\/\$\{encodeURIComponent\(reg\.registration_number\)\}\.png`/.test(js));
 

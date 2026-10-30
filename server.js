@@ -5401,7 +5401,8 @@ const renderReceipt = async (req, res, next) => {
     const categoryFee = fee + discount - optionsFee;
     const discountLabel = reg.discount_code === 'GROUP'
       ? 'Group discount'
-      : (reg.discount_code ? `Promo code ${reg.discount_code}` : 'Discount');
+      : reg.discount_code === 'COMPLIMENTARY' ? 'Complimentary (faculty)'
+        : (reg.discount_code ? `Promo code ${reg.discount_code}` : 'Discount');
     // Only worth showing when there is actually something to break down.
     const showBreakdown = discount > 0 || optionsFee > 0;
     const paidOptions = selections.filter((o) => Number(o.option_fee) > 0);
@@ -7249,8 +7250,32 @@ app.get('/api/admin/bank-credit-candidates', requirePermission('payments.link'),
 // rather than reimplementing it, so a walk-in registration is priced and
 // validated identically to a self-service one -- same phase, same capacity
 // limits, same discount rules.
-app.post('/api/admin/registrations', requirePermission('payments.desk_register'), async (req, res, next) => {
+//
+// Complimentary (POST /api/admin/registrations/complimentary): the same
+// registration for someone on the Faculty list, with the fee -- category and
+// any workshops -- waived in full rather than paid. Chosen one person at a
+// time (not every faculty member is complimentary), by a holder of
+// payments.complimentary. Recorded as payment_mode and discount_code
+// 'COMPLIMENTARY' with the waived amount as the discount, expected and paid
+// ₹0, confirmed outright -- and no ledger row, as with a self-service ₹0
+// registration: there is no money to reconcile. A faculty member not yet
+// linked to an account is linked to the one used here.
+app.post('/api/admin/registrations', requirePermission('payments.desk_register'),
+  (req, res, next) => registerFromAdmin(req, res, next, false));
+app.post('/api/admin/registrations/complimentary', requirePermission('payments.complimentary'),
+  (req, res, next) => registerFromAdmin(req, res, next, true));
+
+async function registerFromAdmin(req, res, next, complimentary) {
   try {
+    // Complimentary is for the Faculty list only. A linked faculty member is
+    // registered on their own account, whatever else was sent.
+    let guest = null;
+    if (complimentary) {
+      guest = await dbGet('SELECT * FROM guests WHERE id = ?', [req.body.guestId]);
+      if (!guest) return res.status(400).json({ success: false, error: 'Only someone on the Faculty list can be registered free. Open them from the Faculty tab.' });
+      if (guest.overall_status === guestLib.CANCELLED) return res.status(409).json({ success: false, error: 'This faculty member is cancelled.' });
+      if (guest.phone_number) req.body.accountKey = guest.phone_number;
+    }
     // Staff registering someone who has already signed up choose their
     // account (accountKey, from GET /api/desk/signups) rather than retyping
     // a number: typing only ever found an account whose key WAS that number,
@@ -7261,6 +7286,9 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
     let phone;
     if (accountKey) {
       linkedAccount = await dbGet("SELECT * FROM users WHERE phone_number = ? AND role = 'DELEGATE'", [accountKey]);
+      if (!linkedAccount && guest) {
+        return res.status(409).json({ success: false, error: 'Their faculty entry is linked to a staff account, which cannot be registered as a delegate.' });
+      }
       if (!linkedAccount) {
         return res.status(404).json({ success: false, error: 'That signed-up account could not be found. Search for them again.' });
       }
@@ -7273,8 +7301,14 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
         return res.status(400).json({ success: false, error: 'Enter a valid 10-digit Indian mobile number.' });
       }
     }
-    const paymentMode = req.body.paymentMode;
-    if (!['CASH', 'BANK_TRANSFER'].includes(paymentMode)) {
+    // An account already on the Faculty list as someone else cannot be
+    // linked to this faculty member as well.
+    if (guest && !guest.phone_number) {
+      const other = await dbGet('SELECT id FROM guests WHERE phone_number = ? AND id != ?', [phone, guest.id]);
+      if (other) return res.status(409).json({ success: false, error: 'That account is already on the Faculty list as someone else.' });
+    }
+    const paymentMode = complimentary ? 'COMPLIMENTARY' : req.body.paymentMode;
+    if (!complimentary && !['CASH', 'BANK_TRANSFER'].includes(paymentMode)) {
       return res.status(400).json({ success: false, error: 'Payment mode must be CASH or BANK_TRANSFER.' });
     }
     // Cash has no bank credit behind it and never will -- the only record of
@@ -7337,7 +7371,7 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
     // admin enters, or the delegate's group discount if they're already in a
     // qualifying group -- whichever is larger, they don't stack.
     let promoDiscount = 0, promoCode = null, promoCodeId = null;
-    if (req.body.discountCode && String(req.body.discountCode).trim()) {
+    if (!complimentary && req.body.discountCode && String(req.body.discountCode).trim()) {
       const dv = await validateDiscountCode(req.body.discountCode, phone, req.body.categoryKey);
       if (!dv.ok) return res.status(400).json({ success: false, error: dv.error });
       promoDiscount = computeDiscountAmount(dv.code, feeInfo.amount);
@@ -7345,7 +7379,7 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
       promoCodeId = dv.code.id;
     }
     let groupDiscount = 0;
-    const dgroup = await getDelegateGroup(phone);
+    const dgroup = complimentary ? null : await getDelegateGroup(phone);
     if (dgroup && dgroup.qualifies && dgroup.group.category_key === req.body.categoryKey) {
       groupDiscount = computeDiscountAmount(dgroup.rule, feeInfo.amount);
     }
@@ -7354,6 +7388,11 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
       discountAmount = groupDiscount; discountCodeApplied = 'GROUP';
     } else if (promoDiscount > 0) {
       discountAmount = promoDiscount; discountCodeApplied = promoCode;
+    }
+    // Complimentary: everything is waived, category and workshops alike.
+    if (complimentary) {
+      discountAmount = feeInfo.amount + optionsFee;
+      discountCodeApplied = 'COMPLIMENTARY';
     }
     const expectedAmount = feeInfo.amount - discountAmount + optionsFee;
 
@@ -7370,7 +7409,9 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
     let bank = null;
     let paidAmount;
     let utrNumber = null;
-    if (linkLater) {
+    if (complimentary) {
+      paidAmount = 0;
+    } else if (linkLater) {
       paidAmount = Number(req.body.amount);
       if (!Number.isFinite(paidAmount) || paidAmount <= 0) return res.status(400).json({ success: false, error: 'Enter a valid amount.' });
       utrNumber = req.body.utrNumber ? String(req.body.utrNumber).trim() : null;
@@ -7444,7 +7485,12 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
     // verified_amount/reviewer yet, same shape as a self-service submission's
     // first ledger row, so the existing Review modal can reconcile it later
     // exactly as it would for one of those.
-    if (linkLater) {
+    if (complimentary) {
+      // Nothing was paid, so there is no ledger row -- as with a
+      // self-service ₹0 registration. The faculty entry is linked to this
+      // account if it was not yet.
+      if (!guest.phone_number) await linkGuestToAccount(req, guest, phone);
+    } else if (linkLater) {
       await dbRun(
         `INSERT INTO payment_transactions
           (registration_id, phone_number, amount, utr_number, payment_mode, txn_status, submitted_at)
@@ -7466,9 +7512,11 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
 
     await recordAudit({
       req, entityType: 'registration', entityId: registrationId,
-      action: 'ADMIN_REGISTERED',
+      action: complimentary ? 'COMPLIMENTARY_REGISTERED' : 'ADMIN_REGISTERED',
       oldValue: null,
-      newValue: `${name} (${phone}) — ${feeInfo.label}, ₹${inr(paidAmount)} via ${PAYMENT_MODE_LABELS[paymentMode]}${
+      newValue: complimentary
+        ? `${name} (${phone}) — ${feeInfo.label}, complimentary (faculty): ₹${inr(discountAmount)} waived`
+        : `${name} (${phone}) — ${feeInfo.label}, ₹${inr(paidAmount)} via ${PAYMENT_MODE_LABELS[paymentMode]}${
         linkLater ? ' — pending bank-statement linkage'
         : bankStatus === 'PARTIAL_PAYMENT' ? ` (₹${inr(expectedAmount - paidAmount)} balance due)` : ''}`,
     });
@@ -7481,7 +7529,13 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
       writeAuditRow('discount_code', promoCodeId, 'DISCOUNT_CODE_USED', null, `${promoCode} used by ${name} (${phone}), reg ${regNo}`, phone, name, 'DELEGATE').catch(() => {});
     }
 
-    if (linkLater) {
+    if (complimentary) {
+      notifyDelegate(phone, 'Registration confirmed',
+        emailWrap('Your registration is confirmed',
+          `<p>Dear ${escapeHtml(name)},</p>
+           <p>Your registration for the ${escapeHtml(CONFERENCE.name)} is <b>confirmed</b>. As faculty, your registration is complimentary — no payment is needed.</p>
+           <p>Registration number: <b>${escapeHtml(regNo)}</b></p>${deskPassEmailHtml(regNo)}`));
+    } else if (linkLater) {
       notifyDelegate(phone, 'Payment received — verification pending',
         emailWrap('We’ve received your payment details',
           `<p>Dear ${escapeHtml(name)},</p>
@@ -7496,11 +7550,12 @@ app.post('/api/admin/registrations', requirePermission('payments.desk_register')
            <p>Registration number: <b>${escapeHtml(regNo)}</b></p>${deskPassEmailHtml(regNo)}`));
     }
 
-    res.json({ success: true, registrationId, registrationNumber: regNo, tempPassword, expectedAmount, paidAmount, bankStatus });
+    res.json({ success: true, registrationId, registrationNumber: regNo, tempPassword, expectedAmount, paidAmount, bankStatus,
+      waivedAmount: complimentary ? discountAmount : 0 });
   } catch (err) {
     next(err);
   }
-});
+}
 
 // Candidate statement debits for refunding one registration's excess --
 // unlinked debit rows, nearest to the outstanding overpaid amount first.
@@ -12739,7 +12794,7 @@ app.get('/api/admin/activity-log', requirePermission('system.activity_log'), asy
 // BANK_TRANSFER because the admin is linking a credit already visible in
 // the imported statement rather than a specific UPI/NEFT method the
 // delegate declared themselves.
-const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT / RTGS', CASH: 'Cash / At Desk', BANK_TRANSFER: 'Bank Transfer (Admin-Linked)' };
+const PAYMENT_MODE_LABELS = { UPI: 'UPI', NEFT_RTGS: 'NEFT / RTGS', CASH: 'Cash / At Desk', BANK_TRANSFER: 'Bank Transfer (Admin-Linked)', COMPLIMENTARY: 'Complimentary (faculty)' };
 // Human-readable labels for a registration's bank_status, used everywhere it's
 // displayed (reports, etc.) instead of the raw DB constant (e.g. BANK_VERIFIED).
 const BANK_STATUS_LABELS = { PENDING: 'Pending', BANK_VERIFIED: 'Verified', REJECTED: 'Rejected', PARTIAL_PAYMENT: 'Partial Payment' };
@@ -13675,6 +13730,7 @@ async function guestRowsJoined(where = '', params = []) {
     `SELECT g.*, u.salutation, u.full_name, u.designation, u.institution, u.district, u.state, u.phone, u.email,
             COALESCE(r.registration_number, u.registration_number) AS registration_number, r.category_label,
             (r.id IS NOT NULL AND COALESCE(r.bank_status, '') != 'REJECTED') AS registered,
+            (r.payment_mode = 'COMPLIMENTARY' AND COALESCE(r.bank_status, '') != 'REJECTED') AS complimentary,
             tc.salutation AS tc_salutation, tc.full_name AS tc_name,
             ac.salutation AS ac_salutation, ac.full_name AS ac_name
        FROM guests g
@@ -13923,6 +13979,24 @@ app.post('/api/guests', requirePermission('guests.edit'), async (req, res, next)
 // Link a guest who was added by name to their account, once they have one.
 // From then on the account supplies their name, designation, phone and
 // email; what was typed in stays on the row, unused, for the record.
+// Link a faculty entry to an account (both checked by the caller). The
+// account may show them to be from MGIMS or Sevagram: a pickup or drop
+// nobody has set yet becomes "Not required"; one already set stays. Returns
+// whether that happened.
+async function linkGuestToAccount(req, g, phone) {
+  const u = await dbGet('SELECT salutation, full_name, email, institution, designation FROM users WHERE phone_number = ?', [phone]);
+  const local = guestLib.isLocalFaculty(u || {});
+  const pickup = local && blankValue(g.pickup_status) ? guestLib.NOT_REQUIRED : g.pickup_status;
+  const drop = local && blankValue(g.drop_status) ? guestLib.NOT_REQUIRED : g.drop_status;
+  const by = req.session.name || req.session.phone;
+  await dbRun('UPDATE guests SET phone_number = ?, pickup_status = ?, drop_status = ?, linked_at = ?, linked_by = ?, updated_at = ?, updated_by = ? WHERE id = ?',
+    [phone, pickup, drop, Date.now(), by, Date.now(), by, g.id]);
+  const name = u ? [u.salutation, u.full_name].filter(Boolean).join(' ') : phone;
+  const changedTransfer = pickup !== g.pickup_status || drop !== g.drop_status;
+  await recordAudit({ req, entityType: 'guest', entityId: String(g.id), action: 'GUEST_LINKED', oldValue: g.guest_name, newValue: `linked to ${name}'s account${changedTransfer ? LOCAL_TRANSFER_NOTE : ''}` });
+  return changedTransfer;
+}
+
 app.put('/api/guests/:id/link', requirePermission('guests.edit'), async (req, res, next) => {
   try {
     const g = await dbGet('SELECT * FROM guests WHERE id = ?', [req.params.id]);
@@ -13934,16 +14008,7 @@ app.put('/api/guests/:id/link', requirePermission('guests.edit'), async (req, re
     if (await dbGet('SELECT id FROM guests WHERE phone_number = ?', [phone])) {
       return res.status(409).json({ success: false, error: 'That account is already on the faculty list as someone else.' });
     }
-    // The account may show them to be from MGIMS or Sevagram: a pickup or
-    // drop nobody has set yet becomes "Not required". One already set stays.
-    const local = guestLib.isLocalFaculty(u);
-    const pickup = local && blankValue(g.pickup_status) ? guestLib.NOT_REQUIRED : g.pickup_status;
-    const drop = local && blankValue(g.drop_status) ? guestLib.NOT_REQUIRED : g.drop_status;
-    await dbRun('UPDATE guests SET phone_number = ?, pickup_status = ?, drop_status = ?, linked_at = ?, linked_by = ?, updated_at = ?, updated_by = ? WHERE id = ?',
-      [phone, pickup, drop, Date.now(), req.session.name || req.session.phone, Date.now(), req.session.name || req.session.phone, g.id]);
-    const name = [u.salutation, u.full_name].filter(Boolean).join(' ');
-    const changedTransfer = pickup !== g.pickup_status || drop !== g.drop_status;
-    await recordAudit({ req, entityType: 'guest', entityId: String(g.id), action: 'GUEST_LINKED', oldValue: g.guest_name, newValue: `linked to ${name}'s account${changedTransfer ? LOCAL_TRANSFER_NOTE : ''}` });
+    const changedTransfer = await linkGuestToAccount(req, g, phone);
     const registered = !!(await dbGet(`SELECT ${authorRegisteredSql('?')} AS yes`, [phone])).yes;
     res.json({ success: true, registered, local: changedTransfer });
   } catch (err) {
