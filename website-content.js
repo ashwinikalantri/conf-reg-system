@@ -107,7 +107,6 @@ module.exports = {
       ['NQOCN Gold Medal', 'for the winner of the award session'],
       ['Certificates', 'for every presenter; prizes for the best paper and poster'],
     ],
-    sampleAbstract: 'docs/sample-abstract.pdf',
     // The model abstract, as a page (/website/sample-abstract). For
     // reference only: the format, not a submission.
     sample: {
