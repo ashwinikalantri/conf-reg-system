@@ -40,7 +40,7 @@ const strip = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').rep
     // ampersand, which the page escapes (and must).
     check('...naming the conference it belongs to', strip(page).includes('Fixture Conference on Quality & Safety 2099'));
     check('...with that ampersand escaped, not raw', /Quality &amp; Safety/.test(page) && !/Quality & Safety/.test(page));
-    check('...and offering the way back to the portal', /<a href="\/"[^>]*>[\s\S]{0,120}Back to the portal/.test(page));
+    check('...and offering the way back to the portal', /<a href="\/portal"[^>]*>[\s\S]{0,120}Back to the portal/.test(page));
 
     console.log('\n== What it offers is what the rules say ==');
     const before = strip(String((await call('GET', URL)).body));

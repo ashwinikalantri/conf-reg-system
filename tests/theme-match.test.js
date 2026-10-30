@@ -19,7 +19,7 @@ check('...with no white buttons left on it', !/bg-white hover:bg-slate-50/.test(
 check('the header has one control, the delegate page\'s menu button; the delegate portal is its first item',
   (header.split('id="settings-menu"')[0].match(/<(a|button)\b/g) || []).length === 1
   && /id="settings-menu-btn"[^>]*class="w-10 h-10 rounded-lg border border-white\/25 hover:bg-white\/10/.test(header)
-  && /id="settings-menu"[^>]*>\s*<a id="admin-menu-portal" href="\/"[\s\S]*?Delegate portal/.test(header));
+  && /id="settings-menu"[^>]*>\s*<a id="admin-menu-portal" href="\/portal"[\s\S]*?Delegate portal/.test(header));
 check('Settings is a menu button (☰), and Log out is the last item in the menu',
   /id="settings-menu-btn"[^>]*aria-label="Menu"/.test(header) && !/> Settings <span/.test(header)
   && /id="admin-logout-item" onclick="logout\(\)"[\s\S]*?<\/button>\s*<\/div>\s*<\/div>\s*<\/div>\s*<\/header>/.test(header)

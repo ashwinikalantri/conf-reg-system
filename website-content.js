@@ -9,8 +9,8 @@
 // a path there.
 
 module.exports = {
-  // Shown in the footer when set. Left blank until the organisers give one.
-  contactEmail: '',
+  // Shown in the footer.
+  contactEmail: 'nqocn2026@mgims.ac.in',
 
   // The venue, for "Open in Google Maps": the New Auditorium Complex.
   venue: {

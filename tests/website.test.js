@@ -15,12 +15,15 @@ const http = require('http');
 
 // A request as if to the website's own address (nqocn2026.mgims.ac.in).
 const SITE = 'nqocn2026.mgims.ac.in';
-const asSite = (path, method = 'GET') => new Promise((resolve, reject) => {
-  const r = http.request({ host: HOST, port: PORT, path, method, headers: { Host: SITE } }, (res) => {
+const asHost = (hostName) => (path, method = 'GET') => new Promise((resolve, reject) => {
+  const r = http.request({ host: HOST, port: PORT, path, method, headers: { Host: hostName } }, (res) => {
     let raw = ''; res.on('data', (c) => { raw += c; }); res.on('end', () => resolve({ status: res.statusCode, location: res.headers.location, raw }));
   });
   r.on('error', reject); r.end();
 });
+const asSite = asHost(SITE);
+// The old address, which now sends everything to the site's.
+const asOld = asHost('registration.mgims.ac.in');
 
 const N = String(Date.now() % 100000000).padStart(8, '0');
 
@@ -39,7 +42,7 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
       check(`/website/${p} opens without signing in`, r.status === 200, r.status);
     }
     check('every page has the menu and the MGIMS copyright', pages.every((p) => /href="\/website\/programme"/.test(got[p]) && /© Mahatma Gandhi Institute of Medical Sciences, Sevagram/.test(got[p])));
-    check('...and links Register and Sign in to the portal', pages.every((p) => /class="btn btn-navy" href="\/"/.test(got[p])));
+    check('...and links Register and Sign in to the portal', pages.every((p) => /class="btn btn-navy" href="\/portal"/.test(got[p])));
     const groups = [...got[''].matchAll(/<details class="dd">\s*<summary[^>]*>([A-Za-z ]+)</g)].map((m) => m[1].trim());
     check('the menu is three groups and two links', JSON.stringify(groups) === JSON.stringify(['Programme', 'Registration', 'People'])
       && /class="top" href="\/website\/visit"/.test(got['']) && /class="top" href="\/website\/about"/.test(got['']), groups);
@@ -90,7 +93,7 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     check('nqocn2026.mgims.ac.in/ is the website home', home.status === 200 && /Two days at Sevagram/.test(home.raw), home.status);
     check('...its links are at the root', /href="\/programme"/.test(home.raw) && !/href="\/website\/(programme|workshops|registration|abstracts|faculty|team|visit|about)/.test(home.raw));
     check('...its images and stylesheet still load', /src="\/website\/img\/nqocn-mgims-logo\.png"/.test(home.raw) && /href="\/website\/site\.css/.test(home.raw));
-    check('...Register and Sign in go to the portal\'s address', /class="btn btn-navy" href="https?:\/\/[^"]+\/"/.test(home.raw) && !/class="btn btn-navy" href="\/"/.test(home.raw));
+    check('...Register and Sign in go to the portal, at /portal', /class="btn btn-navy" href="\/portal"/.test(home.raw));
     check('...and it names itself as the address to list', /<link rel="canonical" href="https:\/\/nqocn2026\.mgims\.ac\.in\/">/.test(home.raw));
     check('every page opens there', (await Promise.all(['/programme', '/workshops', '/registration', '/abstracts', '/sample-abstract', '/faculty', '/team', '/visit', '/about'].map((x) => asSite(x)))).every((r) => r.status === 200));
     const old = await asSite('/website/programme?day=2026-11-22');
@@ -99,17 +102,33 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     check('the earlier site\'s pages move to their new ones', aspx.status === 301 && aspx.location === '/abstracts'
       && (await asSite('/ScientificProgrammeDay2.aspx')).location === '/programme?day=2026-11-22', aspx.location);
     const qr = await asSite('/?hall=ABCD2345');
-    check('a hall QR link goes to the portal', qr.status === 302 && /\/\?hall=ABCD2345$/.test(qr.location || '') && !/^\//.test(qr.location || ''), qr.location);
+    check('a hall QR link opens the portal there, at /portal', qr.status === 302 && qr.location === '/portal?hall=ABCD2345', qr.location);
+    const portal = await asSite('/portal');
+    check('the portal is at /portal', portal.status === 200 && /app\.js\?v=/.test(portal.raw) && !/Two days at Sevagram/.test(portal.raw));
+    check('.../portal/ drops the slash (the page\'s files are relative)', (await asSite('/portal/?x=1')).location === '/portal?x=1');
     const adm = await asSite('/admin');
-    check('the admin panel goes to the portal', adm.status === 302 && /\/admin$/.test(adm.location || ''), adm.location);
-    check('the API is not served there', (await asSite('/api/conference')).status === 302);
-    check('an unknown page there is the site\'s 404', (await asSite('/no-such-page')).status === 404);
-    check('the portal\'s own address is unchanged: / is still the portal', !/Two days at Sevagram/.test((await call('GET', '/', null, null)).raw || ''));
+    check('/admin is served there; signed out, it sends you to /portal', adm.status === 302 && adm.location === '/portal', adm.location);
+    check('the API is served there', (await asSite('/api/conference')).status === 200);
+    check('the group-registration help is served there', (await asSite('/help/group-registration')).status === 200);
+    check('an unknown page there is the site\'s 404', (await asSite('/no-such-page')).status === 404 && /Page not found/.test((await asSite('/no-such-page')).raw));
+    check('elsewhere (an IP, localhost) / is still the portal', !/Two days at Sevagram/.test((await call('GET', '/', null, null)).raw || ''));
+
+    console.log('\n== The old address sends everything to the new one ==');
+    const o1 = await asOld('/');
+    check('registration.mgims.ac.in/ goes to the portal on the new address', o1.status === 302 && o1.location === 'https://nqocn2026.mgims.ac.in/portal', o1.location);
+    check('...a hall QR link keeps its code', (await asOld('/?hall=ABCD2345')).location === 'https://nqocn2026.mgims.ac.in/portal?hall=ABCD2345');
+    check('...a /website page goes to the same page at the root', (await asOld('/website/programme?day=2026-11-22')).location === 'https://nqocn2026.mgims.ac.in/programme?day=2026-11-22');
+    check('.../admin, an email\'s verify link and the help page keep their path', (await asOld('/admin')).location === 'https://nqocn2026.mgims.ac.in/admin'
+      && (await asOld('/verify/abc123')).location === 'https://nqocn2026.mgims.ac.in/verify/abc123'
+      && (await asOld('/help/group-registration')).location === 'https://nqocn2026.mgims.ac.in/help/group-registration');
+    check('...files too', (await asOld('/app.js?v=1')).location === 'https://nqocn2026.mgims.ac.in/app.js?v=1');
+    const post = await asOld('/api/auth/login', 'POST');
+    check('...and a POST keeps its method (307)', post.status === 307 && post.location === 'https://nqocn2026.mgims.ac.in/api/auth/login', [post.status, post.location]);
 
     console.log('\n== Nothing private ==');
     const all = Object.values(got).join('\n');
     const emails = all.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || [];
-    check('no email address on any page (none is set to show)', emails.length === 0, emails.slice(0, 3));
+    check('no email address on any page but the conference\'s own', emails.every((e) => e === 'nqocn2026@mgims.ac.in') && emails.length > 0, [...new Set(emails)].slice(0, 3));
     const mobiles = all.match(/(?<![\d+])[6-9]\d{9}(?!\d)/g) || [];
     check('no bare mobile number on any page', mobiles.length === 0, mobiles.slice(0, 3));
     check('no hall code (the QR secret) is sent', !/\?hall=[A-Z0-9]{8}\b/.test(all));

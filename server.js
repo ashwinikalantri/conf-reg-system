@@ -3676,6 +3676,14 @@ const ASSET_VERSION = (() => {
 })();
 app.locals.assetVersion = ASSET_VERSION;
 
+// The portal moved to the website's own address (nqocn2026.mgims.ac.in,
+// at /portal); the old address sends every request there. First, so even
+// its files go there.
+const WEBSITE_HOST = String(process.env.WEBSITE_HOST || 'nqocn2026.mgims.ac.in').toLowerCase();
+require('./website').redirectOldHosts(app, {
+  from: String(process.env.OLD_HOSTS || 'registration.mgims.ac.in').split(','),
+  to: WEBSITE_HOST,
+});
 // redirect: false -- /website is both a folder here (the site's images and
 // stylesheet) and a page (website.js); without it the folder's trailing-slash
 // redirect answered first.
@@ -3688,10 +3696,10 @@ app.use(maintenanceGate);
 // website-content.js. At /website here, and at the root of its own address,
 // WEBSITE_HOST, once that address is pointed at this server -- mounted this
 // early so that address's / is the website, not the portal.
-require('./website')(app, {
+const website = require('./website')(app, {
   dbAll, dbGet, CONFERENCE, programmeSessions, fetchProgramGroups, getFeeConfig, currentPhase,
   istDateString, abstractSubmissionOpen, formatConferenceDates,
-}, { host: String(process.env.WEBSITE_HOST || 'nqocn2026.mgims.ac.in').toLowerCase(), portalUrl: () => PORTAL_URL });
+}, { host: WEBSITE_HOST });
 
 // Public (pre-auth) maintenance state, so the login screen can show the
 // notice before anyone has a session. Never returns anything sensitive.
@@ -3714,7 +3722,7 @@ app.get('/api/maintenance', (req, res) => {
 // '/' below (see there for why), so this is just a redirect for anyone who
 // still has the old link bookmarked or documented somewhere.
 app.get('/setup', (req, res) => {
-  res.redirect('/');
+  res.redirect('/portal');
 });
 
 // Delegate portal -- except on a deployment that hasn't finished first-run
@@ -3735,8 +3743,12 @@ app.get('/setup', (req, res) => {
 // data (everything is still populated client-side by app.js) -- the page
 // <title> is the one exception, so the browser tab shows something
 // meaningful before the client-side fetch resolves.
-app.get('/', async (req, res, next) => {
+// Also at /portal: on the website's own address '/' is the website (see
+// website.js), so the portal is /portal there; it answers there everywhere.
+// A trailing slash would break the page's relative app.js and styles.css.
+app.get(['/', '/portal'], async (req, res, next) => {
   try {
+    if (req.path === '/portal/') return res.redirect(301, `/portal${req.originalUrl.slice(req.path.length)}`);
     if (await isSetupModeActive()) return res.render('setup');
     // Hand the delegate's own registration to the page so the status chip is
     // right on the first paint. The markup can only ship one status, and
@@ -3764,7 +3776,7 @@ app.get('/', async (req, res, next) => {
 // Admin panel lives outside the static root and is only served to a
 // logged-in admin. Anonymous users go to the portal to log in first.
 app.get('/admin', (req, res) => {
-  if (!req.session) return res.redirect('/');
+  if (!req.session) return res.redirect('/portal');
   // During maintenance the admin panel is super-admin-only: every other role's
   // panel is driven by API calls that maintenanceGate is now 503ing, so it
   // would render as a shell of empty tables rather than anything usable.
@@ -14401,6 +14413,9 @@ app.delete('/api/guests/:id', requirePermission('guests.manage'), async (req, re
     next(err);
   }
 });
+
+// A page nothing answered, on the website's own address: the site's 404.
+app.use(website.notFound);
 
 // --- ERROR HANDLER ------------------------------------------------------
 app.use((err, req, res, next) => {

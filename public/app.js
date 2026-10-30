@@ -3598,7 +3598,8 @@ async function logout() {
   currentDelegate = null;
   storageRemove('local', 'nqocn_current_user');
   // Full navigation so this works from both the delegate portal and /admin.
-  window.location.href = '/';
+  // /portal: on the conference's own address '/' is the website.
+  window.location.href = '/portal';
 }
 
 // Restore an active server session on page load. The session cookie is the
@@ -4146,7 +4147,7 @@ async function initBackendPortal() {
   const meRes = await fetch('/api/auth/me');
   if (!meRes.ok) {
     showToast('Please log in through the delegate portal with an administrator account.');
-    window.location.href = '/';
+    window.location.href = '/portal';
     return;
   }
   const me = await meRes.json();

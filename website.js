@@ -84,10 +84,11 @@ function sessionNames(s) {
   return list;
 }
 
-// The site is served twice: at /website on the portal's own address, and at
-// the root of its own address (`host`, nqocn2026.mgims.ac.in) once that is
-// pointed here. On its own address, anything meant for the portal -- sign
-// in, admin, a hall's QR link -- is sent to the portal (`portalUrl`).
+// The site is served twice: at /website on any address, and at the root of
+// its own address (`host`, nqocn2026.mgims.ac.in). That address carries the
+// delegate portal too, at /portal, with its /admin, /api and /help as ever;
+// the old address (registration.mgims.ac.in) sends everything here
+// (redirectOldHosts).
 const hostOf = (req) => String(req.headers.host || '').split(':')[0].toLowerCase();
 
 // The earlier site's pages on that address (an ASP.NET site), each to its
@@ -100,7 +101,7 @@ const OLD_PAGES = {
   'aboutmgims.aspx': '/about', 'aboutnqocn.aspx': '/about',
 };
 
-module.exports = function mountWebsite(app, d, { host = '', portalUrl = () => '' } = {}) {
+module.exports = function mountWebsite(app, d, { host = '' } = {}) {
   // d: { dbAll, dbGet, CONFERENCE, programmeSessions, fetchProgramGroups,
   //      getFeeConfig, currentPhase, istDateString, abstractSubmissionOpen,
   //      formatConferenceDates }
@@ -277,11 +278,9 @@ module.exports = function mountWebsite(app, d, { host = '', portalUrl = () => ''
     async registration() {
       const cats = await d.dbAll('SELECT label, early_fee, regular_fee, late_fee, spot_fee FROM fee_categories WHERE active = 1 ORDER BY sort_order, id');
       const fee = await feeState();
-      const groupOffer = (await d.dbGet('SELECT COUNT(*) AS n FROM group_discount_rules WHERE active = 1')).n > 0;
       return {
         fee,
         rows: cats.map((c) => ({ label: c.label, fees: [c.early_fee, c.regular_fee, c.late_fee, c.spot_fee].map(rupees) })),
-        groupOffer,
         abstract: abstractState(),
       };
     },
@@ -348,37 +347,60 @@ module.exports = function mountWebsite(app, d, { host = '', portalUrl = () => ''
     }
   }
 
-  // On the website's own address, at its root.
+  // On the website's own address, at its root. Everything else there --
+  // /portal, /admin, /api, /help, the portal's files -- is the portal's, and
+  // falls through to its routes.
+  const siteCtx = { base: '', portal: '/portal' };
   if (host) {
     app.use((req, res, next) => {
-      if (hostOf(req) !== host) return next();
-      const portal = portalUrl().replace(/\/+$/, '');
-      const toPortal = (code) => res.redirect(code, `${portal}${req.originalUrl}`);
-      if (req.method !== 'GET' && req.method !== 'HEAD') return toPortal(307);
-      const ctx = { base: '', portal: `${portal}/` };
+      if (hostOf(req) !== host || (req.method !== 'GET' && req.method !== 'HEAD')) return next();
       const p = req.path;
       const query = req.originalUrl.slice(req.path.length);
-      // A hall's QR code (/?hall=...) is for the portal's attendance.
-      if (p === '/' && req.query.hall) return toPortal(302);
-      if (p === '/') return render(req, res, next, '', ctx);
+      // A hall's QR code (/?hall=...) is the portal's attendance.
+      if (p === '/' && req.query.hall) return res.redirect(302, `/portal${query}`);
+      if (p === '/') return render(req, res, next, '', siteCtx);
       const page = /^\/([a-z-]+)\/?$/.exec(p);
-      if (page && PAGES.has(page[1])) return render(req, res, next, page[1], ctx);
+      if (page && PAGES.has(page[1])) return render(req, res, next, page[1], siteCtx);
       // Old /website links, on this address: the same page at the root.
       if (p === '/website' || p.startsWith('/website/')) return res.redirect(301, `${p.replace(/^\/website\/?/, '/')}${query}`);
       const old = OLD_PAGES[p.replace(/^\//, '').toLowerCase()];
       if (old) return res.redirect(301, old);
-      if (/^\/(api|admin|help|setup|auth|portal)(\/|$)/.test(p)) return toPortal(302);
-      return notFound(req, res, next, ctx);
+      return next();
     });
   }
 
   // On the portal's own address, at /website.
-  const atPath = { base: '/website', portal: '/' };
+  const atPath = { base: '/website', portal: '/portal' };
   app.get(['/website', '/website/'], (req, res, next) => render(req, res, next, '', atPath));
   app.get('/website/:page', (req, res, next) => {
     const key = String(req.params.page || '');
     if (PAGES.has(key) && key) return render(req, res, next, key, atPath);
     return notFound(req, res, next, atPath);
+  });
+
+  // Mounted last, after every portal route: a page nothing else answered,
+  // on the site's own address, is the site's 404.
+  return {
+    notFound: (req, res, next) => (host && hostOf(req) === host && (req.method === 'GET' || req.method === 'HEAD')
+      ? notFound(req, res, next, siteCtx) : next()),
+  };
+};
+
+// The old address: every request to the same place on the new one. The
+// portal's home ('/') is /portal there; a /website page is at the root. A
+// GET is a 302 (temporary, so it can be undone); anything else a 307, which
+// keeps its method and body.
+module.exports.redirectOldHosts = function redirectOldHosts(app, { from = [], to = '' } = {}) {
+  const old = new Set(from.map((h) => String(h).toLowerCase()).filter(Boolean));
+  if (!to || !old.size) return;
+  app.use((req, res, next) => {
+    if (!old.has(hostOf(req))) return next();
+    const p = req.path;
+    const query = req.originalUrl.slice(req.path.length);
+    const target = p === '/' ? '/portal'
+      : (p === '/website' || p.startsWith('/website/')) ? p.replace(/^\/website\/?/, '/')
+        : p;
+    res.redirect(req.method === 'GET' || req.method === 'HEAD' ? 302 : 307, `https://${to}${target}${query}`);
   });
 };
 
