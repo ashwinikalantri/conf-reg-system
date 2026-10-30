@@ -2062,6 +2062,8 @@ async function loadAbstractStatus() {
     const registered = mine.registered !== false;
     cachedOwnAbstract = abs;
     cachedAbstractSubmission = mine.submission || { open: true, deadline: '' };
+    cachedAbstractAuthorsWindow = mine.authorsWindow || null;
+    renderOwnAbstractAuthors(abs, cachedAbstractAuthorsWindow);
     showAbstractCard(!!abs || cachedAbstractSubmission.open !== false);
     if (abs) {
       let [label, cls] = STYLES[abs.status] || ['Submitted', 'bg-slate-100 text-slate-600'];
@@ -2174,6 +2176,157 @@ function toggleAbstractPreview() {
     abs.keywords ? `<div><p class="font-bold text-slate-700">Keywords</p><p>${esc(abs.keywords)}</p></div>` : '',
   ].join('');
   box.classList.remove('hidden');
+}
+
+// --- Abstract authors ---------------------------------------------------------
+// Every author of an abstract, in the order they are to be printed. One
+// editor, used in the submission form (#abstract-form-authors) and the
+// Authors modal (#abstract-authors-list): the presenting author is always on
+// the list; the others can be added, removed and moved with the arrows
+// (buttons rather than dragging, which is unreliable on a phone). State is
+// kept per list, by its element id. See abstract-authors.js for the rules.
+const authorEditors = {};
+// From GET /api/abstracts/me: { open, deadline, max } for their own list.
+let cachedAbstractAuthorsWindow = null;
+
+function setAuthorEditor(cid, list, { max = 6, renamePresenting = false } = {}) {
+  authorEditors[cid] = { list: (list || []).map((a) => ({ name: a.name || '', presenting: !!a.presenting })), max, renamePresenting };
+  renderAuthorEditor(cid);
+}
+
+function renderAuthorEditor(cid) {
+  const box = document.getElementById(cid);
+  const ed = authorEditors[cid];
+  if (!box || !ed) return;
+  const n = ed.list.length;
+  const btn = 'w-10 h-11 shrink-0 flex items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:cursor-not-allowed';
+  box.innerHTML = ed.list.map((a, i) => `
+    <li class="flex items-center gap-1.5">
+      <span class="w-6 shrink-0 text-right text-sm font-bold text-slate-400 tabular-nums">${i + 1}.</span>
+      <div class="flex-1 min-w-0">${a.presenting && !ed.renamePresenting
+        ? `<div class="h-11 px-3 flex items-center gap-2 rounded-lg border border-gold-300 bg-gold-50"><span class="truncate text-sm font-semibold text-slate-900">${esc(a.name)}</span><span class="ml-auto shrink-0 text-[10px] font-bold text-gold-700 uppercase tracking-wide">Presenting</span></div>`
+        : `<input type="text" value="${esc(a.name)}" maxlength="120" autocomplete="off" placeholder="${a.presenting ? 'Presenting author' : 'Author\'s full name'}" aria-label="Author ${i + 1}${a.presenting ? ' (presenting)' : ''}" oninput="setAuthorName('${cid}', ${i}, this.value)"
+            class="w-full h-11 px-3 border ${a.presenting ? 'border-gold-300 bg-gold-50 font-semibold' : 'border-slate-300 bg-white'} rounded-lg text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100">`}</div>
+      <button type="button" ${i === 0 ? 'disabled' : ''} onclick="moveAuthor('${cid}', ${i}, -1)" aria-label="Move ${esc(a.name || 'this author')} up" class="${btn}">↑</button>
+      <button type="button" ${i === n - 1 ? 'disabled' : ''} onclick="moveAuthor('${cid}', ${i}, 1)" aria-label="Move ${esc(a.name || 'this author')} down" class="${btn}">↓</button>
+      ${a.presenting ? '<span class="w-10 shrink-0" aria-hidden="true"></span>' : `<button type="button" onclick="removeAuthor('${cid}', ${i})" aria-label="Remove ${esc(a.name || 'this author')}" class="${btn} hover:text-rose-700">✕</button>`}
+    </li>`).join('')
+    + `<li class="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 pl-7">
+        ${n < ed.max ? `<button type="button" onclick="addAuthor('${cid}')" class="h-10 px-3 rounded-lg border border-dashed border-slate-300 text-sm font-semibold text-navy hover:bg-slate-50">+ Add author</button>` : ''}
+        <span class="text-xs text-slate-500">${n} of ${ed.max} authors${n >= ed.max ? ' — the most an abstract can have' : ''}${n > 1 && ed.renamePresenting ? ' · the gold row is the presenting author' : ''}</span>
+      </li>`;
+}
+
+function setAuthorName(cid, i, value) {
+  const ed = authorEditors[cid];
+  if (ed && ed.list[i]) ed.list[i].name = value;
+}
+function moveAuthor(cid, i, dir) {
+  const ed = authorEditors[cid];
+  const j = i + dir;
+  if (!ed || j < 0 || j >= ed.list.length) return;
+  [ed.list[i], ed.list[j]] = [ed.list[j], ed.list[i]];
+  renderAuthorEditor(cid);
+}
+function removeAuthor(cid, i) {
+  const ed = authorEditors[cid];
+  if (!ed || !ed.list[i] || ed.list[i].presenting) return;
+  ed.list.splice(i, 1);
+  renderAuthorEditor(cid);
+}
+function addAuthor(cid) {
+  const ed = authorEditors[cid];
+  if (!ed || ed.list.length >= ed.max) return;
+  ed.list.push({ name: '', presenting: false });
+  renderAuthorEditor(cid);
+  const inputs = document.querySelectorAll(`#${cid} input`);
+  const last = inputs && inputs[inputs.length - 1];
+  if (last && last.focus) last.focus();
+}
+// The list to send: blank rows left out (the presenting author is kept).
+function authorEditorValue(cid) {
+  const ed = authorEditors[cid];
+  if (!ed) return undefined;
+  return ed.list.map((a) => ({ name: String(a.name || '').replace(/\s+/g, ' ').trim(), presenting: a.presenting }))
+    .filter((a) => a.name || a.presenting);
+}
+
+// "A Rao, B Shah, C Iyer" with the presenting author underlined when there
+// is more than one.
+function abstractAuthorsLineHtml(list) {
+  const many = (list || []).length > 1;
+  return (list || []).map((a) => (a.presenting && many
+    ? `<span class="underline decoration-gold-500 decoration-2 underline-offset-2" title="Presenting author">${esc(a.name)}</span>`
+    : esc(a.name))).join(', ');
+}
+
+// The delegate's own abstract card: its authors, and the way to add or
+// reorder them while the last date for authors has not passed.
+function renderOwnAbstractAuthors(abs, win) {
+  const box = document.getElementById('abstract-authors-box');
+  if (!box) return;
+  if (!abs || abs.status === 'REJECTED') { box.innerHTML = ''; box.classList.add('hidden'); return; }
+  const open = !win || win.open !== false;
+  const by = win && win.deadline ? ` by <b>${esc(formatFullDateWithDay(win.deadline))}</b>` : '';
+  const ask = !abs.authors_given && open
+    ? `<div class="rounded-xl border border-gold-300 bg-gold-50 px-3.5 py-3 mb-2">
+        <p class="text-sm font-bold text-navy">Add your co-authors</p>
+        <p class="text-[13px] text-slate-700 mt-0.5 leading-relaxed">Your abstract lists only you. Add every author in the order they should be printed${by}. If you are the only author, open the list and save it.</p>
+      </div>` : '';
+  const action = open
+    ? `<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <button type="button" onclick="openAbstractAuthors()" class="h-11 px-4 ${abs.authors_given ? 'border border-slate-300 bg-white text-navy hover:bg-slate-50' : 'bg-navy hover:bg-indigo-700 text-white'} font-semibold rounded-lg text-sm">${abs.authors_given ? 'Edit authors' : 'Add authors'}</button>
+        ${abs.authors_given && win && win.deadline ? `<span class="text-xs text-slate-500">Can be changed until ${esc(formatFullDate(win.deadline))}</span>` : ''}
+      </div>`
+    : '<p class="text-xs text-slate-500 mt-1">The author list can no longer be changed here. To correct it, write to the organisers.</p>';
+  box.innerHTML = `${ask}<p class="text-sm text-slate-700"><span class="font-semibold text-slate-900">Authors:</span> ${abstractAuthorsLineHtml(abs.authors || [])}</p>${action}`;
+  box.classList.remove('hidden');
+}
+
+// Open the Authors modal: for the delegate's own abstract (no id), or, from
+// the Abstracts tab, for any abstract -- where the presenting author's name
+// can be corrected too.
+let abstractAuthorsTarget = null;
+function openAbstractAuthors(id) {
+  const admin = id !== undefined && id !== null;
+  const abs = admin ? abstractsCache.find((x) => String(x.id) === String(id)) : cachedOwnAbstract;
+  if (!abs) return;
+  const win = admin ? abstractsAuthorsWindow : cachedAbstractAuthorsWindow;
+  abstractAuthorsTarget = admin ? { mode: 'admin', id: abs.id } : { mode: 'me' };
+  setText('abstract-authors-title', abs.title || '');
+  setAuthorEditor('abstract-authors-list', abs.authors || [], { max: (win && win.max) || 6, renamePresenting: admin });
+  setText('abstract-authors-deadline', admin
+    ? (abs.author_name ? `Submitted by ${abs.author_name}` : '')
+    : (win && win.deadline ? `Can be changed until ${formatFullDate(win.deadline)}` : ''));
+  document.getElementById('modal-abstract-authors').classList.remove('hidden');
+}
+
+async function saveAbstractAuthorsList() {
+  const t = abstractAuthorsTarget;
+  if (!t) return;
+  const btn = document.getElementById('abstract-authors-save');
+  if (btn) btn.disabled = true;
+  try {
+    const url = t.mode === 'admin' ? `/api/abstracts/${encodeURIComponent(t.id)}/authors` : '/api/abstracts/me/authors';
+    const data = await (await fetch(url, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ authors: authorEditorValue('abstract-authors-list') }),
+    })).json();
+    if (!data.success) return showToast(data.error || 'Could not save the authors.');
+    showToast('Authors saved.', 'success');
+    closeModal('modal-abstract-authors');
+    if (t.mode === 'admin') {
+      await renderBackendAbstracts();
+      const review = document.getElementById('modal-abstract-review');
+      if (review && !review.classList.contains('hidden')) openAbstractReview(t.id);
+    } else {
+      loadAbstractStatus();
+    }
+  } catch (e) {
+    showToast('Could not save the authors. Check your connection and try again.');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // Applied promo code for the current payment form: { code, discountAmount,
@@ -3021,6 +3174,8 @@ async function handleAbstractSubmit(e) {
   for (const id of ABSTRACT_SECTION_IDS) {
     payload[id.replace('abstract-', '')] = document.getElementById(id).value;
   }
+  const authors = authorEditorValue('abstract-form-authors');
+  if (authors) payload.authors = authors;
 
   const submitBtn = document.getElementById('abstract-submit-btn');
   const submitLabel = document.getElementById('abstract-submit-label');
@@ -3061,9 +3216,13 @@ function openModal(id) {
     // (REVISION_REQUESTED -- the only status that leaves the dashboard
     // button enabled here, see loadAbstractStatus) gets the form prefilled
     // with what they already submitted; anyone else gets a blank form.
+    const maxAuthors = (cachedAbstractAuthorsWindow && cachedAbstractAuthorsWindow.max) || 6;
     if (cachedOwnAbstract && cachedOwnAbstract.status === 'REVISION_REQUESTED') {
       prefillAbstractFormForRevision(cachedOwnAbstract);
+      setAuthorEditor('abstract-form-authors', cachedOwnAbstract.authors, { max: maxAuthors });
     } else {
+      const me = (currentDelegate && (currentDelegate.full_name || currentDelegate.name)) || 'You';
+      setAuthorEditor('abstract-form-authors', [{ name: me, presenting: true }], { max: maxAuthors });
       resetAbstractKeywords();
       document.getElementById('abstract-title').value = '';
       for (const id of ABSTRACT_SECTION_IDS) {
@@ -8336,6 +8495,8 @@ async function renderGeneralSettings() {
   setVal('gs-conf-regprefix', data.conference.regPrefix);
   setVal('gs-conf-abstractdeadline', data.conference.abstractDeadline);
   renderAbstractDeadlineState(data.conference);
+  setVal('gs-conf-authorsdeadline', data.conference.authorsDeadline);
+  renderAuthorsDeadlineState(data.conference);
   // A conference being set up is always in the future, and it can't end
   // before it starts -- nudged here, enforced server-side regardless (see
   // PUT /api/admin/general-settings).
@@ -8388,6 +8549,23 @@ function renderAbstractDeadlineState(conf) {
   } else {
     el.className = 'text-[11px] font-semibold mt-1 text-rose-700';
     el.textContent = `Closed — the last date was ${day}. New abstracts are refused.`;
+  }
+}
+
+// The same, for the last date to change an abstract's authors.
+function renderAuthorsDeadlineState(conf) {
+  const el = document.getElementById('gs-conf-authors-state');
+  if (!el) return;
+  const day = formatFullDateWithDay(conf.authorsDeadline);
+  if (!conf.authorsDeadline) {
+    el.className = 'text-[11px] font-semibold mt-1 text-slate-500';
+    el.textContent = 'Open — no last date set.';
+  } else if (conf.abstractAuthorsOpen) {
+    el.className = 'text-[11px] font-semibold mt-1 text-emerald-700';
+    el.textContent = `Open — delegates can change their authors until the end of ${day} (IST).`;
+  } else {
+    el.className = 'text-[11px] font-semibold mt-1 text-rose-700';
+    el.textContent = `Closed — the last date was ${day}. Only admins can change authors now.`;
   }
 }
 
@@ -8466,6 +8644,7 @@ async function saveGeneralSettings(e, group) {
       endDate: document.getElementById('gs-conf-enddate').value,
       regPrefix: document.getElementById('gs-conf-regprefix').value,
       abstractDeadline: document.getElementById('gs-conf-abstractdeadline').value,
+      authorsDeadline: document.getElementById('gs-conf-authorsdeadline').value,
     } };
   } else if (group === 'maintenance') {
     body = { maintenance: { message: document.getElementById('gs-maintenance-message').value } };
@@ -8801,6 +8980,29 @@ async function buildMgimsRegisterBody() {
 <p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
 }
 
+// For delegates whose abstract still lists only themselves: the portal took
+// one author per abstract at first. {{title}} is filled in per recipient.
+async function buildAbstractAuthorsBody() {
+  const c = conferenceInfo;
+  const by = c.authorsDeadline ? ` by <b>${esc(formatFullDateWithDay(c.authorsDeadline))}</b>` : '';
+  return `<p>Dear {{name}},</p>
+<p>Thank you for submitting your abstract, <b>&ldquo;{{title}}&rdquo;</b>, to <b>${esc(c.name || 'the conference')}</b>.</p>
+<p>When you submitted it, the portal recorded only you as its author. So that the abstract book and the programme name everyone who worked on it, please add all the co-authors, in the order you want them printed${by}.</p>
+<div style="background:#faf5e8;border:1px solid #d6b46a;border-radius:10px;padding:1rem 1.25rem;margin:1.25rem 0">
+  <div style="font-size:.7rem;letter-spacing:.09em;text-transform:uppercase;color:#8a6d2b;font-weight:700">How to add them</div>
+  <ol style="font-size:.9rem;color:#1c3549;margin:.5rem 0 0;padding-left:1.2rem">
+    <li>Log in to the portal with the account you used to submit the abstract.</li>
+    <li>On the <b>Abstract</b> card, tap <b>Add authors</b>.</li>
+    <li>Add each co-author's full name (up to 6 authors in all), use the arrows to put them in order, and save.</li>
+  </ol>
+</div>
+<p>You stay on the list as the presenting author, and can be placed anywhere in the order. Your abstract itself is not changed. If you are the only author, open the list and save it as it is.</p>
+<p style="text-align:center;margin:1.5rem 0">
+  <a href="${window.location.origin}" style="background:#1c3549;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Add Authors</a>
+</p>
+<p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
+}
+
 // For authors who submitted an abstract but have not registered. {{title}}
 // is filled in per recipient by the server, so it only makes sense on the
 // Abstract Submitted, Not Registered card.
@@ -8981,6 +9183,15 @@ const CUSTOM_REMINDER_TEMPLATES = {
     },
     body: buildAbstractRegistrationMandatoryBody,
   },
+  'abstract-add-authors': {
+    label: 'Abstracts — add all your co-authors',
+    audiences: ['abstract_authors'],
+    async subject() {
+      const who = conferenceInfo.acronym ? ` for ${conferenceInfo.acronym}` : '';
+      return `Add the Co-authors of Your Abstract${who}`;
+    },
+    body: buildAbstractAuthorsBody,
+  },
   'abstract-deadline-extended': {
     label: 'Abstracts — last date extended',
     audiences: ['registered', 'signups'],
@@ -9027,6 +9238,7 @@ const REMINDER_DEFAULT_TEMPLATE = {
   signups: 'registration-reminder', faculty: 'registration-reminder', domain: 'registration-reminder',
   unverified: 'verify-email', abstract: 'abstract-registration-mandatory', codes: 'code-holder',
   balance: 'balance-due', paste: 'early-bird-ending', certificates: 'certificate-ready',
+  abstract_authors: 'abstract-add-authors',
 };
 
 // --- The composer ------------------------------------------------------------
@@ -9740,7 +9952,8 @@ function abstractCardHeader(a) {
       <div class="flex justify-between items-start gap-4">
         <div>
           <h4 class="font-bold text-slate-800">${esc(a.title)}</h4>
-          <p class="text-xs text-slate-500 mt-0.5">${esc(a.author_name)} · ${esc(a.format)}</p>
+          <p class="text-xs text-slate-500 mt-0.5">${a.authors ? abstractAuthorsLineHtml(a.authors) : esc(a.author_name)} · ${esc(a.format)}</p>
+          ${a.authors && !a.authors_given && status !== 'REJECTED' ? '<span class="inline-block mt-1 text-[10px] font-bold text-gold-700 bg-gold-50 border border-gold-300 rounded-full px-2 py-0.5">Co-authors not added</span>' : ''}
         </div>
         <div class="text-right shrink-0">
           <span class="${badge} text-xs px-2.5 py-1 rounded-full font-bold border whitespace-nowrap">${esc(label)}</span>
@@ -9800,7 +10013,7 @@ function openAbstractReview(id) {
   const titleEl = document.getElementById('abstract-review-modal-title');
   if (titleEl) titleEl.innerText = a.title || 'Abstract';
   const body = document.getElementById('abstract-review-modal-body');
-  if (body) body.innerHTML = abstractSectionsHtml(a);
+  if (body) body.innerHTML = abstractAuthorsReviewHtml(a) + abstractSectionsHtml(a);
   const actions = document.getElementById('abstract-review-modal-actions');
   if (actions) actions.dataset.id = a.id;
   // Shared modal, reused per abstract -- collapse the revision note box and
@@ -9839,6 +10052,50 @@ async function submitAbstractRevisionRequest() {
   renderBackendAbstracts();
 }
 
+// The authors' window from GET /api/abstracts, and the "without" filter.
+let abstractsAuthorsWindow = null;
+let abstractsMissingAuthorsOnly = false;
+
+// Above the lists: how many abstracts have their full author list.
+function renderAbstractsAuthorsSummary(abstracts) {
+  const el = document.getElementById('abstracts-authors-summary');
+  if (!el) return;
+  const live = abstracts.filter((a) => a.authors && a.status !== 'REJECTED');
+  if (!live.length) { el.classList.add('hidden'); return; }
+  const missing = live.filter((a) => !a.authors_given).length;
+  if (!missing) abstractsMissingAuthorsOnly = false;
+  const w = abstractsAuthorsWindow;
+  const when = w && w.deadline
+    ? `Delegates can change them until ${esc(formatFullDateWithDay(w.deadline))}${w.open ? '' : ' — that date has passed; only admins can now'}.`
+    : 'No last date is set, so delegates can change them at any time (Conference setup).';
+  el.innerHTML = `<div class="flex-1 min-w-0">
+      <p class="text-sm text-slate-800"><b class="font-bold">${live.length - missing} of ${live.length}</b> abstracts have their full author list${missing ? `; <b class="font-bold">${missing}</b> still list only the submitter` : ''}.</p>
+      <p class="text-xs text-slate-600 mt-0.5">${when}</p>
+    </div>
+    ${missing ? `<button type="button" onclick="toggleAbstractsMissingAuthors()" aria-pressed="${abstractsMissingAuthorsOnly}" class="h-9 px-3 rounded-lg text-xs font-semibold ${abstractsMissingAuthorsOnly ? 'bg-navy hover:bg-indigo-700 text-white' : 'bg-white border border-slate-300 text-navy hover:bg-slate-50'}">${abstractsMissingAuthorsOnly ? 'Show all abstracts' : `Show the ${missing} without`}</button>` : ''}`;
+  el.classList.remove('hidden');
+}
+function toggleAbstractsMissingAuthors() {
+  abstractsMissingAuthorsOnly = !abstractsMissingAuthorsOnly;
+  renderBackendAbstracts();
+}
+
+// The authors, at the top of the review modal, with the way to change them.
+function abstractAuthorsReviewHtml(a) {
+  if (!a.authors) return '';
+  const many = a.authors.length > 1;
+  const note = !a.authors_given ? 'Only the submitter so far — co-authors not added yet.'
+    : many ? 'Presenting author underlined.' : 'Confirmed as the only author.';
+  return `<div class="mb-3 flex items-start gap-3">
+    <div class="flex-1 min-w-0">
+      <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Authors</p>
+      <p class="text-sm text-slate-800 mt-0.5">${abstractAuthorsLineHtml(a.authors)}</p>
+      <p class="text-[11px] ${a.authors_given ? 'text-slate-500' : 'text-gold-700 font-semibold'} mt-0.5">${note}</p>
+    </div>
+    ${can('abstracts.review') ? `<button type="button" onclick="openAbstractAuthors(${esc(a.id)})" class="shrink-0 px-3 py-1.5 bg-white border border-slate-300 text-navy hover:bg-slate-50 font-semibold rounded-lg text-xs">Edit authors</button>` : ''}
+  </div>`;
+}
+
 async function renderBackendAbstracts() {
   const res = await fetch('/api/abstracts');
   const approvalBox = document.getElementById('abstracts-approval-container');
@@ -9852,13 +10109,18 @@ async function renderBackendAbstracts() {
   }
 
   const data = await res.json();
-  const abstracts = data.abstracts || [];
-  abstractsCache = abstracts;
-  const underReview = abstracts.filter(a => (a.status || 'UNDER_REVIEW') === 'UNDER_REVIEW');
+  const all = data.abstracts || [];
+  abstractsCache = all;
+  abstractsAuthorsWindow = data.authorsWindow || null;
+  renderAbstractsAuthorsSummary(all);
+  // "Show the ones without": abstracts (not rejected) still listing only
+  // their submitter.
+  const abstracts = abstractsMissingAuthorsOnly ? all.filter((a) => a.authors && !a.authors_given && a.status !== 'REJECTED') : all;
+  const underReview = all.filter(a => (a.status || 'UNDER_REVIEW') === 'UNDER_REVIEW');
   setText('badge-pending-abstracts', underReview.length);
 
   if (!abstracts.length) {
-    approvalBox.innerHTML = `<p class="text-sm text-slate-500 p-4">No abstracts submitted yet.</p>`;
+    approvalBox.innerHTML = `<p class="text-sm text-slate-500 p-4">${all.length ? 'Every abstract has its author list.' : 'No abstracts submitted yet.'}</p>`;
     assignBox.innerHTML = '';
     return;
   }

@@ -150,6 +150,9 @@
           <p id="abstract-desc" class="text-[15px] text-slate-600 mt-1 leading-relaxed">Submit a paper or poster on healthcare quality and patient safety. One abstract per delegate; it cannot be changed once submitted.</p>
           <!-- The last date, on its own line. renderAbstractDeadlineNote(). -->
           <p id="abstract-deadline-note" class="hidden mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-navy bg-gold-50 border border-gold-300 rounded-full px-3 py-1"></p>
+          <!-- Its authors, in order, and the way to add or reorder them.
+               renderOwnAbstractAuthors(). -->
+          <div id="abstract-authors-box" class="hidden mt-3"></div>
           <button type="button" id="abstract-preview-toggle" onclick="toggleAbstractPreview()" class="hidden block text-sm text-indigo-700 hover:underline font-semibold mt-2">View my submission</button>
           <div id="abstract-preview-box" class="hidden mt-2 p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 space-y-2"></div>
           <button id="abstract-action-btn" onclick="openModal('modal-abstract')" class="mt-4 w-full py-3 bg-navy hover:bg-indigo-700 text-white font-semibold rounded-lg">Submit Abstract</button>

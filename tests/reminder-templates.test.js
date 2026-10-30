@@ -26,7 +26,7 @@ function build(earlyUntil, conf) {
   const src=`
     ${grab('esc')} ${grab('inr')} ${grab('formatFullDate')} ${grab('formatFullDateWithDay')} ${grab('istDateString')}
     ${grab('earlyBirdDeadline')} ${grab('buildEarlyBirdReminderBody')} ${grab('buildEarlyBirdExtensionBody')}
-    ${grab('buildAbstractExtensionBody')} ${grab('buildGroupDiscountBody')} ${grab('buildAbstractRegistrationMandatoryBody')}
+    ${grab('buildAbstractExtensionBody')} ${grab('buildGroupDiscountBody')} ${grab('buildAbstractRegistrationMandatoryBody')} ${grab('buildAbstractAuthorsBody')}
     ${js.match(/const MGIMS_BOTTLE_DEADLINE = '[^']*';/)[0]} ${grab('buildMgimsRegisterBody')}
     ${js.match(/const steelButton = [\s\S]*?<\/p>`;/)[0]}
     ${js.match(/const reminderSignOff = [^\n]+/)[0]}

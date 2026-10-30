@@ -52,6 +52,13 @@
           <input type="text" id="abstract-title" required placeholder="A concise, specific title for your work" class="w-full mt-1 p-2.5 border border-slate-200 rounded-lg outline-none text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition">
         </div>
 
+        <!-- Every author, in order; the delegate is on it as the presenting
+             author (renderAuthorEditor). -->
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Authors <span class="font-normal text-slate-400">(in the order they should be printed)</span></label>
+          <ol id="abstract-form-authors" class="space-y-2 mt-1.5"></ol>
+        </div>
+
         <!-- Five structured sections, each numbered and in its own card with
              a live per-section word count. Each has a small formatting
              toolbar (Bold/Italic/Superscript/Subscript -- covers scientific

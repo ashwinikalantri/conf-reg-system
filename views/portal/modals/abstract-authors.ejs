@@ -1,0 +1,23 @@
+  <!-- MODAL: ABSTRACT AUTHORS -->
+  <!-- Every author of a submitted abstract, in the order they are to be
+       printed. Used by the delegate for their own abstract and by an admin
+       for anyone's (openAbstractAuthors); the list itself is drawn by
+       renderAuthorEditor into #abstract-authors-list. -->
+  <div id="modal-abstract-authors" class="hidden fixed inset-0 bg-slate-900/60 flex justify-center items-center p-2 sm:p-4 z-[60]" role="dialog" aria-labelledby="abstract-authors-heading">
+    <div class="bg-white max-w-lg w-full rounded-2xl shadow-card relative max-h-[95vh] sm:max-h-[90vh] flex flex-col">
+      <button type="button" onclick="closeModal('modal-abstract-authors')" aria-label="Close" class="absolute top-3 right-3 w-11 h-11 flex items-center justify-center text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
+      <div class="p-5 sm:p-6 pb-3 shrink-0">
+        <h3 id="abstract-authors-heading" class="text-xl font-bold text-slate-900 pr-10">Authors</h3>
+        <p id="abstract-authors-title" class="text-sm text-slate-600 mt-0.5 pr-10 line-clamp-2"></p>
+        <p class="text-[13px] text-slate-500 mt-2 leading-relaxed">List every author in the order they should be printed. Use the arrows to move a name up or down. If you are the only author, just save.</p>
+      </div>
+      <div class="flex-1 min-h-0 overflow-y-auto px-5 sm:px-6 pb-2">
+        <ol id="abstract-authors-list" class="space-y-2"></ol>
+      </div>
+      <div class="p-4 sm:p-5 border-t border-slate-100 shrink-0 flex items-center gap-3">
+        <p id="abstract-authors-deadline" class="flex-1 min-w-0 text-xs text-slate-500"></p>
+        <button type="button" onclick="closeModal('modal-abstract-authors')" class="h-11 px-4 border border-slate-300 text-slate-700 hover:bg-slate-50 font-semibold rounded-lg text-sm">Cancel</button>
+        <button type="button" id="abstract-authors-save" onclick="saveAbstractAuthorsList()" class="h-11 px-5 bg-navy hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm disabled:opacity-50">Save authors</button>
+      </div>
+    </div>
+  </div>

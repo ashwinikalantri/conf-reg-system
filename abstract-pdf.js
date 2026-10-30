@@ -108,7 +108,22 @@ function renderAbstractPdf(abstract, opts = {}) {
       // Title, author, format and decision.
       doc.font('bold').fontSize(16).fillColor(C.navy).text(abstract.title || 'Untitled', MARGIN, doc.y, { width });
       doc.moveDown(0.5);
-      doc.font('body').fontSize(10).fillColor(C.ink).text(abstract.author_name || '', MARGIN, doc.y, { width });
+      // Every author in order (author_list, from abstract-authors.js); the
+      // presenting author is underlined when there is more than one.
+      const authors = Array.isArray(abstract.author_list) && abstract.author_list.length
+        ? abstract.author_list : [{ name: abstract.author_name || '', presenting: true }];
+      const authorsY = doc.y;
+      doc.font('body').fontSize(10).fillColor(C.ink);
+      authors.forEach((a, i) => {
+        const last = i === authors.length - 1;
+        const opts = { continued: !last, underline: authors.length > 1 && a.presenting };
+        if (i === 0) doc.text(a.name, MARGIN, authorsY, { width, ...opts });
+        else doc.text(a.name, opts);
+        if (!last) doc.text(', ', { continued: true, underline: false });
+      });
+      if (authors.length > 1) {
+        doc.font('body').fontSize(8).fillColor(C.muted).text('Presenting author underlined', MARGIN, doc.y + 1, { width });
+      }
       const status = STATUS_LABEL[abstract.status || 'UNDER_REVIEW'] || abstract.status;
       const meta = [`Abstract #${abstract.id}`, abstract.format, status, abstract.allocation ? `Allotted: ${abstract.allocation.charAt(0)}${abstract.allocation.slice(1).toLowerCase()}` : '']
         .filter(Boolean).join('  ·  ');

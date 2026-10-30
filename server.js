@@ -36,6 +36,7 @@ const attendanceLib = require('./attendance');
 const councilsLib = require('./councils');
 const certificatePdfLib = require('./certificate-pdf');
 const { renderAbstractPdf } = require('./abstract-pdf');
+const abstractAuthorsLib = require('./abstract-authors');
 const QRCode = require('qrcode');
 // Shared with scripts/daily-digest.js -- see the note there about why the
 // email chrome is not just the app's own CSS.
@@ -274,6 +275,10 @@ const CONFERENCE = {
   // Last day (YYYY-MM-DD, IST) on which a new abstract may be submitted;
   // blank means submission stays open. See abstractSubmissionOpen().
   abstractDeadline: '',
+  // Last day (IST) on which a delegate may add or reorder the authors of
+  // the abstract they submitted; blank keeps it open. After it, only an
+  // admin can change the list. See abstractAuthorsOpen().
+  authorsDeadline: '',
 };
 // `let`: admin-editable, applies immediately (read fresh wherever it's used).
 let PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
@@ -316,6 +321,12 @@ function formatDMY(dateStr) {
 // and a UTC date would close submission at 05:30 IST instead of midnight.
 function abstractSubmissionOpen(when = Date.now()) {
   const d = CONFERENCE.abstractDeadline;
+  return !d || istDateString(when) <= d;
+}
+
+// Whether delegates may still add or reorder their abstract's authors.
+function abstractAuthorsOpen(when = Date.now()) {
+  const d = CONFERENCE.authorsDeadline;
   return !d || istDateString(when) <= d;
 }
 
@@ -451,6 +462,7 @@ const GENERAL_SETTINGS_KEYS = {
   conference_start_date: ['CONFERENCE', 'startDate'], conference_end_date: ['CONFERENCE', 'endDate'],
   conference_location: ['CONFERENCE', 'location'], conference_reg_prefix: ['CONFERENCE', 'regPrefix'],
   conference_abstract_deadline: ['CONFERENCE', 'abstractDeadline'],
+  conference_authors_deadline: ['CONFERENCE', 'authorsDeadline'],
 };
 
 // The rest of "Other Environment Variables" -- PORT, PORTAL_URL, COOKIE_NAME,
@@ -2088,6 +2100,10 @@ db.serialize(() => {
     // REVISION_REQUESTED, same as `allocation` clearing on a non-ACCEPTED
     // status change.
     if (!names.includes('revision_note')) db.run('ALTER TABLE abstracts ADD COLUMN revision_note TEXT');
+    // Every author, in order (abstract-authors.js); NULL until given, when
+    // the submitter is shown alone.
+    if (!names.includes('authors')) db.run('ALTER TABLE abstracts ADD COLUMN authors TEXT');
+    if (!names.includes('authors_updated_at')) db.run('ALTER TABLE abstracts ADD COLUMN authors_updated_at INTEGER');
 
     // Enforce one abstract per author: drop duplicates (keep the latest) BEFORE
     // creating the unique index. Sequenced so the index can't fail on dupes.
@@ -4997,6 +5013,8 @@ app.get('/api/conference', (req, res) => {
     dateLabel: formatConferenceDates(),
     abstractDeadline: CONFERENCE.abstractDeadline,
     abstractSubmissionOpen: abstractSubmissionOpen(),
+    authorsDeadline: CONFERENCE.authorsDeadline,
+    abstractAuthorsOpen: abstractAuthorsOpen(),
   });
 });
 
@@ -5889,6 +5907,19 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
       return res.status(409).json({ success: false, error: 'You have already submitted an abstract; it cannot be changed.' });
     }
 
+    // Every author, in order (optional: without it the submitter is shown
+    // alone, and can add the rest from the dashboard). The submitter is the
+    // presenting author, under the name on their account.
+    let authorsJson;
+    if (req.body.authors !== undefined && req.body.authors !== null) {
+      const own = prev ? await dbGet('SELECT authors, author_name FROM abstracts WHERE id = ?', [prev.id]) : null;
+      const before = own ? abstractAuthorsLib.parseAuthors(own.authors) : null;
+      const presentingName = (before && (before.find((a) => a.presenting) || {}).name) || (own && own.author_name) || req.session.name;
+      const checked = abstractAuthorsLib.cleanAuthors(req.body.authors, { presentingName });
+      if (checked.error) return res.status(400).json({ success: false, error: checked.error });
+      authorsJson = JSON.stringify(checked.authors);
+    }
+
     const cleanTitle = String(title).trim();
     const isResubmission = !!prev;
     if (isResubmission) {
@@ -5900,6 +5931,9 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
         [format, cleanTitle, sections.background, sections.aim, sections.methods, sections.results, sections.conclusion,
          keywords, wordCount, prev.id]
       );
+      if (authorsJson !== undefined) {
+        await dbRun('UPDATE abstracts SET authors = ?, authors_updated_at = ? WHERE id = ?', [authorsJson, Date.now(), prev.id]);
+      }
       await recordAudit({
         req, entityType: 'abstract', entityId: prev.id,
         action: 'ABSTRACT_RESUBMITTED', oldValue: 'REVISION_REQUESTED', newValue: 'UNDER_REVIEW',
@@ -5907,11 +5941,12 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
     } else {
       await dbRun(
         `INSERT INTO abstracts
-          (phone_number, author_name, format, title, background, aim, methods, results, conclusion, keywords, word_count, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNDER_REVIEW')`,
+          (phone_number, author_name, format, title, background, aim, methods, results, conclusion, keywords, word_count, status,
+           authors, authors_updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNDER_REVIEW', ?, ?)`,
         [req.session.phone, req.session.name, format, cleanTitle,
          sections.background, sections.aim, sections.methods, sections.results, sections.conclusion,
-         keywords, wordCount]
+         keywords, wordCount, authorsJson || null, authorsJson ? Date.now() : null]
       );
     }
 
@@ -5929,17 +5964,60 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
   }
 });
 
+// An abstract row as the browser gets it: `authors` read into the list to
+// show (the submitter alone when none was given) and `authors_given`
+// saying whether one was.
+function abstractWithAuthors(row) {
+  const { authors, ...rest } = row;
+  return { ...rest, authors: abstractAuthorsLib.effectiveAuthors(row), authors_given: !!abstractAuthorsLib.parseAuthors(authors) };
+}
+
+// Save an abstract's author list, with an audit row naming the change.
+async function saveAbstractAuthors(req, row, list) {
+  const before = abstractAuthorsLib.authorsText(abstractAuthorsLib.effectiveAuthors(row));
+  const after = abstractAuthorsLib.authorsText(list);
+  await dbRun('UPDATE abstracts SET authors = ?, authors_updated_at = ? WHERE id = ?', [JSON.stringify(list), Date.now(), row.id]);
+  await recordAudit({ req, entityType: 'abstract', entityId: row.id, action: 'ABSTRACT_AUTHORS_UPDATED', oldValue: before, newValue: after });
+}
+
+// The delegate's own abstract: add, remove or reorder its authors -- the
+// one part of a submitted abstract they can still change, until the last
+// date for authors. They stay on it, as the presenting author, under the
+// name already shown.
+app.put('/api/abstracts/me/authors', requireAuth, async (req, res, next) => {
+  try {
+    const row = await dbGet('SELECT id, status, author_name, authors FROM abstracts WHERE phone_number = ?', [req.session.phone]);
+    if (!row) return res.status(404).json({ success: false, error: 'You have not submitted an abstract.' });
+    if (row.status === 'REJECTED') return res.status(409).json({ success: false, error: 'This abstract was not accepted, so its authors cannot be changed.' });
+    if (!abstractAuthorsOpen()) {
+      return res.status(403).json({ success: false, code: 'AUTHORS_CLOSED',
+        error: `Authors could be changed until ${formatDMY(CONFERENCE.authorsDeadline)}. To correct them now, write to the organisers.` });
+    }
+    const before = abstractAuthorsLib.parseAuthors(row.authors);
+    const presentingName = (before && (before.find((a) => a.presenting) || {}).name) || row.author_name;
+    const checked = abstractAuthorsLib.cleanAuthors((req.body || {}).authors, { presentingName });
+    if (checked.error) return res.status(400).json({ success: false, error: checked.error });
+    await saveAbstractAuthors(req, row, checked.authors);
+    res.json({ success: true, authors: checked.authors });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // The caller's own abstract (for the dashboard status), or null.
 app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
   try {
     const row = await dbGet(
       `SELECT id, format, title, status, allocation, revision_note,
-              background, aim, methods, results, conclusion, keywords, word_count
+              background, aim, methods, results, conclusion, keywords, word_count,
+              author_name, authors, authors_updated_at
          FROM abstracts WHERE phone_number = ?`,
       [req.session.phone]
     );
     res.json({
-      abstract: row || null,
+      abstract: row ? abstractWithAuthors(row) : null,
+      // Whether they may still add or reorder the authors themselves.
+      authorsWindow: { open: abstractAuthorsOpen(), deadline: CONFERENCE.authorsDeadline, max: abstractAuthorsLib.MAX_AUTHORS },
       registered: await authorHasRegistered(req.session.phone),
       submission: await abstractSubmissionWindowFor(req.session.phone),
     });
@@ -8468,6 +8546,25 @@ async function audienceMembers(key, filters = {}) {
       return person(r.phone_number, name, r.email, {
         detail: r.title || '',
         tags: [r.status === 'ACCEPTED' ? 'Approved, provisional' : 'Under review'],
+        values: { name: escapeHtml(name || 'Delegate'), title: escapeHtml(r.title || 'your abstract') },
+      });
+    });
+  }
+
+  if (key === 'abstract_authors') {
+    // Submitted, not rejected, and no author list given yet: the
+    // submitter is still shown as the only author.
+    const rows = await dbAll(
+      `SELECT a.phone_number, a.title, COALESCE(a.status, 'UNDER_REVIEW') AS status, a.author_name,
+              u.salutation, u.full_name, u.email
+         FROM abstracts a LEFT JOIN users u ON u.phone_number = a.phone_number
+        WHERE COALESCE(a.status, 'UNDER_REVIEW') != 'REJECTED' AND a.authors IS NULL
+        ORDER BY COALESCE(u.full_name, a.author_name), a.id`);
+    return rows.map((r) => {
+      const name = reminderName(r.salutation, r.full_name || r.author_name);
+      return person(r.phone_number, name, r.email, {
+        detail: r.title || '',
+        tags: [r.status === 'ACCEPTED' ? 'Approved' : r.status === 'REVISION_REQUESTED' ? 'Corrections needed' : 'Under review'],
         values: { name: escapeHtml(name || 'Delegate'), title: escapeHtml(r.title || 'your abstract') },
       });
     });
@@ -11534,7 +11631,7 @@ app.get('/api/admin/general-settings', requirePermission('system.settings_view')
       },
       upi: { id: UPI.id, payeeName: UPI.payeeName },
       bank: { accountName: BANK.accountName, accountNumber: BANK.accountNumber, ifsc: BANK.ifsc, branch: BANK.branch },
-      conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym, startDate: CONFERENCE.startDate, endDate: CONFERENCE.endDate, location: CONFERENCE.location, regPrefix: CONFERENCE.regPrefix, abstractDeadline: CONFERENCE.abstractDeadline, abstractSubmissionOpen: abstractSubmissionOpen() },
+      conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym, startDate: CONFERENCE.startDate, endDate: CONFERENCE.endDate, location: CONFERENCE.location, regPrefix: CONFERENCE.regPrefix, abstractDeadline: CONFERENCE.abstractDeadline, abstractSubmissionOpen: abstractSubmissionOpen(), authorsDeadline: CONFERENCE.authorsDeadline, abstractAuthorsOpen: abstractAuthorsOpen() },
       maintenance: { enabled: maintenance.enabled, message: maintenance.message },
       otherEnvVars: await describeOtherEnvVars(),
     });
@@ -11633,6 +11730,10 @@ app.put('/api/admin/general-settings', requirePermission('system.settings_edit')
         && !DATE_RE.test(String(conference.abstractDeadline).trim())) {
         return res.status(400).json({ success: false, error: 'Abstract Submission Deadline must be YYYY-MM-DD.' });
       }
+      if (conference.authorsDeadline !== undefined && String(conference.authorsDeadline).trim()
+        && !DATE_RE.test(String(conference.authorsDeadline).trim())) {
+        return res.status(400).json({ success: false, error: 'Last date for abstract authors must be YYYY-MM-DD.' });
+      }
     }
 
     // "Other Environment Variables". portalUrl/port/cookieName are required
@@ -11698,8 +11799,8 @@ app.put('/api/admin/general-settings', requirePermission('system.settings_edit')
     await applyFields(bank, BANK, { accountName: 'bank_account_name', accountNumber: 'bank_account_number', ifsc: 'bank_ifsc', branch: 'bank_branch' },
       new Set(['accountName', 'accountNumber', 'ifsc', 'branch']));
     await applyFields(conference, CONFERENCE,
-      { name: 'conference_name', acronym: 'conference_acronym', startDate: 'conference_start_date', endDate: 'conference_end_date', location: 'conference_location', regPrefix: 'conference_reg_prefix', abstractDeadline: 'conference_abstract_deadline' },
-      new Set(['acronym', 'startDate', 'endDate', 'location', 'abstractDeadline']));
+      { name: 'conference_name', acronym: 'conference_acronym', startDate: 'conference_start_date', endDate: 'conference_end_date', location: 'conference_location', regPrefix: 'conference_reg_prefix', abstractDeadline: 'conference_abstract_deadline', authorsDeadline: 'conference_authors_deadline' },
+      new Set(['acronym', 'startDate', 'endDate', 'location', 'abstractDeadline', 'authorsDeadline']));
 
     // Credentials persist to .env, never to schema_meta. The change log records
     // only that a key changed, never any bytes of a bearer secret (SMS API key,
@@ -13095,12 +13196,14 @@ async function buildReport(type, opts = {}) {
   }
   if (type === 'abstracts') {
     const rows = await dbAll(
-      `SELECT title, author_name, format, phone_number FROM abstracts WHERE status = 'ACCEPTED' ORDER BY title`);
+      `SELECT title, author_name, authors, format, phone_number FROM abstracts WHERE status = 'ACCEPTED' ORDER BY title`);
     return {
       title: 'Accepted Abstracts',
       sections: [{
-        columns: ['Title', 'Author', 'Format', 'Mobile'],
-        rows: rows.map((r) => [r.title, r.author_name, r.format, r.phone_number]),
+        // Authors in order, * marking the presenting author; Presenting
+        // Author is the delegate who submitted it.
+        columns: ['Title', 'Authors', 'Presenting Author', 'Format', 'Mobile'],
+        rows: rows.map((r) => [r.title, abstractAuthorsLib.authorsText(abstractAuthorsLib.effectiveAuthors(r)), r.author_name, r.format, r.phone_number]),
       }],
     };
   }
@@ -13353,7 +13456,28 @@ app.get('/api/abstracts', requirePermission('abstracts.view'), async (req, res, 
            WHERE a.entity_type = 'abstract' AND a.entity_id = CAST(abstracts.id AS TEXT)
            ORDER BY a.id DESC LIMIT 1) AS last_action_at
       FROM abstracts ORDER BY id DESC`);
-    res.json({ abstracts: rows || [] });
+    res.json({
+      abstracts: (rows || []).map(abstractWithAuthors),
+      authorsWindow: { open: abstractAuthorsOpen(), deadline: CONFERENCE.authorsDeadline, max: abstractAuthorsLib.MAX_AUTHORS },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// An admin sets an abstract's authors for the delegate -- a list sent by
+// email, or a correction after the last date. Any order; the presenting
+// author's name may be corrected too. Reviewers can already change the
+// abstract's status, so the same permission covers this.
+app.put('/api/abstracts/:id/authors', requirePermission('abstracts.review'), async (req, res, next) => {
+  try {
+    if (!/^\d+$/.test(req.params.id)) return res.status(404).json({ success: false, error: 'Abstract not found.' });
+    const row = await dbGet('SELECT id, author_name, authors FROM abstracts WHERE id = ?', [req.params.id]);
+    if (!row) return res.status(404).json({ success: false, error: 'Abstract not found.' });
+    const checked = abstractAuthorsLib.cleanAuthors((req.body || {}).authors);
+    if (checked.error) return res.status(400).json({ success: false, error: checked.error });
+    await saveAbstractAuthors(req, row, checked.authors);
+    res.json({ success: true, authors: checked.authors });
   } catch (err) {
     next(err);
   }
@@ -13365,7 +13489,7 @@ app.get('/api/abstracts/:id/pdf', requirePermission('abstracts.view'), async (re
   try {
     const row = await dbGet('SELECT * FROM abstracts WHERE id = ?', [req.params.id]);
     if (!row) return res.status(404).json({ success: false, error: 'Abstract not found.' });
-    const buf = await renderAbstractPdf(row, { conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym } });
+    const buf = await renderAbstractPdf({ ...row, author_list: abstractAuthorsLib.effectiveAuthors(row) }, { conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym } });
     res.set('Content-Type', 'application/pdf');
     res.set('Content-Disposition', `attachment; filename="abstract-${row.id}.pdf"`);
     res.set('Cache-Control', 'private, no-store');
@@ -14257,6 +14381,7 @@ function auditRoutePermissions() {
       'GET /api/admin/reports/workshops/options',
       'POST /api/abstracts',
       'GET /api/abstracts/me',
+      'PUT /api/abstracts/me/authors',
     ]);
     const methods = Object.keys(layer.route.methods).map((m) => m.toUpperCase());
     const unlisted = methods.filter((m) => !GATED_INSIDE.has(`${m} ${routePath}`));
