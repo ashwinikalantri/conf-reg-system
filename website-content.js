@@ -86,7 +86,7 @@ module.exports = {
     { name: 'Indian Association of Preventive and Social Medicine (IAPSM)', file: 'partners/iapsm.png' },
     { name: 'Telemedicine Society of India', file: 'partners/telemedicine-society-of-india.png' },
     { name: 'Maharashtra University of Health Sciences (MUHS)', file: 'partners/muhs.png' },
-    { name: 'PCI India', file: 'partners/pci-india.png' },
+    { name: 'PCI India', file: 'partners/pci-india-logo.png' },
   ],
 
   // Field visits and on-campus practice, by programme option id: what each

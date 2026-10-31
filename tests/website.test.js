@@ -101,8 +101,13 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     check('nqocn2026.mgims.ac.in/ is the website home', home.status === 200 && /Two days at Sevagram/.test(home.raw), home.status);
     check('...its links are at the root', /href="\/programme"/.test(home.raw) && !/href="\/website\/(programme|workshops|registration|abstracts|faculty|team|visit|about)/.test(home.raw));
     check('...its images and stylesheet still load', /src="\/website\/img\/nqocn-mgims-logo\.png"/.test(home.raw) && /href="\/website\/site\.css/.test(home.raw));
-    check('...PCI India among the partners, its logo served', /<img src="\/website\/img\/partners\/pci-india\.png" alt="PCI India"/.test(home.raw)
-      && (await call('GET', '/website/img/partners/pci-india.png', null, null)).status === 200);
+    check('...PCI India among the partners, its logo served', /<img src="\/website\/img\/partners\/pci-india-logo\.png" alt="PCI India"/.test(home.raw)
+      && (await call('GET', '/website/img/partners/pci-india-logo.png', null, null)).status === 200);
+    {
+      const { PNG } = require(require('./harness').appFile('node_modules', 'pngjs'));
+      const pci = PNG.sync.read(require('fs').readFileSync(require('./harness').appFile('public', 'website', 'img', 'partners', 'pci-india-logo.png')));
+      check('...on a transparent background (drawn from their SVG)', pci.data[3] === 0 && pci.data[(pci.width * pci.height - 1) * 4 + 3] === 0 && pci.width > 800);
+    }
     check('...Register and Sign in go to the portal, at /portal', /class="btn btn-navy register" href="\/portal"/.test(home.raw));
     check('...and it names itself as the address to list', /<link rel="canonical" href="https:\/\/nqocn2026\.mgims\.ac\.in\/">/.test(home.raw));
     const fac = await asSite('/faculty');
