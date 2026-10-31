@@ -33,6 +33,7 @@ const guestLib = require('./guests');
 const peopleLib = require('./programme-people');
 const reminderLib = require('./reminders');
 const attendanceLib = require('./attendance');
+const abstractTitle = require('./abstract-title');
 const councilsLib = require('./councils');
 const certificatePdfLib = require('./certificate-pdf');
 const { renderAbstractPdf } = require('./abstract-pdf');
@@ -5988,7 +5989,9 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
       authorsJson = JSON.stringify(checked.authors);
     }
 
-    const cleanTitle = String(title).trim();
+    // Its quotation marks off its ends, and in title case (abstract-title.js).
+    const cleanTitle = abstractTitle.cleanTitle(title);
+    if (!cleanTitle) return res.status(400).json({ success: false, error: 'Abstract title is required.' });
     const isResubmission = !!prev;
     if (isResubmission) {
       await dbRun(
