@@ -1981,6 +1981,20 @@ db.serialize(() => {
       at INTEGER NOT NULL
     )
   `);
+  // Additive: a signatory who signs only the certificates with MMC points
+  // (the MMC Observer -- set, when the column arrives, for one whose
+  // designation names MMC); and the faculty-list entry a Faculty
+  // certificate was issued for.
+  db.all('PRAGMA table_info(certificate_signatories)', (err, cols) => {
+    if (err || !cols || cols.some((c) => c.name === 'mmc_only')) return;
+    db.run('ALTER TABLE certificate_signatories ADD COLUMN mmc_only INTEGER NOT NULL DEFAULT 0', (e) => {
+      if (!e) db.run("UPDATE certificate_signatories SET mmc_only = 1 WHERE designation LIKE '%MMC%'");
+    });
+  });
+  db.all('PRAGMA table_info(certificates)', (err, cols) => {
+    if (err || !cols || cols.some((c) => c.name === 'guest_id')) return;
+    db.run('ALTER TABLE certificates ADD COLUMN guest_id INTEGER');
+  });
 
   // The Sent history on the Reminders tab: one row per send from the
   // composer, and one per person chosen in it with what happened for them
@@ -9684,16 +9698,19 @@ app.delete('/api/attendance/:id', requirePermission('attendance.manage'), async 
 //               category that can earn points (Doctor, Medical PG) and a
 //               Medical Council registration number given;
 //   CONF     -- the conference, participation: completed it and paid;
-//   WORKSHOP -- one per workshop signed into (and paid).
+//   WORKSHOP -- one per workshop signed into (and paid);
+//   FACULTY  -- everyone on the Faculty list (not cancelled), registered or
+//               not, signed up or not.
 // "Completed" is attendance.js's: in on every day, out on the last. An admin
 // can include or exclude anyone, with a reason. Issuing fixes the number, the
 // verify code and the name; the PDF is drawn when it is downloaded, from the
 // current wording, signatories and design (see certificate-pdf.js) -- so a
 // correction to the wording reaches certificates already issued.
 
-const CERT_KINDS = ['MMC', 'CONF', 'WORKSHOP'];
-const CERT_KIND_CODE = { MMC: 'MMC', CONF: 'P', WORKSHOP: 'W' };
-const CERT_KIND_LABEL = { MMC: 'Conference, with MMC points', CONF: 'Conference, participation', WORKSHOP: 'Workshop' };
+const CERT_KINDS = ['MMC', 'CONF', 'WORKSHOP', 'FACULTY'];
+const CERT_KIND_CODE = { MMC: 'MMC', CONF: 'P', WORKSHOP: 'W', FACULTY: 'F' };
+const CERT_KIND_LABEL = { MMC: 'Conference, with MMC points', CONF: 'Conference, participation', WORKSHOP: 'Workshop', FACULTY: 'Faculty' };
+const MAX_SIGNATORIES = 6;
 const CERT_TEMPLATE_DEFAULTS = {
   MMC: {
     title: 'Certificate', subtitle: 'of Participation with MMC Credit Points', lead: 'This is to certify that',
@@ -9708,6 +9725,10 @@ const CERT_TEMPLATE_DEFAULTS = {
     title: 'Certificate', subtitle: 'of Workshop Participation', lead: 'This is to certify that',
     body: 'has participated in the workshop **{{workshop}}** held on {{workshop_date}}, as part of the **{{conference}}**, {{venue}}.',
   },
+  FACULTY: {
+    title: 'Certificate', subtitle: 'of Appreciation', lead: 'This is to certify that',
+    body: 'has contributed as **Faculty** to the **{{conference}}** held at {{venue}} on {{dates}}.',
+  },
 };
 const CERT_PLACEHOLDERS = {
   name: 'The name on the certificate', council: 'Their Medical Council', council_reg_no: 'Their registration number',
@@ -9716,16 +9737,52 @@ const CERT_PLACEHOLDERS = {
   mmc_accreditation_no: 'The MMC accreditation number', mmc_points: 'The MMC credit points', cert_no: 'The certificate number',
 };
 
+// A signatory marked mmc_only (the MMC Observer) signs only the
+// certificates with MMC points, whatever is ticked.
+const signsKind = (s, kind) => kind === 'MMC' || !Number(s.mmc_only);
+
 // The wording of each kind, over the defaults; which signatories each
-// carries (ids, in order) -- by default every active one, but the MMC
-// Observer only on the MMC certificate.
+// carries (ids, in order, up to six) -- by default the active ones. A
+// workshop may have its own (byWorkshop: option id -> ids); one without
+// signs as the workshop certificate does.
 function certTemplates(settings, signatories) {
   const out = {};
+  const byId = new Map(signatories.map((s) => [Number(s.id), s]));
   for (const kind of CERT_KINDS) {
     const saved = (settings.templates || {})[kind] || {};
-    const active = signatories.filter((s) => s.active);
-    const fallback = active.filter((s) => kind === 'MMC' || !/\bMMC\b/i.test(`${s.designation}`)).map((s) => s.id);
-    out[kind] = { ...CERT_TEMPLATE_DEFAULTS[kind], ...saved, signatories: Array.isArray(saved.signatories) ? saved.signatories.map(Number) : fallback };
+    const pick = (ids) => ids.map(Number).filter((id) => byId.has(id) && signsKind(byId.get(id), kind)).slice(0, MAX_SIGNATORIES);
+    const fallback = signatories.filter((s) => s.active && signsKind(s, kind)).slice(0, MAX_SIGNATORIES).map((s) => s.id);
+    out[kind] = { ...CERT_TEMPLATE_DEFAULTS[kind], ...saved, signatories: Array.isArray(saved.signatories) ? pick(saved.signatories) : fallback };
+    delete out[kind].byWorkshop;
+    if (kind === 'WORKSHOP') {
+      out[kind].byWorkshop = {};
+      for (const [opt, ids] of Object.entries(saved.byWorkshop || {})) if (Array.isArray(ids)) out[kind].byWorkshop[opt] = pick(ids);
+    }
+  }
+  return out;
+}
+
+// Before a signatory is added: a certificate still on the default (every
+// active signatory) keeps the ones it has, so someone added to sign one
+// workshop does not turn up on every certificate.
+async function freezeSignatoryLists() {
+  const settings = await certificateSettings();
+  const tpl = certTemplates(settings, await dbAll('SELECT * FROM certificate_signatories ORDER BY sort_order, id'));
+  const templates = { ...(settings.templates || {}) };
+  const open = CERT_KINDS.filter((kind) => !Array.isArray((templates[kind] || {}).signatories));
+  if (!open.length) return;
+  for (const kind of open) templates[kind] = { ...(templates[kind] || {}), signatories: tpl[kind].signatories };
+  await dbRun("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('certificate_settings', ?)", [JSON.stringify({ ...settings, templates })]);
+}
+
+// The workshops that give certificates: each programme option with
+// workshop sessions, its name and its (first) date.
+async function certificateWorkshops(sessions = null) {
+  const out = new Map();
+  for (const s of (sessions || await programmeSessions()).filter(isWorkshopSession)) {
+    const id = Number(s.option_id);
+    if (!out.has(id)) out.set(id, { optionId: id, e: `ws:${id}`, name: s.option_name || s.title, date: s.session_date, sessionIds: new Set() });
+    out.get(id).sessionIds.add(s.id);
   }
   return out;
 }
@@ -9737,13 +9794,15 @@ async function seedSignatories() {
   if (n) return;
   const now = Date.now();
   for (const [i, designation] of ['Organising Chairperson', 'Organising Secretary', 'MMC Observer'].entries()) {
-    await dbRun('INSERT INTO certificate_signatories (name, designation, signature_file, sort_order, active, created_at) VALUES (?, ?, NULL, ?, 1, ?)',
-      ['Signatory name', designation, i, now]);
+    await dbRun('INSERT INTO certificate_signatories (name, designation, signature_file, sort_order, active, created_at, mmc_only) VALUES (?, ?, NULL, ?, 1, ?, ?)',
+      ['Signatory name', designation, i, now, designation.includes('MMC') ? 1 : 0]);
   }
 }
 
 const certPrefix = () => String(CONFERENCE.regPrefix || CONFERENCE.acronym || 'CERT').replace(/[^A-Za-z0-9]/g, '').toUpperCase() || 'CERT';
-const verifyUrlFor = (code) => `${String(PORTAL_URL).replace(/\/+$/, '')}/verify/${code}`;
+// The verify page, on the conference's own address (the QR carries it; it
+// is not printed).
+const verifyUrlFor = (code) => `https://${WEBSITE_HOST}/verify/${code}`;
 const newVerifyCode = () => {
   const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // no 0/O, 1/I
   return Array.from(crypto.randomBytes(10), (b) => abc[b % abc.length]).join('');
@@ -9755,13 +9814,7 @@ async function certificateCandidates() {
   const settings = await certificateSettings();
   const sessions = await programmeSessions();
   const conf = attendanceLib.conferenceSessions(sessions, isWorkshopSession);
-  // The workshops: each option with workshop sessions, its date and sessions.
-  const workshops = new Map();
-  for (const s of sessions.filter(isWorkshopSession)) {
-    const id = Number(s.option_id);
-    if (!workshops.has(id)) workshops.set(id, { optionId: id, e: `ws:${id}`, name: s.option_name || s.title, date: s.session_date, sessionIds: new Set() });
-    workshops.get(id).sessionIds.add(s.id);
-  }
+  const workshops = await certificateWorkshops(sessions);
   const regs = await dbAll(
     `SELECT r.id AS registration_id, r.phone_number, r.registration_number, r.delegate_name, r.category_key, r.category_label, r.bank_status,
             u.salutation, u.full_name, u.certificate_name, u.council_name, u.council_reg_no
@@ -9775,13 +9828,33 @@ async function certificateCandidates() {
   }
   const overrides = new Map((await dbAll('SELECT phone_number, scope, decision, reason, by_name, at FROM certificate_overrides'))
     .map((o) => [`${o.phone_number}|${o.scope}`, o]));
-  const issued = await dbAll('SELECT id, phone_number, kind, option_id, cert_no, name, issued_at, revoked_at FROM certificates WHERE revoked_at IS NULL');
+  const issued = await dbAll('SELECT id, phone_number, kind, option_id, guest_id, cert_no, name, issued_at, revoked_at FROM certificates WHERE revoked_at IS NULL');
   const enrolment = new Map();
   for (const e of await dbAll('SELECT registration_id, option_id FROM registration_options')) {
     if (!enrolment.has(e.registration_id)) enrolment.set(e.registration_id, new Set());
     enrolment.get(e.registration_id).add(Number(e.option_id));
   }
-  return regs.map((r) => {
+  // The faculty list. A faculty override is kept under "faculty-<id>"
+  // (scope FAC), which stays the same when they are linked to an account.
+  const faculty = (await dbAll(
+    `SELECT g.id, g.phone_number, g.guest_name, g.guest_designation, u.salutation, u.full_name, u.certificate_name
+       FROM guests g LEFT JOIN users u ON u.phone_number = g.phone_number
+      WHERE COALESCE(g.overall_status, '') != ?`, [guestLib.CANCELLED])).map((g) => {
+    const key = `faculty-${g.id}`;
+    const ov = overrides.get(`${key}|FAC`) || null;
+    const excluded = !!(ov && ov.decision === 'EXCLUDE');
+    return {
+      phone: g.phone_number || key, linked: !!g.phone_number,
+      name: (g.phone_number && (g.certificate_name || reminderName(g.salutation, g.full_name))) || g.guest_name || '',
+      designation: g.guest_designation || '',
+      entry: { guestId: g.id, key, eligible: !excluded, whyNot: excluded ? `Excluded: ${ov.reason}` : null, override: ov,
+        issued: issued.find((c) => c.kind === 'FACULTY' && Number(c.guest_id) === g.id) || null },
+    };
+  });
+  const facultyByPhone = new Map(faculty.filter((f) => f.linked).map((f) => [f.phone, f.entry]));
+  const registered = new Set(regs.map((r) => r.phone_number));
+
+  const people = regs.map((r) => {
     const ids = att.get(r.phone_number) || new Set();
     const done = attendanceLib.completion(sessions.filter((s) => ids.has(s.id)), conf, settings.attendance.lunchSplit);
     const paid = r.bank_status === 'BANK_VERIFIED';
@@ -9815,15 +9888,28 @@ async function certificateCandidates() {
       phone: r.phone_number, registrationNumber: r.registration_number, name, category: r.category_label, categoryKey: r.category_key,
       councilName: r.council_name || null, councilRegNo: r.council_reg_no || null, mmcCategory, paid,
       attended: [...ids], parts: done.parts.map((p) => ({ label: p.label, done: p.done })), missing: done.missing, complete: done.complete,
-      conference: { kind: confKind, whyNot: confWhyNot, override: ov, issued: myIssued.find((c) => c.kind !== 'WORKSHOP') || null },
-      workshops: ws,
+      conference: { kind: confKind, whyNot: confWhyNot, override: ov, issued: myIssued.find((c) => c.kind === 'MMC' || c.kind === 'CONF') || null },
+      workshops: ws, faculty: facultyByPhone.get(r.phone_number) || null,
     };
   });
+  // Faculty who have not registered: here for their Faculty certificate only.
+  for (const f of faculty) {
+    if (f.linked && registered.has(f.phone)) continue;
+    people.push({
+      phone: f.phone, registrationNumber: null, name: f.name, category: f.designation || 'Faculty', categoryKey: null,
+      councilName: null, councilRegNo: null, mmcCategory: false, paid: false, attended: [], parts: [], missing: [], complete: false,
+      notRegistered: true,
+      conference: { kind: null, whyNot: f.linked ? 'Not registered' : 'Not signed up', override: null, issued: null },
+      workshops: [], faculty: f.entry,
+    });
+  }
+  return people.sort((a, b) => String(a.name).localeCompare(String(b.name)));
 }
 
 // Issues the next certificate of a kind to one person. Numbered per kind,
 // in order: NQOCN2026/MMC/0001, NQOCN2026/P/0001, NQOCN2026/W/0001.
 async function issueCertificate(req, person, kind, workshop = null) {
+  const guestId = kind === 'FACULTY' && person.faculty ? person.faculty.guestId : null;
   const code = CERT_KIND_CODE[kind];
   const like = `${certPrefix()}/${code}/%`;
   const last = await dbGet('SELECT cert_no FROM certificates WHERE cert_no LIKE ? ORDER BY id DESC LIMIT 1', [like]);
@@ -9831,10 +9917,10 @@ async function issueCertificate(req, person, kind, workshop = null) {
   const certNo = `${certPrefix()}/${code}/${String(next).padStart(4, '0')}`;
   const r = await dbRun(
     `INSERT INTO certificates (cert_no, verify_code, phone_number, kind, option_id, name, council_name, council_reg_no, category_label,
-       workshop_name, workshop_date, issued_at, issued_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       workshop_name, workshop_date, issued_at, issued_by, guest_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [certNo, newVerifyCode(), person.phone, kind, workshop ? workshop.optionId : null, person.name,
       kind === 'MMC' ? person.councilName : null, kind === 'MMC' ? person.councilRegNo : null, person.category,
-      workshop ? workshop.name : null, workshop ? workshop.date : null, Date.now(), req.session.name || req.session.phone]);
+      workshop ? workshop.name : null, workshop ? workshop.date : null, Date.now(), req.session.name || req.session.phone, guestId]);
   await recordAudit({ req, entityType: 'certificate', entityId: r.lastID, action: 'CERTIFICATE_ISSUED', oldValue: null,
     newValue: `${certNo} · ${CERT_KIND_LABEL[kind]}${workshop ? ` (${workshop.name})` : ''} · ${person.name}` });
   return certNo;
@@ -9887,17 +9973,18 @@ async function certificatePdf(cert, { specimen = false } = {}) {
   const fill = (t) => String(t || '').replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (w, k) => (values[k] == null ? w : String(values[k])));
   const readUpload = async (file) => (file ? fs.promises.readFile(path.join(UPLOAD_DIR, path.basename(file))).catch(() => null) : null);
   const byId = new Map(signatories.map((s) => [s.id, s]));
+  const own = cert.kind === 'WORKSHOP' && cert.option_id != null ? tpl.byWorkshop[String(cert.option_id)] : null;
   const sigs = [];
-  for (const id of tpl.signatories) {
+  for (const id of own || tpl.signatories) {
     const s = byId.get(id);
-    if (s && s.active) sigs.push({ name: s.name, designation: s.designation, image: await readUpload(s.signature_file) });
+    if (s && s.active && signsKind(s, cert.kind)) sigs.push({ name: s.name, designation: s.designation, image: await readUpload(s.signature_file) });
   }
   const url = verifyUrlFor(cert.verify_code);
   // The sponsors' logos: the website's partners, in the same order.
   const logos = [];
   for (const p of require('./website-content').partners || []) {
     const buf = await fs.promises.readFile(path.join(__dirname, 'public', 'website', 'img', p.file)).catch(() => null);
-    if (buf) logos.push(buf);
+    if (buf) logos.push(certificatePdfLib.clearWhiteGround(buf));
   }
   return certificatePdfLib.renderCertificatePdf({
     kind: cert.kind, title: fill(tpl.title), subtitle: fill(tpl.subtitle), lead: fill(tpl.lead), name: cert.name, body: fill(tpl.body),
@@ -9920,10 +10007,12 @@ app.get('/api/admin/certificates/settings', requirePermission('certificates.mana
   try {
     await seedSignatories();
     const settings = await certificateSettings();
-    const signatories = await dbAll('SELECT id, name, designation, signature_file IS NOT NULL AS has_signature, sort_order, active FROM certificate_signatories ORDER BY sort_order, id');
+    const signatories = await dbAll('SELECT id, name, designation, signature_file IS NOT NULL AS has_signature, sort_order, active, mmc_only FROM certificate_signatories ORDER BY sort_order, id');
     res.json({
       settings: { mmc: settings.mmc, attendance: { ...settings.attendance, showFromEffective: attendanceShownFrom(settings) }, eligibleCategories: settings.eligibleCategories, hasBackground: !!settings.background },
       templates: certTemplates(settings, signatories), signatories, placeholders: CERT_PLACEHOLDERS, kinds: CERT_KIND_LABEL,
+      maxSignatories: MAX_SIGNATORIES,
+      workshops: [...(await certificateWorkshops()).values()].map((w) => ({ optionId: w.optionId, name: w.name, date: w.date })),
       categories: await dbAll('SELECT category_key AS value, label FROM fee_categories ORDER BY sort_order, id'),
     });
   } catch (err) {
@@ -9969,7 +10058,18 @@ app.put('/api/admin/certificates/settings', requirePermission('certificates.mana
         if (!t) continue;
         const clean = {};
         for (const f of ['title', 'subtitle', 'lead', 'body']) if (t[f] !== undefined) clean[f] = String(t[f]).slice(0, f === 'body' ? 1200 : 120);
-        if (Array.isArray(t.signatories)) clean.signatories = t.signatories.map(Number).filter(Number.isFinite).slice(0, 4);
+        const ids = (list) => list.map(Number).filter(Number.isFinite).slice(0, MAX_SIGNATORIES);
+        if (Array.isArray(t.signatories)) clean.signatories = ids(t.signatories);
+        // One workshop's own signatories; null puts it back on the default.
+        if (kind === 'WORKSHOP' && t.byWorkshop && typeof t.byWorkshop === 'object') {
+          const by = { ...((next.templates.WORKSHOP || {}).byWorkshop || {}) };
+          for (const [opt, list] of Object.entries(t.byWorkshop)) {
+            if (!/^\d+$/.test(opt)) continue;
+            if (Array.isArray(list)) by[opt] = ids(list);
+            else delete by[opt];
+          }
+          clean.byWorkshop = by;
+        }
         next.templates[kind] = { ...(next.templates[kind] || {}), ...clean };
       }
     }
@@ -10003,9 +10103,12 @@ app.post('/api/admin/certificates/signatories', requirePermission('certificates.
       if (sig.error) return res.status(400).json({ success: false, error: sig.error });
       file = await writeUploadBuffer(sig.buffer, sig.ext);
     }
+    await seedSignatories();
+    await freezeSignatoryLists();
     const order = (await dbGet('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM certificate_signatories')).n;
-    const r = await dbRun('INSERT INTO certificate_signatories (name, designation, signature_file, sort_order, active, created_at) VALUES (?, ?, ?, ?, 1, ?)',
-      [name.slice(0, 120), designation.slice(0, 160), file, order, Date.now()]);
+    const mmcOnly = req.body.mmcOnly !== undefined ? (req.body.mmcOnly ? 1 : 0) : (/\bMMC\b/i.test(designation) ? 1 : 0);
+    const r = await dbRun('INSERT INTO certificate_signatories (name, designation, signature_file, sort_order, active, created_at, mmc_only) VALUES (?, ?, ?, ?, 1, ?, ?)',
+      [name.slice(0, 120), designation.slice(0, 160), file, order, Date.now(), mmcOnly]);
     await recordAudit({ req, entityType: 'certificate_signatory', entityId: r.lastID, action: 'SIGNATORY_ADDED', oldValue: null, newValue: `${name}, ${designation}` });
     res.json({ success: true, id: r.lastID });
   } catch (err) {
@@ -10027,9 +10130,11 @@ app.put('/api/admin/certificates/signatories/:id', requirePermission('certificat
       file = await writeUploadBuffer(sig.buffer, sig.ext);
     } else if (req.body.removeSignature) file = null;
     const active = req.body.active !== undefined ? (req.body.active ? 1 : 0) : s.active;
-    await dbRun('UPDATE certificate_signatories SET name = ?, designation = ?, signature_file = ?, active = ? WHERE id = ?', [name, designation, file, active, s.id]);
+    const mmcOnly = req.body.mmcOnly !== undefined ? (req.body.mmcOnly ? 1 : 0) : Number(s.mmc_only) || 0;
+    await dbRun('UPDATE certificate_signatories SET name = ?, designation = ?, signature_file = ?, active = ?, mmc_only = ? WHERE id = ?', [name, designation, file, active, mmcOnly, s.id]);
+    const tags = (a, m) => `${a ? '' : ' (off)'}${m ? ' (MMC only)' : ''}`;
     await recordAudit({ req, entityType: 'certificate_signatory', entityId: s.id, action: 'SIGNATORY_UPDATED',
-      oldValue: `${s.name}, ${s.designation}${s.active ? '' : ' (off)'}`, newValue: `${name}, ${designation}${active ? '' : ' (off)'}${req.body.signature ? ' · new signature' : ''}` });
+      oldValue: `${s.name}, ${s.designation}${tags(s.active, Number(s.mmc_only))}`, newValue: `${name}, ${designation}${tags(active, mmcOnly)}${req.body.signature ? ' · new signature' : ''}` });
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -10077,9 +10182,12 @@ app.put('/api/admin/certificates/background', requirePermission('certificates.ma
 app.get('/api/admin/certificates/preview.pdf', requirePermission('certificates.view'), async (req, res, next) => {
   try {
     const kind = CERT_KINDS.includes(req.query.kind) ? req.query.kind : 'MMC';
+    // ?option=<id>: one workshop's, with its name, date and signatories.
+    const ws = kind === 'WORKSHOP' && /^\d+$/.test(String(req.query.option || '')) ? (await certificateWorkshops()).get(Number(req.query.option)) : null;
     const pdf = await certificatePdf({
-      kind, name: 'Dr Example Delegate', council_name: 'Maharashtra Medical Council', council_reg_no: '2012/03/1234', category_label: 'Doctor',
-      workshop_name: 'Example Workshop', workshop_date: CONFERENCE.startDate, cert_no: `${certPrefix()}/${CERT_KIND_CODE[kind]}/0000`, verify_code: 'SPECIMEN00',
+      kind, name: kind === 'FACULTY' ? 'Dr Example Faculty' : 'Dr Example Delegate', council_name: 'Maharashtra Medical Council', council_reg_no: '2012/03/1234', category_label: 'Doctor',
+      workshop_name: ws ? ws.name : 'Example Workshop', workshop_date: ws ? ws.date : CONFERENCE.startDate, option_id: ws ? ws.optionId : null,
+      cert_no: `${certPrefix()}/${CERT_KIND_CODE[kind]}/0000`, verify_code: 'SPECIMEN00',
     }, { specimen: true });
     sendPdf(res, pdf, `specimen-${kind}.pdf`);
   } catch (err) {
@@ -10099,16 +10207,23 @@ app.get('/api/admin/certificates/candidates', requirePermission('certificates.vi
 });
 
 // Include someone who would not qualify, or exclude someone who would --
-// for the conference (scope CONF) or one workshop (scope ws:<option id>). A
-// reason is required; decision null clears it.
+// for the conference (scope CONF), one workshop (scope ws:<option id>) or
+// the Faculty certificate (scope FAC, exclude only). A reason is required;
+// decision null clears it.
 app.post('/api/admin/certificates/override', requirePermission('certificates.issue'), async (req, res, next) => {
   try {
     const phone = String(req.body.phone || '');
     const scope = String(req.body.scope || '');
     const decision = req.body.decision ? String(req.body.decision) : null;
-    if (!(scope === 'CONF' || /^ws:\d+$/.test(scope))) return res.status(400).json({ success: false, error: 'Unknown certificate.' });
+    if (!(scope === 'CONF' || scope === 'FAC' || /^ws:\d+$/.test(scope))) return res.status(400).json({ success: false, error: 'Unknown certificate.' });
     if (decision && !['INCLUDE', 'EXCLUDE'].includes(decision)) return res.status(400).json({ success: false, error: 'Include or exclude.' });
-    if (!(await attendingRegistration(phone))) return res.status(404).json({ success: false, error: 'No registration for that person.' });
+    if (scope === 'FAC') {
+      // Faculty earn it by being on the list: it can only be withheld, and
+      // the decision is kept under "faculty-<id>".
+      const m = /^faculty-(\d+)$/.exec(phone);
+      if (!m || !(await dbGet('SELECT id FROM guests WHERE id = ?', [m[1]]))) return res.status(404).json({ success: false, error: 'Not on the Faculty list.' });
+      if (decision === 'INCLUDE') return res.status(400).json({ success: false, error: 'Everyone on the Faculty list receives it already.' });
+    } else if (!(await attendingRegistration(phone))) return res.status(404).json({ success: false, error: 'No registration for that person.' });
     const reason = String(req.body.reason || '').trim().slice(0, 200);
     if (decision && !reason) return res.status(400).json({ success: false, error: 'Give a reason -- it is kept with the decision.' });
     const before = await dbGet('SELECT decision, reason FROM certificate_overrides WHERE phone_number = ? AND scope = ?', [phone, scope]);
@@ -10126,28 +10241,34 @@ app.post('/api/admin/certificates/override', requirePermission('certificates.iss
 });
 
 // Issue every certificate due and not yet issued: the conference's
-// (scope 'conference'), the workshops' ('workshops'), or both ('all').
+// (scope 'conference'), the workshops' ('workshops'), the faculty's
+// ('faculty'), or all of them ('all').
 app.post('/api/admin/certificates/issue', requirePermission('certificates.issue'), async (req, res, next) => {
   try {
-    const scope = ['conference', 'workshops', 'all'].includes(req.body.scope) ? req.body.scope : null;
+    const scope = ['conference', 'workshops', 'faculty', 'all'].includes(req.body.scope) ? req.body.scope : null;
     if (!scope) return res.status(400).json({ success: false, error: 'Choose what to issue.' });
     const only = Array.isArray(req.body.phones) && req.body.phones.length ? new Set(req.body.phones.map(String)) : null;
-    const counts = { MMC: 0, CONF: 0, WORKSHOP: 0 };
+    const counts = { MMC: 0, CONF: 0, WORKSHOP: 0, FACULTY: 0 };
+    const doing = (s) => scope === 'all' || scope === s;
     for (const p of await certificateCandidates()) {
       if (only && !only.has(p.phone)) continue;
-      if (scope !== 'workshops' && p.conference.kind && !p.conference.issued) {
+      if (doing('conference') && p.conference.kind && !p.conference.issued) {
         await issueCertificate(req, p, p.conference.kind);
         counts[p.conference.kind]++;
       }
-      if (scope !== 'conference') {
+      if (doing('workshops')) {
         for (const w of p.workshops) {
           if (!w.eligible || w.issued) continue;
           await issueCertificate(req, p, 'WORKSHOP', { optionId: w.optionId, name: w.name, date: w.date });
           counts.WORKSHOP++;
         }
       }
+      if (doing('faculty') && p.faculty && p.faculty.eligible && !p.faculty.issued) {
+        await issueCertificate(req, p, 'FACULTY');
+        counts.FACULTY++;
+      }
     }
-    res.json({ success: true, issued: counts, total: counts.MMC + counts.CONF + counts.WORKSHOP });
+    res.json({ success: true, issued: counts, total: counts.MMC + counts.CONF + counts.WORKSHOP + counts.FACULTY });
   } catch (err) {
     next(err);
   }
@@ -14119,6 +14240,8 @@ async function linkGuestToAccount(req, g, phone) {
   const by = req.session.name || req.session.phone;
   await dbRun('UPDATE guests SET phone_number = ?, pickup_status = ?, drop_status = ?, linked_at = ?, linked_by = ?, updated_at = ?, updated_by = ? WHERE id = ?',
     [phone, pickup, drop, Date.now(), by, Date.now(), by, g.id]);
+  // A Faculty certificate issued before they signed up: theirs to download now.
+  await dbRun('UPDATE certificates SET phone_number = ? WHERE guest_id = ?', [phone, g.id]);
   const name = u ? [u.salutation, u.full_name].filter(Boolean).join(' ') : phone;
   const changedTransfer = pickup !== g.pickup_status || drop !== g.drop_status;
   await recordAudit({ req, entityType: 'guest', entityId: String(g.id), action: 'GUEST_LINKED', oldValue: g.guest_name, newValue: `linked to ${name}'s account${changedTransfer ? LOCAL_TRANSFER_NOTE : ''}` });
@@ -14161,6 +14284,7 @@ app.put('/api/guests/:id/unlink', requirePermission('guests.edit'), async (req, 
     const by = req.session.name || req.session.phone;
     await dbRun('UPDATE guests SET phone_number = NULL, linked_at = NULL, linked_by = NULL, guest_name = ?, updated_at = ?, updated_by = ? WHERE id = ?',
       [name, Date.now(), by, g.id]);
+    await dbRun('UPDATE certificates SET phone_number = ? WHERE guest_id = ?', [`faculty-${g.id}`, g.id]);
     await recordAudit({ req, entityType: 'guest', entityId: String(g.id), action: 'GUEST_UNLINKED', oldValue: accountName,
       newValue: `unlinked from ${accountName}'s account; now ${name}, not signed up` });
     res.json({ success: true, name });

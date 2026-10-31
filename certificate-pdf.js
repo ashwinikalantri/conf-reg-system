@@ -6,7 +6,7 @@
 // - Generated: a navy frame with a gold rule, the conference named across
 //   the top, "Certificate" and its kind, the name, the wording, the
 //   signatures, the sponsors' logos in a row along the foot, and a verify QR
-//   with the certificate number.
+//   with the certificate number (the QR carries the link; it is not printed).
 //
 // - On the designer's artwork, when one is uploaded: the artwork carries the
 //   conference, the host, the NQOCN mark and the word "Certificate" across
@@ -176,17 +176,24 @@ function drawName(doc, name, y, size, color, maxWidth) {
   doc.fillColor(color).text(name, 0, y + (size - s) * 0.6, { width: W, align: 'center', lineBreak: false });
 }
 
+// Up to six in one row: each gets an equal share of the width, and with
+// more than four the type steps down so a name and its designation still
+// fit their share (a designation wraps to a second line).
 function drawSignatures(doc, sigs, left, right, lineY, ink, muted, sigH = 40) {
   if (!sigs.length) return;
   const slot = (right - left) / sigs.length;
+  const crowded = sigs.length > 4;
+  const textW = Math.min(176, slot - 2);
+  const lineHalf = Math.min(72, slot / 2 - 8);
+  const imgW = Math.min(130, slot - 12);
   sigs.forEach((s, i) => {
     const cx = left + slot * i + slot / 2;
     if (s.image) {
-      try { doc.image(s.image, cx - 65, lineY - sigH - 4, { fit: [130, sigH], align: 'center', valign: 'bottom' }); } catch (e) { /* not an image pdfkit reads */ }
+      try { doc.image(s.image, cx - imgW / 2, lineY - sigH - 4, { fit: [imgW, sigH], align: 'center', valign: 'bottom' }); } catch (e) { /* not an image pdfkit reads */ }
     }
-    doc.lineWidth(0.6).strokeColor(muted).moveTo(cx - 72, lineY).lineTo(cx + 72, lineY).stroke();
-    doc.font('bold').fontSize(9.5).fillColor(ink).text(s.name || '', cx - 88, lineY + 5, { width: 176, align: 'center' });
-    doc.font('body').fontSize(8).fillColor(muted).text(s.designation || '', cx - 88, doc.y + 1, { width: 176, align: 'center' });
+    doc.lineWidth(0.6).strokeColor(muted).moveTo(cx - lineHalf, lineY).lineTo(cx + lineHalf, lineY).stroke();
+    doc.font('bold').fontSize(crowded ? 8 : 9.5).fillColor(ink).text(s.name || '', cx - textW / 2, lineY + 5, { width: textW, align: 'center' });
+    doc.font('body').fontSize(crowded ? 7 : 8).fillColor(muted).text(s.designation || '', cx - textW / 2, doc.y + 1, { width: textW, align: 'center' });
   });
 }
 
@@ -200,33 +207,31 @@ function onArtwork(doc, opts, PH) {
   const centred = (top, width = field.right - field.left) => ({ x: mid - width / 2, top, width });
 
   // The kind, under the artwork's "Certificate".
-  const sub = centred(y(0.412));
+  const sub = centred(y(0.408));
   doc.font('Times-Italic').fontSize(19).fillColor(C.terracotta)
     .text(opts.subtitle || '', sub.x, sub.top, { width: sub.width, align: 'center' });
 
   doc.font('body').fontSize(10.5).fillColor(C.linenMuted)
-    .text(opts.lead || 'This is to certify that', sub.x, y(0.455), { width: sub.width, align: 'center' });
+    .text(opts.lead || 'This is to certify that', sub.x, y(0.456), { width: sub.width, align: 'center' });
 
   // drawName centres on the page; centre it on the field instead.
   doc.save().translate(mid - W / 2, 0);
-  drawName(doc, String(opts.name || ''), y(0.478), 30, C.indigo, field.right - field.left - 40);
+  // A clear space under the line above it.
+  drawName(doc, String(opts.name || ''), y(0.497), 30, C.indigo, field.right - field.left - 40);
   doc.restore();
   doc.lineWidth(0.8).strokeColor(C.terracotta).strokeOpacity(0.55)
-    .moveTo(mid - 200, y(0.542)).lineTo(mid + 200, y(0.542)).stroke().strokeOpacity(1);
+    .moveTo(mid - 200, y(0.562)).lineTo(mid + 200, y(0.562)).stroke().strokeOpacity(1);
 
   const bodyW = field.right - field.left - 20;
-  richText(doc, opts.body, mid - bodyW / 2, y(0.555), bodyW, 11, 3, C.linenInk);
+  richText(doc, opts.body, mid - bodyW / 2, y(0.575), bodyW, 11, 3, C.linenInk);
 
-  drawSignatures(doc, (opts.signatories || []).slice(0, 3), field.left, field.right, y(0.77), C.linenInk, C.linenMuted, 30);
+  // The signatures run wider than the text: from beside the QR to the
+  // motif's edge.
+  drawSignatures(doc, (opts.signatories || []).slice(0, 6), 118, W * 0.87, y(0.775), C.linenInk, C.linenMuted, 28);
 
-  // The sponsors, on a soft white band so every logo reads on linen.
-  if (opts.logos && opts.logos.length) {
-    const top = y(0.857);
-    const h = y(0.04);
-    doc.save().fillOpacity(0.72).fillColor('#ffffff')
-      .roundedRect(field.left - 6, top - 5, field.right - field.left + 12, h + 10, 6).fill().restore();
-    drawLogos(doc, opts.logos, top, field.left + 6, field.right - 6, h, 14);
-  }
+  // The sponsors, straight on the linen (white grounds taken out, see
+  // clearWhiteGround).
+  if (opts.logos && opts.logos.length) drawLogos(doc, opts.logos, y(0.857), field.left, field.right, y(0.04), 14);
 
   // Verify, in the empty left margin.
   const qx = 40;
@@ -237,9 +242,6 @@ function onArtwork(doc, opts, PH) {
   }
   doc.font('body').fontSize(6.5).fillColor(C.linenMuted)
     .text(`Certificate No.\n${opts.certNo || ''}`, qx - 4, qy + 70, { width: 104, align: 'left' });
-  if (opts.verifyUrl) {
-    doc.text(`Verify at ${String(opts.verifyUrl).replace(/^https?:\/\//, '')}`, qx - 4, doc.y + 2, { width: 104, align: 'left' });
-  }
 }
 
 function generated(doc, opts) {
@@ -263,25 +265,22 @@ function generated(doc, opts) {
 
   doc.font('body').fontSize(12).fillColor(C.muted)
     .text(opts.lead || 'This is to certify that', 0, 204, { width: W, align: 'center' });
-  drawName(doc, String(opts.name || ''), 226, 32, C.navy, W - 220);
-  doc.lineWidth(0.8).strokeColor(C.gold).moveTo(W / 2 - 220, 268).lineTo(W / 2 + 220, 268).stroke();
+  drawName(doc, String(opts.name || ''), 234, 32, C.navy, W - 220);
+  doc.lineWidth(0.8).strokeColor(C.gold).moveTo(W / 2 - 220, 276).lineTo(W / 2 + 220, 276).stroke();
 
-  richText(doc, opts.body, 110, 284, W - 220, 12.5, 4);
+  richText(doc, opts.body, 110, 291, W - 220, 12.5, 4);
 
   // Signatures across the foot -- raised a little when the sponsors' logos
   // take the row beneath them. The QR has the right-hand corner.
   const hasLogos = !!(opts.logos && opts.logos.length);
-  drawSignatures(doc, (opts.signatories || []).slice(0, 4), 90, W - 170, hasLogos ? 452 : 486, C.ink, C.muted);
+  drawSignatures(doc, (opts.signatories || []).slice(0, 6), 70, W - 160, hasLogos ? 452 : 486, C.ink, C.muted);
   if (hasLogos) drawLogos(doc, opts.logos, 498, 70, W - 150, 28);
 
-  // Verify: the QR, and the certificate number with where to check it.
+  // Verify: the QR, and the certificate number under it.
   const footY = hasLogos ? H - 52 : H - 62;
   if (opts.qrPng) doc.image(opts.qrPng, W - 122, footY - 70, { width: 66, height: 66 });
   doc.font('body').fontSize(7.5).fillColor(C.muted)
     .text(`Certificate No. ${opts.certNo || ''}`, W - 250, footY, { width: 194, align: 'right' });
-  if (opts.verifyUrl) {
-    doc.text(`Verify: ${String(opts.verifyUrl).replace(/^https?:\/\//, '')}`, 60, footY, { width: W - 330, align: 'left' });
-  }
 }
 
 // The posters for the hall doors: one A4 portrait page per hall -- the
@@ -334,6 +333,81 @@ function renderHallPosters(pages, conference = {}) {
       reject(err);
     }
   });
+}
+
+// A logo on a white square reads as a white box on the linen. The white
+// that reaches the edges is taken out (flood-filled from the border, so
+// white inside the mark -- a letter's counter -- stays), and the soft edge
+// around it fades by how pale it is, so no white fringe is left while the
+// mark's own colour stays solid. A logo with
+// no white border (already transparent, or on its own colour) comes back
+// as it was. PNG or JPEG in, PNG out; kept by content, as every
+// certificate asks for the same few.
+const clearedLogos = new Map();
+function clearWhiteGround(buffer) {
+  const key = require('crypto').createHash('sha1').update(buffer).digest('hex');
+  if (!clearedLogos.has(key)) clearedLogos.set(key, clearWhite(buffer));
+  return clearedLogos.get(key);
+}
+function clearWhite(buffer) {
+  try {
+    const { PNG } = require('pngjs');
+    let img;
+    if (buffer[0] === 0x89 && buffer[1] === 0x50) img = PNG.sync.read(buffer);
+    else if (buffer[0] === 0xff && buffer[1] === 0xd8) img = require('jpeg-js').decode(buffer, { formatAsRGBA: true });
+    else return buffer;
+    const { width: w, height: h } = img;
+    const d = img.data;
+    const whiteAt = (p) => d[p * 4 + 3] > 200 && d[p * 4] > 232 && d[p * 4 + 1] > 232 && d[p * 4 + 2] > 232;
+    const border = [];
+    for (let x = 0; x < w; x++) border.push(x, (h - 1) * w + x);
+    for (let y = 1; y < h - 1; y++) border.push(y * w, y * w + w - 1);
+    const seeds = border.filter(whiteAt);
+    if (seeds.length < border.length * 0.6) return buffer;
+    const ground = new Uint8Array(w * h);
+    for (const p of seeds) ground[p] = 1;
+    while (seeds.length) {
+      const p = seeds.pop();
+      const x = p % w;
+      for (const q of [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, p - w, p + w]) {
+        if (q >= 0 && q < w * h && !ground[q] && whiteAt(q)) { ground[q] = 1; seeds.push(q); }
+      }
+    }
+    // The ground goes; the two pixels around it fade with their paleness.
+    const near = new Uint8Array(w * h);
+    for (let p = 0; p < w * h; p++) {
+      if (!ground[p]) continue;
+      const x = p % w;
+      const y = (p - x) / w;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && nx < w && ny >= 0 && ny < h && !ground[ny * w + nx]) near[ny * w + nx] = 1;
+        }
+      }
+    }
+    const out = new PNG({ width: w, height: h });
+    for (let p = 0; p < w * h; p++) {
+      const i = p * 4;
+      let [r, g, b, a] = [d[i], d[i + 1], d[i + 2], d[i + 3]];
+      if (ground[p]) a = 0;
+      else if (near[p]) {
+        // How far from white; anything half-way to a colour is solid.
+        const k = Math.min(1, 2 * Math.max(1 - r / 255, 1 - g / 255, 1 - b / 255));
+        if (k < 0.008) a = 0;
+        else {
+          const un = (c) => Math.max(0, Math.min(255, Math.round(255 - (255 - c) / k)));
+          r = un(r); g = un(g); b = un(b);
+          a = Math.round(a * k);
+        }
+      }
+      out.data[i] = r; out.data[i + 1] = g; out.data[i + 2] = b; out.data[i + 3] = a;
+    }
+    return PNG.sync.write(out);
+  } catch (e) {
+    return buffer;
+  }
 }
 
 // The copy of the designer's artwork that goes into each certificate. Every
@@ -448,4 +522,4 @@ function shrink(img, tw, th) {
   return { width: tw, height: th, data: out };
 }
 
-module.exports = { renderCertificatePdf, renderHallPosters, certificateCopy, cmykToRgb, PAGE: { W, H } };
+module.exports = { renderCertificatePdf, renderHallPosters, certificateCopy, clearWhiteGround, cmykToRgb, PAGE: { W, H } };

@@ -13624,7 +13624,7 @@ async function switchAttendanceView(view) {
 const certState = { people: [], issued: {}, kinds: {}, settings: null };
 const CERT_BADGE = {
   MMC: 'bg-indigo-100 text-indigo-800 border-indigo-300', CONF: 'bg-emerald-100 text-emerald-800 border-emerald-300',
-  WORKSHOP: 'bg-sky-100 text-sky-800 border-sky-300',
+  WORKSHOP: 'bg-sky-100 text-sky-800 border-sky-300', FACULTY: 'bg-amber-100 text-amber-800 border-amber-300',
 };
 
 async function renderCertificates() {
@@ -13637,13 +13637,15 @@ async function renderCertificates() {
   const p = certState.people;
   const dueConf = p.filter((x) => x.conference.kind && !x.conference.issued).length;
   const dueWs = p.reduce((n, x) => n + x.workshops.filter((w) => w.eligible && !w.issued).length, 0);
+  const dueFac = p.filter((x) => x.faculty && x.faculty.eligible && !x.faculty.issued).length;
   const stat = (label, value, note) => `<div class="bg-white rounded-xl border border-slate-200 p-3"><p class="text-[11px] font-bold text-slate-500 uppercase tracking-wide">${esc(label)}</p>
     <p class="text-2xl font-extrabold text-slate-800 tabular-nums">${value}</p><p class="text-[11px] text-slate-500">${esc(note)}</p></div>`;
   document.getElementById('cert-stats').innerHTML = [
     stat('MMC points', p.filter((x) => x.conference.kind === 'MMC').length, `${certState.issued.MMC || 0} issued`),
     stat('Participation', p.filter((x) => x.conference.kind === 'CONF').length, `${certState.issued.CONF || 0} issued`),
     stat('Workshops', p.reduce((n, x) => n + x.workshops.filter((w) => w.eligible).length, 0), `${certState.issued.WORKSHOP || 0} issued`),
-    stat('Not yet', p.filter((x) => !x.conference.kind).length, 'for the conference'),
+    stat('Faculty', p.filter((x) => x.faculty && x.faculty.eligible).length, `${certState.issued.FACULTY || 0} issued`),
+    stat('Not yet', p.filter((x) => !x.conference.kind && !x.notRegistered).length, 'for the conference'),
   ].join('');
   const mayIssue = can('certificates.issue');
   document.getElementById('cert-issue-btns').classList.toggle('hidden', !mayIssue);
@@ -13653,6 +13655,9 @@ async function renderCertificates() {
   confBtn.disabled = !dueConf;
   wsBtn.textContent = `Issue workshop certificates (${dueWs} due)`;
   wsBtn.disabled = !dueWs;
+  const facBtn = document.getElementById('cert-issue-fac');
+  facBtn.textContent = `Issue faculty certificates (${dueFac} due)`;
+  facBtn.disabled = !dueFac;
   renderCertificateList();
 }
 
@@ -13662,11 +13667,13 @@ function renderCertificateList() {
   const mayIssue = can('certificates.issue');
   const shown = certState.people.filter((x) => {
     if (term && ![x.name, x.registrationNumber].some((v) => String(v || '').toLowerCase().includes(term))) return false;
-    if (filter === 'due') return (x.conference.kind && !x.conference.issued) || x.workshops.some((w) => w.eligible && !w.issued);
+    if (filter === 'due') return (x.conference.kind && !x.conference.issued) || x.workshops.some((w) => w.eligible && !w.issued) || !!(x.faculty && x.faculty.eligible && !x.faculty.issued);
+    if (filter === 'faculty') return !!x.faculty;
+    if (filter === '') return !x.notRegistered;
     if (filter === 'MMC' || filter === 'CONF') return x.conference.kind === filter;
-    if (filter === 'not') return !x.conference.kind;
     if (filter === 'nocouncil') return x.mmcCategory && !x.councilRegNo;
-    if (filter === 'issued') return !!x.conference.issued || x.workshops.some((w) => w.issued);
+    if (filter === 'not') return !x.conference.kind && !x.notRegistered;
+    if (filter === 'issued') return !!x.conference.issued || x.workshops.some((w) => w.issued) || !!(x.faculty && x.faculty.issued);
     return true;
   });
   setText('cert-count', `Showing ${shown.length} of ${certState.people.length}`);
@@ -13679,7 +13686,7 @@ function renderCertificateList() {
     const conf = c.issued ? `${badge(c.issued.kind, c.issued.kind === 'MMC' ? 'MMC points' : 'Participation')} ${issuedLink(c.issued)}`
       : c.kind ? `${badge(c.kind, c.kind === 'MMC' ? 'MMC points · due' : 'Participation · due')}`
         : `<span class="text-xs text-slate-500">${esc(c.whyNot || '')}</span>`;
-    const confOv = mayIssue && !c.issued ? (c.override
+    const confOv = mayIssue && !c.issued && !x.notRegistered ? (c.override
       ? ` <button type="button" onclick="setCertificateOverride('${esc(x.phone)}', 'CONF', null)" class="text-xs text-amber-700 hover:underline">${c.override.decision === 'INCLUDE' ? 'Included' : 'Excluded'} by hand — undo</button>`
       : ` <button type="button" onclick="setCertificateOverride('${esc(x.phone)}', 'CONF', '${c.kind ? 'EXCLUDE' : 'INCLUDE'}')" class="text-xs text-slate-500 hover:underline">${c.kind ? 'Exclude' : 'Include anyway'}</button>`) : '';
     const ws = x.workshops.map((w) => `<div class="text-xs mt-1">
@@ -13689,13 +13696,20 @@ function renderCertificateList() {
           ? ` <button type="button" onclick="setCertificateOverride('${esc(x.phone)}', '${esc(w.e)}', null)" class="text-amber-700 hover:underline">${w.override.decision === 'INCLUDE' ? 'Included' : 'Excluded'} by hand — undo</button>`
           : ` <button type="button" onclick="setCertificateOverride('${esc(x.phone)}', '${esc(w.e)}', '${w.eligible ? 'EXCLUDE' : 'INCLUDE'}')" class="text-slate-500 hover:underline">${w.eligible ? 'Exclude' : 'Include anyway'}</button>`) : ''}
       </div>`).join('');
+    const f = x.faculty;
+    const fac = !f ? '' : `<div class="text-xs mt-1">Faculty:
+        ${f.issued ? `${badge('FACULTY', 'Issued')} ${issuedLink(f.issued)}` : f.eligible ? badge('FACULTY', 'Due') : `<span class="text-slate-500">${esc(f.whyNot || '')}</span>`}
+        ${mayIssue && !f.issued ? (f.override
+          ? ` <button type="button" onclick="setCertificateOverride('${esc(f.key)}', 'FAC', null)" class="text-amber-700 hover:underline">Excluded by hand — undo</button>`
+          : ` <button type="button" onclick="setCertificateOverride('${esc(f.key)}', 'FAC', 'EXCLUDE')" class="text-slate-500 hover:underline">Exclude</button>`) : ''}
+      </div>`;
     return `<div class="px-3 py-2.5">
       <div class="flex flex-wrap items-baseline gap-x-2">
         <span class="font-semibold text-slate-800">${esc(x.name)}</span>
         <span class="text-xs text-slate-400">${esc([x.registrationNumber, x.category, x.councilRegNo ? `${x.councilName || 'Council'} ${x.councilRegNo}` : (x.mmcCategory ? 'no council number' : '')].filter(Boolean).join(' · '))}</span>
       </div>
       <div class="text-xs mt-1">Conference: ${conf}${confOv}</div>
-      ${ws}
+      ${ws}${fac}
     </div>`;
   }).join('') || '<p class="px-3 py-6 text-center text-sm text-slate-400">Nobody to show.</p>';
 }
@@ -13715,15 +13729,21 @@ async function setCertificateOverride(phone, scope, decision) {
   renderCertificates();
 }
 
+function issueCertificatesQuestion(scope) {
+  const what = { conference: 'conference certificate', workshops: 'workshop certificate', faculty: 'faculty certificate' }[scope];
+  const who = scope === 'faculty' ? 'Faculty with an account can download theirs from the portal; for the rest, download it here.' : 'The delegate can download it from the portal.';
+  return `Issue every ${what} now due? Each gets its number. ${who}`;
+}
+
 async function issueCertificates(scope) {
-  const what = scope === 'conference' ? 'conference certificates' : 'workshop certificates';
-  if (!(await showConfirm(`Issue every ${what} now due? Each gets its number, and the delegate can download it from the portal.`, 'Issue'))) return;
+  if (!(await showConfirm(issueCertificatesQuestion(scope), 'Issue'))) return;
   const data = await (await fetch('/api/admin/certificates/issue', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope }),
   })).json();
   if (!data.success) return showToast(data.error || 'Could not issue.');
   const i = data.issued;
-  showToast(scope === 'conference' ? `Issued ${i.MMC} with MMC points and ${i.CONF} participation certificates.` : `Issued ${i.WORKSHOP} workshop certificates.`, 'success');
+  showToast(scope === 'conference' ? `Issued ${i.MMC} with MMC points and ${i.CONF} participation certificates.`
+    : scope === 'faculty' ? `Issued ${i.FACULTY} faculty certificates.` : `Issued ${i.WORKSHOP} workshop certificates.`, 'success');
   renderCertificates();
 }
 
@@ -13733,6 +13753,7 @@ function issuedCertificate(id) {
     if (x.conference.issued && x.conference.issued.id === id) return x.conference.issued;
     const w = x.workshops.find((y) => y.issued && y.issued.id === id);
     if (w) return w.issued;
+    if (x.faculty && x.faculty.issued && x.faculty.issued.id === id) return x.faculty.issued;
   }
   return null;
 }
@@ -13797,9 +13818,37 @@ async function renderCertificateSettings() {
         <button type="button" onclick="saveSignatory(${Number(s.id)})" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save</button>
         <button type="button" onclick="toggleSignatory(${Number(s.id)}, ${s.active ? 0 : 1})" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">${s.active ? 'Turn off' : 'Turn on'}</button>
       </div>
+      <label class="flex items-center gap-1.5 text-xs text-slate-600 sm:w-44 shrink-0"><input type="checkbox" ${Number(s.mmc_only) ? 'checked' : ''} onchange="putSignatory(${Number(s.id)}, { mmcOnly: this.checked })"> Only on certificates with MMC points</label>
     </div>`).join('');
 
   const chips = Object.keys(d.placeholders).map((k) => `<code class="text-[11px] bg-slate-100 px-1 py-0.5 rounded" title="${esc(d.placeholders[k])}">{{${esc(k)}}}</code>`).join(' ');
+  const max = d.maxSignatories || 6;
+  // Who may sign a kind: the active ones, and an MMC-only signatory on the
+  // MMC certificate alone.
+  const signers = (kind) => d.signatories.filter((s) => s.active && (kind === 'MMC' || !Number(s.mmc_only)));
+  const sigBoxes = (kind, ticked, cls) => `<div class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">${signers(kind).map((s) => `<label class="flex items-center gap-1.5">
+      <input type="checkbox" class="${cls}" value="${esc(s.id)}" ${ticked.includes(Number(s.id)) ? 'checked' : ''}> <span><b class="font-semibold">${esc(s.name)}</b> <span class="text-slate-500">· ${esc(s.designation)}</span></span></label>`).join('')}</div>`;
+  const sigNames = (ids) => ids.map((id) => d.signatories.find((s) => Number(s.id) === id)).filter((s) => s && s.active).map((s) => s.name).join(', ') || 'nobody';
+  const workshopRows = (t) => !d.workshops.length ? '' : `
+      <div class="pt-2 border-t border-slate-100">
+        <p class="text-xs font-semibold text-slate-600 mb-1">Each workshop's signatories</p>
+        <p class="text-[11px] text-slate-500 mb-2">A workshop without its own is signed by those ticked above. Add the workshop's faculty under Signatories first.</p>
+        <div class="space-y-1.5">${d.workshops.map((w) => {
+          const own = t.byWorkshop && t.byWorkshop[String(w.optionId)];
+          return `<details class="border border-slate-200 rounded-lg" data-ws="${esc(w.optionId)}">
+            <summary class="px-3 py-2 cursor-pointer text-sm"><span class="font-semibold text-slate-800">${esc(w.name)}</span>
+              <span class="text-xs ${own ? 'text-slate-600' : 'text-slate-400'}">· ${own ? esc(sigNames(own)) : 'as above'}</span></summary>
+            <div class="px-3 pb-3 space-y-2">
+              ${sigBoxes('WORKSHOP', own || t.signatories, 'cs-wsig')}
+              <div class="flex flex-wrap gap-2">
+                <button type="button" onclick="saveWorkshopSignatories(${Number(w.optionId)})" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save for this workshop</button>
+                ${own ? `<button type="button" onclick="saveWorkshopSignatories(${Number(w.optionId)}, true)" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">Sign as above</button>` : ''}
+                <a href="/api/admin/certificates/preview.pdf?kind=WORKSHOP&option=${encodeURIComponent(w.optionId)}" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50">Preview specimen</a>
+              </div>
+            </div>
+          </details>`;
+        }).join('')}</div>
+      </div>`;
   document.getElementById('cs-templates').innerHTML = Object.entries(d.templates).map(([kind, t]) => `
     <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm space-y-2" data-kind="${esc(kind)}">
       <div class="flex flex-wrap items-center justify-between gap-2">
@@ -13814,11 +13863,11 @@ async function renderCertificateSettings() {
       <textarea data-tfield="body" rows="4" aria-label="Wording after the name" class="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none">${esc(t.body)}</textarea>
       <p class="text-[11px] text-slate-500">After the name. <b>**bold**</b> for bold; a new line for a new paragraph. ${chips}</p>
       <div>
-        <p class="text-xs font-semibold text-slate-600 mb-1">Signed by (up to four, in this order)</p>
-        <div class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">${d.signatories.filter((s) => s.active).map((s) => `<label class="flex items-center gap-1.5">
-          <input type="checkbox" class="cs-tsig" value="${esc(s.id)}" ${t.signatories.includes(Number(s.id)) ? 'checked' : ''}> ${esc(s.designation)}</label>`).join('')}</div>
+        <p class="text-xs font-semibold text-slate-600 mb-1">Signed by (up to ${max}, in this order)${kind === 'WORKSHOP' ? ' — every workshop, unless it has its own below' : ''}</p>
+        ${sigBoxes(kind, t.signatories, 'cs-tsig')}
       </div>
       <button type="button" onclick="saveCertificateTemplate('${esc(kind)}')" class="px-4 py-2 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Save wording</button>
+      ${kind === 'WORKSHOP' ? workshopRows(t) : ''}
     </div>`).join('');
 }
 
@@ -13846,8 +13895,21 @@ async function saveCertificateTemplate(kind) {
   const t = {};
   box.querySelectorAll('[data-tfield]').forEach((el) => { t[el.dataset.tfield] = el.value; });
   t.signatories = Array.from(box.querySelectorAll('.cs-tsig')).filter((b) => b.checked).map((b) => Number(b.value));
-  if (t.signatories.length > 4) return showToast('Up to four signatories fit on a certificate.');
+  const max = (certState.settings && certState.settings.maxSignatories) || 6;
+  if (t.signatories.length > max) return showToast(`Up to ${max} signatories fit on a certificate.`);
   if (await putCertificateSettings({ templates: { [kind]: t } }, 'Wording saved. It applies to certificates already issued too.')) renderCertificateSettings();
+}
+
+// One workshop's own signatories; asDefault puts it back on the workshop
+// certificate's.
+async function saveWorkshopSignatories(optionId, asDefault = false) {
+  const box = document.querySelector(`#cs-templates [data-ws="${optionId}"]`);
+  if (!box) return;
+  const ids = asDefault ? null : Array.from(box.querySelectorAll('.cs-wsig')).filter((b) => b.checked).map((b) => Number(b.value));
+  const max = (certState.settings && certState.settings.maxSignatories) || 6;
+  if (ids && ids.length > max) return showToast(`Up to ${max} signatories fit on a certificate.`);
+  if (ids && !ids.length) return showToast('Tick at least one signatory, or use "Sign as above".');
+  if (await putCertificateSettings({ templates: { WORKSHOP: { byWorkshop: { [optionId]: ids } } } }, 'Saved. It applies to certificates already issued too.')) renderCertificateSettings();
 }
 
 function readImageFile(input, maxBytes) {

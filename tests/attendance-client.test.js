@@ -113,11 +113,13 @@ function page(cookie, perms) {
     const C = page(admin, ['certificates.view', 'certificates.issue', 'certificates.manage']);
     await C.f.switchAttendanceView('certificates');
     check('the certificates view: the counts, the list, the issue buttons', /MMC points/.test(C.el('cert-stats').innerHTML)
-      && /Showing \d+ of \d+/.test(C.el('cert-count').textContent) && /Issue conference certificates \(\d+ due\)/.test(C.el('cert-issue-conf').textContent));
+      && /Showing \d+ of \d+/.test(C.el('cert-count').textContent) && /Issue conference certificates \(\d+ due\)/.test(C.el('cert-issue-conf').textContent)
+      && /Issue faculty certificates \(\d+ due\)/.test(C.el('cert-issue-fac').textContent));
     await C.f.switchAttendanceView('settings');
-    check('the settings view: MMC details, categories, signatories and each kind\'s wording', /X/.test(C.el('cs-mmc-no').value)
+    check('the settings view: MMC details, categories, signatories and each kind\'s wording (faculty too)', /X/.test(C.el('cs-mmc-no').value)
       && /class="cs-category" value="faculty_mo" checked/.test(C.el('cs-categories').innerHTML)
-      && /MMC Observer/.test(C.el('cs-signatories').innerHTML) && (C.el('cs-templates').innerHTML.match(/Preview specimen/g) || []).length === 3);
+      && /MMC Observer/.test(C.el('cs-signatories').innerHTML) && (C.el('cs-templates').innerHTML.match(/data-kind="/g) || []).length === 4
+      && /data-kind="FACULTY"/.test(C.el('cs-templates').innerHTML));
     check('...and when lunch starts and marking opens', C.el('cs-lunch').value === '13:00' && Number(C.el('cs-early').value) === 15);
 
     console.log('\n== Programs ==');

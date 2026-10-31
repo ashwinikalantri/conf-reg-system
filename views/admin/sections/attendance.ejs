@@ -73,14 +73,15 @@
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="text-lg font-bold text-slate-800">Certificates</h2>
-            <p class="text-xs text-slate-500">The conference: present at a session before lunch and one after, and paid. With MMC points for doctors and medical postgraduates who have given a council number. A workshop: present at it.</p>
+            <p class="text-xs text-slate-500">The conference: present at a session before lunch and one after, and paid. With MMC points for doctors and medical postgraduates who have given a council number. A workshop: present at it. Faculty: everyone on the Faculty list who is not cancelled.</p>
           </div>
           <div id="cert-issue-btns" class="hidden flex flex-wrap gap-2 w-full sm:w-auto">
             <button type="button" onclick="issueCertificates('conference')" id="cert-issue-conf" class="flex-1 sm:flex-none px-4 py-2 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Issue conference certificates</button>
             <button type="button" onclick="issueCertificates('workshops')" id="cert-issue-ws" class="flex-1 sm:flex-none px-4 py-2 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Issue workshop certificates</button>
+            <button type="button" onclick="issueCertificates('faculty')" id="cert-issue-fac" class="flex-1 sm:flex-none px-4 py-2 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Issue faculty certificates</button>
           </div>
         </div>
-        <div id="cert-stats" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div>
+        <div id="cert-stats" class="grid grid-cols-2 sm:grid-cols-5 gap-3"></div>
         <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
             <select id="cert-filter" onchange="renderCertificateList()" aria-label="Show" class="h-10 px-2 border border-slate-300 rounded-lg text-sm bg-white">
@@ -90,6 +91,7 @@
               <option value="CONF">Qualifies: participation</option>
               <option value="not">Does not qualify yet</option>
               <option value="nocouncil">Doctor or PG without a council number</option>
+              <option value="faculty">Faculty</option>
               <option value="issued">Issued</option>
             </select>
             <input id="cert-search" type="search" oninput="renderCertificateList()" placeholder="Search name or ID" class="sm:col-span-2 h-10 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
