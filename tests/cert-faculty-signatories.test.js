@@ -99,7 +99,7 @@ const images = (pdf) => (pdf.toString('latin1').match(/\/Subtype \/Image/g) || [
     let me = await cand();
     check('someone on the Faculty list, not signed up, is listed for the Faculty certificate', me && me.notRegistered && me.faculty.eligible && !me.conference.kind, me);
     {
-      const view = fs.readFileSync(appFile('views', 'admin', 'sections', 'attendance.ejs'), 'utf8');
+      const view = fs.readFileSync(appFile('views', 'admin', 'sections', 'certificates.ejs'), 'utf8');
       const client = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
       const listFn = client.slice(client.indexOf('function renderCertificateList()'), client.indexOf('async function setCertificateOverride'));
       check('...and shown in the list from the start, not only under the Faculty filter (31 Oct)',

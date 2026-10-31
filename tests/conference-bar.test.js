@@ -4,7 +4,7 @@
 // drop-down in pale gold with no underline, drop-downs like the website's,
 // the account on the right where the website has Sign in. The portal wears it
 // as #dash-bar (partials/topbar.ejs), the admin panel as #admin-bar, whose
-// menus are one ☰ panel below 1200px.
+// menus are one ☰ panel below 1320px.
 const { check, report, appFile } = require('./harness');
 const fs = require('fs');
 const vm = require('vm');
@@ -47,9 +47,9 @@ check('the Admin panel item shows on every delegate page for an admin, not only 
 console.log('\n== The admin panel ==');
 check('the bar replaces the navy title card; the desks are in it, not under it', /<header id="admin-bar" class="cbar /.test(header) && !/include\('admin\/partials\/nav-tabs'\)/.test(admin));
 check('the full-bleed bar undoes the page\'s padding', /class="cbar -mx-4 -mt-4 sm:-mx-8 sm:-mt-8 mb-6"/.test(header) && /<body class="[^"]*p-4 sm:p-8/.test(admin));
-check('each Settings item says what it is', (header.match(/class="cbar-item"><b>[^<]+(<span[^>]*>0<\/span>)?<\/b><span>[^<]+<\/span><\/button>/g) || []).length === 11);
-check('desks inline and drop-downs from 1200px; one ☰ panel below', /#admin-menu \{ display: none; position: absolute;/.test(css) && /#admin-menu\.open \{ display: flex; \}/.test(css)
-  && /@media \(min-width: 1200px\) \{\s*#admin-menu-btn \{ display: none; \}/.test(css));
+check('each Settings item says what it is', (header.match(/class="cbar-item"><b>[^<]+(<span[^>]*>0<\/span>)?<\/b><span>[^<]+<\/span><\/button>/g) || []).length === 12);
+check('desks inline and drop-downs from 1320px; one ☰ panel below', /#admin-menu \{ display: none; position: absolute;/.test(css) && /#admin-menu\.open \{ display: flex; \}/.test(css)
+  && /@media \(min-width: 1320px\) \{\s*#admin-menu-btn \{ display: none; \}/.test(css));
 
 // The admin menus' script, on its own: the drop-downs open one at a time,
 // a desk closes them, Escape closes and hands focus back.

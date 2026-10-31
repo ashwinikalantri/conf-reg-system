@@ -181,7 +181,15 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     console.log('\n== The pages ==');
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
     const view = fs.readFileSync(appFile('views', 'admin', 'sections', 'attendance.ejs'), 'utf8');
-    check('the tab has Attendance, Certificates and Certificate settings', ['data-att-view="attendance"', 'data-att-view="certificates"', 'data-att-view="settings"'].every((x) => view.includes(x)));
+    const certView = fs.readFileSync(appFile('views', 'admin', 'sections', 'certificates.ejs'), 'utf8');
+    const setView = fs.readFileSync(appFile('views', 'admin', 'sections', 'certsettings.ejs'), 'utf8');
+    const navTabs = fs.readFileSync(appFile('views', 'admin', 'partials', 'nav-tabs.ejs'), 'utf8');
+    const adminHeader = fs.readFileSync(appFile('views', 'admin', 'partials', 'header.ejs'), 'utf8');
+    check('Certificates are their own tab in the bar, their settings a Settings page under Conference (31 Oct)',
+      /<section id="section-certificates"/.test(certView) && /id="cert-list"/.test(certView) && /<section id="section-certsettings"/.test(setView) && /id="cs-templates"/.test(setView)
+      && /id="nav-tab-certificates" onclick="switchBackendTab\('certificates'\)"/.test(navTabs)
+      && /id="settings-item-attendance"[\s\S]*?id="settings-item-certsettings" onclick="selectSettingsTab\('certsettings'\)"[\s\S]*?id="settings-group-fees"/.test(adminHeader)
+      && !/data-att-view|att-view-certificates|att-view-settings/.test(view));
     check('issuing asks first', /async function issueCertificates\(scope\) \{[\s\S]{0,200}await showConfirm\(/.test(js));
     check('the portal card offers each download', /\/api\/certificates\/mine\/\$\{encodeURIComponent\(m\.id\)\}\.pdf/.test(js));
   } finally {

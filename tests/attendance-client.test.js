@@ -48,7 +48,7 @@ function page(cookie, perms) {
     myPermissions = new Set(${JSON.stringify(perms)});
     conferenceInfo = { name: 'Fixture Conference', acronym: 'FIXCON', location: 'Sevagram', startDate: '2026-11-21', endDate: '2026-11-22' };
     showToast = (m, t) => globalThis.__toasts.push([m, t]);
-    globalThis.__f = { renderAttendance, attendanceSignIn, renderBackendPrograms, loadAttendanceCard, saveCertificateDetails, switchAttendanceView, renderProgramme, loadHallsCard,
+    globalThis.__f = { renderAttendance, attendanceSignIn, renderBackendPrograms, loadAttendanceCard, saveCertificateDetails, renderCertificates, renderCertificateSettings, renderProgramme, loadHallsCard,
       renderProgrammeSessions, fillProgrammeHallFilter, editProgrammeSession, loadProgrammeCard, renderBadge, showAbstractCard,
       openProgrammePage, renderHomeHero, applyRegistrationState, openProfilePage, renderBadgeBack, flipBadge, dashGo };
     globalThis.__setReg = (r) => { currentRegistration = r; };
@@ -109,13 +109,13 @@ function page(cookie, perms) {
     check('editing one fills the form', A.el('ps-title').value === `Client Talk ${N}` && A.el('ps-label').value === 'Session 1' && A.el('ps-counts').checked === true
       && !A.el('prog-session-form').classList.contains('hidden'));
 
-    console.log('\n== Certificates and their settings ==');
+    console.log('\n== Certificates (their own tab) and their settings (a Settings page) ==');
     const C = page(admin, ['certificates.view', 'certificates.issue', 'certificates.manage']);
-    await C.f.switchAttendanceView('certificates');
+    await C.f.renderCertificates();
     check('the certificates view: the counts, the list, the issue buttons', /MMC points/.test(C.el('cert-stats').innerHTML)
       && /Showing \d+ of \d+/.test(C.el('cert-count').textContent) && /Issue conference certificates \(\d+ due\)/.test(C.el('cert-issue-conf').textContent)
       && /Issue faculty certificates \(\d+ due\)/.test(C.el('cert-issue-fac').textContent));
-    await C.f.switchAttendanceView('settings');
+    await C.f.renderCertificateSettings();
     check('the settings view: MMC details, categories, signatories and each kind\'s wording (faculty too)', /X/.test(C.el('cs-mmc-no').value)
       && /class="cs-category" value="faculty_mo" checked/.test(C.el('cs-categories').innerHTML)
       && /MMC Observer/.test(C.el('cs-signatories').innerHTML) && (C.el('cs-templates').innerHTML.match(/data-kind="/g) || []).length === 4

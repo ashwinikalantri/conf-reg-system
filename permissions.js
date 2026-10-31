@@ -436,7 +436,11 @@ const SECTION_PERMISSIONS = {
   // original guests.* names.
   faculty: { permission: 'guests.view' },
   // Taking attendance at a door, or watching the counts.
-  attendance: { anyOf: ['attendance.mark', 'attendance.view', 'certificates.view'] },
+  attendance: { anyOf: ['attendance.mark', 'attendance.view'] },
+  // Certificates: who qualifies, issuing, those issued (a tab in the bar);
+  // and their wording, signatories and design (a Settings page).
+  certificates: { permission: 'certificates.view' },
+  certsettings: { permission: 'certificates.manage' },
   // The halls and sessions, in the Settings menu.
   programme: { permission: 'programme.manage' },
   general: { permission: 'system.settings_view' },

@@ -4119,6 +4119,8 @@ function applyRoleVisibility() {
   if (tabReports) tabReports.classList.toggle('hidden', !canSee('reports'));
   const tabFaculty = document.getElementById('nav-tab-faculty');
   if (tabFaculty) tabFaculty.classList.toggle('hidden', !canSee('faculty'));
+  const tabCertificates = document.getElementById('nav-tab-certificates');
+  if (tabCertificates) tabCertificates.classList.toggle('hidden', !canSee('certificates'));
 
   // The walk-in registration button now lives on the Front Desk tab
   // (#desk-register-btn, toggled in initFrontDesk) rather than in the
@@ -4138,7 +4140,7 @@ function applyRoleVisibility() {
   // own tab, from the same source that gated it above -- no separate list of
   // roles kept in step by hand.
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
-  const settingsItems = ['attendance', 'programme', 'programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount', 'roles'];
+  const settingsItems = ['attendance', 'certsettings', 'programme', 'programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount', 'roles'];
   settingsItems.forEach((key) => {
     const el = document.getElementById(`settings-item-${key}`);
     if (el) el.classList.toggle('hidden', !canSee(key));
@@ -4150,7 +4152,7 @@ function applyRoleVisibility() {
   // under it.
   if (settingsMenuBtn) settingsMenuBtn.classList.remove('hidden');
   const SETTINGS_GROUPS = {
-    conference: ['programme', 'programs', 'attendance'],
+    conference: ['programme', 'programs', 'attendance', 'certsettings'],
     fees: ['fees', 'discount', 'groupdiscount'],
     messages: ['reminders'],
     system: ['general', 'users', 'roles', 'activity'],
@@ -11027,7 +11029,7 @@ function switchActivityLog(tab) {
   });
 }
 
-// The admin bar's menus (views/admin/partials/header.ejs). From 1200px,
+// The admin bar's menus (views/admin/partials/header.ejs). From 1320px,
 // Settings and the account are drop-downs, each opened by its button; below
 // it, everything is one panel, #admin-menu, opened by ☰. Each opens by the
 // "open" class, and its button says so in aria-expanded.
@@ -13174,9 +13176,9 @@ async function deleteGuestListValue(id) {
   renderGuests();
 }
 
-const SETTINGS_TABS = ['attendance', 'programme', 'programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
+const SETTINGS_TABS = ['attendance', 'certsettings', 'programme', 'programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
 // 'payments' and 'statement' are two screens of the Registration tab.
-const MAIN_TABS = ['overview', 'desk', 'payments', 'statement', 'abstracts', 'faculty', 'reports'];
+const MAIN_TABS = ['overview', 'desk', 'payments', 'statement', 'abstracts', 'faculty', 'certificates', 'reports'];
 
 // Which tabs each role may open -- the single source of truth used both to
 // pick the landing tab and to validate a tab restored from the URL, so a
@@ -13211,6 +13213,8 @@ function switchBackendTab(tab) {
   if (tab === 'reports') loadReportWorkshopOptions();
   if (tab === 'faculty') renderGuests();
   if (tab === 'attendance') renderAttendance();
+  if (tab === 'certificates') renderCertificates();
+  if (tab === 'certsettings') renderCertificateSettings();
   if (tab === 'programme') renderProgramme();
   if (tab === 'programs') renderBackendPrograms();
   if (tab === 'fees') renderBackendFees();
@@ -13853,37 +13857,11 @@ async function addHall(e) {
   loadHallsCard();
 }
 
-// --- The Attendance page's views (the Programme is its own Settings page) ---
-const ATT_VIEWS = ['attendance', 'certificates', 'settings'];
-function attendanceViewAllowed(view) {
-  if (view === 'attendance') return can('attendance.mark') || can('attendance.view');
-  if (view === 'certificates') return can('certificates.view');
-  if (view === 'settings') return can('certificates.manage');
-  return false;
-}
-
+// --- The Attendance page (Settings › Conference). Certificates are their
+// own tab (#certificates) and their settings their own Settings page
+// (#certsettings); the Programme is its own Settings page too. ---
 async function renderAttendance() {
-  document.querySelectorAll('.att-subtab').forEach((b) => b.classList.toggle('hidden', !attendanceViewAllowed(b.dataset.attView)));
-  const saved = storageGet('local', 'nqocn_att_view');
-  const view = attendanceViewAllowed(saved) ? saved : ATT_VIEWS.find(attendanceViewAllowed) || 'attendance';
-  await switchAttendanceView(view);
-}
-
-async function switchAttendanceView(view) {
-  if (!attendanceViewAllowed(view)) view = ATT_VIEWS.find(attendanceViewAllowed) || 'attendance';
-  storageSet('local', 'nqocn_att_view', view);
-  document.querySelectorAll('.att-subtab').forEach((b) => {
-    const on = b.dataset.attView === view;
-    b.classList.toggle('bg-indigo-600', on);
-    b.classList.toggle('text-white', on);
-    b.classList.toggle('text-slate-600', !on);
-    b.classList.toggle('hover:bg-slate-100', !on);
-    b.setAttribute('aria-selected', on ? 'true' : 'false');
-  });
-  ATT_VIEWS.forEach((v) => { const el = document.getElementById(`att-view-${v}`); if (el) el.classList.toggle('hidden', v !== view); });
-  if (view === 'attendance') await renderAttendanceView();
-  if (view === 'certificates') await renderCertificates();
-  if (view === 'settings') await renderCertificateSettings();
+  await renderAttendanceView();
 }
 
 // --- CERTIFICATES (admin) ---
