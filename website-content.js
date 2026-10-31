@@ -59,7 +59,7 @@ module.exports = {
     { title: 'Scientific Committee members', people: [
       ['Dr Dilip Gupta', '', 'dr-dilip-gupta.png'], ['Dr Shuchi Jain', '', 'dr-shuchi-jain.png'], ['Dr Manish Jain', '', 'dr-manish-jain.png'],
       ['Dr Chetna Maliye', '', 'dr-chetna-maliye.png'], ['Dr Vijayshri Deotale', '', 'dr-vijayshri-deotale.png'], ['Dr Bharti Taksande', '', 'dr-bharti-taksande.png'],
-      ['Dr Ashvini Kalantri', '', 'dr-ashvini-kalantri.png'], ['Dr Arjun Jakasania', '', 'dr-arjun-jakasania.png'], ['Mrs Ancy Ramesh', '', 'mrs-ancy-ramesh.png'],
+      ['Dr Ashwini Kalantri', '', 'dr-ashwini-kalantri.png'], ['Dr Arjun Jakasania', '', 'dr-arjun-jakasania.png'], ['Mrs Ancy Ramesh', '', 'mrs-ancy-ramesh.png'],
       ['Mrs Ranjita Wankhede', '', 'mrs-ranjita-wankhede.png'],
     ] },
     { title: 'NQOCN members', people: [
