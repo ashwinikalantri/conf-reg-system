@@ -82,7 +82,7 @@ module.exports = {
     { name: 'Aastrika', file: 'partners/aastrika.png' },
     { name: 'Breastfeeding Promotion Network of India (BPNI)', file: 'partners/bpni.jpg' },
     { name: 'ARSI', file: 'partners/arsi.png' },
-    { name: 'Consortium of Accredited Healthcare Organizations (CAHO)', file: 'partners/caho.png' },
+    { name: 'Consortium of Accredited Healthcare Organizations (CAHO)', file: 'partners/caho-logo.png' },
     { name: 'Indian Association of Preventive and Social Medicine (IAPSM)', file: 'partners/iapsm.png' },
     { name: 'Telemedicine Society of India', file: 'partners/telemedicine-society-of-india.png' },
     { name: 'Maharashtra University of Health Sciences (MUHS)', file: 'partners/muhs-logo.png' },
