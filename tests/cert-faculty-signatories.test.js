@@ -98,6 +98,14 @@ const images = (pdf) => (pdf.toString('latin1').match(/\/Subtype \/Image/g) || [
     const cand = async () => (await call('GET', '/api/admin/certificates/candidates', null, admin)).body.people.find((x) => x.phone === key || (x.faculty && x.faculty.guestId === guestId));
     let me = await cand();
     check('someone on the Faculty list, not signed up, is listed for the Faculty certificate', me && me.notRegistered && me.faculty.eligible && !me.conference.kind, me);
+    {
+      const view = fs.readFileSync(appFile('views', 'admin', 'sections', 'attendance.ejs'), 'utf8');
+      const client = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
+      const listFn = client.slice(client.indexOf('function renderCertificateList()'), client.indexOf('async function setCertificateOverride'));
+      check('...and shown in the list from the start, not only under the Faculty filter (31 Oct)',
+        /<option value="">Everyone: delegates and faculty<\/option>\s*<option value="registered">Registered delegates<\/option>/.test(view)
+        && /if \(filter === 'registered'\) return !x\.notRegistered;/.test(listFn) && !/filter === ''\) return !x\.notRegistered/.test(listFn) && /return true;\n  \}\);/.test(listFn));
+    }
     check('...and nothing else', me && me.workshops.length === 0 && /Not signed up/.test(me.conference.whyNot));
     check('the Faculty certificate cannot be "included anyway": they have it', (await call('POST', '/api/admin/certificates/override', { phone: key, scope: 'FAC', decision: 'INCLUDE', reason: 'x' }, admin)).status === 400);
     await call('POST', '/api/admin/certificates/override', { phone: key, scope: 'FAC', decision: 'EXCLUDE', reason: 'Did not come' }, admin);

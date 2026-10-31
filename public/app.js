@@ -13935,7 +13935,9 @@ function renderCertificateList() {
     if (term && ![x.name, x.registrationNumber].some((v) => String(v || '').toLowerCase().includes(term))) return false;
     if (filter === 'due') return (x.conference.kind && !x.conference.issued) || x.workshops.some((w) => w.eligible && !w.issued) || !!(x.faculty && x.faculty.eligible && !x.faculty.issued);
     if (filter === 'faculty') return !!x.faculty;
-    if (filter === '') return !x.notRegistered;
+    // Everyone by default: faculty who have not registered too, as they have
+    // a Faculty certificate due.
+    if (filter === 'registered') return !x.notRegistered;
     if (filter === 'MMC' || filter === 'CONF') return x.conference.kind === filter;
     if (filter === 'nocouncil') return x.mmcCategory && !x.councilRegNo;
     if (filter === 'not') return !x.conference.kind && !x.notRegistered;
