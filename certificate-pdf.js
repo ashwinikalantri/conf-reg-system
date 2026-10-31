@@ -1,11 +1,20 @@
 'use strict';
 // One e-certificate as a PDF: A4 landscape, drawn with pdfkit.
 //
-// The design is generated (a navy frame with a gold rule, the conference
-// named across the top, "Certificate" and its kind, the name, the wording,
-// the signatures, and a verify QR with the certificate number). When a
-// designer's artwork is uploaded it is drawn full-page instead of the frame
-// and the text is laid over it in the same places.
+// Two layouts:
+//
+// - Generated: a navy frame with a gold rule, the conference named across
+//   the top, "Certificate" and its kind, the name, the wording, the
+//   signatures, the sponsors' logos in a row along the foot, and a verify QR
+//   with the certificate number.
+//
+// - On the designer's artwork, when one is uploaded: the artwork carries the
+//   conference, the host, the NQOCN mark and the word "Certificate" across
+//   its top, and a patterned border along its foot. The text is set in the
+//   plain field between: the kind under "Certificate", the name, the wording,
+//   the signatures, the logos, and the QR in the empty left-hand margin --
+//   clear of the faint motif on the right. The page takes the artwork's
+//   proportions (A4's width; its own height) so nothing is stretched or cut.
 //
 // Text: Times for the title and the name, as certificates are set; Noto Sans
 // (bundled, see assets/fonts) for everything else, since a venue or a
@@ -20,6 +29,9 @@ const H = 595.28;
 const C = {
   navy: '#1c3549', steel: '#2f5673', gold: '#b08d3c', goldInk: '#8a6d2b',
   ink: '#1e293b', muted: '#5b6b7d', faint: '#eef3f6',
+  // The artwork's own: the terracotta of its "Certificate", the indigo of
+  // its MGIMS line, and a warm ink that sits on linen.
+  terracotta: '#9c4128', indigo: '#2e2a86', linenInk: '#33281f', linenMuted: '#6b5a48',
 };
 
 let PDFDocument = null;
@@ -34,7 +46,7 @@ const timesCan = (s) => !/[^\u0000-ÿ–—‘’“”]/.test(String(s || ''));
 // Paragraph text with **bold** spans, centred. Laid out here word by word:
 // pdfkit's own centring goes wrong when a line mixes fonts. A line break in
 // the text starts a new paragraph.
-function richText(doc, text, x, y, width, size, lineGap) {
+function richText(doc, text, x, y, width, size, lineGap, color = C.ink) {
   doc.fontSize(size);
   const lineHeight = size * 1.25 + lineGap;
   let cy = y;
@@ -66,7 +78,7 @@ function richText(doc, text, x, y, width, size, lineGap) {
       let cx = x + (width - l.w) / 2;
       l.words.forEach((word, i) => {
         if (i && !word.glued) cx += space(word.font);
-        doc.font(word.font).fillColor(C.ink).text(word.w, cx, cy, { lineBreak: false });
+        doc.font(word.font).fillColor(color).text(word.w, cx, cy, { lineBreak: false });
         cx += word.ww;
       });
       cy += lineHeight;
@@ -74,6 +86,39 @@ function richText(doc, text, x, y, width, size, lineGap) {
     cy += lineGap * 1.5;
   }
   return cy;
+}
+
+// The sponsors' logos, one row centred between left and right: all the same
+// height, shrunk together when they would not fit, a wide wordmark capped so
+// it does not crowd the rest. logos: [Buffer].
+function drawLogos(doc, logos, top, left, right, height, gap = 16) {
+  const imgs = [];
+  for (const buf of logos || []) {
+    try { const img = doc.openImage(buf); imgs.push({ img, ratio: img.width / img.height }); } catch (e) { /* not an image pdfkit reads */ }
+  }
+  if (!imgs.length) return;
+  const gaps = gap * (imgs.length - 1);
+  const widthAt = (h) => imgs.reduce((t, x) => t + Math.min(x.ratio * h, h * 2.4), 0) + gaps;
+  let h = height;
+  if (widthAt(h) > right - left) h = Math.max(12, height * (right - left - gaps) / (widthAt(height) - gaps));
+  let x = left + (right - left - widthAt(h)) / 2;
+  for (const { img, ratio } of imgs) {
+    const w = Math.min(ratio * h, h * 2.4);
+    doc.image(img, x, top + (height - h) / 2, { fit: [w, h], align: 'center', valign: 'center' });
+    x += w + gap;
+  }
+}
+
+// The page size for an artwork: A4's width, the artwork's height -- within
+// reason; anything far from a landscape page is drawn on A4.
+function pageFor(doc, background) {
+  try {
+    const img = doc.openImage(background);
+    const ratio = img.width / img.height;
+    return { img, height: ratio >= 1.2 && ratio <= 1.7 ? W / ratio : H };
+  } catch (e) {
+    return null;
+  }
 }
 
 function drawFrame(doc) {
@@ -89,11 +134,15 @@ function drawFrame(doc) {
 
 // opts: { kind, title, subtitle, lead, name, body, conference: { name,
 // acronym }, certNo, verifyUrl, qrPng, signatories: [{ name, designation,
-// image }], background, specimen }
+// image }], logos: [Buffer], background, specimen }
 function renderCertificatePdf(opts) {
   const Doc = pdfkit();
   return new Promise((resolve, reject) => {
-    const doc = new Doc({ size: 'A4', layout: 'landscape', margin: 0, info: { Title: `${opts.title || 'Certificate'} — ${opts.name || ''}`.trim(), Author: opts.conference && opts.conference.name } });
+    // The artwork is opened on a scratch document first: its proportions
+    // set the page.
+    const probe = opts.background ? pageFor(new Doc({ autoFirstPage: false }), opts.background) : null;
+    const PH = probe ? probe.height : H;
+    const doc = new Doc({ size: [W, PH], margin: 0, info: { Title: `${opts.title || 'Certificate'} — ${opts.name || ''}`.trim(), Author: opts.conference && opts.conference.name } });
     const chunks = [];
     doc.on('data', (c) => chunks.push(c));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -101,76 +150,138 @@ function renderCertificatePdf(opts) {
     try {
       doc.registerFont('body', path.join(FONT_DIR, 'NotoSans-Regular.ttf'));
       doc.registerFont('bold', path.join(FONT_DIR, 'NotoSans-Bold.ttf'));
-      const conf = opts.conference || {};
-
-      if (opts.background) {
-        doc.image(opts.background, 0, 0, { width: W, height: H });
+      if (probe) {
+        doc.image(opts.background, 0, 0, { width: W, height: PH });
+        onArtwork(doc, opts, PH);
       } else {
-        drawFrame(doc);
-        // The acronym, faint, behind the wording.
-        if (conf.acronym) {
-          doc.save().fillOpacity(0.045).fillColor(C.steel).font('Times-Bold').fontSize(118)
-            .text(conf.acronym, 0, H / 2 - 70, { width: W, align: 'center', lineBreak: false }).restore();
-        }
-        // The conference across the top.
-        doc.font('bold').fontSize(11).fillColor(C.steel)
-          .text(String(conf.acronym || '').toUpperCase(), 0, 58, { width: W, align: 'center', characterSpacing: 3 });
-        doc.font('body').fontSize(10).fillColor(C.muted)
-          .text(conf.name || '', 90, 74, { width: W - 180, align: 'center' });
+        generated(doc, opts);
       }
-
-      doc.font('Times-Bold').fontSize(46).fillColor(C.navy)
-        .text(String(opts.title || 'Certificate').toUpperCase(), 0, 104, { width: W, align: 'center', characterSpacing: 6 });
-      doc.font('Times-Italic').fontSize(20).fillColor(C.goldInk)
-        .text(opts.subtitle || '', 0, 158, { width: W, align: 'center' });
-
-      doc.font('body').fontSize(12).fillColor(C.muted)
-        .text(opts.lead || 'This is to certify that', 0, 204, { width: W, align: 'center' });
-      const name = String(opts.name || '');
-      const nameFont = timesCan(name) ? 'Times-BoldItalic' : 'bold';
-      let nameSize = 32;
-      doc.font(nameFont).fontSize(nameSize);
-      while (doc.widthOfString(name) > W - 220 && nameSize > 18) doc.fontSize(--nameSize);
-      doc.fillColor(C.navy).text(name, 0, 226, { width: W, align: 'center' });
-      doc.lineWidth(0.8).strokeColor(C.gold).moveTo(W / 2 - 220, 268).lineTo(W / 2 + 220, 268).stroke();
-
-      richText(doc, opts.body, 110, 284, W - 220, 12.5, 4);
-
-      // Signatures, spread evenly across the foot.
-      const sigs = (opts.signatories || []).slice(0, 4);
-      if (sigs.length) {
-        const left = 90;
-        const right = W - 170;               // the QR has the right-hand corner
-        const slot = (right - left) / sigs.length;
-        sigs.forEach((s, i) => {
-          const cx = left + slot * i + slot / 2;
-          const lineY = 486;
-          if (s.image) {
-            try { doc.image(s.image, cx - 65, lineY - 46, { fit: [130, 42], align: 'center', valign: 'bottom' }); } catch (e) { /* not an image pdfkit reads */ }
-          }
-          doc.lineWidth(0.6).strokeColor(C.muted).moveTo(cx - 75, lineY).lineTo(cx + 75, lineY).stroke();
-          doc.font('bold').fontSize(9.5).fillColor(C.ink).text(s.name || '', cx - 90, lineY + 5, { width: 180, align: 'center' });
-          doc.font('body').fontSize(8).fillColor(C.muted).text(s.designation || '', cx - 90, doc.y + 1, { width: 180, align: 'center' });
-        });
-      }
-
-      // Verify: the QR, and the certificate number with where to check it.
-      if (opts.qrPng) doc.image(opts.qrPng, W - 122, H - 132, { width: 66, height: 66 });
-      doc.font('body').fontSize(7.5).fillColor(C.muted)
-        .text(`Certificate No. ${opts.certNo || ''}`, W - 250, H - 62, { width: 194, align: 'right' });
-      if (opts.verifyUrl) {
-        doc.text(`Verify: ${String(opts.verifyUrl).replace(/^https?:\/\//, '')}`, 60, H - 62, { width: W - 330, align: 'left' });
-      }
-
       if (opts.specimen) {
         doc.save().fillOpacity(0.12).fillColor('#b91c1c').font('Times-Bold').fontSize(110)
-          .rotate(-24, { origin: [W / 2, H / 2] }).text('SPECIMEN', 0, H / 2 - 60, { width: W, align: 'center', lineBreak: false }).restore();
+          .rotate(-24, { origin: [W / 2, PH / 2] }).text('SPECIMEN', 0, PH / 2 - 60, { width: W, align: 'center', lineBreak: false }).restore();
       }
       doc.end();
     } catch (err) {
       reject(err);
     }
   });
+}
+
+// The name, large, shrunk to fit; Times unless it holds what Times cannot draw.
+function drawName(doc, name, y, size, color, maxWidth) {
+  const font = timesCan(name) ? 'Times-BoldItalic' : 'bold';
+  let s = size;
+  doc.font(font).fontSize(s);
+  while (doc.widthOfString(name) > maxWidth && s > 16) doc.fontSize(--s);
+  doc.fillColor(color).text(name, 0, y + (size - s) * 0.6, { width: W, align: 'center', lineBreak: false });
+}
+
+function drawSignatures(doc, sigs, left, right, lineY, ink, muted, sigH = 40) {
+  if (!sigs.length) return;
+  const slot = (right - left) / sigs.length;
+  sigs.forEach((s, i) => {
+    const cx = left + slot * i + slot / 2;
+    if (s.image) {
+      try { doc.image(s.image, cx - 65, lineY - sigH - 4, { fit: [130, sigH], align: 'center', valign: 'bottom' }); } catch (e) { /* not an image pdfkit reads */ }
+    }
+    doc.lineWidth(0.6).strokeColor(muted).moveTo(cx - 72, lineY).lineTo(cx + 72, lineY).stroke();
+    doc.font('bold').fontSize(9.5).fillColor(ink).text(s.name || '', cx - 88, lineY + 5, { width: 176, align: 'center' });
+    doc.font('body').fontSize(8).fillColor(muted).text(s.designation || '', cx - 88, doc.y + 1, { width: 176, align: 'center' });
+  });
+}
+
+// Over the designer's artwork. Positions are fractions of the page height,
+// read off the artwork: its "Certificate" ends at 40%, its border starts at
+// 90.6%; the motif on the right begins at 87% of the width.
+function onArtwork(doc, opts, PH) {
+  const y = (f) => PH * f;
+  const field = { left: 150, right: W * 0.87 - 20 };   // clear of the QR column and the motif
+  const mid = (field.left + field.right) / 2;
+  const centred = (top, width = field.right - field.left) => ({ x: mid - width / 2, top, width });
+
+  // The kind, under the artwork's "Certificate".
+  const sub = centred(y(0.412));
+  doc.font('Times-Italic').fontSize(19).fillColor(C.terracotta)
+    .text(opts.subtitle || '', sub.x, sub.top, { width: sub.width, align: 'center' });
+
+  doc.font('body').fontSize(10.5).fillColor(C.linenMuted)
+    .text(opts.lead || 'This is to certify that', sub.x, y(0.455), { width: sub.width, align: 'center' });
+
+  // drawName centres on the page; centre it on the field instead.
+  doc.save().translate(mid - W / 2, 0);
+  drawName(doc, String(opts.name || ''), y(0.478), 30, C.indigo, field.right - field.left - 40);
+  doc.restore();
+  doc.lineWidth(0.8).strokeColor(C.terracotta).strokeOpacity(0.55)
+    .moveTo(mid - 200, y(0.542)).lineTo(mid + 200, y(0.542)).stroke().strokeOpacity(1);
+
+  const bodyW = field.right - field.left - 20;
+  richText(doc, opts.body, mid - bodyW / 2, y(0.555), bodyW, 11, 3, C.linenInk);
+
+  drawSignatures(doc, (opts.signatories || []).slice(0, 3), field.left, field.right, y(0.77), C.linenInk, C.linenMuted, 30);
+
+  // The sponsors, on a soft white band so every logo reads on linen.
+  if (opts.logos && opts.logos.length) {
+    const top = y(0.857);
+    const h = y(0.04);
+    doc.save().fillOpacity(0.72).fillColor('#ffffff')
+      .roundedRect(field.left - 6, top - 5, field.right - field.left + 12, h + 10, 6).fill().restore();
+    drawLogos(doc, opts.logos, top, field.left + 6, field.right - 6, h, 14);
+  }
+
+  // Verify, in the empty left margin.
+  const qx = 40;
+  const qy = y(0.70);
+  if (opts.qrPng) {
+    doc.save().fillOpacity(0.9).fillColor('#ffffff').roundedRect(qx - 4, qy - 4, 70, 70, 4).fill().restore();
+    doc.image(opts.qrPng, qx, qy, { width: 62, height: 62 });
+  }
+  doc.font('body').fontSize(6.5).fillColor(C.linenMuted)
+    .text(`Certificate No.\n${opts.certNo || ''}`, qx - 4, qy + 70, { width: 104, align: 'left' });
+  if (opts.verifyUrl) {
+    doc.text(`Verify at ${String(opts.verifyUrl).replace(/^https?:\/\//, '')}`, qx - 4, doc.y + 2, { width: 104, align: 'left' });
+  }
+}
+
+function generated(doc, opts) {
+  const conf = opts.conference || {};
+  drawFrame(doc);
+  // The acronym, faint, behind the wording.
+  if (conf.acronym) {
+    doc.save().fillOpacity(0.045).fillColor(C.steel).font('Times-Bold').fontSize(118)
+      .text(conf.acronym, 0, H / 2 - 70, { width: W, align: 'center', lineBreak: false }).restore();
+  }
+  // The conference across the top.
+  doc.font('bold').fontSize(11).fillColor(C.steel)
+    .text(String(conf.acronym || '').toUpperCase(), 0, 58, { width: W, align: 'center', characterSpacing: 3 });
+  doc.font('body').fontSize(10).fillColor(C.muted)
+    .text(conf.name || '', 90, 74, { width: W - 180, align: 'center' });
+
+  doc.font('Times-Bold').fontSize(46).fillColor(C.navy)
+    .text(String(opts.title || 'Certificate').toUpperCase(), 0, 104, { width: W, align: 'center', characterSpacing: 6 });
+  doc.font('Times-Italic').fontSize(20).fillColor(C.goldInk)
+    .text(opts.subtitle || '', 0, 158, { width: W, align: 'center' });
+
+  doc.font('body').fontSize(12).fillColor(C.muted)
+    .text(opts.lead || 'This is to certify that', 0, 204, { width: W, align: 'center' });
+  drawName(doc, String(opts.name || ''), 226, 32, C.navy, W - 220);
+  doc.lineWidth(0.8).strokeColor(C.gold).moveTo(W / 2 - 220, 268).lineTo(W / 2 + 220, 268).stroke();
+
+  richText(doc, opts.body, 110, 284, W - 220, 12.5, 4);
+
+  // Signatures across the foot -- raised a little when the sponsors' logos
+  // take the row beneath them. The QR has the right-hand corner.
+  const hasLogos = !!(opts.logos && opts.logos.length);
+  drawSignatures(doc, (opts.signatories || []).slice(0, 4), 90, W - 170, hasLogos ? 452 : 486, C.ink, C.muted);
+  if (hasLogos) drawLogos(doc, opts.logos, 498, 70, W - 150, 28);
+
+  // Verify: the QR, and the certificate number with where to check it.
+  const footY = hasLogos ? H - 52 : H - 62;
+  if (opts.qrPng) doc.image(opts.qrPng, W - 122, footY - 70, { width: 66, height: 66 });
+  doc.font('body').fontSize(7.5).fillColor(C.muted)
+    .text(`Certificate No. ${opts.certNo || ''}`, W - 250, footY, { width: 194, align: 'right' });
+  if (opts.verifyUrl) {
+    doc.text(`Verify: ${String(opts.verifyUrl).replace(/^https?:\/\//, '')}`, 60, footY, { width: W - 330, align: 'left' });
+  }
 }
 
 // The posters for the hall doors: one A4 portrait page per hall -- the
@@ -225,4 +336,116 @@ function renderHallPosters(pages, conference = {}) {
   });
 }
 
-module.exports = { renderCertificatePdf, renderHallPosters, PAGE: { W, H } };
+// The copy of the designer's artwork that goes into each certificate. Every
+// certificate carries the background whole, and an artwork straight from the
+// designer can run to tens of megabytes -- a certificate to email. This one
+// is A4 at 300 dpi at most (3508 pixels across), as a quality-90 JPEG: a
+// 16 MB artwork becomes about 2.6 MB with no visible difference. PNG or JPEG
+// in; a transparent PNG is laid on white. Returns null for what it cannot
+// read, and the original is used.
+const PRINT_WIDTH = 3508;
+function certificateCopy(buffer) {
+  try {
+    let img;
+    if (buffer[0] === 0x89 && buffer[1] === 0x50) {
+      const png = require('pngjs').PNG.sync.read(buffer);
+      const d = png.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const a = d[i + 3] / 255;
+        d[i] = d[i] * a + 255 * (1 - a); d[i + 1] = d[i + 1] * a + 255 * (1 - a); d[i + 2] = d[i + 2] * a + 255 * (1 - a); d[i + 3] = 255;
+      }
+      img = { width: png.width, height: png.height, data: d };
+    } else {
+      img = decodeCmyk(buffer) || require('jpeg-js').decode(buffer, { maxMemoryUsageInMB: 2048, maxResolutionInMP: 400, formatAsRGBA: true });
+    }
+    if (img.width > PRINT_WIDTH) img = shrink(img, PRINT_WIDTH, Math.round(img.height * PRINT_WIDTH / img.width));
+    const out = require('jpeg-js').encode(img, 90).data;
+    return out.length < buffer.length ? out : buffer;
+  } catch (e) {
+    return null;
+  }
+}
+
+// A CMYK JPEG -- what a designer exports for print -- in RGB. jpeg-js turns
+// CMYK into RGB by the crudest formula, which pushes the artwork's indigo to
+// a bright blue; this uses xpdf/poppler's table instead (what PDF viewers do
+// for a CMYK image, and what the original looks like on a certificate). It
+// needs the decoder's raw ink values, which jpeg-js does not export: its
+// decoder is loaded from source for them (jpeg-js is pinned to 0.4.4 for
+// this). Returns null for any other JPEG, or on any failure.
+let JpegImage;
+function decodeCmyk(buffer) {
+  try {
+    if (!JpegImage) {
+      const fs = require('fs');
+      const src = fs.readFileSync(require.resolve('jpeg-js/lib/decoder.js'), 'utf8');
+      // eslint-disable-next-line no-new-func
+      JpegImage = new Function('module', 'Buffer', `${src}\n;return JpegImage;`)({}, Buffer);
+    }
+    const d = new JpegImage();
+    d.opts = { colorTransform: undefined, tolerantDecoding: true, maxResolutionInMP: 400, maxMemoryUsageInMB: 2048 };
+    JpegImage.resetMaxMemoryUsage(2048 * 1024 * 1024);
+    d.parse(new Uint8Array(buffer));
+    if (!d.components || d.components.length !== 4) return null;
+    const ink = d.getData(d.width, d.height);   // C, M, Y, K: 0 = no ink
+    const out = Buffer.alloc(d.width * d.height * 4);
+    for (let i = 0, j = 0; i < ink.length; i += 4, j += 4) {
+      const rgb = cmykToRgb(ink[i] / 255, ink[i + 1] / 255, ink[i + 2] / 255, ink[i + 3] / 255);
+      out[j] = rgb[0]; out[j + 1] = rgb[1]; out[j + 2] = rgb[2]; out[j + 3] = 255;
+    }
+    return { width: d.width, height: d.height, data: out };
+  } catch (e) {
+    return null;
+  }
+}
+
+// xpdf's GfxDeviceCMYKColorSpace::getRGB: each of the 16 ink combinations'
+// measured colour, blended by how much of each ink there is.
+function cmykToRgb(c, m, y, k) {
+  const c1 = 1 - c; const m1 = 1 - m; const y1 = 1 - y; const k1 = 1 - k;
+  let r = 0; let g = 0; let b = 0; let x;
+  x = c1 * m1 * y1 * k1; r += x; g += x; b += x;
+  x = c1 * m1 * y1 * k; r += 0.1373 * x; g += 0.1216 * x; b += 0.1255 * x;
+  x = c1 * m1 * y * k1; r += x; g += 0.9490 * x;
+  x = c1 * m1 * y * k; r += 0.1098 * x; g += 0.1020 * x;
+  x = c1 * m * y1 * k1; r += 0.9255 * x; b += 0.5490 * x;
+  x = c1 * m * y1 * k; r += 0.1412 * x;
+  x = c1 * m * y * k1; r += 0.9294 * x; g += 0.1098 * x; b += 0.1412 * x;
+  x = c1 * m * y * k; r += 0.1333 * x;
+  x = c * m1 * y1 * k1; g += 0.6784 * x; b += 0.9373 * x;
+  x = c * m1 * y1 * k; g += 0.0588 * x; b += 0.1412 * x;
+  x = c * m1 * y * k1; g += 0.6510 * x; b += 0.3137 * x;
+  x = c * m1 * y * k; g += 0.0745 * x;
+  x = c * m * y1 * k1; r += 0.1804 * x; g += 0.1922 * x; b += 0.5725 * x;
+  x = c * m * y1 * k; b += 0.0078 * x;
+  x = c * m * y * k1; r += 0.2118 * x; g += 0.2119 * x; b += 0.2235 * x;
+  const to8 = (v) => Math.max(0, Math.min(255, Math.round(v * 255)));
+  return [to8(r), to8(g), to8(b)];
+}
+
+// Box-filter downscale of an RGBA image.
+function shrink(img, tw, th) {
+  const out = Buffer.alloc(tw * th * 4);
+  const sx = img.width / tw;
+  const sy = img.height / th;
+  for (let y = 0; y < th; y++) {
+    const y0 = Math.floor(y * sy);
+    const y1 = Math.max(y0 + 1, Math.min(img.height, Math.floor((y + 1) * sy)));
+    for (let x = 0; x < tw; x++) {
+      const x0 = Math.floor(x * sx);
+      const x1 = Math.max(x0 + 1, Math.min(img.width, Math.floor((x + 1) * sx)));
+      let r = 0; let g = 0; let b = 0; let n = 0;
+      for (let yy = y0; yy < y1; yy++) {
+        for (let xx = x0; xx < x1; xx++) {
+          const i = (yy * img.width + xx) * 4;
+          r += img.data[i]; g += img.data[i + 1]; b += img.data[i + 2]; n++;
+        }
+      }
+      const j = (y * tw + x) * 4;
+      out[j] = r / n; out[j + 1] = g / n; out[j + 2] = b / n; out[j + 3] = 255;
+    }
+  }
+  return { width: tw, height: th, data: out };
+}
+
+module.exports = { renderCertificatePdf, renderHallPosters, certificateCopy, cmykToRgb, PAGE: { W, H } };

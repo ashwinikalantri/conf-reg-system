@@ -9841,6 +9841,37 @@ async function issueCertificate(req, person, kind, workshop = null) {
 }
 
 // The PDF of one certificate row (or a specimen, from made-up values).
+// The background each certificate carries: a lighter copy of the uploaded
+// artwork (certificateCopy), made once and kept beside it in the settings as
+// { from, file }. Made on upload; for an artwork uploaded before copies were
+// made, on its first use.
+let certBackgroundCopying = null;
+async function certificateBackground(settings) {
+  if (!settings.background) return null;
+  const read = (file) => fs.promises.readFile(path.join(UPLOAD_DIR, path.basename(file))).catch(() => null);
+  const copy = settings.backgroundCopy;
+  if (copy && copy.from === settings.background && copy.file) {
+    const buf = await read(copy.file);
+    if (buf) return buf;
+  }
+  const original = await read(settings.background);
+  if (!original) return null;
+  if (!certBackgroundCopying || certBackgroundCopying.from !== settings.background) {
+    certBackgroundCopying = { from: settings.background, done: (async () => {
+      const out = certificatePdfLib.certificateCopy(original);
+      if (!out || out === original) return original;
+      const file = await writeUploadBuffer(out, 'jpg');
+      const now = await certificateSettings();
+      if (now.background === settings.background) {
+        await dbRun("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('certificate_settings', ?)",
+          [JSON.stringify({ ...now, backgroundCopy: { from: settings.background, file } })]);
+      }
+      return out;
+    })().finally(() => { certBackgroundCopying = null; }) };
+  }
+  return certBackgroundCopying.done;
+}
+
 async function certificatePdf(cert, { specimen = false } = {}) {
   await seedSignatories();
   const settings = await certificateSettings();
@@ -9862,11 +9893,17 @@ async function certificatePdf(cert, { specimen = false } = {}) {
     if (s && s.active) sigs.push({ name: s.name, designation: s.designation, image: await readUpload(s.signature_file) });
   }
   const url = verifyUrlFor(cert.verify_code);
+  // The sponsors' logos: the website's partners, in the same order.
+  const logos = [];
+  for (const p of require('./website-content').partners || []) {
+    const buf = await fs.promises.readFile(path.join(__dirname, 'public', 'website', 'img', p.file)).catch(() => null);
+    if (buf) logos.push(buf);
+  }
   return certificatePdfLib.renderCertificatePdf({
     kind: cert.kind, title: fill(tpl.title), subtitle: fill(tpl.subtitle), lead: fill(tpl.lead), name: cert.name, body: fill(tpl.body),
     conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym }, certNo: cert.cert_no, verifyUrl: url,
-    qrPng: await QRCode.toBuffer(url, { type: 'png', width: 300, margin: 1 }), signatories: sigs,
-    background: await readUpload(settings.background), specimen,
+    qrPng: await QRCode.toBuffer(url, { type: 'png', width: 300, margin: 1 }), signatories: sigs, logos,
+    background: await certificateBackground(settings), specimen,
   });
 }
 
@@ -10025,7 +10062,10 @@ app.put('/api/admin/certificates/background', requirePermission('certificates.ma
       if (!buffer.length) return res.status(400).json({ success: false, error: 'That image is empty.' });
       file = await writeUploadBuffer(buffer, /png/i.test(m[1]) ? 'png' : 'jpg');
     }
-    await dbRun("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('certificate_settings', ?)", [JSON.stringify({ ...current, background: file })]);
+    await dbRun("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('certificate_settings', ?)", [JSON.stringify({ ...current, background: file, backgroundCopy: null })]);
+    // The lighter copy the certificates carry, made now rather than on the
+    // first certificate.
+    if (file) await certificateBackground(await certificateSettings());
     await recordAudit({ req, entityType: 'settings', entityId: 'certificates', action: 'CERTIFICATE_BACKGROUND', oldValue: current.background ? 'designer artwork' : 'generated', newValue: file ? 'designer artwork' : 'generated' });
     res.json({ success: true });
   } catch (err) {
@@ -14563,5 +14603,11 @@ app.listen(PORT, () => {
   console.log(`SMS OTP: ${smsEnabled() ? 'ENABLED (Vynttra)' : 'disabled (no SMS_API_KEY)'}`);
   console.log(`Email: ${emailEnabled() ? `ENABLED (SES, from ${EMAIL.from})` : 'disabled (no AWS/SES config)'}`);
   if (OTP_ECHO && !smsEnabled()) console.log('[dev] OTP echo is ON — codes are returned to the client and logged here.');
+  // The certificates' copy of an artwork uploaded before copies were made:
+  // made now, a little after start, rather than holding up the first
+  // certificate.
+  setTimeout(() => {
+    certificateSettings().then(certificateBackground).catch((e) => console.error('Certificate background copy:', e.message));
+  }, 5000).unref();
 });
 }

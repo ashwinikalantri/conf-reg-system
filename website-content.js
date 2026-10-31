@@ -81,7 +81,7 @@ module.exports = {
     { name: 'World Health Organization', file: 'partners/who.png' },
     { name: 'Aastrika', file: 'partners/aastrika.png' },
     { name: 'Breastfeeding Promotion Network of India (BPNI)', file: 'partners/bpni.jpg' },
-    { name: 'ARSI', file: 'partners/arsi.gif' },
+    { name: 'ARSI', file: 'partners/arsi.png' },
     { name: 'Consortium of Accredited Healthcare Organizations (CAHO)', file: 'partners/caho.png' },
     { name: 'Indian Association of Preventive and Social Medicine (IAPSM)', file: 'partners/iapsm.png' },
     { name: 'Telemedicine Society of India', file: 'partners/telemedicine-society-of-india.png' },
