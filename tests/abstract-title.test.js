@@ -26,6 +26,11 @@ for (const [what, input, want] of cases) {
   check(what, got === want, got);
 }
 check('quotes alone leave nothing', cleanTitle(' “” ') === '');
+check('a leading hyphen taken off', cleanTitle('-Improving hand hygiene compliance') === 'Improving Hand Hygiene Compliance', cleanTitle('-Improving hand hygiene compliance'));
+check('...and a "Title of paper:" label', cleanTitle('Title of paper:  Improving Hand Hygiene: A PDSA-Based Project') === 'Improving Hand Hygiene: A PDSA-Based Project'
+  && cleanTitle('TITLE: A study of care') === 'A Study of Care' && cleanTitle('“Title of the abstract – Care at home”') === 'Care at Home');
+check('...but a title that merely starts with "Title" is left alone', cleanTitle('Titles and honours in nursing') === 'Titles and Honours in Nursing');
+check('...and a hyphen inside a title too', cleanTitle('Co-designing care') === 'Co-Designing Care');
 
 const server = fs.readFileSync(appFile('server.js'), 'utf8');
 check('a submitted title is cleaned the same way, and an empty one refused',

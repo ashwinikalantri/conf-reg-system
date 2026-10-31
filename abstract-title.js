@@ -1,5 +1,6 @@
 // An abstract's title, tidied: the quotation marks some authors wrap it in
-// taken off its ends, runs of spaces made one, and title case.
+// taken off its ends, a leading dash or "Title of paper:" taken off its
+// start, runs of spaces made one, and title case.
 //
 // Title case is APA's: every word capitalised but the short conjunctions,
 // articles and prepositions (three letters or fewer) inside the title; the
@@ -51,8 +52,12 @@ function titleCase(text) {
   }).join(' ');
 }
 
+// What some authors type before the title itself: a dash or bullet, or a
+// label such as "Title of paper:".
+const LEAD = /^(?:[-–—•*\s]+|title(?:\s+of\s+(?:the\s+)?(?:paper|abstract|study))?\s*[:\-–—]\s*)+/i;
+
 function cleanTitle(title) {
-  const s = String(title == null ? '' : title).replace(/\s+/g, ' ').replace(QUOTES, '').trim();
+  const s = String(title == null ? '' : title).replace(/\s+/g, ' ').replace(QUOTES, '').replace(LEAD, '').replace(QUOTES, '').trim();
   return s ? titleCase(s) : s;
 }
 
