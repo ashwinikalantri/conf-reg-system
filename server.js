@@ -10001,7 +10001,7 @@ async function certificatePdf(cert, { specimen = false } = {}) {
   const logos = [];
   for (const p of require('./website-content').partners || []) {
     const buf = await fs.promises.readFile(path.join(__dirname, 'public', 'website', 'img', p.file)).catch(() => null);
-    if (buf) logos.push(certificatePdfLib.clearWhiteGround(buf));
+    if (buf) logos.push(buf);
   }
   return certificatePdfLib.renderCertificatePdf({
     kind: cert.kind, title: fill(tpl.title), subtitle: fill(tpl.subtitle), lead: fill(tpl.lead), name: cert.name, body: fill(tpl.body),

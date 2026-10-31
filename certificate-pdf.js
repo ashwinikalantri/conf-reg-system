@@ -229,9 +229,14 @@ function onArtwork(doc, opts, PH) {
   // motif's edge.
   drawSignatures(doc, (opts.signatories || []).slice(0, 6), 118, W * 0.87, y(0.775), C.linenInk, C.linenMuted, 28);
 
-  // The sponsors, straight on the linen (white grounds taken out, see
-  // clearWhiteGround).
-  if (opts.logos && opts.logos.length) drawLogos(doc, opts.logos, y(0.857), field.left, field.right, y(0.04), 14);
+  // The sponsors, on a soft white band so every logo reads on linen.
+  if (opts.logos && opts.logos.length) {
+    const top = y(0.857);
+    const h = y(0.04);
+    doc.save().fillOpacity(0.72).fillColor('#ffffff')
+      .roundedRect(field.left - 6, top - 5, field.right - field.left + 12, h + 10, 6).fill().restore();
+    drawLogos(doc, opts.logos, top, field.left + 6, field.right - 6, h, 14);
+  }
 
   // Verify, in the empty left margin.
   const qx = 40;
@@ -333,81 +338,6 @@ function renderHallPosters(pages, conference = {}) {
       reject(err);
     }
   });
-}
-
-// A logo on a white square reads as a white box on the linen. The white
-// that reaches the edges is taken out (flood-filled from the border, so
-// white inside the mark -- a letter's counter -- stays), and the soft edge
-// around it fades by how pale it is, so no white fringe is left while the
-// mark's own colour stays solid. A logo with
-// no white border (already transparent, or on its own colour) comes back
-// as it was. PNG or JPEG in, PNG out; kept by content, as every
-// certificate asks for the same few.
-const clearedLogos = new Map();
-function clearWhiteGround(buffer) {
-  const key = require('crypto').createHash('sha1').update(buffer).digest('hex');
-  if (!clearedLogos.has(key)) clearedLogos.set(key, clearWhite(buffer));
-  return clearedLogos.get(key);
-}
-function clearWhite(buffer) {
-  try {
-    const { PNG } = require('pngjs');
-    let img;
-    if (buffer[0] === 0x89 && buffer[1] === 0x50) img = PNG.sync.read(buffer);
-    else if (buffer[0] === 0xff && buffer[1] === 0xd8) img = require('jpeg-js').decode(buffer, { formatAsRGBA: true });
-    else return buffer;
-    const { width: w, height: h } = img;
-    const d = img.data;
-    const whiteAt = (p) => d[p * 4 + 3] > 200 && d[p * 4] > 232 && d[p * 4 + 1] > 232 && d[p * 4 + 2] > 232;
-    const border = [];
-    for (let x = 0; x < w; x++) border.push(x, (h - 1) * w + x);
-    for (let y = 1; y < h - 1; y++) border.push(y * w, y * w + w - 1);
-    const seeds = border.filter(whiteAt);
-    if (seeds.length < border.length * 0.6) return buffer;
-    const ground = new Uint8Array(w * h);
-    for (const p of seeds) ground[p] = 1;
-    while (seeds.length) {
-      const p = seeds.pop();
-      const x = p % w;
-      for (const q of [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, p - w, p + w]) {
-        if (q >= 0 && q < w * h && !ground[q] && whiteAt(q)) { ground[q] = 1; seeds.push(q); }
-      }
-    }
-    // The ground goes; the two pixels around it fade with their paleness.
-    const near = new Uint8Array(w * h);
-    for (let p = 0; p < w * h; p++) {
-      if (!ground[p]) continue;
-      const x = p % w;
-      const y = (p - x) / w;
-      for (let dy = -2; dy <= 2; dy++) {
-        for (let dx = -2; dx <= 2; dx++) {
-          const nx = x + dx;
-          const ny = y + dy;
-          if (nx >= 0 && nx < w && ny >= 0 && ny < h && !ground[ny * w + nx]) near[ny * w + nx] = 1;
-        }
-      }
-    }
-    const out = new PNG({ width: w, height: h });
-    for (let p = 0; p < w * h; p++) {
-      const i = p * 4;
-      let [r, g, b, a] = [d[i], d[i + 1], d[i + 2], d[i + 3]];
-      if (ground[p]) a = 0;
-      else if (near[p]) {
-        // How far from white; anything half-way to a colour is solid.
-        const k = Math.min(1, 2 * Math.max(1 - r / 255, 1 - g / 255, 1 - b / 255));
-        if (k < 0.008) a = 0;
-        else {
-          const un = (c) => Math.max(0, Math.min(255, Math.round(255 - (255 - c) / k)));
-          r = un(r); g = un(g); b = un(b);
-          a = Math.round(a * k);
-        }
-      }
-      out.data[i] = r; out.data[i + 1] = g; out.data[i + 2] = b; out.data[i + 3] = a;
-    }
-    return PNG.sync.write(out);
-  } catch (e) {
-    return buffer;
-  }
 }
 
 // The copy of the designer's artwork that goes into each certificate. Every
@@ -522,4 +452,4 @@ function shrink(img, tw, th) {
   return { width: tw, height: th, data: out };
 }
 
-module.exports = { renderCertificatePdf, renderHallPosters, certificateCopy, clearWhiteGround, cmykToRgb, PAGE: { W, H } };
+module.exports = { renderCertificatePdf, renderHallPosters, certificateCopy, cmykToRgb, PAGE: { W, H } };

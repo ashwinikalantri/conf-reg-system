@@ -14,7 +14,6 @@
 //     follows them to their account when they are linked.
 const { call, check, report, adminLogin, appFile, openDb } = require('./harness');
 const fs = require('fs');
-const { PNG } = require(appFile('node_modules', 'pngjs'));
 const certLib = require(appFile('certificate-pdf.js'));
 const partners = require(appFile('website-content.js')).partners;
 
@@ -134,25 +133,8 @@ const images = (pdf) => (pdf.toString('latin1').match(/\/Subtype \/Image/g) || [
     check('...and the link is not printed', !/Verify at|Verify: \$\{/.test(src));
 
     console.log('\n== Logos ==');
-    const logo = new PNG({ width: 30, height: 30 });
-    for (let y = 0; y < 30; y++) {
-      for (let x = 0; x < 30; x++) {
-        const i = (y * 30 + x) * 4;
-        const mark = x >= 8 && x < 22 && y >= 8 && y < 22;
-        const counter = x >= 13 && x < 17 && y >= 13 && y < 17;
-        const c = mark && !counter ? [200, 20, 20] : [255, 255, 255];
-        logo.data[i] = c[0]; logo.data[i + 1] = c[1]; logo.data[i + 2] = c[2]; logo.data[i + 3] = 255;
-      }
-    }
-    const out = PNG.sync.read(certLib.clearWhiteGround(PNG.sync.write(logo)));
-    const a = (x, y) => out.data[(y * 30 + x) * 4 + 3];
-    check('a logo\'s white ground is taken out', a(0, 0) === 0 && a(29, 29) === 0 && a(5, 15) === 0);
-    check('...the mark kept', a(10, 10) === 255 && a(20, 15) === 255);
-    check('...and the white inside it too', a(15, 15) === 255);
-    const blue = new PNG({ width: 10, height: 10 });
-    for (let i = 0; i < blue.data.length; i += 4) { blue.data[i] = 0; blue.data[i + 1] = 174; blue.data[i + 2] = 236; blue.data[i + 3] = 255; }
-    const blueBuf = PNG.sync.write(blue);
-    check('a logo on its own colour is left as it is', certLib.clearWhiteGround(blueBuf) === blueBuf);
+    check('the logos as they are, on the soft white band (their white grounds kept, 31 Oct)', !/clearWhite/.test(src + server)
+      && /fillOpacity\(0\.72\)\.fillColor\('#ffffff'\)/.test(src));
   } finally {
     if (guestId) {
       await db.run('DELETE FROM certificates WHERE guest_id = ?', [guestId]);
