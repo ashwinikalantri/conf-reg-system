@@ -43,7 +43,7 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
       check(`/website/${p} opens without signing in`, r.status === 200, r.status);
     }
     check('every page has the menu and the MGIMS copyright', pages.every((p) => /href="\/website\/programme"/.test(got[p]) && /© Mahatma Gandhi Institute of Medical Sciences, Sevagram/.test(got[p])));
-    check('...and links Register and Sign in to the portal', pages.every((p) => /class="btn btn-navy" href="\/portal"/.test(got[p])));
+    check('...and links Register and Sign in to the portal', pages.every((p) => /class="btn btn-navy register" href="\/portal"/.test(got[p])));
     const groups = [...got[''].matchAll(/<details class="dd">\s*<summary[^>]*>([A-Za-z ]+)</g)].map((m) => m[1].trim());
     check('the menu is three groups and two links', JSON.stringify(groups) === JSON.stringify(['Programme', 'Registration', 'People'])
       && /class="top" href="\/website\/visit"/.test(got['']) && /class="top" href="\/website\/about"/.test(got['']), groups);
@@ -103,7 +103,7 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     check('...its images and stylesheet still load', /src="\/website\/img\/nqocn-mgims-logo\.png"/.test(home.raw) && /href="\/website\/site\.css/.test(home.raw));
     check('...PCI India among the partners, its logo served', /<img src="\/website\/img\/partners\/pci-india\.png" alt="PCI India"/.test(home.raw)
       && (await call('GET', '/website/img/partners/pci-india.png', null, null)).status === 200);
-    check('...Register and Sign in go to the portal, at /portal', /class="btn btn-navy" href="\/portal"/.test(home.raw));
+    check('...Register and Sign in go to the portal, at /portal', /class="btn btn-navy register" href="\/portal"/.test(home.raw));
     check('...and it names itself as the address to list', /<link rel="canonical" href="https:\/\/nqocn2026\.mgims\.ac\.in\/">/.test(home.raw));
     const fac = await asSite('/faculty');
     check('the faculty page lists Dr Peter Lachman, no longer Dr Katherine Semrau', fac.raw.includes('Dr Peter Lachman') && !/Semrau/.test(fac.raw));
@@ -149,6 +149,21 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     for (const id of sessions.filter(Boolean)) await db.run('DELETE FROM programme_sessions WHERE id = ?', [id]);
     if (hallId) await db.run('DELETE FROM halls WHERE id = ?', [hallId]);
     if (hallId2) await db.run('DELETE FROM halls WHERE id = ?', [hallId2]);
+  }
+  console.log('\n== Signed in to the portal: their button, not Sign in and Register ==');
+  {
+    const out = await call('GET', '/api/auth/whoami');
+    check('signed out: says so, and is never cached', out.status === 200 && out.body && out.body.signedIn === false && /no-store/.test(out.headers['cache-control'] || ''));
+    const cookie = await adminLogin();
+    const me = await call('GET', '/api/auth/whoami', null, cookie);
+    check('signed in: their name, and nothing more', me.body && me.body.signedIn === true && typeof me.body.name === 'string' && me.body.name.length > 0
+      && Object.keys(me.body).sort().join() === 'name,signedIn');
+    const home = await asSite('/');
+    check('the header has the button, swapped in by the browser (the page itself stays the same for everyone)',
+      /<a class="me" id="site-me" href="\/portal" aria-label="Your delegate portal">/.test(home.raw) && /fetch\('\/api\/auth\/whoami'/.test(home.raw)
+      && /class="signin" href="\/portal">Sign in<\/a>/.test(home.raw));
+    const siteCss = require('fs').readFileSync(require('./harness').appFile('public', 'website', 'site.css'), 'utf8');
+    check('...which hides Sign in and Register once signed in', /\.signed-in \.me \{ display: inline-flex; \}/.test(siteCss) && /\.signed-in \.signin, \.signed-in \.register \{ display: none; \}/.test(siteCss));
   }
   db.close();
   report();

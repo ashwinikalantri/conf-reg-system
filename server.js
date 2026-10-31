@@ -4423,6 +4423,22 @@ app.post('/api/auth/verify-contact/confirm', requireAuth, async (req, res, next)
   }
 });
 
+// Who is signed in, for the public website's header: their name only, or
+// signedIn false. Never an error, so a signed-out visitor costs nothing; and
+// never cached, since the website's pages are (Cache-Control public).
+app.get('/api/auth/whoami', async (req, res, next) => {
+  try {
+    res.set('Cache-Control', 'private, no-store');
+    const user = req.session && req.session.phone
+      ? await dbGet('SELECT salutation, full_name FROM users WHERE phone_number = ?', [req.session.phone]) : null;
+    if (!user) return res.json({ signedIn: false });
+    const name = [user.salutation, user.full_name].filter(Boolean).join(' ').trim();
+    res.json({ signedIn: true, name });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Current session, for restoring state on page load.
 app.get('/api/auth/me', requireAuth, async (req, res, next) => {
   try {

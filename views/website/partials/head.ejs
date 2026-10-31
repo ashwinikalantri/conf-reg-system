@@ -36,7 +36,10 @@
     </nav>
     <div class="header-actions">
       <a class="signin" href="<%= portal %>">Sign in</a>
-      <a class="btn btn-navy" href="<%= portal %>">Register</a>
+      <a class="btn btn-navy register" href="<%= portal %>">Register</a>
+      <!-- Signed in to the portal: their button instead, to the portal
+           (filled in by the script below, from /api/auth/whoami). -->
+      <a class="me" id="site-me" href="<%= portal %>" aria-label="Your delegate portal"><span class="me-initials" id="site-me-initials" aria-hidden="true"></span><span class="me-name" id="site-me-name"></span></a>
       <details class="menu">
         <summary aria-label="Menu"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></summary>
         <nav class="menu-panel" aria-label="Main">
@@ -48,13 +51,44 @@
           <hr>
           <% menu.filter((m) => !m.items).forEach((m) => { %><a href="<%= base %>/<%= m.key %>"<% if (page === m.key) { %> aria-current="page"<% } %>><%= m.label %></a><% }) %>
           <p class="menu-group">Go to</p>
-          <a class="menu-go" href="<%= portal %>">Delegate portal<span>Sign in</span></a>
+          <a class="menu-go" href="<%= portal %>">Delegate portal<span id="site-menu-me">Sign in</span></a>
         </nav>
       </details>
     </div>
   </div>
 </header>
 <script>
+// Signed in to the portal? Then their button, not Sign in and Register. The
+// pages are cached for everyone, so this asks the browser's own session; the
+// last answer, kept on this device, paints first so the header does not jump.
+(function () {
+  var root = document.documentElement;
+  function show(name) {
+    var words = String(name || '').replace(/^\s*(dr|prof|mr|mrs|ms|miss|shri|smt)\.?\s+/i, '').trim().split(/\s+/).filter(Boolean);
+    var initials = words.length ? (words[0][0] + (words.length > 1 ? words[words.length - 1][0] : '')).toUpperCase() : '';
+    document.getElementById('site-me-initials').textContent = initials;
+    document.getElementById('site-me-name').textContent = name || 'Delegate portal';
+    document.getElementById('site-menu-me').textContent = name || 'Signed in';
+    root.classList.add('signed-in');
+  }
+  function hide() {
+    root.classList.remove('signed-in');
+    document.getElementById('site-menu-me').textContent = 'Sign in';
+  }
+  var kept = null;
+  try { kept = localStorage.getItem('nqocn-signed-in'); } catch (e) {}
+  if (kept) show(kept);
+  if (!window.fetch) return;
+  fetch('/api/auth/whoami', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (who) {
+    if (who && who.signedIn) {
+      show(who.name);
+      try { localStorage.setItem('nqocn-signed-in', who.name || ' '); } catch (e) {}
+    } else {
+      hide();
+      try { localStorage.removeItem('nqocn-signed-in'); } catch (e) {}
+    }
+  }).catch(function () {});
+})();
 (function () {
   var dds = Array.prototype.slice.call(document.querySelectorAll('details.dd, details.menu'));
   dds.forEach(function (d) { d.addEventListener('toggle', function () { if (d.open) dds.forEach(function (o) { if (o !== d) o.open = false; }); }); });
