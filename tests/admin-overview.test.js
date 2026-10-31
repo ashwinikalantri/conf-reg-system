@@ -217,7 +217,8 @@ const TOTALS = { success: true, collected: 5750, outstanding: 1250, owingCount: 
     const hidden = (id) => opsOnly.els[id].classList.contains('hidden');
     check('the two rupee cards are hidden without payments.view_totals',
       hidden('ov-card-collected') && hidden('ov-card-outstanding'));
-    check('...while the headcounts still show', !hidden('overview-money'));
+    check('...the Money card with them', hidden('overview-money'));
+    check('...while the headcounts still show', !hidden('overview-regs'));
     check('...with the real numbers in them', String(opsOnly.els['ov-delegates'].textContent) === '4');
     // Stronger than checking the DOM: the figures are never even requested,
     // so there is nothing to reveal in devtools either.

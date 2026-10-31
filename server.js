@@ -9603,7 +9603,9 @@ app.put('/api/attendance/me/certificate', requireAuth, async (req, res, next) =>
 });
 
 // Counts: how many are present at each session that takes attendance, what
-// is on in each hall now, and how many have completed the conference.
+// is on in each hall now, how many have completed the conference, and -- for
+// the Overview's day panel -- how many were here today and how many badges
+// have been collected.
 app.get('/api/attendance/summary', requirePermission('attendance.view'), async (req, res, next) => {
   try {
     const now = Date.now();
@@ -9624,11 +9626,18 @@ app.get('/api/attendance/summary', requirePermission('attendance.view'), async (
       if (attendanceLib.completion(sessions.filter((s) => ids.has(s.id)), conf, settings.attendance.lunchSplit).complete) completed++;
     }
     const registered = (await dbGet("SELECT COUNT(*) AS n FROM registrations WHERE COALESCE(bank_status, '') != 'REJECTED'")).n;
+    // For the Overview on a conference day: how many people were marked at
+    // any of today's sessions, and how many badges the desk has handed over.
+    const today = istDateString(now);
+    const todayIds = new Set(sessions.filter((s) => s.session_date === today).map((s) => s.id));
+    let presentToday = 0;
+    for (const ids of byPerson.values()) if ([...ids].some((id) => todayIds.has(id))) presentToday++;
+    const badgesCollected = (await dbGet("SELECT COUNT(*) AS n FROM registrations WHERE checked_in_at IS NOT NULL AND COALESCE(bank_status, '') != 'REJECTED'")).n;
     const enrolled = new Map((await dbAll(
       `SELECT ro.option_id, COUNT(*) AS n FROM registration_options ro JOIN registrations r ON r.id = ro.registration_id
         WHERE COALESCE(r.bank_status, '') != 'REJECTED' GROUP BY ro.option_id`)).map((r) => [Number(r.option_id), r.n]));
     res.json({
-      registered, completed, settings: settings.attendance,
+      registered, completed, presentToday, badgesCollected, settings: settings.attendance,
       sessions: sessions.filter(attendanceLib.takesAttendance).map((s) => ({
         ...publicSession(s), present: counts.get(s.id) || 0, enrolled: isWorkshopSession(s) ? (enrolled.get(Number(s.option_id)) || 0) : null,
         window: attendanceLib.sessionWindow(s, now, settings.attendance.earlyMinutes),

@@ -232,3 +232,13 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
   #admin-menu #settings-menu .cbar-group.first { border-top: 0; margin-top: 0; padding-top: 6px; }
   #admin-me-menu .cbar-group.go { border-top: 0; margin-top: 0; }
 }
+
+/* The admin Overview's "Waiting on you" rows (views/admin/sections/
+   overview.ejs): the count, what is waiting, and where it opens. */
+.ov-row { display: grid; grid-template-columns: 3.75rem minmax(0, 1fr) auto; align-items: center; gap: 14px; width: 100%; min-height: 56px; padding: 10px 4px; border-top: 1px solid #eef1f4; text-align: left; border-radius: 0; }
+.ov-row:hover { background: #f8fafb; }
+.ov-row.hidden { display: none; }
+.ov-n { font-size: 24px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+.ov-go { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 600; color: #1c3549; white-space: nowrap; }
+.ov-go::after { content: "›"; font-size: 18px; line-height: 1; }
+@media (max-width: 639px) { .ov-row { grid-template-columns: 3rem minmax(0, 1fr) auto; gap: 10px; } .ov-n { font-size: 21px; } .ov-go { font-size: 0; } .ov-go::after { font-size: 20px; } }

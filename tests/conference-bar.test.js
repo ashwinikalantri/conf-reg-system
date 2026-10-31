@@ -23,7 +23,7 @@ const js = read('public', 'app.js');
 console.log('\n== The website ==');
 check('the page you are on: pale gold, bold, no gold underline',
   /\.nav \.top\[aria-current="page"\], \.dd summary\.here \{ background: var\(--gold-50\); font-weight: 700; \}/.test(siteCss) && !/inset 0 -3px 0 var\(--gold\)/.test(siteCss));
-check('its phone menu ends as the others do: Go to, the delegate portal', /<p class="menu-group">Go to<\/p>\s*<a class="menu-go" href="<%= portal %>">Delegate portal<span>Sign in<\/span><\/a>\s*<\/nav>/.test(siteHead));
+check('its phone menu ends as the others do: Go to, the delegate portal', /<p class="menu-group">Go to<\/p>\s*<a class="menu-go" href="<%= portal %>">Delegate portal<span id="site-menu-me">Sign in<\/span><\/a>\s*<\/nav>/.test(siteHead));
 
 console.log('\n== The same look in the portal and the admin panel ==');
 check('one stylesheet for the bar: white, the logo, a gold tag', /\.cbar \{ background: #fff; border-bottom: 1px solid #e3e7eb;/.test(css) && /\.cbar-place \{[^}]*color: #8a6d2b;/.test(css));

@@ -1,115 +1,180 @@
-  <!-- SECTION: OVERVIEW
-       The landing screen. Every number here is a headline for a section
-       further along the tab bar, so each card links to the section that owns
-       it rather than being a dead end -- an overview whose figures cannot be
-       opened is just a poster.
+  <!-- SECTION: OVERVIEW (redesigned 31 Oct 2026, from the "Admin Overview"
+       canvas). What needs you first -- one list, most urgent first, each row
+       opening the section that can settle it -- then how the conference is
+       shaping up: registrations, workshops, money, abstracts, faculty, and
+       where delegates come from. On a conference day a gold-edged panel for
+       the day leads.
 
-       Cards are hidden for a viewer whose role cannot open the section they
-       summarise (see renderBackendOverview): a finance admin should not learn
-       the abstract count from a tab they are not allowed into. -->
+       Every figure comes from the endpoint the section that owns it uses
+       (renderBackendOverview), and a part is shown only to someone whose
+       role can open what it summarises: a finance admin does not learn the
+       abstract count from a tab they cannot open. -->
   <section id="section-overview" class="hidden">
 
-    <div class="flex items-baseline justify-between flex-wrap gap-2 mb-4">
-      <h2 class="text-lg font-bold text-slate-800">Overview</h2>
-      <p id="overview-updated" class="text-xs text-slate-400"></p>
+    <div class="flex items-baseline justify-between flex-wrap gap-x-4 gap-y-1 mb-4">
+      <div class="flex items-baseline gap-x-3.5 gap-y-1 flex-wrap">
+        <h2 class="text-2xl font-bold text-slate-900">Overview</h2>
+        <p id="ov-when" class="text-[15px] text-slate-600"></p>
+      </div>
+      <p class="text-sm text-slate-500"><span id="overview-updated"></span> · <button type="button" onclick="renderBackendOverview()" class="font-semibold text-navy hover:underline">Refresh</button></p>
     </div>
 
-    <!-- On the conference days: each hall with a session open for attendance,
-         and how many are marked present -- so the desk sees a door where
-         nobody is being scanned. renderOverviewNow(); attendance.view. -->
+    <!-- A conference day: the day's figures, and each hall with a session
+         open for attendance -- a door where nobody is being scanned is
+         flagged. renderOverviewNow(); attendance.view. -->
     <div id="overview-now" class="hidden mb-4 rounded-2xl border-2 border-gold-500 bg-white p-4 sm:p-5 shadow-sm">
-      <div class="flex items-baseline justify-between gap-3 flex-wrap mb-3">
-        <h3 class="text-lg font-bold text-slate-900">Now <span id="overview-now-when" class="font-semibold text-slate-500"></span></h3>
-        <button type="button" onclick="selectSettingsTab('attendance')" class="text-sm font-semibold text-navy underline">Attendance</button>
+      <div id="ov-day-stats" class="hidden grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div><p class="text-sm font-semibold text-slate-600">Here today</p><p id="ov-day-present" class="text-2xl font-bold text-slate-900 tabular-nums">0</p><p id="ov-day-present-sub" class="text-sm text-slate-600">marked at a session</p></div>
+        <div><p class="text-sm font-semibold text-slate-600">Badges collected</p><p id="ov-day-badges" class="text-2xl font-bold text-slate-900 tabular-nums">0</p><p class="text-sm text-slate-600">at the registration counter</p></div>
+        <div><p class="text-sm font-semibold text-slate-600">In the halls now</p><p id="ov-day-now" class="text-2xl font-bold text-slate-900 tabular-nums">0</p><p class="text-sm text-slate-600">marked at the sessions on</p></div>
+        <div><p class="text-sm font-semibold text-slate-600">Done for a certificate</p><p id="ov-day-done" class="text-2xl font-bold text-emerald-700 tabular-nums">0</p><p class="text-sm text-slate-600">a session before lunch and after</p></div>
       </div>
-      <div id="overview-now-halls" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
-    </div>
-
-    <!-- Money first: it is the question the desk is asked most.
-
-         The two rupee figures are conference-wide money and hide separately
-         from the two headcounts: they need payments.view_totals, which is a
-         different disclosure from working the approval queue. They are
-         individually hidden rather than split into their own grid so the row
-         still flows as 2 or 4 cards instead of wrapping. -->
-    <div id="overview-money" class="hidden grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-      <div id="ov-card-collected" class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-        <p class="text-sm font-semibold text-slate-600">Collected</p>
-        <p id="ov-collected" class="skeleton text-2xl font-bold text-slate-800 mt-1 tabular-nums">₹0</p>
-        <p id="ov-collected-sub" class="text-xs text-slate-500 mt-0.5">&nbsp;</p>
-      </div>
-      <div id="ov-card-outstanding" class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-        <p class="text-sm font-semibold text-slate-600">Outstanding</p>
-        <p id="ov-outstanding" class="skeleton text-2xl font-bold text-rose-700 mt-1 tabular-nums">₹0</p>
-        <p id="ov-outstanding-sub" class="text-xs text-slate-500 mt-0.5">&nbsp;</p>
-      </div>
-      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-        <p class="text-sm font-semibold text-slate-600">Delegates</p>
-        <p id="ov-delegates" class="skeleton text-2xl font-bold text-slate-800 mt-1 tabular-nums">0</p>
-        <p id="ov-delegates-sub" class="text-xs text-slate-500 mt-0.5">&nbsp;</p>
-      </div>
-      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-        <p class="text-sm font-semibold text-slate-600">Confirmed</p>
-        <p id="ov-confirmed" class="skeleton text-2xl font-bold text-emerald-700 mt-1 tabular-nums">0</p>
-        <p id="ov-confirmed-sub" class="text-xs text-slate-500 mt-0.5">&nbsp;</p>
+      <div id="overview-now-wrap" class="hidden">
+        <div id="overview-now-head" class="flex items-baseline justify-between gap-3 flex-wrap mb-3">
+          <h3 class="text-lg font-bold text-slate-900">Now in the halls <span id="overview-now-when" class="font-semibold text-slate-500"></span></h3>
+          <button type="button" onclick="selectSettingsTab('attendance')" class="text-sm font-semibold text-navy hover:underline">Attendance →</button>
+        </div>
+        <div id="overview-now-halls" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
       </div>
     </div>
 
-    <!-- What is waiting on somebody. These are the ones worth acting on, so
-         each is a button into the section that can settle it. -->
-    <!-- Hidden whole for a viewer with none of the sections it summarises:
-         the heading and the all-clear line below both make claims across
-         payments, the statement and abstracts, so shown to someone who can
-         see none of them they would be asserting something unknowable. -->
-    <div id="overview-attention" class="hidden mb-6">
-      <h3 class="text-base font-bold text-slate-800 mb-2">Needs attention</h3>
-      <div id="overview-queues" class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <button type="button" id="ov-q-payments" onclick="switchBackendTab('payments')" class="hidden text-left bg-white rounded-2xl border border-slate-200 shadow-sm p-4 hover:border-indigo-300 hover:shadow-card transition">
-          <p class="text-sm font-semibold text-slate-600">Awaiting approval</p>
-          <p id="ov-pending" class="skeleton text-2xl font-bold text-amber-700 mt-1 tabular-nums">0</p>
-          <p class="text-xs text-navy font-semibold mt-0.5">Open Registration Approval →</p>
-        </button>
-        <button type="button" id="ov-q-balance" onclick="switchBackendTab('payments')" class="hidden text-left bg-white rounded-2xl border border-slate-200 shadow-sm p-4 hover:border-indigo-300 hover:shadow-card transition">
-          <p class="text-sm font-semibold text-slate-600">Balance due</p>
-          <p id="ov-balance" class="skeleton text-2xl font-bold text-rose-700 mt-1 tabular-nums">0</p>
-          <p id="ov-balance-sub" class="text-xs text-slate-500 mt-0.5">&nbsp;</p>
-        </button>
-        <button type="button" id="ov-q-statement" onclick="switchBackendTab('statement')" class="hidden text-left bg-white rounded-2xl border border-slate-200 shadow-sm p-4 hover:border-indigo-300 hover:shadow-card transition">
-          <p class="text-sm font-semibold text-slate-600">Unmatched credits</p>
-          <p id="ov-unmatched" class="skeleton text-2xl font-bold text-slate-800 mt-1 tabular-nums">0</p>
-          <p class="text-xs text-navy font-semibold mt-0.5">Open Bank Statement →</p>
-        </button>
-        <button type="button" id="ov-q-abstracts" onclick="switchBackendTab('abstracts')" class="hidden text-left bg-white rounded-2xl border border-slate-200 shadow-sm p-4 hover:border-indigo-300 hover:shadow-card transition">
-          <p class="text-sm font-semibold text-slate-600">Abstracts to review</p>
-          <p id="ov-abstracts" class="skeleton text-2xl font-bold text-amber-700 mt-1 tabular-nums">0</p>
-          <p id="ov-abstracts-sub" class="text-xs text-slate-500 mt-0.5">&nbsp;</p>
-        </button>
+    <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_22rem] gap-4 items-start">
+      <div class="space-y-4 min-w-0">
+
+        <!-- Waiting on you. A row shows only when it has something in it and
+             the role can open where it leads; with nothing waiting, one line
+             says so for the sections this role can see. -->
+        <div id="overview-attention" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm px-5 pt-4 pb-2">
+          <div class="flex items-baseline justify-between gap-3 mb-1">
+            <h3 class="text-lg font-bold text-slate-900">Waiting on you</h3>
+            <span class="text-sm text-slate-500">most urgent first</span>
+          </div>
+          <div id="overview-queues">
+            <button type="button" id="ov-q-balance" onclick="setPaymentFilter('balance'); switchBackendTab('payments')" class="ov-row hidden">
+              <span id="ov-balance" class="skeleton ov-n text-rose-700">0</span>
+              <span class="min-w-0"><span class="block font-semibold text-slate-900">Balance due</span><span id="ov-balance-sub" class="block text-sm text-slate-600">&nbsp;</span></span>
+              <span class="ov-go">Registration</span>
+            </button>
+            <button type="button" id="ov-q-payments" onclick="switchBackendTab('payments')" class="ov-row hidden">
+              <span id="ov-pending" class="skeleton ov-n text-amber-700">0</span>
+              <span class="min-w-0"><span class="block font-semibold text-slate-900">Registrations to approve</span><span class="block text-sm text-slate-600">payment submitted, waiting for a decision</span></span>
+              <span class="ov-go">Registration</span>
+            </button>
+            <button type="button" id="ov-q-statement" onclick="switchBackendTab('statement')" class="ov-row hidden">
+              <span id="ov-unmatched" class="skeleton ov-n text-amber-700">0</span>
+              <span class="min-w-0"><span class="block font-semibold text-slate-900">Bank credits not matched</span><span class="block text-sm text-slate-600">on the bank statement, no registration linked</span></span>
+              <span class="ov-go">Bank statement</span>
+            </button>
+            <button type="button" id="ov-q-abstracts" onclick="switchBackendTab('abstracts')" class="ov-row hidden">
+              <span id="ov-abstracts" class="skeleton ov-n text-amber-700">0</span>
+              <span class="min-w-0"><span class="block font-semibold text-slate-900">Abstracts to review</span><span id="ov-abstracts-sub" class="block text-sm text-slate-600">&nbsp;</span></span>
+              <span class="ov-go">Review Desk</span>
+            </button>
+          </div>
+          <!-- Faculty: the rooms, pickups and accounts still to settle
+               (guests.view). Each opens the Faculty tab, filtered. -->
+          <div id="overview-queues-faculty" class="empty:hidden">
+            <button type="button" id="ov-q-rooms" onclick="openFacultyFlag('noAccommodation')" class="ov-row hidden">
+              <span id="ov-rooms" class="skeleton ov-n text-rose-700">0</span>
+              <span class="min-w-0"><span class="block font-semibold text-slate-900">Faculty needing a room</span><span class="block text-sm text-slate-600">staying with us, no room assigned</span></span>
+              <span class="ov-go">Faculty</span>
+            </button>
+            <button type="button" id="ov-q-pickups" onclick="openFacultyFlag('')" class="ov-row hidden">
+              <span id="ov-pickups" class="skeleton ov-n text-amber-700">0</span>
+              <span class="min-w-0"><span class="block font-semibold text-slate-900">Faculty pickup not decided</span><span class="block text-sm text-slate-600">no pickup arranged or declined yet</span></span>
+              <span class="ov-go">Faculty</span>
+            </button>
+            <button type="button" id="ov-q-signup" onclick="openFacultyFlag('notSignedUp')" class="ov-row hidden">
+              <span id="ov-signup" class="skeleton ov-n text-navy">0</span>
+              <span class="min-w-0"><span class="block font-semibold text-slate-900">Faculty not signed up</span><span id="ov-signup-sub" class="block text-sm text-slate-600">no portal account linked</span></span>
+              <span class="ov-go">Faculty</span>
+            </button>
+          </div>
+          <p id="overview-clear-line" class="hidden border-t border-slate-100 py-3 text-sm text-slate-600"></p>
+          <p id="overview-all-clear" class="hidden border-t border-slate-100 py-3 text-[15px] text-slate-600"></p>
+        </div>
+
+        <!-- Registrations (payments.view): the headcounts, sign-ups not yet
+             registered (comms.reminders_view, with the reminder it calls
+             for), each week's new registrations, and the categories. -->
+        <div id="overview-regs" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-5">
+          <div class="flex items-baseline justify-between gap-3">
+            <h3 class="text-lg font-bold text-slate-900">Registrations</h3>
+            <button type="button" onclick="switchBackendTab('reports')" class="text-sm font-semibold text-navy hover:underline">Reports →</button>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            <div><p class="text-sm font-semibold text-slate-600">Registered</p><p id="ov-delegates" class="skeleton text-2xl font-bold text-slate-900 tabular-nums">0</p><p id="ov-delegates-sub" class="text-sm text-slate-600">&nbsp;</p></div>
+            <div><p class="text-sm font-semibold text-slate-600">Confirmed</p><p id="ov-confirmed" class="skeleton text-2xl font-bold text-emerald-700 tabular-nums">0</p><p id="ov-confirmed-sub" class="text-sm text-slate-600">&nbsp;</p></div>
+            <div id="ov-signups-box" class="hidden"><p class="text-sm font-semibold text-slate-600">Signed up, not registered</p><p id="ov-signups" class="text-2xl font-bold text-gold-700 tabular-nums">0</p><button type="button" onclick="selectSettingsTab('reminders')" class="text-sm font-semibold text-navy hover:underline text-left">Send them a reminder →</button></div>
+          </div>
+          <div id="ov-weeks-box" class="hidden">
+            <p class="text-sm font-semibold text-slate-600 mb-2">New registrations each week</p>
+            <div id="ov-weeks" class="flex items-end gap-1 sm:gap-1.5 h-28 border-b border-slate-300"></div>
+            <div id="ov-weeks-labels" class="flex gap-1 sm:gap-1.5 pt-1 text-xs text-slate-500"></div>
+          </div>
+          <div id="ov-cats-box" class="hidden">
+            <p class="text-sm font-semibold text-slate-600 mb-2">By category</p>
+            <div id="ov-cats-bar" class="flex h-3.5 rounded-md overflow-hidden bg-slate-100"></div>
+            <div id="ov-cats-legend" class="flex flex-wrap gap-x-4 gap-y-1.5 mt-2.5 text-sm text-slate-700"></div>
+          </div>
+        </div>
+
+        <!-- Workshops and QI practices: the seats taken in each, full and
+             over marked. The seats are public (the registration form and
+             the website show what is left); the exact count over capacity
+             comes from the Workshops screen's own endpoint, for whoever may
+             open it. -->
+        <div id="overview-workshops" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+          <div class="flex items-baseline justify-between gap-3 flex-wrap mb-2">
+            <h3 class="text-lg font-bold text-slate-900">Workshops and QI practices</h3>
+            <p class="text-sm text-slate-600"><span id="ov-ws-summary"></span><button type="button" id="ov-ws-open" onclick="selectSettingsTab('programs')" class="hidden ml-2 font-semibold text-navy hover:underline">Workshops →</button></p>
+          </div>
+          <div id="ov-ws-list" class="space-y-4"></div>
+        </div>
       </div>
-      <!-- Faculty: the rooms, pickups and accounts still to settle
-           (guests.view). Each opens the Faculty tab. -->
-      <div id="overview-queues-faculty" class="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-3 empty:hidden">
-        <button type="button" id="ov-q-rooms" onclick="openFacultyFlag('noAccommodation')" class="hidden text-left bg-white rounded-2xl border border-slate-200 shadow-sm p-4 hover:border-indigo-300 hover:shadow-card transition">
-          <p class="text-sm font-semibold text-slate-600">Faculty needing a room</p>
-          <p id="ov-rooms" class="skeleton text-2xl font-bold text-rose-700 mt-1 tabular-nums">0</p>
-          <p class="text-xs text-navy font-semibold mt-0.5">Open Faculty →</p>
-        </button>
-        <button type="button" id="ov-q-pickups" onclick="openFacultyFlag('')" class="hidden text-left bg-white rounded-2xl border border-slate-200 shadow-sm p-4 hover:border-indigo-300 hover:shadow-card transition">
-          <p class="text-sm font-semibold text-slate-600">Pickup not decided</p>
-          <p id="ov-pickups" class="skeleton text-2xl font-bold text-amber-700 mt-1 tabular-nums">0</p>
-          <p class="text-xs text-navy font-semibold mt-0.5">Open Faculty →</p>
-        </button>
-        <button type="button" id="ov-q-signup" onclick="openFacultyFlag('notSignedUp')" class="hidden text-left bg-white rounded-2xl border border-slate-200 shadow-sm p-4 hover:border-indigo-300 hover:shadow-card transition">
-          <p class="text-sm font-semibold text-slate-600">Faculty not signed up</p>
-          <p id="ov-signup" class="skeleton text-2xl font-bold text-amber-700 mt-1 tabular-nums">0</p>
-          <p class="text-xs text-navy font-semibold mt-0.5">Open Faculty →</p>
-        </button>
+
+      <div class="space-y-4 min-w-0">
+        <!-- Money: conference-wide totals, payments.view_totals (a separate
+             disclosure from working the approval queue). -->
+        <div id="overview-money" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+          <div class="flex items-baseline justify-between gap-3">
+            <h3 class="text-lg font-bold text-slate-900">Money</h3>
+            <button type="button" id="ov-money-statement" onclick="switchBackendTab('statement')" class="hidden text-sm font-semibold text-navy hover:underline">Bank statement →</button>
+          </div>
+          <div id="ov-card-collected"><p class="text-sm font-semibold text-slate-600">Collected</p><p id="ov-collected" class="skeleton text-2xl font-bold text-slate-900 tabular-nums">₹0</p><p id="ov-collected-sub" class="text-sm text-slate-600">&nbsp;</p></div>
+          <div class="h-2.5 rounded-full bg-slate-100 overflow-hidden"><div id="ov-money-bar" class="h-full bg-navy" style="width:0%"></div></div>
+          <div id="ov-card-outstanding"><p class="text-sm font-semibold text-slate-600">Outstanding</p><p id="ov-outstanding" class="skeleton text-xl font-bold text-rose-700 tabular-nums">₹0</p><p id="ov-outstanding-sub" class="text-sm text-slate-600">&nbsp;</p></div>
+        </div>
+
+        <!-- Abstracts (abstracts.view): submitted, where they stand, and
+             oral against poster. -->
+        <div id="overview-abstracts" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+          <div class="flex items-baseline justify-between gap-3">
+            <h3 class="text-lg font-bold text-slate-900">Abstracts</h3>
+            <button type="button" onclick="switchBackendTab('abstracts')" class="text-sm font-semibold text-navy hover:underline">Review Desk →</button>
+          </div>
+          <div><p class="text-sm font-semibold text-slate-600">Submitted</p><p id="ov-abs-total" class="text-2xl font-bold text-slate-900 tabular-nums">0</p></div>
+          <div id="ov-abs-bar" class="flex h-2.5 rounded-full bg-slate-100 overflow-hidden"></div>
+          <div id="ov-abs-legend" class="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-700"></div>
+          <div id="ov-abs-formats" class="divide-y divide-slate-100 text-sm"></div>
+        </div>
+
+        <!-- Faculty (guests.view): the list, and how far along their
+             accounts, travel and rooms are. -->
+        <div id="overview-faculty" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+          <div class="flex items-baseline justify-between gap-3">
+            <h3 class="text-lg font-bold text-slate-900">Faculty</h3>
+            <button type="button" onclick="switchBackendTab('faculty')" class="text-sm font-semibold text-navy hover:underline">Faculty →</button>
+          </div>
+          <div><p class="text-sm font-semibold text-slate-600">On the list</p><p id="ov-fac-total" class="text-2xl font-bold text-slate-900 tabular-nums">0</p><p id="ov-fac-sub" class="text-sm text-slate-600"></p></div>
+          <div id="ov-fac-bars" class="space-y-3"></div>
+        </div>
       </div>
-      <p id="overview-all-clear" class="hidden text-sm text-slate-500 bg-white rounded-2xl border border-slate-200 shadow-sm p-5"></p>
     </div>
 
-      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+      <div class="mt-4 bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
         <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
-          <h3 class="font-bold text-slate-800">Delegate Locations</h3>
+          <h3 class="text-lg font-bold text-slate-900">Where delegates come from</h3>
           <div class="flex items-center gap-2">
             <div class="flex bg-slate-100 rounded-lg p-0.5 text-xs font-semibold">
               <button type="button" id="delegate-map-btn-registered" onclick="setDelegateMapMetric('registered')" class="px-3 py-1.5 rounded-md bg-white text-emerald-700 shadow-sm">Registered</button>

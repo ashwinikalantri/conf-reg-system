@@ -4504,15 +4504,47 @@ async function rescanFlaggedPayments(all = false) {
 // The endpoints would 403 anyway; hiding the card as well means a finance
 // admin is not shown an empty "Abstracts to review" box they can do nothing
 // about and cannot verify.
-// The Overview's "Now": each session open for attendance this minute, its
-// hall and how many are marked present. One that started ten minutes ago
-// with nobody marked is flagged -- the door may have no one scanning.
-function renderOverviewNow(summary) {
+// The Overview's title line: where the conference stands, by its dates --
+// "21 days to go", "Day 1 of 2", or over -- and where and when it is.
+function overviewWhen(now = Date.now()) {
+  const start = conferenceInfo.startDate;
+  const end = conferenceInfo.endDate || start;
+  if (!start) return { lead: '', where: '', onDay: false };
+  const today = new Date(now + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const dayN = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
+  let lead;
+  if (today < start) lead = dayN(today, start) === 1 ? 'Tomorrow' : `${dayN(today, start)} days to go`;
+  else if (today <= end) lead = dayN(start, end) ? `Day ${dayN(start, today) + 1} of ${dayN(start, end) + 1}` : 'Today';
+  else lead = 'The conference is over';
+  const where = [shortDateRange(start, end), conferenceInfo.location].filter(Boolean).join(' · ');
+  return { lead, where, onDay: today >= start && today <= end };
+}
+
+// The Overview's day panel. On a conference day: who was here today, badges
+// collected, how many are in the halls now, and how many have done enough
+// for a certificate. Whenever a session is open for attendance: each one,
+// its hall and how many are marked present -- one that started ten minutes
+// ago with nobody marked is flagged, the door may have no one scanning.
+function renderOverviewNow(summary, onDay) {
   const box = document.getElementById('overview-now');
   const halls = document.getElementById('overview-now-halls');
   if (!box || !halls) return;
   const open = summary && Array.isArray(summary.sessions) ? summary.sessions.filter((s) => s.window && s.window.open) : [];
-  box.classList.toggle('hidden', !open.length);
+  const stats = !!(summary && onDay);
+  box.classList.toggle('hidden', !open.length && !stats);
+  const statBox = document.getElementById('ov-day-stats');
+  if (statBox) statBox.classList.toggle('hidden', !stats);
+  if (stats) {
+    setText('ov-day-present', summary.presentToday || 0);
+    setText('ov-day-present-sub', `marked at a session, of ${summary.registered || 0} registered`);
+    setText('ov-day-badges', summary.badgesCollected || 0);
+    setText('ov-day-now', open.reduce((n, s) => n + (Number(s.present) || 0), 0));
+    setText('ov-day-done', summary.completed || 0);
+  }
+  const wrap = document.getElementById('overview-now-wrap');
+  if (wrap) wrap.classList.toggle('hidden', !open.length);
+  const head = document.getElementById('overview-now-head');
+  if (head) ['mt-4', 'pt-4', 'border-t', 'border-slate-100'].forEach((c) => head.classList.toggle(c, stats));
   if (!open.length) { halls.innerHTML = ''; return; }
   const ist = new Date(Date.now() + 5.5 * 3600e3);
   const nowMin = ist.getUTCHours() * 60 + ist.getUTCMinutes();
@@ -4529,11 +4561,97 @@ function renderOverviewNow(summary) {
   }).join('');
 }
 
-// From the Overview's faculty cards: the Faculty tab, filtered.
+// From the Overview's faculty rows: the Faculty tab, filtered.
 let pendingGuestFlag = null;
 function openFacultyFlag(flag) {
   pendingGuestFlag = flag;
   switchBackendTab('faculty');
+}
+
+// A thin bar of parts, each { n, colour }, as a share of their total.
+const OV_COLOURS = ['#1c3549', '#2f5673', '#628ea8', '#b08d3c', '#d6b46a', '#8a6d2b', '#94a3b8', '#cbd5e1'];
+function overviewBarHtml(parts) {
+  const total = parts.reduce((s, p) => s + p.n, 0);
+  if (!total) return '';
+  return parts.filter((p) => p.n > 0)
+    .map((p) => `<div style="width:${(p.n / total * 100).toFixed(2)}%;background:${p.colour}" title="${esc(p.label)}: ${p.n}"></div>`).join('');
+}
+function overviewLegendHtml(parts) {
+  return parts.filter((p) => p.n > 0).map((p) => `<span class="inline-flex items-center gap-1.5"><i class="inline-block w-2.5 h-2.5 rounded-sm" style="background:${p.colour}"></i>${esc(p.label)} <b class="tabular-nums text-slate-900">${p.n}</b></span>`).join('');
+}
+
+// Registrations each week (IST, Monday to Sunday), up to the last sixteen
+// weeks; the week still running in gold. A month's name under its first week.
+function renderOverviewWeeks(rows) {
+  const box = document.getElementById('ov-weeks-box');
+  const bars = document.getElementById('ov-weeks');
+  const labels = document.getElementById('ov-weeks-labels');
+  const times = rows.map((r) => Number(r.submitted_at)).filter((t) => t > 0);
+  if (box) box.classList.toggle('hidden', !times.length);
+  if (!times.length || !bars || !labels) return;
+  const WEEK = 7 * 864e5;
+  const weekOf = (ms) => {
+    const d = new Date(ms + 5.5 * 3600e3);
+    d.setUTCHours(0, 0, 0, 0);
+    d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+    return d.getTime();
+  };
+  const last = weekOf(Date.now());
+  const first = Math.max(weekOf(Math.min(...times)), last - 15 * WEEK);
+  const weeks = [];
+  for (let w = first; w <= last; w += WEEK) weeks.push({ w, n: 0 });
+  for (const t of times) {
+    const i = Math.round((weekOf(t) - first) / WEEK);
+    if (i >= 0 && i < weeks.length) weeks[i].n++;
+  }
+  const max = Math.max(1, ...weeks.map((x) => x.n));
+  const day = (ms) => new Date(ms).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  bars.innerHTML = weeks.map((x, i) => `<div class="flex-1 min-w-0 h-full flex flex-col items-center justify-end gap-0.5" title="Week of ${esc(day(x.w))}: ${x.n}">
+      <span class="text-[11px] text-slate-500 tabular-nums">${x.n || ''}</span>
+      <div class="w-full max-w-[2.25rem] rounded-t ${i === weeks.length - 1 ? 'bg-gold-500' : 'bg-navy'}" style="height:${Math.round(x.n / max * 84)}px"></div>
+    </div>`).join('');
+  labels.innerHTML = weeks.map((x, i) => {
+    const mon = new Date(x.w).toLocaleDateString('en-IN', { month: 'short', timeZone: 'UTC' });
+    const prev = i ? new Date(weeks[i - 1].w).toLocaleDateString('en-IN', { month: 'short', timeZone: 'UTC' }) : null;
+    return `<span class="flex-1 min-w-0 whitespace-nowrap overflow-visible">${mon !== prev ? esc(mon) : ''}</span>`;
+  }).join('');
+}
+
+// Workshops and QI practices: each option's seats taken. From the Workshops
+// screen's own endpoint when the role may open it (it counts past capacity),
+// else from the registration form's (seats left, so "full" at most).
+function renderOverviewWorkshops(data, exact) {
+  const box = document.getElementById('overview-workshops');
+  const list = document.getElementById('ov-ws-list');
+  const groups = (data && data.groups ? data.groups : []).map((g) => ({
+    name: g.name,
+    options: (g.options || []).filter((o) => o.active === undefined || Number(o.active)).filter((o) => Number(o.capacity) > 0).map((o) => {
+      const cap = Number(o.capacity);
+      const taken = exact ? Number(o.enrolled) || 0 : Math.max(0, cap - (Number(o.remaining) || 0));
+      return { name: o.name, cap, taken };
+    }),
+  })).filter((g) => g.options.length);
+  if (box) box.classList.toggle('hidden', !groups.length);
+  if (!groups.length || !list) return;
+  const all = groups.flatMap((g) => g.options);
+  const full = all.filter((o) => o.taken === o.cap).length;
+  const over = all.filter((o) => o.taken > o.cap).length;
+  setText('ov-ws-summary', [`${full} full`, over ? `${over} over capacity` : ''].filter(Boolean).join(' · '));
+  const openBtn = document.getElementById('ov-ws-open');
+  if (openBtn) openBtn.classList.toggle('hidden', !canSee('programs'));
+  list.innerHTML = groups.map((g) => `<div>
+      ${groups.length > 1 ? `<p class="text-sm font-semibold text-slate-600 mb-1">${esc(g.name)}</p>` : ''}
+      <div class="grid sm:grid-cols-2 gap-x-7">${g.options.map((o) => {
+        const isOver = o.taken > o.cap;
+        const isFull = o.taken === o.cap;
+        const chip = isOver ? `<span class="ml-1.5 rounded-full bg-rose-100 text-rose-800 text-[11px] font-bold px-1.5 py-0.5">+${o.taken - o.cap}</span>`
+          : isFull ? '<span class="ml-1.5 rounded-full bg-gold-50 text-gold-700 text-[11px] font-bold px-1.5 py-0.5">Full</span>' : '';
+        return `<div class="py-1.5">
+          <div class="flex items-baseline justify-between gap-3"><span class="text-sm text-slate-900 truncate" title="${esc(o.name)}">${esc(o.name)}</span><span class="shrink-0 text-sm text-slate-600 tabular-nums">${o.taken} / ${o.cap}${chip}</span></div>
+          <div class="mt-1 h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full ${isOver ? 'bg-rose-600' : isFull ? 'bg-gold-500' : 'bg-navy'}" style="width:${Math.min(100, o.taken / o.cap * 100).toFixed(1)}%"></div></div>
+        </div>`;
+      }).join('')}</div>
+    </div>`).join('');
 }
 
 async function renderBackendOverview() {
@@ -4548,11 +4666,18 @@ async function renderBackendOverview() {
   // Conference-wide money is its own permission: working the approval queue
   // and seeing what the conference has taken are different disclosures.
   const seesTotals = can('payments.view_totals');
+  const seesSignups = can('comms.reminders_view');
+  const seesWorkshopCounts = can('masters.programs_view');
 
   const show = (id, on) => {
     const el = document.getElementById(id);
     if (el) el.classList.toggle('hidden', !on);
   };
+
+  const when = overviewWhen();
+  setText('ov-when', '');
+  const whenEl = document.getElementById('ov-when');
+  if (whenEl && when.lead) whenEl.innerHTML = `<b class="text-gold-700">${esc(when.lead)}</b>${when.where ? ` · ${esc(when.where)}` : ''}`;
 
   // Fetched in parallel and each guarded on its own: one section being
   // unreachable, or simply slow, must not stop the rest of the page
@@ -4565,45 +4690,69 @@ async function renderBackendOverview() {
     } catch (e) { return null; }
   };
 
-  const [regs, abstracts, statement, totals, faculty, attendance] = await Promise.all([
+  const [regs, abstracts, statement, totals, faculty, attendance, workshops, audiences] = await Promise.all([
     seesPayments ? getJson('/api/registrations') : Promise.resolve(null),
     seesAbstracts ? getJson('/api/abstracts') : Promise.resolve(null),
     seesStatement ? getJson('/api/admin/bank-statement/reconcile') : Promise.resolve(null),
     seesTotals ? getJson('/api/admin/finance-summary') : Promise.resolve(null),
     seesFaculty ? getJson('/api/guests') : Promise.resolve(null),
     seesAttendance ? getJson('/api/attendance/summary') : Promise.resolve(null),
+    getJson(seesWorkshopCounts ? '/api/admin/program-groups' : '/api/program-options'),
+    seesSignups ? getJson('/api/admin/reminders/audiences') : Promise.resolve(null),
   ]);
-  renderOverviewNow(attendance);
+  renderOverviewNow(attendance, when.onDay);
+  renderOverviewWorkshops(workshops, seesWorkshopCounts && !!workshops);
 
   let pending = 0;
   let balanceCount = 0;
   let unmatched = 0;
   let underReview = 0;
 
-  // The block appears if EITHER half has something to show: the headcounts
-  // need payments.view, the two rupee figures need payments.view_totals, and
-  // a role may hold one without the other.
-  show('overview-money', !!regs || !!totals);
+  // Registrations: the headcounts need payments.view; the two rupee figures
+  // (the Money card) need payments.view_totals. A role may hold one without
+  // the other.
+  show('overview-regs', !!regs);
+  show('overview-money', !!totals);
   show('ov-card-collected', !!totals);
   show('ov-card-outstanding', !!totals);
+  show('ov-money-statement', !!totals && seesStatement);
 
   if (regs) {
     const all = regs.registrations || [];
+    const live = all.filter((r) => r.bank_status !== 'REJECTED');
     const verified = all.filter((r) => r.bank_status === 'BANK_VERIFIED');
     const partial = all.filter((r) => r.bank_status === 'PARTIAL_PAYMENT' || isBalanceDue(r));
     const needsDecision = all.filter((r) => r.bank_status === 'PENDING' && !isBalanceDue(r));
+    const rejected = all.length - live.length;
     pending = needsDecision.length;
     balanceCount = partial.length;
 
-    setText('ov-delegates', all.length);
-    setText('ov-delegates-sub', 'registrations submitted');
+    setText('ov-delegates', live.length);
+    setText('ov-delegates-sub', rejected ? `submitted, besides ${rejected} rejected` : 'registrations submitted');
     setText('ov-confirmed', verified.length);
-    setText('ov-confirmed-sub', all.length ? `${Math.round((verified.length / all.length) * 100)}% of submissions` : 'none yet');
+    setText('ov-confirmed-sub', live.length ? `${Math.round((verified.length / live.length) * 100)}% of them` : 'none yet');
 
     setText('ov-pending', pending);
     setText('ov-balance', balanceCount);
-    setText('ov-balance-sub', balanceCount ? 'waiting on the delegate' : 'none outstanding');
+    const owed = partial.reduce((s, r) => s + Math.max(0, (Number(r.expected_amount) || 0) - (Number(r.verified_total) || 0)), 0);
+    setText('ov-balance-sub', balanceCount ? (owed > 0 ? `₹${inr(owed)} still owed` : 'waiting on the delegate') : 'none outstanding');
+
+    renderOverviewWeeks(live);
+    const byCat = new Map();
+    for (const r of live) { const k = r.category_label || 'Other'; byCat.set(k, (byCat.get(k) || 0) + 1); }
+    const cats = [...byCat.entries()].sort((a, b) => b[1] - a[1]).map(([label, n], i) => ({ label, n, colour: OV_COLOURS[Math.min(i, OV_COLOURS.length - 1)] }));
+    show('ov-cats-box', cats.length > 0);
+    const catBar = document.getElementById('ov-cats-bar');
+    if (catBar) catBar.innerHTML = overviewBarHtml(cats);
+    const catLegend = document.getElementById('ov-cats-legend');
+    if (catLegend) catLegend.innerHTML = overviewLegendHtml(cats);
   }
+
+  // Signed up, never registered: the Reminders audience of that name, so
+  // the count is the one the reminder would go to.
+  const signupAudience = audiences && Array.isArray(audiences.audiences) ? audiences.audiences.find((a) => a.key === 'signups') : null;
+  show('ov-signups-box', !!regs && !!signupAudience);
+  if (signupAudience) setText('ov-signups', signupAudience.count || 0);
 
   // Totals come from the server, not from summing the registration list in
   // the browser. That is what makes payments.view_totals a real boundary:
@@ -4615,6 +4764,9 @@ async function renderBackendOverview() {
     setText('ov-outstanding-sub', totals.outstanding > 0
       ? `across ${totals.owingCount} delegate${totals.owingCount === 1 ? '' : 's'}`
       : 'nothing owed');
+    const due = (Number(totals.collected) || 0) + (Number(totals.outstanding) || 0);
+    const bar = document.getElementById('ov-money-bar');
+    if (bar) bar.style.width = `${due ? Math.min(100, (Number(totals.collected) || 0) / due * 100).toFixed(1) : 0}%`;
     // The sub-line under Collected counts confirmed registrations, which only
     // the registration list knows -- left blank for a totals-only role rather
     // than inventing a number it cannot see.
@@ -4635,18 +4787,35 @@ async function renderBackendOverview() {
     setText('ov-unmatched', unmatched);
   }
 
+  show('overview-abstracts', !!abstracts);
   if (abstracts) {
     const list = abstracts.abstracts || [];
     underReview = list.filter((a) => a.status === 'UNDER_REVIEW').length;
     const accepted = list.filter((a) => a.status === 'ACCEPTED').length;
     setText('ov-abstracts', underReview);
     setText('ov-abstracts-sub', `${list.length} submitted · ${accepted} accepted`);
+    setText('ov-abs-total', list.length);
+    const STATUS = [['UNDER_REVIEW', 'Under review', '#d6b46a'], ['ACCEPTED', 'Accepted', '#047857'], ['REJECTED', 'Not accepted', '#94a3b8']];
+    const known = new Set(STATUS.map(([k]) => k));
+    const parts = STATUS.map(([k, label, colour]) => ({ label, colour, n: list.filter((a) => a.status === k).length }))
+      .concat([{ label: 'Other', colour: '#cbd5e1', n: list.filter((a) => !known.has(a.status)).length }]);
+    const absBar = document.getElementById('ov-abs-bar');
+    if (absBar) absBar.innerHTML = overviewBarHtml(parts);
+    const absLegend = document.getElementById('ov-abs-legend');
+    if (absLegend) absLegend.innerHTML = overviewLegendHtml(parts);
+    const formats = new Map();
+    for (const a of list) { const k = a.format || 'Format not given'; formats.set(k, (formats.get(k) || 0) + 1); }
+    const fmtBox = document.getElementById('ov-abs-formats');
+    if (fmtBox) fmtBox.innerHTML = [...formats.entries()].sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => `<div class="flex justify-between gap-3 py-1.5"><span>${esc(k)}</span><b class="tabular-nums text-slate-900">${n}</b></div>`).join('');
   }
 
-  // Faculty: rooms to assign, pickups to decide, accounts to link.
+  // Faculty: rooms to assign, pickups to decide, accounts to link; and how
+  // far along the list is.
   let noRoom = 0;
   let undecided = 0;
   let notSignedUp = 0;
+  show('overview-faculty', !!(faculty && faculty.guests));
   if (faculty && faculty.dashboard) {
     const live = (faculty.guests || []).filter((g) => !g.cancelled);
     noRoom = Number(faculty.dashboard.noAccommodation) || 0;
@@ -4655,38 +4824,62 @@ async function renderBackendOverview() {
     setText('ov-rooms', noRoom);
     setText('ov-pickups', undecided);
     setText('ov-signup', notSignedUp);
+    setText('ov-signup-sub', `${live.length - notSignedUp} of ${live.length} have a portal account`);
+  }
+  if (faculty && faculty.guests) {
+    const live = faculty.guests.filter((g) => !g.cancelled);
+    setText('ov-fac-total', live.length);
+    const byStatus = new Map();
+    for (const g of live) { const k = String(g.overall_status || '').trim(); if (k) byStatus.set(k, (byStatus.get(k) || 0) + 1); }
+    setText('ov-fac-sub', [...byStatus.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${k.toLowerCase()}`).join(' · '));
+    const staying = live.filter((g) => !Number(g.stay_not_needed));
+    const bars = [
+      ['Signed up to the portal', live.filter((g) => g.phone_number).length, live.length],
+      ['Arrival known', live.filter((g) => String(g.arrival_date || '').trim()).length, live.length],
+      ['Room assigned', staying.filter((g) => String(g.room_no || '').trim()).length, staying.length],
+    ];
+    const barBox = document.getElementById('ov-fac-bars');
+    if (barBox) barBox.innerHTML = bars.map(([label, n, of]) => `<div>
+        <div class="flex justify-between gap-3 text-sm"><span>${esc(label)}</span><b class="tabular-nums text-slate-900">${n} / ${of}</b></div>
+        <div class="mt-1 h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full bg-navy" style="width:${of ? (n / of * 100).toFixed(1) : 0}%"></div></div>
+      </div>`).join('');
   }
   show('ov-q-rooms', seesFaculty && noRoom > 0);
   show('ov-q-pickups', seesFaculty && undecided > 0);
   show('ov-q-signup', seesFaculty && notSignedUp > 0);
   show('overview-queues-faculty', seesFaculty && noRoom + undecided + notSignedUp > 0);
 
-  // A queue card earns its place by being reachable AND having something in
-  // it. An overview of four zeroes tells the desk less than one sentence.
+  // A row earns its place by being reachable AND having something in it.
+  // A list of zeroes tells the desk less than one sentence.
   show('ov-q-payments', seesPayments && pending > 0);
   show('ov-q-balance', seesPayments && balanceCount > 0);
   show('ov-q-statement', seesStatement && unmatched > 0);
   show('ov-q-abstracts', seesAbstracts && underReview > 0);
-  // The whole block belongs to whoever can open at least one of the sections
-  // it summarises. Without this the heading and the all-clear line showed to
-  // everyone, and the line in particular claimed nothing was waiting ANYWHERE
-  // -- said to someone who can see only abstracts while a payments queue was
-  // piling up behind a tab they cannot open.
+  // The list belongs to whoever can open at least one of the sections it
+  // summarises. Without this its all-clear line would claim nothing was
+  // waiting ANYWHERE -- said to someone who can see only abstracts while a
+  // payments queue was piling up behind a tab they cannot open.
   const anySection = seesPayments || seesStatement || seesAbstracts || seesFaculty;
   show('overview-attention', anySection);
 
-  const anyQueue = (seesPayments && (pending > 0 || balanceCount > 0))
-    || (seesStatement && unmatched > 0) || (seesAbstracts && underReview > 0)
-    || (seesFaculty && noRoom + undecided + notSignedUp > 0);
+  const waiting = {
+    registrations: seesPayments && (pending > 0 || balanceCount > 0),
+    'the bank statement': seesStatement && unmatched > 0,
+    abstracts: seesAbstracts && underReview > 0,
+    faculty: seesFaculty && noRoom + undecided + notSignedUp > 0,
+  };
+  const mine = [seesPayments && 'registrations', seesStatement && 'the bank statement',
+    seesAbstracts && 'abstracts', seesFaculty && 'faculty'].filter(Boolean);
+  const anyQueue = mine.some((k) => waiting[k]);
+  const joinList = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} or ${xs[xs.length - 1]}` : xs[0]);
   show('overview-all-clear', anySection && !anyQueue);
   // Say which sections the all-clear covers, so it is a claim about the
   // viewer's own work rather than about the conference.
-  if (anySection && !anyQueue) {
-    const mine = [seesPayments && 'registrations', seesStatement && 'the bank statement',
-      seesAbstracts && 'abstracts', seesFaculty && 'faculty'].filter(Boolean);
-    const list = mine.length > 1 ? `${mine.slice(0, -1).join(', ')} or ${mine[mine.length - 1]}` : mine[0];
-    setText('overview-all-clear', `Nothing is waiting on a decision in ${list} right now.`);
-  }
+  if (anySection && !anyQueue) setText('overview-all-clear', `Nothing is waiting on a decision in ${joinList(mine)} right now.`);
+  // With some rows showing, the sections that are clear say so in a line.
+  const clear = mine.filter((k) => !waiting[k]);
+  show('overview-clear-line', anyQueue && clear.length > 0);
+  if (anyQueue && clear.length) setText('overview-clear-line', `Nothing waiting in ${joinList(clear)}.`);
 
   setText('overview-updated', `Updated ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`);
   settleSkeletons(host);
