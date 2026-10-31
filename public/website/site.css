@@ -150,7 +150,7 @@ p { margin: 0; }
 @media (min-width: 720px) { .oration-title { font-size: 44px; } }
 .partners { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
 .partner { height: 96px; border: 1px solid var(--line); border-radius: 12px; background: #fff; display: flex; align-items: center; justify-content: center; padding: 12px; }
-.partner img { max-height: 72px; width: auto; object-fit: contain; display: block; }
+.partner img { max-height: 72px; max-width: 100%; width: auto; height: auto; object-fit: contain; display: block; }
 
 /* Programme */
 .tabs { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; border-radius: 12px; background: rgba(255, 255, 255, 0.1); align-self: flex-start; }

@@ -101,8 +101,12 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     check('nqocn2026.mgims.ac.in/ is the website home', home.status === 200 && /Two days at Sevagram/.test(home.raw), home.status);
     check('...its links are at the root', /href="\/programme"/.test(home.raw) && !/href="\/website\/(programme|workshops|registration|abstracts|faculty|team|visit|about)/.test(home.raw));
     check('...its images and stylesheet still load', /src="\/website\/img\/nqocn-mgims-logo\.png"/.test(home.raw) && /href="\/website\/site\.css/.test(home.raw));
+    check('...PCI India among the partners, its logo served', /<img src="\/website\/img\/partners\/pci-india\.png" alt="PCI India"/.test(home.raw)
+      && (await call('GET', '/website/img/partners/pci-india.png', null, null)).status === 200);
     check('...Register and Sign in go to the portal, at /portal', /class="btn btn-navy" href="\/portal"/.test(home.raw));
     check('...and it names itself as the address to list', /<link rel="canonical" href="https:\/\/nqocn2026\.mgims\.ac\.in\/">/.test(home.raw));
+    const fac = await asSite('/faculty');
+    check('the faculty page lists Dr Peter Lachman, no longer Dr Katherine Semrau', fac.raw.includes('Dr Peter Lachman') && !/Semrau/.test(fac.raw));
     check('every page opens there', (await Promise.all(['/programme', '/workshops', '/registration', '/abstracts', '/sample-abstract', '/faculty', '/team', '/visit', '/about'].map((x) => asSite(x)))).every((r) => r.status === 200));
     const old = await asSite('/website/programme?day=2026-11-22');
     check('an old /website link there moves to the root', old.status === 301 && old.location === '/programme?day=2026-11-22', [old.status, old.location]);

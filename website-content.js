@@ -41,7 +41,6 @@ module.exports = {
     { name: 'Dr Peter Lachman', role: 'Leadership QI & Patient Safety, Royal College of Physicians of Ireland', photo: 'people/dr-peter-lachman.png' },
     { name: 'Dr Nigel Livesley', role: 'Independent Consultant; former Technical Director, Jhpiego Kenya', photo: 'people/dr-nigel-livesley.png' },
     { name: 'Dr Amit Gupta', role: 'Clinical Lead, NICU, Oxford University Hospitals NHS Trust', photo: 'people/dr-amit-gupta.png' },
-    { name: 'Dr Katherine Semrau', role: 'Deputy Director, Ariadne Labs', photo: 'people/dr-katherine-semrau.png' },
   ],
 
   // The organising team, group by group, as on the earlier site.
@@ -87,6 +86,7 @@ module.exports = {
     { name: 'Indian Association of Preventive and Social Medicine (IAPSM)', file: 'partners/iapsm.png' },
     { name: 'Telemedicine Society of India', file: 'partners/telemedicine-society-of-india.png' },
     { name: 'Maharashtra University of Health Sciences (MUHS)', file: 'partners/muhs.png' },
+    { name: 'PCI India', file: 'partners/pci-india.png' },
   ],
 
   // Field visits and on-campus practice, by programme option id: what each
