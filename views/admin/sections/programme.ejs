@@ -11,8 +11,9 @@
       <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
           <h3 class="text-sm font-bold text-slate-800">Sessions</h3>
-          <div class="flex gap-2">
-            <select id="prog-day" onchange="renderProgrammeSessions()" aria-label="Day" class="h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
+          <div class="flex flex-wrap gap-2">
+            <select id="prog-day" onchange="fillProgrammeHallFilter(); renderProgrammeSessions()" aria-label="Day" class="h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
+            <select id="prog-hall" onchange="renderProgrammeSessions()" aria-label="Hall" class="h-9 max-w-[12rem] px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
             <button type="button" onclick="editProgrammeSession(null)" class="h-9 px-3 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Add session</button>
           </div>
         </div>

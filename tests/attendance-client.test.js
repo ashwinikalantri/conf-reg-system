@@ -49,7 +49,7 @@ function page(cookie, perms) {
     conferenceInfo = { name: 'Fixture Conference', acronym: 'FIXCON', location: 'Sevagram', startDate: '2026-11-21', endDate: '2026-11-22' };
     showToast = (m, t) => globalThis.__toasts.push([m, t]);
     globalThis.__f = { renderAttendance, attendanceSignIn, renderBackendPrograms, loadAttendanceCard, saveCertificateDetails, switchAttendanceView, renderProgramme, loadHallsCard,
-      renderProgrammeSessions, editProgrammeSession, loadProgrammeCard, renderBadge, showAbstractCard,
+      renderProgrammeSessions, fillProgrammeHallFilter, editProgrammeSession, loadProgrammeCard, renderBadge, showAbstractCard,
       openProgrammePage, renderHomeHero, applyRegistrationState, openProfilePage, renderBadgeBack, flipBadge, dashGo };
     globalThis.__setReg = (r) => { currentRegistration = r; };
     globalThis.__setDelegate = (d) => { currentDelegate = d; };`, sandbox);
@@ -94,8 +94,17 @@ function page(cookie, perms) {
       && !A.el('gs-card-halls').classList.contains('hidden'));
     await A.f.renderProgramme(); // its own Settings page, no longer a view of Attendance
     A.el('prog-day').value = today;
+    A.f.fillProgrammeHallFilter(); // the day's onchange
     A.f.renderProgrammeSessions();
     check('the day\'s sessions, a workshop\'s named', A.el('prog-sessions').innerHTML.includes(`Client Talk ${N}`) && A.el('prog-sessions').innerHTML.includes(`Workshop: ${option.name}`));
+    check('a Hall filter beside the day: All halls, then the day\'s halls', /<option value="">All halls \(\d+\)<\/option>/.test(A.el('prog-hall').innerHTML)
+      && A.el('prog-hall').innerHTML.includes(`>Client Hall ${N}</option>`));
+    A.el('prog-hall').value = String(hallId);
+    A.f.renderProgrammeSessions();
+    check('...choosing one lists only its sessions', A.el('prog-sessions').innerHTML.includes(`Client Talk ${N}`)
+      && !/class="text-\[10px\] bg-slate-100[^>]*>(?!Client Hall)/.test(A.el('prog-sessions').innerHTML));
+    A.el('prog-hall').value = '';
+    A.f.renderProgrammeSessions();
     A.f.editProgrammeSession(talk);
     check('editing one fills the form', A.el('ps-title').value === `Client Talk ${N}` && A.el('ps-label').value === 'Session 1' && A.el('ps-counts').checked === true
       && !A.el('prog-session-form').classList.contains('hidden'));

@@ -1312,14 +1312,17 @@ function renderProgrammePage() {
       Day ${i + 1} · ${esc(weekday(d))} ${esc(shortDateRange(d, d).replace(/ \d{4}$/, ''))}</button>`).join('');
   const day = sessions.filter((s) => s.date === programmeDay);
   const allHalls = [...new Set(day.map((s) => s.hall))];
-  // A hall filter where there are a few halls (the conference day), not a
-  // dozen workshop rooms.
-  const hallsWithTalks = [...new Set(day.filter((s) => !progIsBreak(s)).map((s) => s.hall))];
-  const chips = hallsWithTalks.length > 1 && hallsWithTalks.length <= 6;
-  if (!chips || (programmeHall && !hallsWithTalks.includes(programmeHall))) programmeHall = '';
-  document.getElementById('prog-page-halls').innerHTML = chips ? ['', ...hallsWithTalks].map((h) => `
-    <button type="button" onclick="programmeHall='${esc(h)}'; renderProgrammePage()"
-      class="shrink-0 px-3.5 py-1.5 rounded-full text-sm font-semibold border ${h === programmeHall ? 'bg-navy border-navy text-white' : 'bg-white border-slate-300 text-slate-600'}">${esc(h || 'All halls')}</button>`).join('') : '';
+  // A hall filter, a drop-down, on any day with talks in more than one hall.
+  const hallOrder = (programmeData.halls || []).map((h) => h.name);
+  const hallsWithTalks = [...new Set(day.filter((s) => !progIsBreak(s)).map((s) => s.hall))]
+    .sort((a, b) => ((hallOrder.indexOf(a) + 1) || 1e9) - ((hallOrder.indexOf(b) + 1) || 1e9) || a.localeCompare(b));
+  const filtered = hallsWithTalks.length > 1;
+  if (!filtered || (programmeHall && !hallsWithTalks.includes(programmeHall))) programmeHall = '';
+  const hallBox = document.getElementById('prog-page-halls');
+  hallBox.innerHTML = !filtered ? ''
+    : `<select id="prog-page-hall-select" aria-label="Hall" onchange="programmeHall=this.value; renderProgrammePage()"
+      class="w-full sm:w-auto sm:min-w-[16rem] h-11 px-3 rounded-xl border bg-white text-navy text-[15px] font-semibold ${programmeHall ? 'border-navy ring-1 ring-navy' : 'border-slate-300'}">
+      ${['', ...hallsWithTalks].map((h) => `<option value="${esc(h)}"${h === programmeHall ? ' selected' : ''}>${esc(h || `All halls (${hallsWithTalks.length})`)}</option>`).join('')}</select>`;
   // On the day: what is on now, pinned above the list, with how far it has run.
   const nowBox = document.getElementById('prog-page-now');
   if (nowBox) {
@@ -13297,17 +13300,34 @@ async function renderProgramme() {
   const keep = daySel.value;
   daySel.innerHTML = days.map((d) => `<option value="${esc(d)}">${esc(formatFullDate(d))}</option>`).join('');
   if (days.includes(keep)) daySel.value = keep;
+  fillProgrammeHallFilter();
   document.getElementById('ps-hall').innerHTML = p.halls.filter((h) => h.active).map((h) => `<option value="${esc(h.id)}">${esc(h.name)}</option>`).join('');
   document.getElementById('ps-option').innerHTML = '<option value="">Not a workshop or practice</option>'
     + p.options.map((o) => `<option value="${esc(o.id)}">${esc(o.group_name)}: ${esc(o.name)}</option>`).join('');
   renderProgrammeSessions();
 }
 
+// The Hall filter beside Day: the halls with a session on the chosen day, in
+// hall order, kept across a day change where that hall is in use.
+function fillProgrammeHallFilter() {
+  const p = attState.programme;
+  const sel = document.getElementById('prog-hall');
+  if (!p || !sel) return;
+  const day = document.getElementById('prog-day').value;
+  const used = new Set(p.sessions.filter((s) => s.date === day).map((s) => s.hallId));
+  const halls = p.halls.filter((h) => used.has(h.id));
+  const keep = sel.value;
+  sel.innerHTML = `<option value="">All halls (${halls.length})</option>`
+    + halls.map((h) => `<option value="${esc(h.id)}">${esc(h.name)}</option>`).join('');
+  sel.value = halls.some((h) => String(h.id) === keep) ? keep : '';
+}
+
 function renderProgrammeSessions() {
   const p = attState.programme;
   if (!p) return;
   const day = document.getElementById('prog-day').value;
-  const list = p.sessions.filter((s) => s.date === day);
+  const hall = document.getElementById('prog-hall') ? document.getElementById('prog-hall').value : '';
+  const list = p.sessions.filter((s) => s.date === day && (!hall || String(s.hallId) === hall));
   document.getElementById('prog-sessions').innerHTML = list.map((s) => `
     <div class="py-2 flex items-start gap-3 ${s.counts ? '' : 'opacity-70'}">
       <span class="w-28 shrink-0 text-xs text-slate-500 tabular-nums pt-0.5">${esc(sessionTimes(s))}</span>
@@ -13317,7 +13337,7 @@ function renderProgrammeSessions() {
         <span class="block text-[11px] mt-0.5">${s.counts ? `<span class="text-emerald-700 font-semibold">Takes attendance · ${s.present} present</span>` : '<span class="text-slate-400">No attendance</span>'}${s.optionName ? ` · <span class="text-indigo-700">${s.workshop ? 'Workshop' : 'Practice'}: ${esc(s.optionName)}</span>` : ''}</span>
       </span>
       <button type="button" onclick="editProgrammeSession(${Number(s.id)})" class="shrink-0 px-2.5 py-1 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">Edit</button>
-    </div>`).join('') || '<p class="py-4 text-sm text-slate-400">No sessions on this day.</p>';
+    </div>`).join('') || `<p class="py-4 text-sm text-slate-400">${hall ? 'No sessions in this hall on this day.' : 'No sessions on this day.'}</p>`;
 }
 
 function editProgrammeSession(id) {
@@ -13325,7 +13345,8 @@ function editProgrammeSession(id) {
   const s = id ? p.sessions.find((x) => x.id === id) : null;
   const set = (k, v) => { document.getElementById(k).value = v == null ? '' : v; };
   set('ps-id', s ? s.id : '');
-  set('ps-hall', s ? s.hallId : (p.halls.find((h) => h.active) || {}).id);
+  const hallFilter = document.getElementById('prog-hall') && document.getElementById('prog-hall').value;
+  set('ps-hall', s ? s.hallId : (p.halls.find((h) => h.active && String(h.id) === hallFilter) || p.halls.find((h) => h.active) || {}).id);
   set('ps-date', s ? s.date : document.getElementById('prog-day').value);
   set('ps-start', s ? s.start : '');
   set('ps-end', s ? s.end : '');
@@ -13393,6 +13414,12 @@ async function saveProgrammeSession(e) {
   showToast('Saved.', 'success');
   document.getElementById('prog-session-form').classList.add('hidden');
   document.getElementById('prog-day').value = body.date;
+  // Filtered to a hall and the session went to another: follow it there.
+  const hallSel = document.getElementById('prog-hall');
+  if (hallSel && hallSel.value && hallSel.value !== String(body.hallId)) {
+    hallSel.add(new Option('', String(body.hallId)));
+    hallSel.value = String(body.hallId);
+  }
   renderProgramme();
 }
 

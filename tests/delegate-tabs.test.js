@@ -130,6 +130,32 @@ console.log('\n== The programme ==');
   check('...only on today', now.classList.contains('hidden'));
 }
 
+console.log('\n== The programme: filter by hall ==');
+{
+  const { sb, el } = load();
+  sb.__set(prog, confirmed);
+  sb.__f.renderProgrammePage();
+  check('two halls with talks: a drop-down, All halls and each hall', /<select id="prog-page-hall-select"/.test(el('prog-page-halls').innerHTML)
+    && /All halls \(2\)<\/option>/.test(el('prog-page-halls').innerHTML) && /<option value="Main Auditorium">Main Auditorium<\/option>/.test(el('prog-page-halls').innerHTML)
+    && /<option value="Hall A">Hall A<\/option>/.test(el('prog-page-halls').innerHTML) && !/<button/.test(el('prog-page-halls').innerHTML));
+  vm.runInContext("programmeDay = '2026-11-20'", sb);
+  sb.__f.renderProgrammePage();
+  check('a day with talks in one hall: no filter', el('prog-page-halls').innerHTML === '');
+  // A workshop day: eight rooms, listed in hall order, not the order they first appear.
+  const rooms = Array.from({ length: 8 }, (_, i) => ({ id: 10 + i, name: `Room ${i + 1}` }));
+  const ws = rooms.slice().reverse().map((h, i) => ({ id: 100 + i, hallId: h.id, hall: h.name, date: '2026-11-21', start: '10:00', end: '13:00', title: `Workshop in ${h.name}`, counts: true }));
+  sb.__set({ ...prog, halls: [...halls, ...rooms], sessions: [...sessions.filter((x) => x.date !== '2026-11-21'), ...ws], now: { date: '2026-11-21', minutes: 600 } }, confirmed);
+  sb.__f.renderProgrammePage();
+  const box = el('prog-page-halls').innerHTML;
+  check('eight rooms: the same drop-down', /<select id="prog-page-hall-select" aria-label="Hall"/.test(box) && !/<button/.test(box), box.slice(0, 200));
+  check('...All halls first, the rooms in hall order', /<option value="" selected>All halls \(8\)<\/option>\s*<option value="Room 1">Room 1<\/option>/.test(box) && box.indexOf('Room 2') < box.indexOf('Room 8'));
+  check('...every workshop shown', rooms.every((h) => el('prog-page-list').innerHTML.includes(`Workshop in ${h.name}`)));
+  vm.runInContext("programmeHall = 'Room 3'", sb);
+  sb.__f.renderProgrammePage();
+  check('choosing a room: only what is on there', el('prog-page-list').innerHTML.includes('Workshop in Room 3') && !el('prog-page-list').innerHTML.includes('Workshop in Room 4')
+    && /<option value="Room 3" selected>/.test(el('prog-page-halls').innerHTML));
+}
+
 console.log('\n== Small fixes ==');
 const portalViews = ['sections/auth.ejs', 'sections/dashboard.ejs', 'modals/registration-payment.ejs', 'modals/verify-email.ejs', 'modals/set-password.ejs', 'modals/confirm.ejs', 'modals/correct-submission.ejs', 'modals/add-group-member.ejs']
   .map((f) => fs.readFileSync(appFile('views', 'portal', ...f.split('/')), 'utf8')).join('\n');
