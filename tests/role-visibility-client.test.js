@@ -34,7 +34,7 @@ const ELEMENT_IDS = [
   'settings-item-discount', 'settings-item-activity',
   'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
   'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments',
-  'report-workshops', 'report-abstracts',
+  'report-workshops', 'report-abstracts', 'report-users',
   // Step 2 of the Abstracts tab, gated on abstracts.assign rather than on
   // seeing the section -- a reviewer who cannot set oral vs poster should not
   // be shown the controls for it.
@@ -55,7 +55,7 @@ const EXPECTED_VISIBLE = {
     'settings-group-conference', 'settings-group-fees', 'settings-group-messages', 'settings-group-system', 'settings-item-attendance', 'settings-item-programme', 'settings-item-programs', 'settings-item-fees',
     'settings-item-general', 'settings-item-discount', 'settings-item-activity',
     'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
-    'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts',
+    'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts', 'report-users',
     'abstracts-assignment-block'],
   FINANCE_ADMIN: ['nav-tab-payments', 'reg-subtab-statement', 'nav-tab-reports',
     'settings-group-fees', 'settings-group-messages', 'settings-item-fees', 'settings-item-discount',
@@ -72,7 +72,7 @@ const EXPECTED_VISIBLE = {
   // categories need a student ID.
   FRONT_DESK: ['nav-tab-desk', 'settings-group-conference', 'settings-group-fees', 'settings-item-attendance', 'settings-item-fees'],
   OPERATIONS: ['nav-tab-reports', 'settings-group-system', 'settings-item-users',
-    'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts'],
+    'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts', 'report-users'],
 };
 
 // A minimal element/document, same shape tests/dashboard-first-paint.test.js

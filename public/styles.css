@@ -242,3 +242,15 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
 .ov-go { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 600; color: #1c3549; white-space: nowrap; }
 .ov-go::after { content: "›"; font-size: 18px; line-height: 1; }
 @media (max-width: 639px) { .ov-row { grid-template-columns: 3rem minmax(0, 1fr) auto; gap: 10px; } .ov-n { font-size: 21px; } .ov-go { font-size: 0; } .ov-go::after { font-size: 20px; } }
+
+/* The Reports tab's list (views/admin/sections/reports.ejs): grouped, each
+   report with a line on what it holds, the one open in pale gold. */
+.rep-group { margin: 14px 0 4px; padding: 0 12px; font-weight: 700; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: #8a6d2b; }
+.rep-group:first-child { margin-top: 6px; }
+.rep-item { display: flex; flex-direction: column; gap: 2px; width: 100%; min-height: 44px; padding: 10px 12px; border-radius: 10px; text-align: left; color: #13212d; }
+.rep-item:hover { background: #f5f7f9; }
+.rep-item[aria-current="true"] { background: #faf5e8; }
+.rep-item b { font-size: 15px; font-weight: 600; }
+.rep-item[aria-current="true"] b { font-weight: 700; }
+.rep-item span { font-size: 13px; color: #51606d; }
+.rep-item.hidden, .rep-group.hidden { display: none; }

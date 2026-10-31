@@ -13647,7 +13647,9 @@ app.get('/api/admin/reports/workshops/options', requireAuth, async (req, res, ne
       return res.status(403).json({ success: false, error: 'You do not have permission for this report.' });
     }
     const groups = await fetchProgramGroups({ activeOnly: false });
-    const options = groups.flatMap((g) => g.options.map((o) => ({ id: o.id, groupName: g.name, name: o.name })));
+    // With how full each is, for the picker ("(40 of 40)"): delegates, as
+    // the Workshops screen counts them.
+    const options = groups.flatMap((g) => g.options.map((o) => ({ id: o.id, groupName: g.name, name: o.name, capacity: Number(o.capacity) || 0, enrolled: Number(o.enrolled) || 0 })));
     res.json({ options });
   } catch (err) {
     next(err);

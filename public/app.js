@@ -4172,6 +4172,7 @@ function applyRoleVisibility() {
     'report-payments': 'reports.payments',
     'report-workshops': 'reports.programs',
     'report-abstracts': 'reports.abstracts',
+    'report-users': 'reports.users',
   };
   Object.entries(reportCards).forEach(([id, permission]) => {
     const el = document.getElementById(id);
@@ -8970,24 +8971,81 @@ async function renderGroupsMonitor() {
 // Populates the workshops report's picker so only one option's roster is
 // viewed/downloaded at a time, instead of dumping every workshop and QI
 // practice into one report.
+// --- REPORTS ---------------------------------------------------------------
+// The Reports tab (views/admin/sections/reports.ejs): the reports listed on
+// the left, the one chosen open on the right. On a phone the list is the
+// page and a report opens in its place. A roster opens once its workshop
+// or practice is chosen.
+let currentReport = null;
+const visibleReports = () => [...document.querySelectorAll('#report-list .rep-item')]
+  .filter((b) => !b.classList.contains('hidden')).map((b) => b.dataset.report);
+
+// A group's heading shows only when the role may open a report under it.
+function updateReportGroups() {
+  let heading = null;
+  let any = false;
+  const close = () => { if (heading) heading.classList.toggle('hidden', !any); };
+  document.querySelectorAll('#report-list > *').forEach((el) => {
+    if (el.classList.contains('rep-group')) { close(); heading = el; any = false; } else if (!el.classList.contains('hidden')) any = true;
+  });
+  close();
+}
+
+async function initReports() {
+  updateReportGroups();
+  await loadReportWorkshopOptions();
+  const shown = visibleReports();
+  if (currentReport && shown.includes(currentReport)) return openReport(currentReport);
+  const wide = window.matchMedia ? window.matchMedia('(min-width: 1024px)').matches : true;
+  if (wide && shown.length) openReport(shown[0]);
+}
+
+function openReport(type) {
+  currentReport = type;
+  document.querySelectorAll('#report-list .rep-item').forEach((b) => b.setAttribute('aria-current', b.dataset.report === type ? 'true' : 'false'));
+  const list = document.getElementById('report-list');
+  const pane = document.getElementById('report-pane');
+  if (list) list.classList.add('max-lg:hidden');
+  if (pane) pane.classList.remove('hidden');
+  const pick = document.getElementById('report-workshop-pick');
+  if (pick) pick.classList.toggle('hidden', type !== 'workshops');
+  if (type === 'workshops') {
+    const q = reportWorkshopQuery();
+    if (!q) {
+      const box = document.getElementById('report-view-container');
+      if (box) box.innerHTML = '<p class="p-6 text-[15px] text-slate-600">Choose the workshop or practice above to see who is in it.</p>';
+      return undefined;
+    }
+    return viewReport('workshops', q);
+  }
+  return viewReport(type);
+}
+
+// On a phone: back to the list.
+function closeReport() {
+  const list = document.getElementById('report-list');
+  const pane = document.getElementById('report-pane');
+  if (list) list.classList.remove('max-lg:hidden');
+  if (pane) pane.classList.add('hidden');
+}
+
 async function loadReportWorkshopOptions() {
   const select = document.getElementById('report-workshop-select');
   if (!select) return;
   const res = await fetch('/api/admin/reports/workshops/options');
-  if (!res.ok) { select.innerHTML = '<option value="">Could not load options</option>'; return; }
+  if (!res.ok) { select.innerHTML = '<option value="">Could not load the workshops</option>'; return; }
   const data = await res.json();
   const options = data.options || [];
+  const chosen = select.value;
   select.innerHTML = options.length
-    ? `<option value="">Select a program option…</option>` +
-      options.map((o) => `<option value="${esc(o.id)}">${esc(o.groupName)}: ${esc(o.name)}</option>`).join('')
-    : '<option value="">No program options set up yet</option>';
-  select.onchange = () => {
-    const enabled = !!select.value;
-    ['report-workshop-view-btn', 'report-workshop-csv-btn', 'report-workshop-pdf-btn'].forEach((id) => {
-      const btn = document.getElementById(id);
-      if (btn) btn.disabled = !enabled;
-    });
-  };
+    ? '<option value="">Choose a workshop or practice…</option>'
+      + options.map((o) => {
+        const seats = Number(o.capacity) > 0 ? ` (${Number(o.enrolled) || 0} of ${Number(o.capacity)})` : '';
+        return `<option value="${esc(o.id)}">${esc(o.groupName)} · ${esc(o.name)}${esc(seats)}</option>`;
+      }).join('')
+    : '<option value="">No workshops or practices set up yet</option>';
+  if (chosen && options.some((o) => String(o.id) === chosen)) select.value = chosen;
+  select.onchange = () => { if (currentReport === 'workshops') openReport('workshops'); };
 }
 
 function reportWorkshopQuery() {
@@ -10068,53 +10126,105 @@ function reportRowCardHtml(row, columns) {
     ${locationParts.length ? `<p class="text-[12px] text-slate-400 mt-1 leading-relaxed">${locationParts.join(dot)}</p>` : ''}`;
 }
 
+// The Summary, read as figures: the three that matter most first, then each
+// part as a short list (a count and its share, or an amount and how many),
+// and the wider tables (programme occupancy) in full.
+function reportSummaryHtml(rep) {
+  const sections = rep.sections || [];
+  const find = (section, label) => {
+    const s = sections.find((x) => x.name === section);
+    const r = s && s.rows.find((x) => String(x[0]).startsWith(label));
+    return r || null;
+  };
+  const heads = [
+    ['Registrations submitted', find('Registrations', 'Registrations submitted'), 1, ''],
+    ['Confirmed, paid and verified', find('Registrations', 'Confirmed'), 1, 'text-emerald-700'],
+    ['Collected', find('Money', 'Collected'), 2, ''],
+  ].filter(([, r]) => r);
+  const headHtml = heads.length ? `<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">${heads.map(([label, r, i, cls]) => `<div class="rounded-xl border border-slate-200 p-4">
+      <p class="text-sm font-semibold text-slate-600">${esc(label)}</p><p class="text-2xl font-bold tabular-nums ${cls || 'text-slate-900'}">${esc(r[i])}</p></div>`).join('')}</div>` : '';
+  const small = sections.filter((s) => s.columns.length === 3 && s.rows.length);
+  const wide = sections.filter((s) => s.columns.length !== 3 || !s.rows.length);
+  const listCard = (s) => {
+    const money = s.columns[2] === 'Amount';
+    return `<div class="rounded-xl border border-slate-200 p-4">
+      <h4 class="font-bold text-slate-900 mb-1.5">${esc(s.name)}</h4>
+      ${s.rows.map((r) => `<div class="flex items-baseline justify-between gap-3 py-1.5 border-t border-slate-100 first-of-type:border-0 text-sm">
+        <span class="text-slate-700">${esc(r[0])}</span>
+        <span class="flex items-baseline gap-3 shrink-0"><b class="tabular-nums text-slate-900">${esc(money ? r[2] : r[1])}</b><span class="tabular-nums text-slate-500 min-w-[3rem] text-right">${esc(money ? r[1] : r[2])}</span></span>
+      </div>`).join('')}
+    </div>`;
+  };
+  const tableCard = (s) => `<div class="rounded-xl border border-slate-200 p-4">
+      <h4 class="font-bold text-slate-900 mb-2">${esc(s.name)}</h4>
+      <div class="overflow-x-auto"><table class="w-full text-sm border-collapse">
+        <thead><tr>${s.columns.map((c, i) => `<th class="text-left ${i > 1 ? 'text-right' : ''} font-semibold text-slate-600 py-1.5 px-2 border-b border-slate-200 whitespace-nowrap">${esc(c)}</th>`).join('')}</tr></thead>
+        <tbody>${s.rows.length ? s.rows.map((r) => `<tr>${r.map((c, i) => `<td class="py-1.5 px-2 border-b border-slate-100 ${i > 1 ? 'text-right tabular-nums' : ''}">${esc(c)}</td>`).join('')}</tr>`).join('')
+          : `<tr><td colspan="${s.columns.length}" class="py-3 px-2 text-slate-500">Nothing to show</td></tr>`}</tbody>
+      </table></div>
+    </div>`;
+  return `<div class="p-4 sm:p-5 space-y-3">
+    ${headHtml}
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">${small.map(listCard).join('')}</div>
+    ${wide.map(tableCard).join('')}
+    <span id="report-total-count" class="hidden">${sections.reduce((n, s) => n + s.rows.length, 0)}</span>
+  </div>`;
+}
+
+// A report opened in the page: its title, Excel and PDF at its top, then the
+// Summary as figures, or a line list with its headings kept in view and a
+// search that narrows what is shown (the download is always the whole).
 async function viewReport(type, extraQuery) {
   const box = document.getElementById('report-view-container');
   if (!box) return;
-  box.classList.remove('hidden');
-  box.innerHTML = '<p class="text-sm text-slate-500">Loading…</p>';
-  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  box.innerHTML = '<p class="p-6 text-sm text-slate-500">Loading…</p>';
 
   const res = await fetch(`/api/admin/reports/${encodeURIComponent(type)}?format=json${extraQuery || ''}`);
   const data = await res.json();
-  if (!data.success) { box.innerHTML = `<p class="text-sm text-rose-600">${esc(data.error || 'Could not load report.')}</p>`; return; }
+  if (!data.success) { box.innerHTML = `<p class="p-6 text-sm text-rose-700">${esc(data.error || 'Could not load the report.')}</p>`; return; }
+  // A slower answer for a report no longer chosen is not drawn over it.
+  if (currentReport && currentReport !== type) return;
 
   const rep = data.report;
   const totalRows = rep.sections.reduce((n, s) => n + s.rows.length, 0);
+  const extra = esc(JSON.stringify(extraQuery || ''));
+  const summary = rep.kind === 'summary';
 
   const table = (sec, idx) => `
     <div class="report-section" data-section-idx="${idx}">
-      ${sec.name ? `<h3 class="text-sm font-bold text-indigo-800 mt-4 mb-2">${esc(sec.name)} <span class="report-section-count text-slate-400 font-normal${rep.kind === 'summary' ? ' hidden' : ''}">(${sec.rows.length})</span></h3>` : ''}
-      <div class="overflow-x-auto border border-slate-200 rounded-xl">
-        <table class="w-full text-left border-collapse text-xs sm:min-w-[600px]">
-          <thead class="hidden sm:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 font-bold text-slate-500 uppercase">
-            ${sec.columns.map(c => `<th class="py-2 px-3">${esc(c)}</th>`).join('')}
+      ${sec.name ? `<h3 class="text-sm font-bold text-slate-900 px-4 sm:px-5 pt-4 pb-2">${esc(sec.name)} <span class="report-section-count text-slate-500 font-normal">(${sec.rows.length})</span></h3>` : ''}
+      <div class="overflow-auto max-h-[70vh] border-y border-slate-200">
+        <table class="w-full text-left border-collapse text-sm sm:min-w-[600px]">
+          <thead class="hidden sm:table-header-group"><tr>
+            ${sec.columns.map((c) => `<th class="sticky top-0 z-[1] bg-slate-50 py-2.5 px-3 font-semibold text-slate-600 border-b border-slate-200 whitespace-nowrap">${esc(c)}</th>`).join('')}
           </tr></thead>
           <tbody class="divide-y divide-slate-100 report-tbody">
-            ${sec.rows.length ? sec.rows.map(r => `<tr class="report-row">
+            ${sec.rows.length ? sec.rows.map((r) => `<tr class="report-row">
                 <td class="py-3 px-3 block sm:hidden">${reportRowCardHtml(r, sec.columns)}</td>
-                ${r.map((c) => `<td class="py-2 px-3 hidden sm:table-cell">${esc(c)}</td>`).join('')}
+                ${r.map((c) => `<td class="py-2 px-3 hidden sm:table-cell whitespace-nowrap">${esc(c)}</td>`).join('')}
               </tr>`).join('')
-              : `<tr class="report-empty-row"><td colspan="${sec.columns.length}" class="py-4 px-3 text-center text-slate-400">No records</td></tr>`}
+    : `<tr class="report-empty-row"><td colspan="${sec.columns.length}" class="py-4 px-3 text-center text-slate-500">No records</td></tr>`}
           </tbody>
         </table>
       </div>
     </div>`;
 
   box.innerHTML = `
-    <div class="flex justify-between items-center flex-wrap gap-3">
-      <div>
-        <h3 class="font-bold text-slate-800">${esc(rep.title)}</h3>
-        <p class="text-xs text-slate-500 mt-0.5">${rep.kind === 'summary'
-          ? `Summary figures — no individual records<span id="report-total-count" class="hidden">${totalRows}</span>`
-          : `Total: <span id="report-total-count" class="font-bold text-slate-700">${totalRows}</span> record${totalRows === 1 ? '' : 's'}`}<span id="report-filtered-note" class="hidden text-slate-400"> (filtered from ${totalRows})</span></p>
+    <div class="p-4 sm:p-5 flex justify-between items-start flex-wrap gap-3 border-b border-slate-200">
+      <div class="min-w-0">
+        <h3 class="text-lg font-bold text-slate-900">${esc(rep.title)}</h3>
+        <p class="text-sm text-slate-600 mt-0.5">${summary
+    ? 'Counts and totals only. You see the parts your role allows.'
+    : `<span id="report-total-count" class="font-bold text-slate-900">${totalRows}</span> record${totalRows === 1 ? '' : 's'}<span id="report-filtered-note" class="hidden"> shown of ${totalRows}</span>`}</p>
       </div>
-      <div class="flex items-center gap-2">
-        <input id="report-search-input" type="text" placeholder="Search rows…" oninput="filterReportRows()" class="p-2 border rounded-lg text-xs w-52 outline-none focus:ring-2 focus:ring-indigo-200">
-        <button onclick="document.getElementById('report-view-container').classList.add('hidden')" class="text-xs text-slate-400 hover:text-slate-600 font-semibold">✕ Close</button>
+      <div class="flex gap-2">
+        <button type="button" onclick='downloadReport(${esc(JSON.stringify(type))}, "csv", ${extra})' class="inline-flex items-center gap-1.5 h-10 px-3.5 rounded-xl border border-slate-300 bg-white text-navy text-sm font-semibold hover:bg-slate-50"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>Excel</button>
+        <button type="button" onclick='downloadReport(${esc(JSON.stringify(type))}, null, ${extra})' class="inline-flex items-center gap-1.5 h-10 px-3.5 rounded-xl bg-navy hover:bg-indigo-700 text-white text-sm font-semibold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>PDF</button>
       </div>
+      ${summary ? '' : `<div class="w-full"><label for="report-search-input" class="sr-only">Search in this report</label>
+        <input id="report-search-input" type="search" placeholder="Search in this report" oninput="filterReportRows()" class="w-full sm:max-w-sm h-10 px-3 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200"></div>`}
     </div>
-    ${rep.sections.map(table).join('')}`;
+    ${summary ? reportSummaryHtml(rep) : `<div class="pb-1">${rep.sections.map(table).join('')}</div>`}`;
 }
 
 // Filters every row across the currently-viewed report's sections by a
@@ -13210,7 +13320,7 @@ function switchBackendTab(tab) {
   if (tab === 'desk') initFrontDesk();
   if (tab === 'payments') renderBackendPayments();
   if (tab === 'abstracts') renderBackendAbstracts();
-  if (tab === 'reports') loadReportWorkshopOptions();
+  if (tab === 'reports') initReports();
   if (tab === 'faculty') renderGuests();
   if (tab === 'attendance') renderAttendance();
   if (tab === 'certificates') renderCertificates();

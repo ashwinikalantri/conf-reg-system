@@ -1,67 +1,43 @@
-    <!-- TAB: REPORTS -->
-    <section id="section-reports" class="hidden space-y-6">
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <!-- The one report with no line list: headline counts and totals only.
-             Spans the grid because it is the report somebody opens first.
-             What it contains depends on the viewer -- each block needs the
-             permission that governs its data (see buildReport's 'summary'). -->
-        <div id="report-summary" class="md:col-span-2 bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <h3 class="font-bold text-slate-800">Summary</h3>
-          <p class="text-xs text-slate-500 mt-1 mb-4">Headline figures across registrations, money, programmes, abstracts and accounts — counts and totals only, no individual records. You see the parts your role is allowed to see.</p>
-          <div class="flex flex-wrap gap-2">
-            <button onclick="viewReport('summary')" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M2 12c2.5-5 7-8 10-8s7.5 3 10 8c-2.5 5-7 8-10 8s-7.5-3-10-8z"/><circle cx="12" cy="12" r="3"/></svg>View</button>
-            <button onclick="downloadReport('summary','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>Excel</button>
-            <button onclick="downloadReport('summary')" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="6" y="9" width="12" height="7" rx="1"/><path d="M6 9V4h12v5"/><path d="M8 16v4h8v-4"/></svg>PDF</button>
+    <!-- TAB: REPORTS (redesigned 31 Oct 2026, from the "Admin Reports"
+         canvas). The reports, grouped, on the left -- each shown only to a
+         role that holds its permission (applyRoleVisibility, reportCards);
+         the one chosen opens on the right at once, Excel and PDF at its top.
+         On a phone the list is the page, and a report opens in its place
+         with a way back. openReport()/viewReport() in app.js. -->
+    <section id="section-reports" class="hidden">
+      <div class="flex items-baseline gap-x-3.5 gap-y-1 flex-wrap mb-4">
+        <h2 class="text-2xl font-bold text-slate-900">Reports</h2>
+        <p class="text-[15px] text-slate-600">Pick a report, look it over here, then download it.</p>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-[17.5rem_minmax(0,1fr)] gap-4 items-start">
+        <nav id="report-list" aria-label="Reports" class="bg-white rounded-2xl border border-slate-200 shadow-sm p-2">
+          <p class="rep-group">At a glance</p>
+          <button type="button" id="report-summary" data-report="summary" onclick="openReport('summary')" class="rep-item"><b>Summary</b><span>Headline figures, no names</span></button>
+          <p class="rep-group">People</p>
+          <button type="button" id="report-delegates" data-report="delegates" onclick="openReport('delegates')" class="rep-item"><b>Registered delegates</b><span>Confirmed, with institute and payment date</span></button>
+          <button type="button" id="report-delegate-programs" data-report="delegate-programs" onclick="openReport('delegate-programs')" class="rep-item"><b>Delegates and their programmes</b><span>A column for each programme group; pending too</span></button>
+          <button type="button" id="report-users" data-report="users" onclick="openReport('users')" class="rep-item"><b>All accounts</b><span>Everyone signed up, with their role</span></button>
+          <p class="rep-group">Money</p>
+          <button type="button" id="report-payments" data-report="payments" onclick="openReport('payments')" class="rep-item"><b>Payments</b><span>Every registration's payment and status</span></button>
+          <p class="rep-group">Programme</p>
+          <button type="button" id="report-workshops" data-report="workshops" onclick="openReport('workshops')" class="rep-item"><b>Workshop and QI rosters</b><span>Who is in each, one at a time</span></button>
+          <p class="rep-group">Abstracts</p>
+          <button type="button" id="report-abstracts" data-report="abstracts" onclick="openReport('abstracts')" class="rep-item"><b>Accepted abstracts</b><span>Title, authors and format</span></button>
+        </nav>
+
+        <div id="report-pane" class="min-w-0 hidden lg:block">
+          <button type="button" onclick="closeReport()" class="lg:hidden mb-3 inline-flex items-center gap-1 h-11 px-1 text-[15px] font-semibold text-navy"><span aria-hidden="true">‹</span> All reports</button>
+          <!-- A roster's workshop or practice, chosen before it opens. -->
+          <div id="report-workshop-pick" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm p-4 mb-3">
+            <label for="report-workshop-select" class="block text-sm font-semibold text-slate-600 mb-1">Workshop or practice</label>
+            <select id="report-workshop-select" class="w-full h-11 px-3 border border-slate-300 rounded-xl text-[15px] bg-white outline-none">
+              <option value="">Loading…</option>
+            </select>
           </div>
-        </div>
-        <div id="report-delegates" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <h3 class="font-bold text-slate-800">Registered Delegates</h3>
-          <p class="text-xs text-slate-500 mt-1 mb-4">Demography &amp; institute details for verified delegates, with the date their payment reached the bank — no program-group or fee data.</p>
-          <div class="flex flex-wrap gap-2">
-            <button onclick="viewReport('delegates')" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M2 12c2.5-5 7-8 10-8s7.5 3 10 8c-2.5 5-7 8-10 8s-7.5-3-10-8z"/><circle cx="12" cy="12" r="3"/></svg>View</button>
-            <button onclick="downloadReport('delegates','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>Excel</button>
-            <button onclick="downloadReport('delegates')" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="6" y="9" width="12" height="7" rx="1"/><path d="M6 9V4h12v5"/><path d="M8 16v4h8v-4"/></svg>PDF</button>
-          </div>
-        </div>
-        <div id="report-delegate-programs" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <h3 class="font-bold text-slate-800">Delegates &amp; Program Selections</h3>
-          <p class="text-xs text-slate-500 mt-1 mb-4">One row per delegate with a column per program group (Workshops, QI Practices, …) — for sorting and filtering in Excel. Includes pending registrations; faculty are marked.</p>
-          <div class="flex flex-wrap gap-2">
-            <button onclick="viewReport('delegate-programs')" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M2 12c2.5-5 7-8 10-8s7.5 3 10 8c-2.5 5-7 8-10 8s-7.5-3-10-8z"/><circle cx="12" cy="12" r="3"/></svg>View</button>
-            <button onclick="downloadReport('delegate-programs','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>Excel</button>
-            <button onclick="downloadReport('delegate-programs')" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="6" y="9" width="12" height="7" rx="1"/><path d="M6 9V4h12v5"/><path d="M8 16v4h8v-4"/></svg>PDF</button>
-          </div>
-        </div>
-        <div id="report-payments" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <h3 class="font-bold text-slate-800">Payments</h3>
-          <p class="text-xs text-slate-500 mt-1 mb-4">Every registration's payment details and status — pending, verified, and rejected.</p>
-          <div class="flex flex-wrap gap-2">
-            <button onclick="viewReport('payments')" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M2 12c2.5-5 7-8 10-8s7.5 3 10 8c-2.5 5-7 8-10 8s-7.5-3-10-8z"/><circle cx="12" cy="12" r="3"/></svg>View</button>
-            <button onclick="downloadReport('payments','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>Excel</button>
-            <button onclick="downloadReport('payments')" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="6" y="9" width="12" height="7" rx="1"/><path d="M6 9V4h12v5"/><path d="M8 16v4h8v-4"/></svg>PDF</button>
-          </div>
-        </div>
-        <div id="report-workshops" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <h3 class="font-bold text-slate-800">Registrations by Program Option</h3>
-          <p class="text-xs text-slate-500 mt-1 mb-4">Pick one program option (from any group) to view or download its roster.</p>
-          <select id="report-workshop-select" class="w-full p-2 border rounded-lg text-sm bg-white outline-none mb-3">
-            <option value="">Loading options…</option>
-          </select>
-          <div class="flex flex-wrap gap-2">
-            <button id="report-workshop-view-btn" disabled onclick="viewReport('workshops', reportWorkshopQuery())" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M2 12c2.5-5 7-8 10-8s7.5 3 10 8c-2.5 5-7 8-10 8s-7.5-3-10-8z"/><circle cx="12" cy="12" r="3"/></svg>View</button>
-            <button id="report-workshop-csv-btn" disabled onclick="downloadReport('workshops','csv', reportWorkshopQuery())" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>Excel</button>
-            <button id="report-workshop-pdf-btn" disabled onclick="downloadReport('workshops', null, reportWorkshopQuery())" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="6" y="9" width="12" height="7" rx="1"/><path d="M6 9V4h12v5"/><path d="M8 16v4h8v-4"/></svg>PDF</button>
-          </div>
-        </div>
-        <div id="report-abstracts" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <h3 class="font-bold text-slate-800">Accepted Abstracts</h3>
-          <p class="text-xs text-slate-500 mt-1 mb-4">All abstracts marked accepted.</p>
-          <div class="flex flex-wrap gap-2">
-            <button onclick="viewReport('abstracts')" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M2 12c2.5-5 7-8 10-8s7.5 3 10 8c-2.5 5-7 8-10 8s-7.5-3-10-8z"/><circle cx="12" cy="12" r="3"/></svg>View</button>
-            <button onclick="downloadReport('abstracts','csv')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>Excel</button>
-            <button onclick="downloadReport('abstracts')" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="6" y="9" width="12" height="7" rx="1"/><path d="M6 9V4h12v5"/><path d="M8 16v4h8v-4"/></svg>PDF</button>
+          <div id="report-view-container" class="bg-white rounded-2xl border border-slate-200 shadow-sm">
+            <p class="p-6 text-sm text-slate-500">Choose a report.</p>
           </div>
         </div>
       </div>
-      <div id="report-view-container" class="hidden bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-6"></div>
     </section>
