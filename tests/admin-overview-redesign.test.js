@@ -92,6 +92,8 @@ const GUESTS = { dashboard: { noAccommodation: 2, notSignedUp: 1 }, guests: [
   check('registrations, workshops, money, abstracts, faculty and the map', ['overview-regs', 'overview-workshops', 'overview-money', 'overview-abstracts', 'overview-faculty', 'delegate-map']
     .every((id) => view.includes(`id="${id}"`)));
   check('no shouting labels, numbers bold not black', !/uppercase|font-black/.test(view));
+  check('the map is a glance: in the narrow column under Faculty, never wider than a phone', view.indexOf('id="overview-faculty"') < view.indexOf('id="delegate-map"')
+    && /id="delegate-map" class="w-full max-w-md mx-auto relative"/.test(view) && view.indexOf('id="delegate-map"') < view.lastIndexOf('</div>\n    </div>\n\n  </section>'));
 
   console.log('\n== Where the conference stands ==');
   {
