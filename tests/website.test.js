@@ -31,6 +31,7 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
   const admin = await adminLogin();
   const db = openDb();
   let hallId = null;
+  let hallId2 = null;
   const sessions = [];
   try {
     console.log('\n== Every page, signed out ==');
@@ -61,12 +62,19 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     const s1 = await add({ start: '17:10', end: '17:30', label: 'Session 99', title: `Website talk ${N} <script>alert(1)</script>`, speakers: `Dr Web Speaker ${N}`, chairs: `Dr Web Chair ${N}` });
     sessions.push(s1.body.id);
     check('fixture: a session in a new hall', s1.body.success === true, s1.body);
+    // A second hall that day, so there is something to filter between.
+    hallId2 = (await call('POST', '/api/admin/programme/halls', { name: `Site Hall B ${N}` }, admin)).body.id;
+    const s1b = await call('POST', '/api/admin/programme/sessions', { hallId: hallId2, date: '2026-11-22', counts: false, start: '17:10', end: '17:30', label: 'Session 98', title: `Other hall talk ${N}` }, admin);
+    sessions.push(s1b.body.id);
     const prog = (await call('GET', '/website/programme?day=2026-11-22', null, null)).raw || '';
     check('it is on the programme page, with its speaker and chair', prog.includes(`Website talk ${N}`) && prog.includes(`Dr Web Speaker ${N}`) && prog.includes(`Chairs: Dr Web Chair ${N}`));
     check('...escaped, never run', !prog.includes('<script>alert(1)</script>') && prog.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
     check('...in time, as "5:10 PM"', prog.includes('5:10'));
     const byHall = (await call('GET', `/website/programme?day=2026-11-22&hall=${encodeURIComponent(`Site Hall ${N}`)}`, null, null)).raw || '';
-    check('choosing its hall shows it', byHall.includes(`Website talk ${N}`) && /aria-current="true">Site Hall/.test(byHall));
+    check('the hall filter is a drop-down: day kept, All halls first', /<form class="hall-filter" method="get" action="\/website\/programme">/.test(byHall)
+      && /<input type="hidden" name="day" value="2026-11-22">/.test(byHall) && /<select id="hall-select" name="hall" class="chosen">\s*<option value="">All halls \(\d+\)<\/option>/.test(byHall)
+      && !/class="pills"/.test(byHall));
+    check('choosing its hall shows it, not the other hall\'s', byHall.includes(`Website talk ${N}`) && !byHall.includes(`Other hall talk ${N}`) && new RegExp(`<option value="Site Hall ${N}" selected>Site Hall ${N}</option>`).test(byHall));
     const s2 = await add({ date: '2026-11-21', start: '10:00', end: '11:00', label: 'Workshop 99', title: `Saturday item ${N}` });
     sessions.push(s2.body.id);
     const otherDay = (await call('GET', '/website/programme?day=2026-11-21', null, null)).raw || '';
@@ -136,6 +144,7 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
   } finally {
     for (const id of sessions.filter(Boolean)) await db.run('DELETE FROM programme_sessions WHERE id = ?', [id]);
     if (hallId) await db.run('DELETE FROM halls WHERE id = ?', [hallId]);
+    if (hallId2) await db.run('DELETE FROM halls WHERE id = ?', [hallId2]);
   }
   db.close();
   report();

@@ -12,9 +12,23 @@
 
 <div class="wrap" style="padding-top: 24px; padding-bottom: 64px">
   <h2 class="kicker" style="margin-bottom: 12px"><%= dayLabel %></h2>
-  <nav class="pills" aria-label="Hall">
-    <% halls.forEach((h) => { %><a href="<%= h.href %>"<% if (h.current) { %> aria-current="true"<% } %>><%= h.label %></a><% }) %>
-  </nav>
+  <% if (halls.length > 2) { %>
+  <form class="hall-filter" method="get" action="<%= base %>/programme">
+    <input type="hidden" name="day" value="<%= day %>">
+    <label for="hall-select">Hall</label>
+    <select id="hall-select" name="hall"<% if (halls.some((h) => h.current && h.name)) { %> class="chosen"<% } %>>
+      <% halls.forEach((h) => { %><option value="<%= h.name %>"<% if (h.current) { %> selected<% } %>><%= h.name ? h.label : `${h.label} (${halls.length - 1})` %></option><% }) %>
+    </select>
+    <noscript><button class="btn btn-navy" type="submit">Show</button></noscript>
+  </form>
+  <script>
+  (function () {
+    var f = document.querySelector('.hall-filter');
+    var s = f && f.querySelector('select');
+    if (s) s.addEventListener('change', function () { if (!s.value) s.removeAttribute('name'); f.submit(); });
+  })();
+  </script>
+  <% } %>
 
   <% if (!rows.length) { %><p class="muted" style="padding: 32px 0">Nothing on this day yet.</p><% } %>
   <% rows.forEach((r) => { %>
