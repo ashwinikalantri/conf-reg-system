@@ -122,6 +122,7 @@ const adminViews = glob(appFile('views', 'admin')).filter((f) => f.endsWith('.ej
 check('one primary colour: navy, not steel or slate', !/bg-indigo-600 hover:bg-indigo-700|bg-slate-700 hover:bg-slate-800|bg-slate-800 hover:bg-slate-900/.test(adminViews + js)
   && (adminViews.match(/bg-navy hover:bg-indigo-700/g) || []).length > 40);
 check('numbers bold, never black', !/font-black/.test(adminViews + js));
-check('the top tabs: one row that scrolls on a phone', /id="nav-tabs" class="flex overflow-x-auto/.test(tabs) && !/flex-wrap/.test(tabs.split('id="nav-tabs"')[1].split('>')[0])
-  && (tabs.match(/shrink-0 whitespace-nowrap">/g) || []).length >= 6);
+check('the desks: links in the bar from 1200px, the ☰ panel\'s first rows below it', /<nav id="nav-tabs" aria-label="Desks">/.test(tabs)
+  && /@media \(min-width: 1200px\) \{[\s\S]*?#nav-tabs \{ flex-direction: row;/.test(fs.readFileSync(appFile('public', 'styles.css'), 'utf8'))
+  && (tabs.match(/class="cbar-link( hidden)?">/g) || []).length === 6);
 report();

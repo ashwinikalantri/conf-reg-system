@@ -17,6 +17,7 @@ const vm = require('vm');
 const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
 const dash = fs.readFileSync(appFile('views', 'portal', 'sections', 'dashboard.ejs'), 'utf8');
 const css = fs.readFileSync(appFile('public', 'styles.css'), 'utf8');
+const topbar = fs.readFileSync(appFile('views', 'portal', 'partials', 'topbar.ejs'), 'utf8');
 
 function load() {
   const els = new Map();
@@ -67,8 +68,8 @@ console.log('\n== The tab bar ==');
 check('Home, Programme, Map, Badge, fixed to the bottom', /<nav id="dash-tabs" aria-label="Main" class="hidden md:hidden fixed bottom-0/.test(dash)
   && ['home', 'programme', 'map', 'badge'].every((t) => new RegExp(`id="dash-tab-${t}"`).test(dash)) && /id="dash-tab-badge" onclick="openBadgeFullScreen\(\)"/.test(dash));
 check('...with room kept for it below the page', /body\.has-tabs \{ padding-bottom: calc\(5\.5rem/.test(css));
-check('the menu keeps what is used now and then: profile, admin, password, log out', /aria-label="More: profile, password, log out"/.test(dash)
-  && !/onclick="dashGo\('home'\)" class="w-full/.test(dash) && !/id="dash-menu-programme"/.test(dash) && !/id="dash-menu-map"/.test(dash));
+check('the menu keeps what is used now and then: profile, admin, password, log out', /aria-label="More: profile, password, log out"/.test(topbar)
+  && !/aria-label="More/.test(dash) && !/onclick="dashGo\('home'\)" class="cbar-item/.test(topbar) && !/id="dash-menu-programme"/.test(dash) && !/id="dash-menu-map"/.test(dash));
 check('the programme and map pages lose their Back buttons to it', !/onclick="closeProgrammePage\(\)" aria-label="Back"/.test(dash)
   && !/<section id="map-page"[\s\S]*?aria-label="Back"[\s\S]*?<\/header>/.test(dash.split('<section id="profile-page"')[0]));
 {
@@ -78,6 +79,7 @@ check('the programme and map pages lose their Back buttons to it', !/onclick="cl
   check('on the home page: the bar, with Home only, before anything is known', !el('dash-tabs').classList.contains('hidden') && body.classList.contains('has-tabs')
     && !el('dash-tab-home').classList.contains('hidden') && ['programme', 'map', 'badge'].every((t) => el(`dash-tab-${t}`).classList.contains('hidden')));
   check('...Home marked as here', el('dash-tab-home').getAttribute('aria-current') === 'page' && el('dash-tab-home').classList.contains('bg-gold-50'));
+  check('...and the conference bar above the page', !el('dash-bar').classList.contains('hidden'));
   sb.__set(prog, confirmed);
   sb.__f.navigateTo('programme-page');
   check('programme out, a hall on the map, confirmed: all four', ['home', 'programme', 'map', 'badge'].every((t) => !el(`dash-tab-${t}`).classList.contains('hidden')));
@@ -88,6 +90,7 @@ check('the programme and map pages lose their Back buttons to it', !/onclick="cl
   check('no hall on the map, not yet confirmed: no Map, no Badge', el('dash-tab-map').classList.contains('hidden') && el('dash-tab-badge').classList.contains('hidden'));
   sb.__f.navigateTo('auth-page');
   check('off the delegate\'s pages (signing in): no bar', el('dash-tabs').classList.contains('hidden') && !body.classList.contains('has-tabs'));
+  check('...nor the conference bar (sign-in has its own hero)', el('dash-bar').classList.contains('hidden'));
 }
 
 console.log('\n== The conference day ==');

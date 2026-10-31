@@ -257,8 +257,9 @@ function navigateTo(pageId) {
   // Off the map: stop following their location.
   if (pageId !== 'map-page') stopCampusLocate();
   updateDashTabs(pageId);
-  // The backend button is only for admins on the dashboard; hide it elsewhere.
-  updateAdminNav(pageId === 'dashboard-page' && isAdminUser());
+  // The Admin panel item, in the bar's account menu: for admins, on the
+  // delegate's pages.
+  updateAdminNav(Object.prototype.hasOwnProperty.call(DASH_TAB_OF_PAGE, pageId) && isAdminUser());
 }
 
 
@@ -272,6 +273,8 @@ function updateDashTabs(pageId) {
   if (!bar) return;
   const on = Object.prototype.hasOwnProperty.call(DASH_TAB_OF_PAGE, dashTabsPage);
   bar.classList.toggle('hidden', !on);
+  const topBar = document.getElementById('dash-bar');
+  if (topBar) topBar.classList.toggle('hidden', !on);
   if (document.body && document.body.classList) {
     document.body.classList.toggle('has-tabs', on);
     // The delegate's pages start at the top; sign-in stays centred.
@@ -295,19 +298,31 @@ function updateDashTabs(pageId) {
     btn.classList.toggle('font-bold', here);
     btn.classList.toggle('text-slate-600', !here);
   }
-  // The same tabs as links in each page's navy header, from tablet width up.
+  // The same tabs as links in the conference bar, from tablet width up; the
+  // page they are on is marked by aria-current (pale gold, styles.css).
   const links = document.querySelectorAll ? document.querySelectorAll('.dash-nav-link') : [];
   for (const link of links) {
     const tab = link.dataset ? link.dataset.tab : null;
     const here = DASH_TAB_OF_PAGE[dashTabsPage] === tab;
     link.classList.toggle('hidden', !has[tab]);
     if (link.setAttribute) link.setAttribute('aria-current', here ? 'page' : 'false');
-    link.classList.toggle('bg-white/10', here);
-    link.classList.toggle('text-white', here);
-    link.classList.toggle('font-bold', here);
-    link.classList.toggle('shadow-[inset_0_-2px_0_#d6b46a]', here);
-    link.classList.toggle('text-white/80', !here);
   }
+}
+
+// Initials for the bar's account button: "Dr Asha Rao" -> "AR".
+function nameInitials(name) {
+  const words = String(name || '').replace(/^\s*(dr|prof|mr|mrs|ms|miss|shri|smt)\.?\s+/i, '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return '';
+  return (words[0][0] + (words.length > 1 ? words[words.length - 1][0] : '')).toUpperCase();
+}
+
+// Who is signed in, on the bar's account button: their initials, and from a
+// laptop up their name.
+function setBarAccount(name) {
+  const initials = nameInitials(name);
+  const box = document.getElementById('dash-me-initials');
+  if (box && initials) box.textContent = initials;
+  setText('dash-me-name', name || '');
 }
 
 function toggleAuth(view) {
@@ -607,6 +622,7 @@ try {
     const nameEl = document.getElementById('user-display-name');
     const subEl = document.getElementById('user-display-sub');
     if (nameEl) nameEl.innerText = currentDelegate.salutation ? `${currentDelegate.salutation} ${displayName}` : displayName;
+    setBarAccount(currentDelegate.salutation ? `${currentDelegate.salutation} ${displayName}` : displayName);
     if (subEl) subEl.innerText = `${currentDelegate.designation} | ${currentDelegate.institution || currentDelegate.institute} (${delegateDisplayPhone(currentDelegate) || currentDelegate.email || ''})`;
   }
 } catch (err) {
@@ -945,6 +961,7 @@ async function loadDashboard() {
 
   const displayName = currentDelegate.full_name || currentDelegate.name;
   document.getElementById('user-display-name').innerText = currentDelegate.salutation ? `${currentDelegate.salutation} ${displayName}` : displayName;
+  setBarAccount(currentDelegate.salutation ? `${currentDelegate.salutation} ${displayName}` : displayName);
   // phone_number is the account key, which is only a real number for
   // phone-based accounts -- fall back to the email for email-only ones
   // rather than printing a synthetic key as if it were a mobile.
@@ -1101,8 +1118,7 @@ function flipBadge() {
 
 // --- Menu and the Profile page ---
 function dashGo(where) {
-  const menu = document.getElementById('dash-menu');
-  if (menu) menu.classList.add('hidden');
+  closeDashMenu();
   if (where === 'programme') return openProgrammePage();
   if (where === 'map') return openMapPage();
   if (where === 'profile') return openProfilePage();
@@ -1611,15 +1627,33 @@ function stopCampusLocate() {
 }
 
 // --- The home screen ---
-// The header's menu: change password, the admin panel (staff), log out.
+// The bar's account menu: profile, password, the admin panel (staff), log out.
 function toggleDashMenu(e) {
   if (e) e.stopPropagation();
   const menu = document.getElementById('dash-menu');
-  if (menu) menu.classList.toggle('hidden');
+  if (!menu) return;
+  const open = menu.classList.contains('hidden');
+  menu.classList.toggle('hidden', !open);
+  const btn = document.getElementById('dash-menu-btn');
+  if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function closeDashMenu() {
+  const menu = document.getElementById('dash-menu');
+  if (menu) menu.classList.add('hidden');
+  const btn = document.getElementById('dash-menu-btn');
+  if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', 'false');
 }
 document.addEventListener('click', (e) => {
   const menu = document.getElementById('dash-menu');
-  if (menu && !menu.classList.contains('hidden') && !menu.contains(e.target)) menu.classList.add('hidden');
+  if (menu && !menu.classList.contains('hidden') && !menu.contains(e.target)) closeDashMenu();
+});
+document.addEventListener('keydown', (e) => {
+  const menu = document.getElementById('dash-menu');
+  if (e.key === 'Escape' && menu && !menu.classList.contains('hidden')) {
+    closeDashMenu();
+    const btn = document.getElementById('dash-menu-btn');
+    if (btn && btn.focus) btn.focus();
+  }
 });
 
 // The one thing that matters now, by where they are:
@@ -4155,6 +4189,13 @@ async function initBackendPortal() {
   }
   const me = await meRes.json();
   activeAdminUser = me.user;
+  // Who is signed in, on the bar's account button and at the top of its menu.
+  const meName = (me.user && me.user.full_name) || '';
+  const meInitials = nameInitials(meName);
+  const meBox = document.getElementById('admin-me-initials');
+  if (meBox && meInitials) meBox.textContent = meInitials;
+  setText('admin-me-name', meName);
+  setText('admin-me-role', (me.roles && me.roles.length ? me.roles : [me.user && me.user.role]).filter(Boolean).map(roleLabel).join(', '));
   myPermissions = new Set(me.permissions || []);
   mySections = me.sections || {};
 
@@ -10793,22 +10834,57 @@ function switchActivityLog(tab) {
   });
 }
 
-// Header "Settings" dropdown: Masters, Reminders, and Logs (Activity Log)
-// live here instead of the main tab bar.
-function toggleSettingsMenu(forceHide) {
-  const menu = document.getElementById('settings-menu');
-  if (menu) menu.classList.toggle('hidden', forceHide === true ? true : undefined);
+// The admin bar's menus (views/admin/partials/header.ejs). From 1200px,
+// Settings and the account are drop-downs, each opened by its button; below
+// it, everything is one panel, #admin-menu, opened by ☰. Each opens by the
+// "open" class, and its button says so in aria-expanded.
+const ADMIN_MENUS = [['settings-menu', 'settings-menu-btn'], ['admin-me-menu', 'admin-me-btn'], ['admin-menu', 'admin-menu-btn']];
+function setAdminMenu(menuId, open) {
+  const pair = ADMIN_MENUS.find(([m]) => m === menuId);
+  const menu = document.getElementById(menuId);
+  if (menu) menu.classList.toggle('open', open);
+  const btn = pair && document.getElementById(pair[1]);
+  if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
+function toggleAdminMenuById(menuId) {
+  const menu = document.getElementById(menuId);
+  const open = !(menu && menu.classList.contains('open'));
+  // One open at a time: the drop-downs, or the one panel.
+  ADMIN_MENUS.forEach(([m]) => { if (m !== menuId) setAdminMenu(m, false); });
+  setAdminMenu(menuId, open);
+}
+function closeAdminMenus() { ADMIN_MENUS.forEach(([m]) => setAdminMenu(m, false)); }
+function toggleSettingsMenu(forceHide) {
+  if (forceHide === true) return setAdminMenu('settings-menu', false);
+  toggleAdminMenuById('settings-menu');
+}
+function toggleAdminMeMenu() { toggleAdminMenuById('admin-me-menu'); }
+function toggleAdminMenu() { toggleAdminMenuById('admin-menu'); }
 function selectSettingsTab(tab) {
   switchBackendTab(tab);
-  toggleSettingsMenu(true);
+  closeAdminMenus();
 }
 document.addEventListener('click', (e) => {
-  const menu = document.getElementById('settings-menu');
-  const btn = document.getElementById('settings-menu-btn');
-  if (!menu || menu.classList.contains('hidden')) return;
-  if (menu.contains(e.target) || (btn && btn.contains(e.target))) return;
-  menu.classList.add('hidden');
+  ADMIN_MENUS.forEach(([m, b]) => {
+    const menu = document.getElementById(m);
+    const btn = document.getElementById(b);
+    if (!menu || !menu.classList.contains('open')) return;
+    if (menu.contains(e.target) || (btn && btn.contains(e.target))) return;
+    // The panel holds the drop-downs; a click inside it is not outside them.
+    const panel = document.getElementById('admin-menu');
+    if (m !== 'admin-menu' && panel && panel.classList.contains('open') && panel.contains(e.target)) return;
+    setAdminMenu(m, false);
+  });
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  ADMIN_MENUS.forEach(([m, b]) => {
+    const menu = document.getElementById(m);
+    if (!menu || !menu.classList.contains('open')) return;
+    setAdminMenu(m, false);
+    const btn = document.getElementById(b);
+    if (btn && btn.focus) btn.focus();
+  });
 });
 
 // Settings sub-menu tabs (each is now its own top-level <section>) vs. the
@@ -12959,22 +13035,19 @@ function switchBackendTab(tab) {
     const btn = document.getElementById(`nav-tab-${t}`);
     if (btn) {
       const active = t === tab || (t === 'payments' && tab === 'statement');
-      btn.classList.toggle('text-navy', active);
-      btn.classList.toggle('border-b-2', active);
-      btn.classList.toggle('border-gold-500', active);
-      btn.classList.toggle('text-slate-500', !active);
+      btn.setAttribute('aria-current', active ? 'page' : 'false');
     }
   });
 
-  // Highlight whichever Settings-menu item is currently selected, since those
-  // tabs live in the header dropdown rather than the main tab bar.
+  // Mark whichever Settings item is open, and Settings itself in the bar,
+  // since those screens live in its drop-down rather than among the desks.
   SETTINGS_TABS.forEach((key) => {
     const item = document.getElementById(`settings-item-${key}`);
-    if (!item) return;
-    const active = key === tab;
-    item.classList.toggle('bg-gold-50', active);
-    item.classList.toggle('text-navy', active);
+    if (item) item.setAttribute('aria-current', key === tab ? 'page' : 'false');
   });
+  const settingsBtn = document.getElementById('settings-menu-btn');
+  if (settingsBtn) settingsBtn.setAttribute('aria-current', SETTINGS_TABS.includes(tab) ? 'page' : 'false');
+  closeAdminMenus();
 
   // Registration's sub-menu, while either of its two screens is open and the
   // role may open both.

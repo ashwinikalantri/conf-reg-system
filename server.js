@@ -3786,6 +3786,7 @@ app.get(['/', '/portal'], async (req, res, next) => {
     }
     res.render('index', {
       conferenceName: CONFERENCE.name,
+      websiteUrl: `https://${WEBSITE_HOST}/`,
       // undefined => not logged in, so the page leaves the chip neutral and
       // waits for the fetch. null => logged in, no registration yet.
       bootstrapReg: bootstrapReg === undefined ? undefined : bootstrapReg,
@@ -3811,7 +3812,7 @@ app.get('/admin', (req, res) => {
     return res.status(403).send(
       noticePage('Not authorised', '<p style="margin:0">Your account does not have administrative access.</p>'));
   }
-  res.render('admin');
+  res.render('admin', { websiteUrl: `https://${WEBSITE_HOST}/` });
 });
 
 // Autocomplete source for the signup form's Designation/Institute fields --

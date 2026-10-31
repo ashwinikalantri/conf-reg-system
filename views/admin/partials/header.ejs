@@ -1,69 +1,69 @@
-  <!-- The delegate page's navy header (dashboard.ejs): gold kicker, white
-       title, and its menu button at the top right. -->
-  <header class="max-w-7xl mx-auto bg-navy text-white rounded-2xl px-5 py-4 sm:px-6 sm:py-5 mb-8 shadow-card flex items-start justify-between gap-3">
-    <div class="min-w-0">
-      <p class="text-xs tracking-[0.3em] font-semibold uppercase text-gold-300">Admin Panel</p>
-      <h1 id="conf-name-h1" class="skeleton text-xl sm:text-2xl font-bold mt-1 leading-tight text-white text-balance">Registration Portal</h1>
-    </div>
+  <!-- The conference bar, as on the website and the delegate's pages: the
+       logo, a gold "Admin" tag, then #admin-menu -- the desks (nav-tabs),
+       Settings in the four groups this role may open (Conference, Fees and
+       discounts, Messages, System and access; a heading shows only when the
+       role may open something under it, SETTINGS_GROUPS in
+       applyRoleVisibility), and the account (the website, the delegate
+       portal, Log out, always last). From 1200px the desks are links in the
+       bar and Settings and the account drop down; narrower, all of it is one
+       panel under the ☰ button (styles.css, #admin-menu). -->
+  <header id="admin-bar" class="cbar -mx-4 -mt-4 sm:-mx-8 sm:-mt-8 mb-6">
+    <div class="cbar-in">
+      <a href="<%= locals.websiteUrl || '/' %>" class="shrink-0" aria-label="The conference website"><img class="cbar-logo" src="/website/img/nqocn-mgims-logo.png" alt="NQOCN, Nationwide Quality of Care Network, with MGIMS Sevagram" width="1021" height="203"></a>
+      <span class="cbar-place">Admin</span>
+      <h1 id="conf-name-h1" class="skeleton sr-only">Registration Portal</h1>
 
-    <!-- One menu, as on the delegate page: the delegate portal, the Settings
-         screens this role may open in four groups (Conference, Fees and
-         discounts, Messages, System and access), then Log out, always last.
-         Every role has it (it holds Log out); a group's heading shows only
-         when the role may open something under it (SETTINGS_GROUPS in
-         applyRoleVisibility). -->
-    <div class="shrink-0">
-      <div class="relative">
-        <button type="button" id="settings-menu-btn" onclick="toggleSettingsMenu()" aria-label="Menu" aria-haspopup="true" class="w-10 h-10 rounded-lg border border-white/25 hover:bg-white/10 text-white flex items-center justify-center">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-5 h-5" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
-        </button>
-        <div id="settings-menu" class="hidden absolute right-0 mt-2 w-60 bg-white rounded-xl shadow-card border border-slate-200 py-1.5 z-50 text-slate-800 max-h-[80vh] overflow-y-auto">
-          <a id="admin-menu-portal" href="/portal" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.6 3.1-6.5 7-6.5s7 2.9 7 6.5"/></svg>Delegate portal</span>
-          </a>
-          <p id="settings-group-conference" class="settings-group-heading mt-1.5 border-t border-slate-100 px-4 pt-2.5 pb-1 text-[11px] font-bold uppercase tracking-widest text-slate-400">Conference</p>
-          <button id="settings-item-programme" onclick="selectSettingsTab('programme')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/></svg>Programme</span>
+      <div id="admin-menu" aria-label="Menu">
+<%- include('nav-tabs') %>
+
+        <div class="relative shrink-0">
+          <button type="button" id="settings-menu-btn" onclick="toggleSettingsMenu()" aria-haspopup="true" aria-expanded="false" class="cbar-link cbar-drop">Settings <svg class="cbar-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+          <div id="settings-menu">
+            <div class="cbar-cols">
+              <div>
+                <p id="settings-group-conference" class="cbar-group first">Conference</p>
+                <button type="button" id="settings-item-programme" onclick="selectSettingsTab('programme')" class="cbar-item"><b>Programme</b><span>Halls, sessions and the hall posters</span></button>
+                <button type="button" id="settings-item-programs" onclick="selectSettingsTab('programs')" class="cbar-item"><b>Workshops</b><span>Workshop options, seats and dates</span></button>
+                <button type="button" id="settings-item-attendance" onclick="selectSettingsTab('attendance')" class="cbar-item"><b>Attendance</b><span>Who attended, and their certificates</span></button>
+                <p id="settings-group-fees" class="cbar-group">Fees and discounts</p>
+                <button type="button" id="settings-item-fees" onclick="selectSettingsTab('fees')" class="cbar-item"><b>Fee Master</b><span>Categories, fees and their phases</span></button>
+                <button type="button" id="settings-item-discount" onclick="selectSettingsTab('discount')" class="cbar-item"><b>Discount codes</b><span>Codes, and what each takes off</span></button>
+                <button type="button" id="settings-item-groupdiscount" onclick="selectSettingsTab('groupdiscount')" class="cbar-item"><b>Group Discount</b><span>For groups registering together</span></button>
+              </div>
+              <div>
+                <p id="settings-group-messages" class="cbar-group first">Messages</p>
+                <button type="button" id="settings-item-reminders" onclick="selectSettingsTab('reminders')" class="cbar-item"><b>Reminders <span id="badge-pending-signups" class="bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span></b><span>Emails to delegates, and what was sent</span></button>
+                <p id="settings-group-system" class="cbar-group">System and access</p>
+                <button type="button" id="settings-item-general" onclick="selectSettingsTab('general')" class="cbar-item"><b>Conference setup</b><span>Name, dates, venue and portal settings</span></button>
+                <button type="button" id="settings-item-users" onclick="selectSettingsTab('users')" class="cbar-item"><b>Users</b><span>Accounts, and the role each has</span></button>
+                <button type="button" id="settings-item-roles" onclick="selectSettingsTab('roles')" class="cbar-item"><b>Roles</b><span>What each role may open and do</span></button>
+                <button type="button" id="settings-item-activity" onclick="selectSettingsTab('activity')" class="cbar-item"><b>Logs</b><span>Who changed what, and when</span></button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="admin-me-wrap" class="relative shrink-0">
+          <button type="button" id="admin-me-btn" onclick="toggleAdminMeMenu()" aria-label="Your account: the website, the delegate portal, log out" aria-haspopup="true" aria-expanded="false" class="cbar-me cbar-drop">
+            <span id="admin-me-initials" class="cbar-initials" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.6 3.1-6.5 7-6.5s7 2.9 7 6.5"/></svg></span>
+            <svg class="cbar-chev mr-2" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
           </button>
-          <button id="settings-item-programs" onclick="selectSettingsTab('programs')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M14.5 3.5a4.5 4.5 0 0 0-5.9 5.9L3 15l3 3 5.6-5.6a4.5 4.5 0 0 0 5.9-5.9l-2.8 2.8-2-2z"/></svg>Workshops</span>
-          </button>
-          <button id="settings-item-attendance" onclick="selectSettingsTab('attendance')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 12l3 3 5-6"/></svg>Attendance</span>
-          </button>
-          <p id="settings-group-fees" class="settings-group-heading mt-1.5 border-t border-slate-100 px-4 pt-2.5 pb-1 text-[11px] font-bold uppercase tracking-widest text-slate-400">Fees and discounts</p>
-          <button id="settings-item-fees" onclick="selectSettingsTab('fees')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="12" cy="12" r="9"/><path d="M12 7v10"/><path d="M9 9.7c0-1.1 1.2-1.7 3-1.7s3 .8 3 1.9-1.2 1.6-3 1.6-3 .6-3 1.8 1.2 1.9 3 1.9 3-.6 3-1.6"/></svg>Fee Master</span>
-          </button>
-          <button id="settings-item-discount" onclick="selectSettingsTab('discount')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><line x1="14" y1="6" x2="14" y2="18" stroke-dasharray="2.5 2.5"/></svg>Discount codes</span>
-          </button>
-          <button id="settings-item-groupdiscount" onclick="selectSettingsTab('groupdiscount')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2c2.8.4 5 2.8 5 5.8"/></svg>Group Discount</span>
-          </button>
-          <p id="settings-group-messages" class="settings-group-heading mt-1.5 border-t border-slate-100 px-4 pt-2.5 pb-1 text-[11px] font-bold uppercase tracking-widest text-slate-400">Messages</p>
-          <button id="settings-item-reminders" onclick="selectSettingsTab('reminders')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M3 6.5 L12 13 L21 6.5"/></svg>Reminders</span>
-            <span id="badge-pending-signups" class="ml-auto bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
-          </button>
-          <p id="settings-group-system" class="settings-group-heading mt-1.5 border-t border-slate-100 px-4 pt-2.5 pb-1 text-[11px] font-bold uppercase tracking-widest text-slate-400">System and access</p>
-          <button id="settings-item-general" onclick="selectSettingsTab('general')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="11" cy="17" r="2" fill="currentColor" stroke="none"/></svg>Conference setup</span>
-          </button>
-          <button id="settings-item-users" onclick="selectSettingsTab('users')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>Users</span>
-          </button>
-          <button id="settings-item-roles" onclick="selectSettingsTab('roles')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg>Roles</span>
-          </button>
-          <button id="settings-item-activity" onclick="selectSettingsTab('activity')" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="6" y="4" width="12" height="17" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/></svg>Logs</span>
-          </button>
-          <div id="settings-menu-divider" class="my-1.5 border-t border-slate-100"></div>
-          <button type="button" id="admin-logout-item" onclick="logout()" class="w-full text-left px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2">
-            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 16l-4-4 4-4"/><line x1="6" y1="12" x2="15" y2="12"/></svg>Log out</span>
-          </button>
+          <div id="admin-me-menu">
+            <div id="admin-me-head" class="flex-col gap-0.5 px-3.5 pt-2 pb-2.5">
+              <b id="admin-me-name" class="text-[15px] text-slate-900"></b>
+              <span id="admin-me-role" class="text-sm text-slate-600"></span>
+            </div>
+            <p class="cbar-group go">Go to</p>
+            <a href="<%= locals.websiteUrl || '/' %>" class="cbar-item"><b>Conference website</b></a>
+            <a id="admin-menu-portal" href="/portal" class="cbar-item"><b>Delegate portal</b></a>
+            <div class="cbar-rule"></div>
+            <button type="button" id="admin-logout-item" onclick="logout()" class="cbar-item"><b>Log out</b></button>
+          </div>
         </div>
       </div>
+
+      <button type="button" id="admin-menu-btn" onclick="toggleAdminMenu()" aria-label="Menu" aria-controls="admin-menu" aria-expanded="false" class="cbar-burger ml-auto shrink-0">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
     </div>
   </header>

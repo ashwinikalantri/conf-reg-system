@@ -1,7 +1,7 @@
 // The desktop view (the design review of 29 Oct 2026):
 //
-//   * Delegate: from tablet width up the tabs are links in each page's navy
-//     header and the bottom bar is for phones; the delegate's pages start at
+//   * Delegate: from tablet width up the tabs are links in the conference
+//     bar (31 Oct 2026; it was each page's navy header) and the bottom bar is for phones; the delegate's pages start at
 //     the top; the programme becomes a timetable (a column per hall) on a
 //     desktop; the map's list sits beside the map; sign-in is two halves.
 //   * Admin: Conference setup's jump buttons are a side menu on a desktop,
@@ -16,7 +16,7 @@ const read = (...p) => fs.readFileSync(appFile(...p), 'utf8');
 const js = read('public', 'app.js');
 const css = read('public', 'styles.css');
 const dash = read('views', 'portal', 'sections', 'dashboard.ejs');
-const nav = read('views', 'portal', 'partials', 'desktop-nav.ejs');
+const nav = read('views', 'portal', 'partials', 'topbar.ejs');
 const index = read('views', 'index.ejs');
 const hero = read('views', 'portal', 'partials', 'hero.ejs');
 const auth = read('views', 'portal', 'sections', 'auth.ejs');
@@ -63,10 +63,10 @@ const sessions = [
 ];
 const prog = { halls, sessions, mine: [], now: { date: '2026-11-22', minutes: 9 * 60 } };
 
-console.log('\n== Delegate: the tabs in the header ==');
-check('a header nav from tablet width up, Home · Programme · Map · Badge', /class="dash-nav hidden md:flex/.test(nav)
+console.log('\n== Delegate: the tabs in the bar ==');
+check('a nav in the bar from tablet width up, Home · Programme · Map · Badge', /class="dash-nav hidden md:flex/.test(nav)
   && ['home', 'programme', 'map', 'badge'].every((t) => new RegExp(`data-tab="${t}"`).test(nav)));
-check('...in all four delegate headers', (dash.match(/include\('\.\.\/partials\/desktop-nav'\)/g) || []).length === 4);
+check('...one bar for all four delegate pages, not one per page header', (index.match(/include\('portal\/partials\/topbar'\)/g) || []).length === 1 && !/desktop-nav|dash-nav/.test(dash));
 check('the bottom bar is for phones, and so is the room kept for it', /<nav id="dash-tabs" aria-label="Main" class="hidden md:hidden/.test(dash)
   && /@media \(max-width: 767px\) \{ body\.has-tabs \{ padding-bottom/.test(css));
 {
@@ -75,7 +75,7 @@ check('the bottom bar is for phones, and so is the room kept for it', /<nav id="
   sb.__f.navigateTo('map-page');
   const by = (t) => links.find((l) => l.dataset.tab === t);
   check('the header links show as the bottom tabs do, the page marked', ['home', 'programme', 'map', 'badge'].every((t) => !by(t).classList.contains('hidden'))
-    && by('map').getAttribute('aria-current') === 'page' && by('map').classList.contains('shadow-[inset_0_-2px_0_#d6b46a]') && by('home').getAttribute('aria-current') === 'false');
+    && by('map').getAttribute('aria-current') === 'page' && by('home').getAttribute('aria-current') === 'false');
   check('the delegate\'s pages start at the top', body.classList.contains('justify-start') && !body.classList.contains('justify-center'));
   sb.__f.navigateTo('auth-page');
   check('...sign-in stays centred', body.classList.contains('justify-center') && !body.classList.contains('justify-start'));

@@ -47,7 +47,8 @@
           <% } }) %>
           <hr>
           <% menu.filter((m) => !m.items).forEach((m) => { %><a href="<%= base %>/<%= m.key %>"<% if (page === m.key) { %> aria-current="page"<% } %>><%= m.label %></a><% }) %>
-          <a href="<%= portal %>">Sign in</a>
+          <p class="menu-group">Go to</p>
+          <a class="menu-go" href="<%= portal %>">Delegate portal<span>Sign in</span></a>
         </nav>
       </details>
     </div>

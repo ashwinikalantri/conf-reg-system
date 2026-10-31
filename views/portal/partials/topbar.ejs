@@ -1,0 +1,36 @@
+<!-- The conference bar on the delegate's pages: the website's header (logo,
+     links, the account on the right), with a gold "Delegate" tag. From
+     tablet width up the delegate's tabs are its links (the bottom bar,
+     #dash-tabs, is for phones); each shows and is marked by updateDashTabs(),
+     as the bottom tabs are. The account drop-down holds what is used now and
+     then. Shown on the delegate's pages only (updateDashTabs). -->
+<header id="dash-bar" class="cbar hidden self-stretch -mx-4 -mt-4 mb-4">
+  <div class="cbar-in">
+    <a href="<%= locals.websiteUrl || '/' %>" class="shrink-0" aria-label="The conference website"><img class="cbar-logo" src="/website/img/nqocn-mgims-logo.png" alt="NQOCN, Nationwide Quality of Care Network, with MGIMS Sevagram" width="1021" height="203"></a>
+    <span class="cbar-place">Delegate</span>
+    <nav aria-label="Main" class="dash-nav hidden md:flex items-center gap-0.5 min-w-0">
+      <button type="button" data-tab="home" onclick="dashGo('home')" class="dash-nav-link cbar-link">Home</button>
+      <button type="button" data-tab="programme" onclick="dashGo('programme')" class="dash-nav-link cbar-link hidden">Programme</button>
+      <button type="button" data-tab="map" onclick="dashGo('map')" class="dash-nav-link cbar-link hidden">Map</button>
+      <button type="button" data-tab="badge" onclick="openBadgeFullScreen()" class="dash-nav-link cbar-link hidden">Badge</button>
+    </nav>
+    <div class="ml-auto flex items-center gap-2 shrink-0">
+      <span class="hidden lg:block"><a href="<%= locals.websiteUrl || '/' %>" class="cbar-link">Conference website</a></span>
+      <div class="relative">
+        <button type="button" id="dash-menu-btn" onclick="toggleDashMenu(event)" aria-label="More: profile, password, log out" aria-haspopup="true" aria-expanded="false" class="cbar-me">
+          <span id="dash-me-initials" class="cbar-initials" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.6 3.1-6.5 7-6.5s7 2.9 7 6.5"/></svg></span>
+          <span id="dash-me-name" class="hidden lg:inline max-w-[12rem] truncate"></span>
+          <svg class="cbar-chev hidden md:block mr-2" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div id="dash-menu" class="hidden cbar-panel">
+          <button type="button" onclick="dashGo('profile')" class="cbar-item"><b>Profile</b><span>Your details, council number and certificate</span></button>
+          <button type="button" onclick="openSetPasswordModal(false)" class="cbar-item"><b>Change password</b><span>To sign in without a one-time code</span></button>
+          <a id="admin-nav-btn" href="/admin" class="cbar-item hidden"><b>Admin panel</b><span>For organisers and volunteers</span></a>
+          <div class="lg:hidden"><a href="<%= locals.websiteUrl || '/' %>" class="cbar-item"><b>Conference website</b><span>Programme, faculty, getting here</span></a></div>
+          <div class="cbar-rule"></div>
+          <button type="button" onclick="logout()" class="cbar-item"><b>Log out</b></button>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>

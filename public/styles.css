@@ -162,3 +162,73 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
    card's height. Only while shown -- a display rule on the element itself
    would override .hidden on the delegate's pages. */
 @media (min-width: 1024px) { #portal-hero:not(.hidden) { display: flex; flex-direction: column; justify-content: center; } }
+
+/* THE CONFERENCE BAR: the website's header (public/website/site.css,
+   .site-header), worn by the delegate's pages and the admin panel too -- the
+   logo, a gold tag saying where you are, the links in navy, the page you are
+   on (and a drop-down that is open) in pale gold, and drop-downs that look
+   like the website's. Its own rules, not Tailwind's, so the three stay one
+   design; `.hidden` is restated where a rule here sets display. */
+.cbar { background: #fff; border-bottom: 1px solid #e3e7eb; position: relative; z-index: 45; }
+.cbar-in { display: flex; align-items: center; gap: 16px; min-height: 64px; padding: 0 16px; max-width: 80rem; margin: 0 auto; }
+.cbar-logo { height: 30px; width: auto; display: block; }
+.cbar-place { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: #8a6d2b; white-space: nowrap; }
+.cbar-place::before { content: ""; width: 1px; height: 24px; background: #c8d0d7; }
+.cbar-link { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 11px; border-radius: 9px; font-weight: 600; font-size: 15px; color: #1c3549; white-space: nowrap; text-decoration: none; background: none; }
+.cbar-link:hover { background: #f5f7f9; }
+.cbar-link[aria-expanded="true"], .cbar-link[aria-current="page"] { background: #faf5e8; }
+.cbar-link[aria-current="page"] { font-weight: 700; }
+.cbar-link.hidden, .cbar-item.hidden, .cbar-group.hidden { display: none; }
+.cbar-chev { transition: transform 0.15s; }
+[aria-expanded="true"] > .cbar-chev { transform: rotate(180deg); }
+.cbar-me { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 4px; border: 1px solid #c8d0d7; border-radius: 999px; background: #fff; color: #1c3549; font-weight: 600; font-size: 15px; white-space: nowrap; }
+.cbar-me[aria-expanded="true"] { background: #faf5e8; border-color: #1c3549; }
+.cbar-initials { width: 34px; height: 34px; border-radius: 999px; background: #1c3549; color: #d6b46a; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; letter-spacing: 0.04em; flex-shrink: 0; }
+.cbar-burger { width: 44px; height: 44px; border: 1px solid #c8d0d7; border-radius: 10px; background: #fff; color: #1c3549; display: flex; align-items: center; justify-content: center; }
+.cbar-burger[aria-expanded="true"] { background: #faf5e8; border-color: #1c3549; }
+.cbar-panel { position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; width: min(320px, calc(100vw - 24px)); background: #fff; border: 1px solid #e3e7eb; border-radius: 14px; box-shadow: 0 16px 40px rgba(19, 33, 45, 0.16); padding: 8px; flex-direction: column; text-align: left; }
+.cbar-panel:not(.hidden) { display: flex; }
+.cbar-item { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 10px 14px; border-radius: 10px; text-align: left; text-decoration: none; color: #1c3549; background: none; }
+.cbar-item:hover { background: #f5f7f9; }
+.cbar-item[aria-current="page"] { background: #faf5e8; }
+.cbar-item b { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; color: #1c3549; }
+.cbar-item[aria-current="page"] b { font-weight: 700; }
+.cbar-item > span { font-size: 14px; font-weight: 400; color: #51606d; }
+.cbar-group { margin: 8px 0 2px; padding: 10px 14px 4px; border-top: 1px solid #eef1f4; font-weight: 700; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: #8a6d2b; }
+.cbar-group.first { border-top: 0; margin-top: 0; padding-top: 6px; }
+.cbar-rule { border-top: 1px solid #eef1f4; margin: 6px 0 4px; }
+@media (min-width: 768px) { .cbar-in { padding: 0 24px; min-height: 68px; } .cbar-logo { height: 34px; } }
+
+/* The admin panel's menu (#admin-menu). Below 1200px -- where the desks no
+   longer fit beside the logo -- it is one panel under the ☰ button, as on
+   the website's phones: the desks, then Settings and the account, each
+   listed in full. From 1200px it is the bar itself: the desks as links,
+   Settings and the account as drop-downs. */
+#admin-menu { display: none; position: absolute; left: 12px; right: 12px; top: calc(100% + 6px); z-index: 60; max-height: calc(100vh - 90px); overflow-y: auto; background: #fff; border: 1px solid #e3e7eb; border-radius: 14px; box-shadow: 0 16px 40px rgba(19, 33, 45, 0.16); padding: 8px; flex-direction: column; }
+#admin-menu.open { display: flex; }
+#admin-menu .cbar-drop { display: none; }
+#nav-tabs { display: flex; flex-direction: column; }
+#nav-tabs .cbar-link { width: 100%; font-size: 16px; min-height: 46px; padding: 0 14px; }
+#nav-tabs .cbar-link > span:last-child:not(:first-child) { margin-left: auto; }
+#settings-menu, #admin-me-menu { display: flex; flex-direction: column; }
+#settings-menu .cbar-cols { display: flex; flex-direction: column; }
+#admin-me-head { display: none; }
+/* On the one panel, Settings' first group follows the desks, so it keeps its rule. */
+#admin-menu #settings-menu .cbar-group.first { border-top: 1px solid #eef1f4; margin-top: 8px; padding-top: 10px; }
+@media (min-width: 1200px) {
+  #admin-menu-btn { display: none; }
+  #admin-menu, #admin-menu.open { display: flex; position: static; flex-direction: row; align-items: center; gap: 2px; flex: 1 1 auto; min-width: 0; max-height: none; overflow: visible; background: none; border: 0; border-radius: 0; box-shadow: none; padding: 0; }
+  #admin-menu .cbar-drop { display: inline-flex; }
+  #nav-tabs { flex-direction: row; align-items: center; gap: 2px; }
+  #nav-tabs .cbar-link { width: auto; font-size: 15px; min-height: 44px; padding: 0 11px; }
+  #admin-me-wrap { margin-left: auto; }
+  #settings-menu, #admin-me-menu { display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; background: #fff; border: 1px solid #e3e7eb; border-radius: 14px; box-shadow: 0 16px 40px rgba(19, 33, 45, 0.16); padding: 8px; }
+  #settings-menu.open, #admin-me-menu.open { display: flex; }
+  #settings-menu { width: 680px; }
+  #settings-menu .cbar-cols { flex-direction: row; gap: 8px; align-items: flex-start; }
+  #settings-menu .cbar-cols > div { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+  #admin-me-menu { width: 300px; }
+  #admin-me-head { display: flex; }
+  #admin-menu #settings-menu .cbar-group.first { border-top: 0; margin-top: 0; padding-top: 6px; }
+  #admin-me-menu .cbar-group.go { border-top: 0; margin-top: 0; }
+}
