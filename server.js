@@ -3651,8 +3651,12 @@ function requirePermission(permission) {
 // worth it.
 app.use(compression());
 // Body limit sized for a single base64 screenshot (5 MB image + ~33%
-// encoding overhead + form fields), not the old 50 MB.
-app.use(express.json({ limit: '8mb' }));
+// encoding overhead + form fields), not the old 50 MB. The certificate
+// background has no size limit of its own: it is read by its route, once
+// the caller is known to manage certificates (CERT_BACKGROUND_JSON).
+const CERT_BACKGROUND_PATH = '/api/admin/certificates/background';
+const jsonBody = express.json({ limit: '8mb' });
+app.use((req, res, next) => (req.path === CERT_BACKGROUND_PATH ? next() : jsonBody(req, res, next)));
 app.use(express.urlencoded({ limit: '8mb', extended: true }));
 // index: false -- the delegate portal is a template now (views/index.ejs plus
 // its partials), served by the explicit GET / below. Without this, static
@@ -10007,8 +10011,10 @@ app.get('/api/admin/certificates/signatories/:id/signature', requirePermission('
 });
 
 // The designer's artwork, drawn full-page under the text. PNG or JPEG, A4
-// landscape (297 x 210 mm).
-app.put('/api/admin/certificates/background', requirePermission('certificates.manage'), async (req, res, next) => {
+// landscape (297 x 210 mm). Any size: the only ceiling is Cloudflare's
+// 100 MB per request in front of the server, which the parser matches.
+const CERT_BACKGROUND_JSON = express.json({ limit: '100mb' });
+app.put('/api/admin/certificates/background', requirePermission('certificates.manage'), CERT_BACKGROUND_JSON, async (req, res, next) => {
   try {
     const current = await certificateSettings();
     let file = null;
@@ -10016,7 +10022,7 @@ app.put('/api/admin/certificates/background', requirePermission('certificates.ma
       const m = /^data:(image\/(?:png|jpe?g));base64,([A-Za-z0-9+/=]+)$/i.exec(req.body.image);
       if (!m) return res.status(400).json({ success: false, error: 'The background must be a PNG or JPEG image.' });
       const buffer = Buffer.from(m[2], 'base64');
-      if (!buffer.length || buffer.length > 8 * 1024 * 1024) return res.status(400).json({ success: false, error: 'The background must be under 8 MB.' });
+      if (!buffer.length) return res.status(400).json({ success: false, error: 'That image is empty.' });
       file = await writeUploadBuffer(buffer, /png/i.test(m[1]) ? 'png' : 'jpg');
     }
     await dbRun("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('certificate_settings', ?)", [JSON.stringify({ ...current, background: file })]);

@@ -13856,7 +13856,7 @@ function readImageFile(input, maxBytes) {
     input.value = '';
     if (!file) return resolve(null);
     if (!/^image\/(png|jpeg)$/.test(file.type)) { showToast('Choose a PNG or JPEG image.'); return resolve(null); }
-    if (file.size > maxBytes) { showToast(`The image must be under ${Math.round(maxBytes / 1048576)} MB.`); return resolve(null); }
+    if (maxBytes && file.size > maxBytes) { showToast(`The image must be under ${Math.round(maxBytes / 1048576)} MB.`); return resolve(null); }
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
     reader.onerror = () => resolve(null);
@@ -13898,11 +13898,13 @@ async function addSignatory(e) {
 }
 
 async function uploadCertificateBackground(input) {
-  const dataUrl = await readImageFile(input, 8 * 1048576);
+  const dataUrl = await readImageFile(input, 0); // no size limit
   if (!dataUrl) return;
-  const data = await (await fetch('/api/admin/certificates/background', {
+  const res = await fetch('/api/admin/certificates/background', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }),
-  })).json();
+  });
+  if (res.status === 413) return showToast('That image is too large to send (over about 75 MB). Save it smaller and try again.');
+  const data = await res.json();
   if (!data.success) return showToast(data.error || 'Could not upload.');
   showToast('Background uploaded. Preview a specimen to check the placement.', 'success');
   renderCertificateSettings();
