@@ -9755,7 +9755,7 @@ function reportRowCardHtml(row, columns) {
   // someone is at a glance -- designation and institute affiliation --
   // dropping demographic/contact fields the mobile card doesn't need.
   if (columns.includes('Institution') && columns.includes('Pincode')) {
-    const keep = ['Designation', 'Institution', 'District', 'State'];
+    const keep = ['Designation', 'Institution', 'District', 'State', 'Payment Date'];
     restIdxs = restIdxs.filter((i) => keep.includes(columns[i]));
   }
 

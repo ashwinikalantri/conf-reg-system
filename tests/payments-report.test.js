@@ -1,7 +1,8 @@
 // The "Delegate Payment Details & Status" report carries each delegate's
 // designation and institution, and the date(s) their money reached the
 // account -- from the bank statement, through each linked payment or (older
-// links) the registration itself; several for instalments.
+// links) the registration itself; several for instalments. The Registered
+// Delegates report shows the same date.
 const { call, check, report, adminLogin, openDb } = require('./harness');
 
 const N = String(Date.now()).slice(-7);
@@ -51,6 +52,17 @@ const N = String(Date.now()).slice(-7);
     check('no bank credit linked: the date is left empty, not guessed', !!unmatched || sec.rows.every((r) => r[col('Payment Date (Bank)')]));
     const csv = await call('GET', '/api/admin/reports/payments?format=csv', null, admin);
     check('the Excel download carries the new columns too', csv.status === 200 && /Payment Date \(Bank\)/.test(csv.raw) && csv.raw.includes('Associate Professor'));
+
+    // The Registered Delegates report carries the same date.
+    const del = (await call('GET', '/api/admin/reports/delegates?format=json', null, admin)).body.report.sections[0];
+    const dcol = del.columns.indexOf('Payment Date');
+    check('Registered Delegates has a Payment Date column', dcol >= 0, del.columns);
+    const drow = del.rows.find((r) => r[0] === `PR${N}`);
+    check('...with both instalment dates, earliest first', drow && drow[dcol] === '12 Sep 2026; 3 Oct 2026', drow && drow[dcol]);
+    const dlegacy = del.rows.find((r) => r[0] === `PL${N}`);
+    check('...and the older-style link\'s date', dlegacy && dlegacy[dcol] === '20 Aug 2026', dlegacy && dlegacy[dcol]);
+    const delCsv = await call('GET', '/api/admin/reports/delegates?format=csv', null, admin);
+    check('...in the Excel download too', delCsv.status === 200 && delCsv.raw.includes('Payment Date') && delCsv.raw.includes('20 Aug 2026'));
   } finally {
     for (const id of made.txns) await db.run('DELETE FROM payment_transactions WHERE id = ?', [id]);
     for (const id of made.regs) await db.run('DELETE FROM registrations WHERE id = ?', [id]);

@@ -12903,6 +12903,24 @@ async function computeFinanceTotals() {
   };
 }
 
+// When the money reached the account: the bank statement's date of each
+// credit linked to the registration -- through its payments, or (older
+// links) the registration itself. Several for a delegate who paid in
+// instalments. Returns registration id -> "12 Sep 2026; 3 Oct 2026".
+async function reportPaymentDates() {
+  const creditDates = {};
+  const addCredit = (regId, iso) => { if (iso) (creditDates[regId] ||= new Set()).add(String(iso).slice(0, 10)); };
+  for (const c of await dbAll(
+    `SELECT pt.registration_id, b.post_date FROM payment_transactions pt
+       JOIN bank_statement_transactions b ON b.id = pt.bank_txn_id
+      WHERE COALESCE(pt.txn_status, '') != 'REJECTED'`)) addCredit(c.registration_id, c.post_date);
+  for (const c of await dbAll(
+    `SELECT r.id AS registration_id, b.post_date FROM registrations r
+       JOIN bank_statement_transactions b ON b.id = r.bank_txn_id`)) addCredit(c.registration_id, c.post_date);
+  const fmtIso = (iso) => attendanceLib.dateRange(iso, iso); // "12 Sep 2026", the same on every server
+  return (regId) => [...(creditDates[regId] || [])].sort().map(fmtIso).join('; ');
+}
+
 async function buildReport(type, opts = {}) {
   // The one report with no line list. Every other report is a table of
   // people or payments; this is the handful of numbers somebody asks for
@@ -13124,17 +13142,20 @@ async function buildReport(type, opts = {}) {
 
   if (type === 'delegates') {
     const rows = (await dbAll(
-      `SELECT registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number AS phone_number,
-         u.age, u.gender, u.designation, u.institution, u.district, u.state, u.pincode, u.country, u.email, u.phone
+      `SELECT registrations.id, registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number AS phone_number,
+         registrations.payment_mode, u.age, u.gender, u.designation, u.institution, u.district, u.state, u.pincode, u.country, u.email, u.phone
          FROM registrations
          LEFT JOIN users u ON u.phone_number = registrations.phone_number
          WHERE registrations.bank_status = 'BANK_VERIFIED'
          ORDER BY registrations.registration_number`)).map(withDelegateSalutation);
+    const paymentDates = await reportPaymentDates();
     return {
       title: 'Registered Delegates',
       sections: [{
-        columns: ['Reg No', 'Name', 'Age', 'Gender', 'Mobile', 'Email', 'Designation', 'Institution', 'District', 'State', 'Pincode', 'Country'],
-        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.age, r.gender, displayPhone(r), r.email, r.designation, r.institution, r.district, r.state, r.pincode, r.country || 'India']),
+        columns: ['Reg No', 'Name', 'Age', 'Gender', 'Mobile', 'Email', 'Designation', 'Institution', 'District', 'State', 'Pincode', 'Country', 'Payment Date'],
+        // A complimentary registration has no bank credit to date.
+        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.age, r.gender, displayPhone(r), r.email, r.designation, r.institution, r.district, r.state, r.pincode, r.country || 'India',
+          paymentDates(r.id) || (r.payment_mode === 'COMPLIMENTARY' ? 'Complimentary' : '')]),
       }],
     };
   }
@@ -13199,21 +13220,7 @@ async function buildReport(type, opts = {}) {
          u.designation, u.institution
          FROM registrations LEFT JOIN users u ON u.phone_number = registrations.phone_number
          ORDER BY registrations.registration_number`)).map(withDelegateSalutation);
-    // When the money reached the account: the bank statement's date of each
-    // credit linked to the registration -- through its payments, or (older
-    // links) the registration itself. Several for a delegate who paid in
-    // instalments.
-    const creditDates = {};
-    const addCredit = (regId, iso) => { if (iso) (creditDates[regId] ||= new Set()).add(String(iso).slice(0, 10)); };
-    for (const c of await dbAll(
-      `SELECT pt.registration_id, b.post_date FROM payment_transactions pt
-         JOIN bank_statement_transactions b ON b.id = pt.bank_txn_id
-        WHERE COALESCE(pt.txn_status, '') != 'REJECTED'`)) addCredit(c.registration_id, c.post_date);
-    for (const c of await dbAll(
-      `SELECT r.id AS registration_id, b.post_date FROM registrations r
-         JOIN bank_statement_transactions b ON b.id = r.bank_txn_id`)) addCredit(c.registration_id, c.post_date);
-    const fmtIso = (iso) => attendanceLib.dateRange(iso, iso); // "12 Sep 2026", the same on every server
-    const paymentDates = (regId) => [...(creditDates[regId] || [])].sort().map(fmtIso).join('; ');
+    const paymentDates = await reportPaymentDates();
     // Same verified-total-minus-refunds computation as GET /api/registrations
     // and getPaymentSummary -- paid_amount above is just the claimed amount
     // at submission, not the cumulative verified total across every linked
