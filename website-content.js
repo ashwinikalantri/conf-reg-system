@@ -85,7 +85,7 @@ module.exports = {
     { name: 'Consortium of Accredited Healthcare Organizations (CAHO)', file: 'partners/caho.png' },
     { name: 'Indian Association of Preventive and Social Medicine (IAPSM)', file: 'partners/iapsm.png' },
     { name: 'Telemedicine Society of India', file: 'partners/telemedicine-society-of-india.png' },
-    { name: 'Maharashtra University of Health Sciences (MUHS)', file: 'partners/muhs.png' },
+    { name: 'Maharashtra University of Health Sciences (MUHS)', file: 'partners/muhs-logo.png' },
     { name: 'PCI India', file: 'partners/pci-india-logo.png' },
   ],
 
