@@ -26,6 +26,8 @@ for (const [what, input, want] of cases) {
   check(what, got === want, got);
 }
 check('quotes alone leave nothing', cleanTitle(' “” ') === '');
+check('no space before a colon', cleanTitle('Diabetes in Central India : A Mixed Method Study') === 'Diabetes in Central India: A Mixed Method Study'
+  && cleanTitle('Intensive Care Unit  : A Quality Improvement Initiative') === 'Intensive Care Unit: A Quality Improvement Initiative');
 check('a leading hyphen taken off', cleanTitle('-Improving hand hygiene compliance') === 'Improving Hand Hygiene Compliance', cleanTitle('-Improving hand hygiene compliance'));
 check('...and a "Title of paper:" label', cleanTitle('Title of paper:  Improving Hand Hygiene: A PDSA-Based Project') === 'Improving Hand Hygiene: A PDSA-Based Project'
   && cleanTitle('TITLE: A study of care') === 'A Study of Care' && cleanTitle('“Title of the abstract – Care at home”') === 'Care at Home');
