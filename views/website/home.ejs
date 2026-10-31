@@ -91,7 +91,12 @@
 <section aria-labelledby="partners-h">
   <div class="wrap section stack" style="gap: 20px">
     <p id="partners-h" class="kicker" style="color: var(--muted)">With our partners</p>
-    <div class="partners">
+    <%# The same number of logos in each row, as near as the count allows:
+        at most 8 a row on a desktop, 5 on a tablet, 3 on a phone, spread
+        over as few rows as that takes, the shorter row centred (11 logos:
+        6 and 5; 4, 4 and 3; 3, 3, 3 and 2). %>
+    <% const perRow = (max) => { const n = content.partners.length || 1; return Math.ceil(n / Math.ceil(n / max)); }; %>
+    <div class="partners" style="--per-sm: <%= perRow(3) %>; --per-md: <%= perRow(5) %>; --per-lg: <%= perRow(8) %>">
       <% content.partners.forEach((p) => { %><div class="partner"><img src="<%= assets %>/img/<%= p.file %>" alt="<%= p.name %>" loading="lazy"></div><% }) %>
     </div>
   </div>

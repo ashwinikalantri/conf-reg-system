@@ -160,8 +160,12 @@ p { margin: 0; }
 .feature > * { flex: 1 1 420px; min-width: 0; }
 .oration-title { font-weight: 800; font-size: 36px; line-height: 1.1; }
 @media (min-width: 720px) { .oration-title { font-size: 44px; } }
-.partners { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
-.partner { height: 96px; border: 1px solid var(--line); border-radius: 12px; background: #fff; display: flex; align-items: center; justify-content: center; padding: 12px; }
+/* Partners: rows of equal count (the count is worked out in home.ejs), the
+   shorter row centred. */
+.partners { --per: var(--per-sm, 3); display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+@media (min-width: 720px) { .partners { --per: var(--per-md, 5); } }
+@media (min-width: 1000px) { .partners { --per: var(--per-lg, 8); } }
+.partner { flex: 0 0 calc((100% - (var(--per) - 1) * 12px) / var(--per)); min-width: 0; box-sizing: border-box; height: 96px; border: 1px solid var(--line); border-radius: 12px; background: #fff; display: flex; align-items: center; justify-content: center; padding: 12px; }
 .partner img { max-height: 72px; max-width: 100%; width: auto; height: auto; object-fit: contain; display: block; }
 
 /* Programme */

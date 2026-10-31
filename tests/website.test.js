@@ -101,6 +101,13 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     check('nqocn2026.mgims.ac.in/ is the website home', home.status === 200 && /Two days at Sevagram/.test(home.raw), home.status);
     check('...its links are at the root', /href="\/programme"/.test(home.raw) && !/href="\/website\/(programme|workshops|registration|abstracts|faculty|team|visit|about)/.test(home.raw));
     check('...its images and stylesheet still load', /src="\/website\/img\/nqocn-mgims-logo\.png"/.test(home.raw) && /href="\/website\/site\.css/.test(home.raw));
+    {
+      const n = require('../website-content').partners.length;
+      const per = (max) => Math.ceil(n / Math.ceil(n / max));
+      check(`the partners in rows of equal count (${n}: ${per(8)} a row on a desktop, ${per(5)} on a tablet, ${per(3)} on a phone)`,
+        new RegExp(`<div class="partners" style="--per-sm: ${per(3)}; --per-md: ${per(5)}; --per-lg: ${per(8)}">`).test(home.raw)
+        && /\.partners \{ --per: var\(--per-sm, 3\); display: flex; flex-wrap: wrap; justify-content: center;/.test(require('fs').readFileSync(require('./harness').appFile('public', 'website', 'site.css'), 'utf8')));
+    }
     check('...PCI India among the partners, its logo served', /<img src="\/website\/img\/partners\/pci-india-logo\.png" alt="PCI India"/.test(home.raw)
       && (await call('GET', '/website/img/partners/pci-india-logo.png', null, null)).status === 200);
     {
