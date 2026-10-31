@@ -1513,8 +1513,8 @@ async function repriceWithBestCode(req, phone) {
   if (!(newDiscount > oldDiscount)) return null;
   const from = Number(reg.expected_amount) || 0;
   const to = Math.max(0, categoryFee - newDiscount + optionsFee - adjustment);
-  await dbRun('UPDATE registrations SET discount_code = ?, discount_amount = ?, expected_amount = ? WHERE id = ?',
-    [v.code.code, newDiscount, to, reg.id]);
+  await dbRun('UPDATE registrations SET discount_code = ?, discount_amount = ?, discount_applied_at = ?, expected_amount = ? WHERE id = ?',
+    [v.code.code, newDiscount, Date.now(), to, reg.id]);
   // Part-paid, and now paid in full: back to finance to confirm, as a fee
   // adjustment does.
   if (reg.bank_status === 'PARTIAL_PAYMENT' && (await getPaymentSummary(reg.id, to)).fullyPaid) {
@@ -2642,6 +2642,10 @@ db.serialize(() => {
     // Applied promo/discount code and the rupee amount it took off the fee.
     if (!names.includes('discount_code')) pending.push(alter('ALTER TABLE registrations ADD COLUMN discount_code TEXT'));
     if (!names.includes('discount_amount')) pending.push(alter('ALTER TABLE registrations ADD COLUMN discount_amount REAL DEFAULT 0'));
+    // When the discount code was applied -- the "payment date" of a
+    // registration a code made free. Not back-filled: older rows fall back
+    // to submitted_at (see reportPaymentDates' callers).
+    if (!names.includes('discount_applied_at')) pending.push(alter('ALTER TABLE registrations ADD COLUMN discount_applied_at INTEGER'));
 
     Promise.all(pending).then(() => {
       // Backfill a number for any already-verified registration that predates
@@ -4574,8 +4578,8 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 
       await dbRun(
         `INSERT INTO registrations
-          (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount)
-          VALUES (?, ?, ?, ?, 0, 0, NULL, NULL, ?, NULL, NULL, NULL, 0, 'BANK_VERIFIED', NULL, NULL, NULL, ?, ?, ?)
+          (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_vpa_match, ocr_utr_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount, discount_applied_at)
+          VALUES (?, ?, ?, ?, 0, 0, NULL, NULL, ?, NULL, NULL, NULL, 0, 'BANK_VERIFIED', NULL, NULL, NULL, ?, ?, ?, ?)
           ON CONFLICT(phone_number) DO UPDATE SET
             delegate_name = excluded.delegate_name,
             category_key = excluded.category_key,
@@ -4595,9 +4599,10 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
             payment_mode = NULL,
             submitted_at = excluded.submitted_at,
             discount_code = excluded.discount_code,
-            discount_amount = excluded.discount_amount`,
+            discount_amount = excluded.discount_amount,
+            discount_applied_at = excluded.discount_applied_at`,
         [phone, name, effectiveCategoryKey, categoryLabel,
-          idFilename, Date.now(), discountCodeApplied, discountAmount]
+          idFilename, Date.now(), discountCodeApplied, discountAmount, discountCodeApplied ? Date.now() : null]
       );
       const regRow = await dbGet('SELECT id FROM registrations WHERE phone_number = ?', [phone]);
       await saveRegistrationSelections(regRow.id, selections);
@@ -4666,8 +4671,8 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
 
     const result = await dbRun(
       `INSERT INTO registrations
-        (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_amount_status, ocr_vpa_match, ocr_utr_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL, ?, ?, ?, ?)
+        (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number, screenshot, id_card, ocr_amount_match, ocr_amount_status, ocr_vpa_match, ocr_utr_match, is_flagged, bank_status, rejection_reason, rejection_note, payment_mode, submitted_at, discount_code, discount_amount, discount_applied_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, NULL, ?, ?, ?, ?, ?)
         ON CONFLICT(phone_number) DO UPDATE SET
           delegate_name = excluded.delegate_name,
           category_key = excluded.category_key,
@@ -4688,10 +4693,12 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
           payment_mode = excluded.payment_mode,
           submitted_at = excluded.submitted_at,
           discount_code = excluded.discount_code,
-          discount_amount = excluded.discount_amount`,
+          discount_amount = excluded.discount_amount,
+          discount_applied_at = excluded.discount_applied_at`,
       [phone, name, effectiveCategoryKey, categoryLabel,
         expectedAmount, paidAmount, utr, filename, idFilename,
-        checks.amount ? 1 : 0, checks.amountStatus, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, flagged, mode, Date.now(), discountCodeApplied, discountAmount]
+        checks.amount ? 1 : 0, checks.amountStatus, checks.vpa ? 1 : 0, checks.utr ? 1 : 0, flagged, mode, Date.now(), discountCodeApplied, discountAmount,
+        discountCodeApplied ? Date.now() : null]
     );
 
     if (prev && prev.screenshot && prev.screenshot !== filename) {
@@ -5314,7 +5321,7 @@ async function revokeGroupDiscountIfBelowThreshold(groupId) {
     const summary = await getPaymentSummary(reg.id, fullFee);
     const newStatus = reg.bank_status === 'REJECTED' ? 'REJECTED'
       : (summary.verifiedTotal >= fullFee ? reg.bank_status : (summary.verifiedTotal > 0 ? 'PARTIAL_PAYMENT' : 'PENDING'));
-    await dbRun('UPDATE registrations SET expected_amount = ?, discount_amount = 0, discount_code = NULL, bank_status = ? WHERE id = ?',
+    await dbRun('UPDATE registrations SET expected_amount = ?, discount_amount = 0, discount_code = NULL, discount_applied_at = NULL, bank_status = ? WHERE id = ?',
       [fullFee, newStatus, reg.id]);
     notifyDelegate(reg.phone_number, 'Group discount no longer applies — balance due',
       emailWrap('Your group discount has been withdrawn',
@@ -7491,11 +7498,11 @@ async function registerFromAdmin(req, res, next, complimentary) {
       `INSERT INTO registrations
         (phone_number, delegate_name, category_key, category_label, expected_amount, paid_amount, utr_number,
          id_verified, id_verified_by, id_verified_at, bank_status, payment_mode, submitted_at,
-         discount_code, discount_amount)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         discount_code, discount_amount, discount_applied_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [phone, name, req.body.categoryKey, feeInfo.label, expectedAmount, paidAmount, utrNumber,
        needsId ? 1 : 0, needsId ? (req.session.name || req.session.phone) : null, needsId ? now : null,
-       bankStatus, paymentMode, now, discountCodeApplied, discountAmount]
+       bankStatus, paymentMode, now, discountCodeApplied, discountAmount, discountCodeApplied ? now : null]
     );
     const registrationId = result.lastID;
     await saveRegistrationSelections(registrationId, selections);
@@ -13143,19 +13150,29 @@ async function buildReport(type, opts = {}) {
   if (type === 'delegates') {
     const rows = (await dbAll(
       `SELECT registrations.id, registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number AS phone_number,
-         registrations.payment_mode, u.age, u.gender, u.designation, u.institution, u.district, u.state, u.pincode, u.country, u.email, u.phone
+         registrations.payment_mode, registrations.expected_amount, registrations.discount_code,
+         registrations.discount_applied_at, registrations.submitted_at, u.age, u.gender, u.designation, u.institution, u.district, u.state, u.pincode, u.country, u.email, u.phone
          FROM registrations
          LEFT JOIN users u ON u.phone_number = registrations.phone_number
          WHERE registrations.bank_status = 'BANK_VERIFIED'
          ORDER BY registrations.registration_number`)).map(withDelegateSalutation);
     const paymentDates = await reportPaymentDates();
+    // No bank credit to date: a complimentary registration takes the day it
+    // was added, and one a discount code made free the day the code was
+    // applied (rows from before that was recorded: the day they registered).
+    const noPaymentDate = (r) => {
+      if (r.payment_mode !== 'COMPLIMENTARY' && (!r.discount_code || Number(r.expected_amount) > 0)) return '';
+      const at = r.discount_applied_at || r.submitted_at;
+      if (!at) return '';
+      const iso = istDateString(at);
+      return attendanceLib.dateRange(iso, iso);
+    };
     return {
       title: 'Registered Delegates',
       sections: [{
         columns: ['Reg No', 'Name', 'Age', 'Gender', 'Mobile', 'Email', 'Designation', 'Institution', 'District', 'State', 'Pincode', 'Country', 'Payment Date'],
-        // A complimentary registration has no bank credit to date.
         rows: rows.map((r) => [r.registration_number, r.delegate_name, r.age, r.gender, displayPhone(r), r.email, r.designation, r.institution, r.district, r.state, r.pincode, r.country || 'India',
-          paymentDates(r.id) || (r.payment_mode === 'COMPLIMENTARY' ? 'Complimentary' : '')]),
+          paymentDates(r.id) || noPaymentDate(r)]),
       }],
     };
   }
