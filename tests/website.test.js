@@ -111,6 +111,8 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
       check('MUHS: the new logo, transparent, served', muhs.data[3] === 0 && muhs.height === 640
         && /<img src="\/website\/img\/partners\/muhs-logo\.png"/.test(home.raw) && (await call('GET', '/website/img/partners/muhs-logo.png', null, null)).status === 200);
       const caho = PNG.sync.read(require('fs').readFileSync(require('./harness').appFile('public', 'website', 'img', 'partners', 'caho-logo.png')));
+      check('C3 among the partners, its logo served', /<img src="\/website\/img\/partners\/c3\.png" alt="Centre for Catalyzing Change \(C3\)"/.test(home.raw)
+        && (await call('GET', '/website/img/partners/c3.png', null, null)).status === 200);
       check('CAHO: the new logo, transparent, served', caho.data[3] === 0
         && /<img src="\/website\/img\/partners\/caho-logo\.png"/.test(home.raw) && (await call('GET', '/website/img/partners/caho-logo.png', null, null)).status === 200);
     }

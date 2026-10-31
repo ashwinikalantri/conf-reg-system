@@ -87,6 +87,7 @@ module.exports = {
     { name: 'Telemedicine Society of India', file: 'partners/telemedicine-society-of-india.png' },
     { name: 'Maharashtra University of Health Sciences (MUHS)', file: 'partners/muhs-logo.png' },
     { name: 'PCI India', file: 'partners/pci-india-logo.png' },
+    { name: 'Centre for Catalyzing Change (C3)', file: 'partners/c3.png' },
   ],
 
   // Field visits and on-campus practice, by programme option id: what each
