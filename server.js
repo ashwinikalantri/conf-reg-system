@@ -34,6 +34,7 @@ const peopleLib = require('./programme-people');
 const reminderLib = require('./reminders');
 const attendanceLib = require('./attendance');
 const abstractTitle = require('./abstract-title');
+const mealsLib = require('./meals');
 const councilsLib = require('./councils');
 const certificatePdfLib = require('./certificate-pdf');
 const { renderAbstractPdf } = require('./abstract-pdf');
@@ -1932,6 +1933,40 @@ db.serialize(() => {
       option_id INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER
+    )
+  `);
+  // A meal: scanned at its counter (see MEALS). Sessions ticked as meals
+  // that start together are one meal served at several counters.
+  db.run('ALTER TABLE programme_sessions ADD COLUMN meal INTEGER NOT NULL DEFAULT 0', () => {});
+  // Each serving: one per person per meal (the partial unique index), at a
+  // counter (the session), by a volunteer; "serve anyway" keeps its reason.
+  // person_key is the account's phone_number, or faculty-<guest id> for
+  // faculty with no account.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS meal_servings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meal_key TEXT NOT NULL,
+      session_id INTEGER NOT NULL,
+      person_key TEXT NOT NULL,
+      person_kind TEXT NOT NULL,
+      person_name TEXT,
+      at INTEGER NOT NULL,
+      by_phone TEXT,
+      by_name TEXT,
+      method TEXT NOT NULL,
+      override_reason TEXT,
+      removed_at INTEGER,
+      removed_by TEXT
+    )
+  `);
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS meal_servings_once ON meal_servings (meal_key, person_key) WHERE removed_at IS NULL');
+  // The printed meal pass for faculty and organisers: an unguessable code
+  // for its QR, one per person.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS meal_passes (
+      person_key TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL
     )
   `);
 
@@ -9175,7 +9210,7 @@ const sessionLabel = (s) => `${s.title} · ${s.hall}, ${attendanceLib.shortDate(
 const publicSession = (s) => ({
   id: s.id, hallId: s.hall_id, hall: s.hall, date: s.session_date, start: s.start_time, end: s.end_time,
   label: s.label || '', title: s.title, speakers: s.speakers || '', chairs: s.chairs || '',
-  counts: Number(s.counts) === 1, workshop: isWorkshopSession(s), optionId: s.option_id || null, optionName: s.option_name || null,
+  counts: Number(s.counts) === 1, meal: Number(s.meal) === 1, workshop: isWorkshopSession(s), optionId: s.option_id || null, optionName: s.option_name || null,
 });
 
 // The registration someone attends under: any not rejected.
@@ -9338,6 +9373,7 @@ async function sessionInput(b, current = {}) {
     speakers: String(v('speakers', current.speakers) || '').trim().slice(0, 600) || null,
     chairs: String(v('chairs', current.chairs) || '').trim().slice(0, 300) || null,
     counts: v('counts', current.counts) ? 1 : 0,
+    meal: v('meal', current.meal) ? 1 : 0,
     option_id: v('optionId', current.option_id) ? Number(v('optionId', current.option_id)) : null,
   };
   if (!(await dbGet('SELECT id FROM halls WHERE id = ?', [out.hall_id]))) return { error: 'Choose the hall.' };
@@ -9430,6 +9466,242 @@ app.delete('/api/admin/programme/sessions/:id', requirePermission('programme.man
     await dbRun('DELETE FROM programme_session_faculty WHERE session_id = ?', [s.id]);
     await recordAudit({ req, entityType: 'programme_session', entityId: s.id, action: 'SESSION_DELETED', oldValue: `${s.session_date} ${s.start_time} · ${s.title}`, newValue: null });
     res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- MEALS ---
+// The meal counters. A meal is a programme session ticked "meal"; those
+// starting together are one meal at several counters (meals.js). A
+// volunteer (meals.scan) scans a badge, a meal pass, or finds someone by
+// name: served once per person per meal, whichever counter. Who is served:
+// meals.js, decide(). Servings never count towards a certificate.
+const NOT_STAFF_ROLES = new Set(['DELEGATE', 'PARTNER']);
+const mealMeals = async () => mealsLib.groupMeals(await programmeSessions());
+const isCancelledGuest = (g) => String(g.overall_status || '').trim().toLowerCase() === guestLib.CANCELLED.toLowerCase();
+
+// Who a person is at a meal counter, by their key: an account's
+// phone_number, or faculty-<guest id> for faculty with no account (a
+// linked faculty member is always their account, so a badge and a pass
+// are the same person).
+async function mealPerson(key) {
+  const fac = /^faculty-(\d+)$/.exec(String(key || ''));
+  if (fac) {
+    const g = await dbGet('SELECT id, phone_number, guest_name, guest_designation, overall_status FROM guests WHERE id = ?', [fac[1]]);
+    if (!g) return null;
+    if (g.phone_number) return mealPerson(g.phone_number);
+    const cancelled = isCancelledGuest(g);
+    return { key: `faculty-${g.id}`, name: g.guest_name || 'Faculty', detail: g.guest_designation || 'Faculty, no portal account',
+      ...mealsLib.decide({ faculty: !cancelled, facultyCancelled: cancelled }) };
+  }
+  const u = await dbGet('SELECT phone_number, salutation, full_name, role, registration_number FROM users WHERE phone_number = ?', [key]);
+  if (!u) return null;
+  const guests = await dbAll('SELECT overall_status FROM guests WHERE phone_number = ?', [u.phone_number]);
+  const onList = guests.some((g) => !isCancelledGuest(g));
+  const reg = await dbGet('SELECT registration_number, category_label, bank_status FROM registrations WHERE phone_number = ?', [u.phone_number]);
+  return {
+    key: u.phone_number,
+    name: reminderName(u.salutation, u.full_name) || (reg && reg.registration_number) || 'Unnamed account',
+    detail: [(reg && reg.registration_number) || u.registration_number, reg && reg.category_label].filter(Boolean).join(' · '),
+    ...mealsLib.decide({ staff: !NOT_STAFF_ROLES.has(u.role), faculty: onList, facultyCancelled: !onList && guests.length > 0, regStatus: reg ? reg.bank_status : null }),
+  };
+}
+const publicMealPerson = (p) => ({ key: p.key, name: p.name, detail: p.detail, eligible: p.eligible, kind: p.kind,
+  kindLabel: p.kind ? mealsLib.KIND_LABEL[p.kind] : 'Not registered', reason: p.reason });
+
+// A scan or a typed entry: a meal pass code, else a badge, ID, mobile,
+// email or name (the Front Desk's own lookup).
+async function mealFind(identifier, personKey) {
+  if (personKey) {
+    const person = await mealPerson(String(personKey));
+    return person ? { person } : { error: 'Nobody found.' };
+  }
+  const raw = String(identifier || '').trim();
+  if (mealsLib.PASS_RE.test(raw.toUpperCase())) {
+    const pass = await dbGet('SELECT person_key FROM meal_passes WHERE code = ?', [raw.toUpperCase()]);
+    const person = pass && await mealPerson(pass.person_key);
+    return person ? { person } : { error: 'That meal pass is not known. Find them by name instead.' };
+  }
+  const found = await deskFindDelegate(raw);
+  if (found.error) return { error: found.error };
+  if (found.candidates) return { error: 'That matches more than one person. Find them by name below.' };
+  const person = await mealPerson(found.user.phone_number);
+  return person ? { person } : { error: 'Nobody found.' };
+}
+
+// Everyone a meal is for, by kind: confirmed delegates, faculty (not
+// cancelled) and organisers, each person once (faculty first, then
+// organiser, then delegate).
+async function mealExpected() {
+  const kinds = new Map();
+  for (const g of await dbAll('SELECT id, phone_number, overall_status FROM guests')) {
+    if (!isCancelledGuest(g)) kinds.set(g.phone_number || `faculty-${g.id}`, 'FACULTY');
+  }
+  for (const u of await dbAll('SELECT phone_number, role FROM users')) {
+    if (!NOT_STAFF_ROLES.has(u.role) && !kinds.has(u.phone_number)) kinds.set(u.phone_number, 'ORGANISER');
+  }
+  for (const r of await dbAll("SELECT phone_number FROM registrations WHERE bank_status = 'BANK_VERIFIED'")) {
+    if (!kinds.has(r.phone_number)) kinds.set(r.phone_number, 'DELEGATE');
+  }
+  const count = { DELEGATE: 0, FACULTY: 0, ORGANISER: 0 };
+  for (const k of kinds.values()) count[k]++;
+  return { ...count, total: kinds.size, keys: kinds };
+}
+
+// Each meal with what has been served: in all, by kind, at each counter,
+// and how many were served anyway.
+async function mealCounts(meals) {
+  const rows = await dbAll(`SELECT meal_key, session_id, person_kind, COUNT(*) AS n, SUM(override_reason IS NOT NULL) AS anyway
+      FROM meal_servings WHERE removed_at IS NULL GROUP BY meal_key, session_id, person_kind`);
+  return meals.map((m) => {
+    const mine = rows.filter((r) => r.meal_key === m.key);
+    const kind = (k) => mine.filter((r) => r.person_kind === k).reduce((n, r) => n + r.n, 0);
+    return {
+      ...m, window: mealsLib.mealWindow(m),
+      served: mine.reduce((n, r) => n + r.n, 0), anyway: mine.reduce((n, r) => n + (r.anyway || 0), 0),
+      byKind: { DELEGATE: kind('DELEGATE'), FACULTY: kind('FACULTY'), ORGANISER: kind('ORGANISER') },
+      counters: m.counters.map((c) => ({ ...c, served: mine.filter((r) => r.session_id === c.sessionId).reduce((n, r) => n + r.n, 0) })),
+    };
+  });
+}
+
+// The counter's screen: every meal, the one on now first chosen, served and
+// expected.
+app.get('/api/meals', requirePermission('meals.scan'), async (req, res, next) => {
+  try {
+    const meals = await mealMeals();
+    const current = mealsLib.currentMeal(meals);
+    const expected = await mealExpected();
+    res.json({ success: true, meals: await mealCounts(meals), current: current ? current.key : null,
+      expected: { DELEGATE: expected.DELEGATE, FACULTY: expected.FACULTY, ORGANISER: expected.ORGANISER, total: expected.total } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Serve someone at a counter: SERVE, ALREADY (when, where, by whom),
+// NOT_ELIGIBLE (why) -- or, with a reason, served anyway.
+app.post('/api/meals/serve', requirePermission('meals.scan'), async (req, res, next) => {
+  try {
+    const meal = (await mealMeals()).find((m) => m.key === String(req.body.mealKey || ''));
+    if (!meal) return res.status(400).json({ success: false, error: 'Choose the meal.' });
+    const counter = meal.counters.find((c) => c.sessionId === Number(req.body.sessionId)) || (meal.counters.length === 1 ? meal.counters[0] : null);
+    if (!counter) return res.status(400).json({ success: false, error: 'Choose the counter.' });
+    if (!mealsLib.mealWindow(meal).open) {
+      return res.status(409).json({ success: false, error: `${meal.title} is served on ${attendanceLib.shortDate(meal.date)}, ${attendanceLib.to12(meal.start)} to ${attendanceLib.to12(meal.end)}. The counter opens an hour before.` });
+    }
+    const found = await mealFind(req.body.identifier, req.body.personKey);
+    if (!found.person) return res.status(404).json({ success: false, result: 'UNKNOWN', error: found.error || 'Nobody found.' });
+    const p = found.person;
+    const anyway = String(req.body.overrideReason || '').trim().slice(0, 300);
+    if (!p.eligible && !anyway) return res.json({ success: true, result: 'NOT_ELIGIBLE', person: publicMealPerson(p) });
+    try {
+      const r = await dbRun(`INSERT INTO meal_servings (meal_key, session_id, person_key, person_kind, person_name, at, by_phone, by_name, method, override_reason)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [meal.key, counter.sessionId, p.key, p.kind || 'DELEGATE', p.name, Date.now(), req.session.phone, req.session.name || req.session.phone,
+          req.body.personKey ? 'LOOKUP' : 'SCAN', p.eligible ? null : anyway]);
+      if (!p.eligible) {
+        await recordAudit({ req, entityType: 'meal_serving', entityId: r.lastID, action: 'MEAL_SERVED_ANYWAY',
+          oldValue: `${p.name}: ${p.reason}`, newValue: `${meal.title}, ${counter.hall}: ${anyway}` });
+      }
+      return res.json({ success: true, result: 'SERVE', person: publicMealPerson(p), servingId: r.lastID, anyway: !p.eligible });
+    } catch (e) {
+      if (!/UNIQUE/i.test(String(e.message))) throw e;
+      const prev = await dbGet('SELECT at, by_name, session_id FROM meal_servings WHERE meal_key = ? AND person_key = ? AND removed_at IS NULL', [meal.key, p.key]);
+      const where = prev && meal.counters.find((c) => c.sessionId === prev.session_id);
+      return res.json({ success: true, result: 'ALREADY', person: publicMealPerson(p), servedAt: prev ? prev.at : null,
+        counter: where ? where.hall : '', by: prev ? prev.by_name : '' });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A serving entered by mistake, taken back: by the volunteer who entered
+// it, within ten minutes, or by someone who sees the counts.
+app.post('/api/meals/undo', requirePermission('meals.scan'), async (req, res, next) => {
+  try {
+    const s = await dbGet('SELECT * FROM meal_servings WHERE id = ? AND removed_at IS NULL', [req.body.servingId]);
+    if (!s) return res.status(404).json({ success: false, error: 'Nothing to take back.' });
+    const own = s.by_phone === req.session.phone && Date.now() - s.at < 10 * 60 * 1000;
+    if (!own && !sessionCan(req, 'meals.view')) return res.status(403).json({ success: false, error: 'Only the volunteer who served them can take it back, within ten minutes.' });
+    await dbRun('UPDATE meal_servings SET removed_at = ?, removed_by = ? WHERE id = ?', [Date.now(), req.session.name || req.session.phone, s.id]);
+    await recordAudit({ req, entityType: 'meal_serving', entityId: s.id, action: 'MEAL_SERVING_UNDONE', oldValue: `${s.person_name}, ${s.meal_key}`, newValue: null });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Find someone by name, mobile, ID or email: accounts, and faculty with no
+// account; each with whether they are served.
+app.get('/api/meals/search', requirePermission('meals.scan'), async (req, res, next) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ success: true, people: [] });
+    const like = `%${q}%`;
+    const digits = q.replace(/\D/g, '');
+    const users = await dbAll(`SELECT DISTINCT u.phone_number FROM users u LEFT JOIN registrations r ON r.phone_number = u.phone_number
+        WHERE u.full_name LIKE ? OR u.email LIKE ? OR UPPER(COALESCE(r.registration_number, u.registration_number, '')) LIKE UPPER(?)
+           ${digits.length >= 5 ? 'OR u.phone_number LIKE ? OR u.phone LIKE ?' : ''}
+        ORDER BY u.full_name LIMIT 10`, digits.length >= 5 ? [like, like, like, `%${digits}%`, `%${digits}%`] : [like, like, like]);
+    const faculty = await dbAll('SELECT id FROM guests WHERE phone_number IS NULL AND guest_name LIKE ? ORDER BY guest_name LIMIT 10', [like]);
+    const people = [];
+    for (const k of [...users.map((u) => u.phone_number), ...faculty.map((g) => `faculty-${g.id}`)]) {
+      const p = await mealPerson(k);
+      if (p && !people.some((x) => x.key === p.key)) people.push(publicMealPerson(p));
+    }
+    res.json({ success: true, people: people.slice(0, 12) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The counts, for the Overview and the organisers: each meal, expected and
+// served.
+app.get('/api/admin/meals/summary', requirePermission('meals.view'), async (req, res, next) => {
+  try {
+    const meals = await mealMeals();
+    const expected = await mealExpected();
+    const current = mealsLib.currentMeal(meals);
+    res.json({ success: true, meals: await mealCounts(meals), current: current ? current.key : null,
+      expected: { DELEGATE: expected.DELEGATE, FACULTY: expected.FACULTY, ORGANISER: expected.ORGANISER, total: expected.total } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The meal passes: faculty (not cancelled) and organisers -- those with no
+// badge QR of their own, or none they will carry -- eight to a page.
+app.get('/api/admin/meals/passes.pdf', requirePermission('meals.view'), async (req, res, next) => {
+  try {
+    const { keys } = await mealExpected();
+    const people = [];
+    for (const [key, kind] of keys) {
+      if (kind === 'DELEGATE') continue;
+      const p = await mealPerson(key);
+      if (!p || !p.eligible) continue;
+      let pass = await dbGet('SELECT code FROM meal_passes WHERE person_key = ?', [p.key]);
+      if (!pass) {
+        for (let tries = 0; tries < 5 && !pass; tries++) {
+          const code = mealsLib.newPassCode(crypto.randomBytes);
+          try {
+            await dbRun('INSERT INTO meal_passes (person_key, code, created_at) VALUES (?, ?, ?)', [p.key, code, Date.now()]);
+            pass = { code };
+          } catch (e) { if (!/UNIQUE/i.test(String(e.message))) throw e; pass = await dbGet('SELECT code FROM meal_passes WHERE person_key = ?', [p.key]); }
+        }
+      }
+      people.push({ name: p.name, kind: mealsLib.KIND_LABEL[p.kind], code: pass.code });
+    }
+    people.sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name));
+    for (const p of people) p.qr = await QRCode.toBuffer(p.code, { type: 'png', width: 360, margin: 1, errorCorrectionLevel: 'M' });
+    const pdf = await certificatePdfLib.renderMealPasses(people, { name: CONFERENCE.name, acronym: CONFERENCE.acronym });
+    await recordAudit({ req, entityType: 'meal_passes', entityId: 'all', action: 'MEAL_PASSES_PRINTED', oldValue: null, newValue: `${people.length} passes` });
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', 'inline; filename="meal-passes.pdf"');
+    res.set('Cache-Control', 'private, no-store');
+    res.send(pdf);
   } catch (err) {
     next(err);
   }
@@ -13536,6 +13808,33 @@ async function buildReport(type, opts = {}) {
         rows: rows.map((r) => [r.title, abstractAuthorsLib.authorsText(abstractAuthorsLib.effectiveAuthors(r)), r.author_name, r.format, r.phone_number]),
       }],
     };
+  }
+  if (type === 'meals') {
+    // Each meal: expected and served, by kind and at each counter; then who
+    // was served at each, and when.
+    const meals = await mealCounts(await mealMeals());
+    const expected = await mealExpected();
+    const when = (m) => `${attendanceLib.shortDate(m.date)}, ${attendanceLib.to12(m.start)}–${attendanceLib.to12(m.end)}`;
+    const sections = [{
+      name: 'Meals',
+      columns: ['Meal', 'When', 'Expected', 'Served', 'Delegates', 'Faculty', 'Organisers', 'Served anyway'],
+      rows: meals.map((m) => [m.title, when(m), expected.total, m.served, m.byKind.DELEGATE, m.byKind.FACULTY, m.byKind.ORGANISER, m.anyway]),
+    }, {
+      name: 'By counter',
+      columns: ['Meal', 'Counter', 'Served'],
+      rows: meals.flatMap((m) => m.counters.map((c) => [m.title, c.hall, c.served])),
+    }];
+    for (const m of meals) {
+      const rows = await dbAll(`SELECT s.at, s.person_name, s.person_kind, s.session_id, s.by_name, s.override_reason
+          FROM meal_servings s WHERE s.meal_key = ? AND s.removed_at IS NULL ORDER BY s.at`, [m.key]);
+      sections.push({
+        name: `${m.title}, ${when(m)}`,
+        columns: ['Time', 'Name', 'As', 'Counter', 'Served by', 'Served anyway because'],
+        rows: rows.map((r) => [new Date(r.at + 5.5 * 3600e3).toISOString().slice(11, 16), r.person_name, mealsLib.KIND_LABEL[r.person_kind] || r.person_kind,
+          (m.counters.find((c) => c.sessionId === r.session_id) || {}).hall || '', r.by_name || '', r.override_reason || '']),
+      });
+    }
+    return { title: 'Meals Served', sections };
   }
   return null;
 }

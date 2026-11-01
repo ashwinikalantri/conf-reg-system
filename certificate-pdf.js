@@ -452,4 +452,64 @@ function shrink(img, tw, th) {
   return { width: tw, height: th, data: out };
 }
 
-module.exports = { renderCertificatePdf, renderHallPosters, certificateCopy, cmykToRgb, PAGE: { W, H } };
+// Meal passes, for faculty and organisers who have no badge QR: eight to an
+// A4 page, two across, with cut lines. Each: the conference, "Meal pass",
+// the name, Faculty or Organiser, and the QR the counter scans.
+// passes: [{ name, kind, qr (PNG buffer) }]
+function renderMealPasses(passes, conference = {}) {
+  const Doc = pdfkit();
+  const PW = 595.28;
+  const PH = 841.89;
+  const COLS = 2;
+  const ROWS = 4;
+  const cw = PW / COLS;
+  const ch = PH / ROWS;
+  return new Promise((resolve, reject) => {
+    const doc = new Doc({ size: 'A4', margin: 0, autoFirstPage: false, info: { Title: 'Meal passes', Author: conference.name } });
+    const chunks = [];
+    doc.on('data', (c) => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+    try {
+      doc.registerFont('body', path.join(FONT_DIR, 'NotoSans-Regular.ttf'));
+      doc.registerFont('bold', path.join(FONT_DIR, 'NotoSans-Bold.ttf'));
+      passes.forEach((p, i) => {
+        const slot = i % (COLS * ROWS);
+        if (slot === 0) {
+          doc.addPage();
+          // Cut lines.
+          doc.save().lineWidth(0.5).strokeColor('#b9c2cc').dash(4, { space: 4 });
+          for (let c = 1; c < COLS; c++) doc.moveTo(c * cw, 0).lineTo(c * cw, PH).stroke();
+          for (let r = 1; r < ROWS; r++) doc.moveTo(0, r * ch).lineTo(PW, r * ch).stroke();
+          doc.restore();
+        }
+        const x = (slot % COLS) * cw;
+        const y = Math.floor(slot / COLS) * ch;
+        const pad = 16;
+        doc.save().rect(x + pad, y + pad, cw - 2 * pad, 30).fill(C.navy).restore();
+        doc.font('bold').fontSize(9.5).fillColor('#d6b46a')
+          .text(String(conference.acronym || '').toUpperCase(), x + pad + 10, y + pad + 10, { width: cw - 2 * pad - 20, characterSpacing: 2, lineBreak: false });
+        doc.font('bold').fontSize(9.5).fillColor('#ffffff')
+          .text('MEAL PASS', x + pad + 10, y + pad + 10, { width: cw - 2 * pad - 20, align: 'right', characterSpacing: 2, lineBreak: false });
+        const qr = 108;
+        const qx = x + cw - pad - qr - 4;
+        const qy = y + pad + 42;
+        doc.image(p.qr, qx, qy, { width: qr, height: qr });
+        const tw = qx - (x + pad) - 12;
+        let size = 15;
+        doc.font(timesCan(p.name) ? 'Times-Bold' : 'bold').fontSize(size);
+        while (doc.heightOfString(p.name, { width: tw }) > 62 && size > 9) doc.fontSize(--size);
+        doc.fillColor(C.navy).text(p.name, x + pad + 4, qy + 4, { width: tw });
+        doc.font('bold').fontSize(10.5).fillColor(C.steel).text(p.kind, x + pad + 4, doc.y + 4, { width: tw });
+        doc.font('body').fontSize(7.5).fillColor('#51606d')
+          .text('Show this at the meal counter. One serving for each meal.', x + pad + 4, y + ch - pad - 24, { width: cw - 2 * pad - 8 });
+      });
+      if (!passes.length) { doc.addPage(); doc.font('body').fontSize(12).fillColor('#51606d').text('No meal passes to print.', 60, 80); }
+      doc.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+module.exports = { renderCertificatePdf, renderHallPosters, renderMealPasses, certificateCopy, cmykToRgb, PAGE: { W, H } };

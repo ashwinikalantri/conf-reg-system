@@ -30,6 +30,7 @@ const SECTIONS = [
   { key: 'attendance', label: 'Attendance' },
   { key: 'programme', label: 'Programme' },
   { key: 'certificates', label: 'Certificates' },
+  { key: 'meals', label: 'Meals' },
   { key: 'reports', label: 'Reports' },
   { key: 'users', label: 'Users & roles' },
   { key: 'masters', label: 'Masters' },
@@ -124,6 +125,8 @@ const PERMISSIONS = [
   ['certificates.issue', 'certificates', 'Issue certificates', 'Issue certificates, include or exclude someone with a reason, correct the name on one, and withdraw one.'],
   ['certificates.manage', 'certificates', 'Certificate settings', 'Set the MMC details, which categories earn MMC points, the attendance hours, the wording of each certificate, the signatories and the design.'],
   ['attendance.manage', 'attendance', 'Correct attendance', 'Mark someone present at any session at any time, or remove a mark, with a reason that is kept.'],
+  ['meals.scan', 'meals', 'Serve meals', 'At a meal counter: scan badges and meal passes, or find someone by name, and serve each person once a meal.'],
+  ['meals.view', 'meals', 'Meal counts and passes', 'See how many are expected and served at each meal, the Meals report, and print the meal passes for faculty and organisers.'],
   ['programme.manage', 'programme', 'Edit the programme', 'Add and edit halls and sessions -- times, titles, speakers, which take attendance -- and print the hall QR posters.'],
   ['guests.view', 'guests', 'View faculty', 'Open the Faculty tab: every faculty member\'s travel and stay, the dashboard, the pickup and drop schedules, vehicles and rooms.'],
   ['guests.edit', 'guests', 'Mark faculty, edit shared details', 'Mark a delegate as faculty (adding them to the faculty list), and edit Special Needs, Overall Status and Remarks.'],
@@ -220,6 +223,12 @@ const ROUTE_PERMISSIONS = {
   'POST /api/desk/checkin': 'desk.checkin',
   'GET /api/attendance/halls': 'attendance.mark',
   'POST /api/attendance/scan': 'attendance.mark',
+  'GET /api/meals': 'meals.scan',
+  'POST /api/meals/serve': 'meals.scan',
+  'POST /api/meals/undo': 'meals.scan',
+  'GET /api/meals/search': 'meals.scan',
+  'GET /api/admin/meals/summary': 'meals.view',
+  'GET /api/admin/meals/passes.pdf': 'meals.view',
   'GET /api/admin/programme': 'programme.manage',
   'POST /api/admin/programme/halls': 'programme.manage',
   'PUT /api/admin/programme/halls/:id': 'programme.manage',
@@ -404,6 +413,7 @@ const REPORT_PERMISSIONS = {
   abstracts: 'reports.abstracts',
   users: 'reports.users',
   summary: 'reports.summary',
+  meals: 'meals.view',
 };
 
 // Which permission opens each screen of the admin panel -- one entry per file
@@ -423,7 +433,7 @@ const SECTION_PERMISSIONS = {
   payments: { permission: 'payments.view' },
   statement: { permission: 'statement.view' },
   abstracts: { permission: 'abstracts.view' },
-  reports: { anyOf: ['reports.delegates', 'reports.delegate_programs', 'reports.payments',
+  reports: { anyOf: ['meals.view', 'reports.delegates', 'reports.delegate_programs', 'reports.payments',
     'reports.programs', 'reports.abstracts', 'reports.users', 'reports.summary'] },
   users: { permission: 'users.view' },
   roles: { permission: 'users.manage_roles' },
@@ -441,6 +451,8 @@ const SECTION_PERMISSIONS = {
   // and their wording, signatories and design (a Settings page).
   certificates: { permission: 'certificates.view' },
   certsettings: { permission: 'certificates.manage' },
+  // The meal counter (Settings › Conference › Meals).
+  meals: { anyOf: ['meals.scan', 'meals.view'] },
   // The halls and sessions, in the Settings menu.
   programme: { permission: 'programme.manage' },
   general: { permission: 'system.settings_view' },
@@ -569,6 +581,12 @@ const SYSTEM_ROLES = [
     label: 'Volunteer – Registration',
     description: 'Registration desk volunteer: looks delegates up on the Front Desk, checks them in, and signs them in at the hall and workshop doors.',
     permissions: ['desk.view', 'desk.checkin', 'attendance.mark'],
+  },
+  {
+    key: 'VOLUNTEER_MEALS',
+    label: 'Volunteer – Meals',
+    description: 'Meal counter volunteer: scans badges and meal passes at the lunch and dinner counters, and finds people by name; nothing else.',
+    permissions: ['meals.scan'],
   },
   {
     key: 'VOLUNTEER_TRANSPORT',

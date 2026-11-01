@@ -25,7 +25,7 @@ check('old #statement links still open it', js.includes("'payments', 'statement'
 console.log('\n== Settings ==');
 check('Attendance and Programme are in the Settings menu',
   /id="settings-item-attendance"/.test(header) && /id="settings-item-programme"/.test(header));
-check('both are Settings tabs, not main tabs', /SETTINGS_TABS = \['attendance', 'certsettings', 'programme'/.test(js) && !/MAIN_TABS = \[[^\]]*'attendance'/.test(js));
+check('both are Settings tabs, not main tabs', /SETTINGS_TABS = \['attendance', 'certsettings', 'meals', 'programme'/.test(js) && !/MAIN_TABS = \[[^\]]*'attendance'/.test(js));
 check('the Programme page has the halls and sessions', /id="section-programme"/.test(read('views', 'admin', 'sections', 'programme.ejs')));
 check('Attendance no longer has a Programme view', !/data-att-view="programme"|att-view-programme/.test(attendance));
 report();

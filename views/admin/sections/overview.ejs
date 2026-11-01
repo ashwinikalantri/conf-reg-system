@@ -23,6 +23,9 @@
          open for attendance -- a door where nobody is being scanned is
          flagged. renderOverviewNow(); attendance.view. -->
     <div id="overview-now" class="hidden mb-4 rounded-2xl border-2 border-gold-500 bg-white p-4 sm:p-5 shadow-sm">
+      <!-- A meal being served now (meals.view): served of expected, and at
+           each counter where there are several. -->
+      <p id="ov-meal-now" class="hidden mb-4 pb-4 border-b border-slate-100 text-[15px] text-slate-700"></p>
       <div id="ov-day-stats" class="hidden grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div><p class="text-sm font-semibold text-slate-600">Here today</p><p id="ov-day-present" class="text-2xl font-bold text-slate-900 tabular-nums">0</p><p id="ov-day-present-sub" class="text-sm text-slate-600">marked at a session</p></div>
         <div><p class="text-sm font-semibold text-slate-600">Badges collected</p><p id="ov-day-badges" class="text-2xl font-bold text-slate-900 tabular-nums">0</p><p class="text-sm text-slate-600">at the registration counter</p></div>

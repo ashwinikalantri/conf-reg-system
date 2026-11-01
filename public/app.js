@@ -4140,7 +4140,7 @@ function applyRoleVisibility() {
   // own tab, from the same source that gated it above -- no separate list of
   // roles kept in step by hand.
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
-  const settingsItems = ['attendance', 'certsettings', 'programme', 'programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount', 'roles'];
+  const settingsItems = ['attendance', 'certsettings', 'meals', 'programme', 'programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount', 'roles'];
   settingsItems.forEach((key) => {
     const el = document.getElementById(`settings-item-${key}`);
     if (el) el.classList.toggle('hidden', !canSee(key));
@@ -4152,7 +4152,7 @@ function applyRoleVisibility() {
   // under it.
   if (settingsMenuBtn) settingsMenuBtn.classList.remove('hidden');
   const SETTINGS_GROUPS = {
-    conference: ['programme', 'programs', 'attendance', 'certsettings'],
+    conference: ['programme', 'programs', 'attendance', 'certsettings', 'meals'],
     fees: ['fees', 'discount', 'groupdiscount'],
     messages: ['reminders'],
     system: ['general', 'users', 'roles', 'activity'],
@@ -4173,6 +4173,7 @@ function applyRoleVisibility() {
     'report-workshops': 'reports.programs',
     'report-abstracts': 'reports.abstracts',
     'report-users': 'reports.users',
+    'report-meals': 'meals.view',
   };
   Object.entries(reportCards).forEach(([id, permission]) => {
     const el = document.getElementById(id);
@@ -4228,6 +4229,8 @@ async function initBackendPortal() {
     // The coordinators' whole job is the Guests tab.
     : canSee('faculty') ? 'faculty'
     : canSee('attendance') ? 'attendance'
+    // The meal counter volunteers' whole job.
+    : canSee('meals') ? 'meals'
     : 'workshops'; // unreachable for the five built-in roles; a defensive fallback for an unrecognised one
   const allowed = allowedBackendTabs();
   const hashTab = tabFromHash();
@@ -4671,6 +4674,7 @@ async function renderBackendOverview() {
   const seesTotals = can('payments.view_totals');
   const seesSignups = can('comms.reminders_view');
   const seesWorkshopCounts = can('masters.programs_view');
+  const seesMeals = can('meals.view');
 
   const show = (id, on) => {
     const el = document.getElementById(id);
@@ -4693,7 +4697,7 @@ async function renderBackendOverview() {
     } catch (e) { return null; }
   };
 
-  const [regs, abstracts, statement, totals, faculty, attendance, workshops, audiences] = await Promise.all([
+  const [regs, abstracts, statement, totals, faculty, attendance, workshops, audiences, mealSummary] = await Promise.all([
     seesPayments ? getJson('/api/registrations') : Promise.resolve(null),
     seesAbstracts ? getJson('/api/abstracts') : Promise.resolve(null),
     seesStatement ? getJson('/api/admin/bank-statement/reconcile') : Promise.resolve(null),
@@ -4702,8 +4706,20 @@ async function renderBackendOverview() {
     seesAttendance ? getJson('/api/attendance/summary') : Promise.resolve(null),
     getJson(seesWorkshopCounts ? '/api/admin/program-groups' : '/api/program-options'),
     seesSignups ? getJson('/api/admin/reminders/audiences') : Promise.resolve(null),
+    seesMeals ? getJson('/api/admin/meals/summary') : Promise.resolve(null),
   ]);
   renderOverviewNow(attendance, when.onDay);
+  // A meal being served now: how many so far, of how many expected.
+  const mealNow = mealSummary && Array.isArray(mealSummary.meals) ? mealSummary.meals.find((m) => m.window && m.window.open) : null;
+  const mealLine = document.getElementById('ov-meal-now');
+  if (mealLine) {
+    mealLine.classList.toggle('hidden', !mealNow);
+    if (mealNow) {
+      const at = mealNow.counters.length > 1 ? ` · ${mealNow.counters.map((c) => `${esc(c.hall)} ${c.served}`).join(' · ')}` : '';
+      mealLine.innerHTML = `<b class="text-slate-900">${esc(mealNow.title)}</b>: <b class="text-2xl font-bold text-slate-900 tabular-nums">${mealNow.served}</b> served of ${mealSummary.expected.total} expected${at}`;
+      show('overview-now', true);
+    }
+  }
   renderOverviewWorkshops(workshops, seesWorkshopCounts && !!workshops);
 
   let pending = 0;
@@ -13286,7 +13302,7 @@ async function deleteGuestListValue(id) {
   renderGuests();
 }
 
-const SETTINGS_TABS = ['attendance', 'certsettings', 'programme', 'programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
+const SETTINGS_TABS = ['attendance', 'certsettings', 'meals', 'programme', 'programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
 // 'payments' and 'statement' are two screens of the Registration tab.
 const MAIN_TABS = ['overview', 'desk', 'payments', 'statement', 'abstracts', 'faculty', 'certificates', 'reports'];
 
@@ -13325,6 +13341,7 @@ function switchBackendTab(tab) {
   if (tab === 'attendance') renderAttendance();
   if (tab === 'certificates') renderCertificates();
   if (tab === 'certsettings') renderCertificateSettings();
+  if (tab === 'meals') renderMeals();
   if (tab === 'programme') renderProgramme();
   if (tab === 'programs') renderBackendPrograms();
   if (tab === 'fees') renderBackendFees();
@@ -13714,7 +13731,7 @@ function renderProgrammeSessions() {
       <span class="flex-1 min-w-0">
         <span class="block text-sm text-slate-800"><span class="text-[10px] bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full font-bold mr-1">${esc(s.hall)}</span>${esc(s.label ? `${s.label}: ` : '')}<b>${esc(s.title)}</b></span>
         <span class="block text-xs text-slate-500 truncate">${esc([s.speakers, s.chairs ? `Chair: ${s.chairs}` : ''].filter(Boolean).join(' · '))}</span>
-        <span class="block text-[11px] mt-0.5">${s.counts ? `<span class="text-emerald-700 font-semibold">Takes attendance · ${s.present} present</span>` : '<span class="text-slate-400">No attendance</span>'}${s.optionName ? ` · <span class="text-indigo-700">${s.workshop ? 'Workshop' : 'Practice'}: ${esc(s.optionName)}</span>` : ''}</span>
+        <span class="block text-[11px] mt-0.5">${s.counts ? `<span class="text-emerald-700 font-semibold">Takes attendance · ${s.present} present</span>` : '<span class="text-slate-400">No attendance</span>'}${s.meal ? ' · <span class="text-gold-700 font-semibold">Meal: scanned at the counter</span>' : ''}${s.optionName ? ` · <span class="text-indigo-700">${s.workshop ? 'Workshop' : 'Practice'}: ${esc(s.optionName)}</span>` : ''}</span>
       </span>
       <button type="button" onclick="editProgrammeSession(${Number(s.id)})" class="shrink-0 px-2.5 py-1 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">Edit</button>
     </div>`).join('') || `<p class="py-4 text-sm text-slate-400">${hall ? 'No sessions in this hall on this day.' : 'No sessions on this day.'}</p>`;
@@ -13747,6 +13764,7 @@ function editProgrammeSession(id) {
   set('ps-option', s && s.optionId ? s.optionId : '');
   syncSessionTitleField();
   document.getElementById('ps-counts').checked = s ? s.counts : true;
+  document.getElementById('ps-meal').checked = s ? !!s.meal : false;
   document.getElementById('ps-delete').classList.toggle('hidden', !s);
   document.getElementById('prog-session-form').classList.remove('hidden');
   document.getElementById('ps-title').focus();
@@ -13786,6 +13804,7 @@ async function saveProgrammeSession(e) {
     people: Object.fromEntries(['speakers', 'chairs'].map((role) => [role,
       psPeople[role].map((p) => (p.guestId != null ? { guestId: p.guestId } : { text: p.text }))])),
     counts: document.getElementById('ps-counts').checked,
+    meal: document.getElementById('ps-meal').checked,
   };
   const data = await (await fetch(id ? `/api/admin/programme/sessions/${encodeURIComponent(id)}` : '/api/admin/programme/sessions', {
     method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -13972,6 +13991,236 @@ async function addHall(e) {
 // (#certsettings); the Programme is its own Settings page too. ---
 async function renderAttendance() {
   await renderAttendanceView();
+}
+
+// --- MEALS (Settings › Conference › Meals; views/admin/sections/meals.ejs) --
+// The meal counter: choose the meal (the one being served now is chosen) and
+// the counter where a meal is served at several places; then scan, or find
+// someone by name. Each answer fills the screen: Serve (green), Already
+// served (amber), Not on the list (red). The server decides (meals.js).
+const mealState = { meals: [], key: null, expected: null, scanner: null, lastScan: { text: '', at: 0 }, searchTimer: null, searchSeq: 0 };
+const mealOf = () => mealState.meals.find((m) => m.key === mealState.key) || null;
+const mealWhen = (m) => `${shortDateRange(m.date, m.date)}, ${guestTime12(m.start)}–${guestTime12(m.end)}`;
+
+async function renderMeals() {
+  const res = await fetch('/api/meals');
+  if (!res.ok) return;
+  const data = await res.json();
+  mealState.meals = data.meals || [];
+  mealState.expected = data.expected || null;
+  if (!mealState.meals.some((m) => m.key === mealState.key)) mealState.key = data.current;
+  const sel = document.getElementById('meal-select');
+  if (sel) {
+    sel.innerHTML = mealState.meals.length
+      ? mealState.meals.map((m) => `<option value="${esc(m.key)}">${esc(m.title)} · ${esc(mealWhen(m))}</option>`).join('')
+      : '<option value="">No meals in the programme yet</option>';
+    sel.value = mealState.key || '';
+  }
+  const admin = document.getElementById('meal-admin');
+  if (admin) admin.classList.toggle('hidden', !can('meals.view'));
+  mealChosen(true);
+}
+
+function mealChosen(keep) {
+  const sel = document.getElementById('meal-select');
+  if (sel && !keep) mealState.key = sel.value;
+  const m = mealOf();
+  const box = document.getElementById('meal-counter-box');
+  const csel = document.getElementById('meal-counter');
+  if (box) box.classList.toggle('hidden', !m || m.counters.length < 2);
+  if (csel && m) {
+    const saved = storageGet('local', `nqocn_meal_counter_${m.key}`);
+    csel.innerHTML = m.counters.map((c) => `<option value="${esc(c.sessionId)}">${esc(c.hall)}</option>`).join('');
+    if (saved && m.counters.some((c) => String(c.sessionId) === saved)) csel.value = saved;
+  }
+  renderMealCounts();
+}
+
+function mealCounterChosen() {
+  const m = mealOf();
+  const csel = document.getElementById('meal-counter');
+  if (m && csel) storageSet('local', `nqocn_meal_counter_${m.key}`, csel.value);
+  renderMealCounts();
+}
+
+function mealCounterId() {
+  const m = mealOf();
+  if (!m) return null;
+  if (m.counters.length === 1) return m.counters[0].sessionId;
+  const csel = document.getElementById('meal-counter');
+  return csel ? Number(csel.value) : null;
+}
+
+function renderMealCounts() {
+  const m = mealOf();
+  const status = document.getElementById('meal-status');
+  const btn = document.getElementById('meal-scan-btn');
+  if (!m) {
+    setText('meal-served', 0);
+    if (status) { status.textContent = 'No meal is ticked in the programme yet.'; status.className = 'text-sm font-semibold text-slate-600'; }
+    if (btn) btn.disabled = true;
+    return;
+  }
+  const w = m.window || {};
+  if (status) {
+    status.textContent = w.open ? 'Being served now.' : w.over ? 'This meal is over.' : `Opens at ${guestTime12(m.start)} less an hour, on ${shortDateRange(m.date, m.date)}.`;
+    status.className = `text-sm font-semibold ${w.open ? 'text-emerald-700' : 'text-slate-600'}`;
+  }
+  if (btn) btn.disabled = !w.open;
+  setText('meal-served', m.served);
+  setText('meal-expected-line', mealState.expected ? `of ${mealState.expected.total} expected` : '');
+  const here = document.getElementById('meal-here-line');
+  const counter = m.counters.find((c) => c.sessionId === mealCounterId());
+  if (here) {
+    here.classList.toggle('hidden', m.counters.length < 2 || !counter);
+    if (counter) here.textContent = `${counter.served} at ${counter.hall}`;
+  }
+}
+
+// One answer, as the counter sees it.
+function mealResultHtml(d, big) {
+  const p = d.person || {};
+  const who = `<p class="${big ? 'text-2xl' : 'text-xl'} font-bold leading-tight mt-1">${esc(p.name || '')}</p>
+    <p class="text-[15px] opacity-90">${esc([p.kindLabel, p.detail].filter(Boolean).join(' · '))}</p>`;
+  const key = esc(JSON.stringify(p.key || ''));
+  if (d.result === 'SERVE') {
+    return `<div class="rounded-2xl bg-emerald-600 text-white p-5">
+      <p class="text-3xl font-extrabold tracking-wide">${d.anyway ? 'Served anyway' : 'Serve'}</p>${who}
+      ${d.servingId ? `<button type="button" onclick="mealUndo(${Number(d.servingId)})" class="mt-3 h-11 px-4 rounded-xl bg-white/15 hover:bg-white/25 text-sm font-semibold">Undo, a mistake</button>` : ''}
+    </div>`;
+  }
+  if (d.result === 'ALREADY') {
+    const at = d.servedAt ? new Date(d.servedAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '';
+    return `<div class="rounded-2xl bg-amber-400 text-amber-950 p-5">
+      <p class="text-3xl font-extrabold tracking-wide">Already served</p>${who}
+      <p class="text-[15px] font-semibold mt-2">${esc([at && `at ${at}`, d.counter, d.by && `by ${d.by}`].filter(Boolean).join(', '))}</p>
+    </div>`;
+  }
+  if (d.result === 'NOT_ELIGIBLE') {
+    return `<div class="rounded-2xl bg-rose-700 text-white p-5">
+      <p class="text-3xl font-extrabold tracking-wide">Not on the list</p>${who}
+      <p class="text-[15px] font-semibold mt-2">${esc(p.reason || '')}</p>
+      <button type="button" onclick='mealServeAnyway(${key})' class="mt-3 h-11 px-4 rounded-xl bg-white/15 hover:bg-white/25 text-sm font-semibold">Serve anyway, with a reason</button>
+    </div>`;
+  }
+  return `<div class="rounded-2xl bg-slate-800 text-white p-5">
+    <p class="text-3xl font-extrabold tracking-wide">Not found</p>
+    <p class="text-[15px] mt-1">${esc(d.error || 'Nobody found.')}</p>
+  </div>`;
+}
+
+function showMealResult(d) {
+  const box = document.getElementById('meal-result');
+  if (box) { box.innerHTML = mealResultHtml(d, true); box.classList.remove('hidden'); }
+  const line = document.getElementById('meal-scan-result');
+  if (line && mealState.scanner) { line.className = 'p-3'; line.innerHTML = mealResultHtml(d, false); }
+  if (navigator.vibrate) navigator.vibrate(d.result === 'SERVE' ? 60 : [90, 60, 90]);
+  if (d.result === 'SERVE') {
+    const m = mealOf();
+    if (m) {
+      m.served++;
+      const c = m.counters.find((x) => x.sessionId === mealCounterId());
+      if (c) c.served++;
+      renderMealCounts();
+    }
+  }
+}
+
+async function mealServe(body) {
+  const m = mealOf();
+  if (!m) return showToast('Choose the meal.');
+  const res = await fetch('/api/meals/serve', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mealKey: m.key, sessionId: mealCounterId(), ...body }) });
+  let data = {};
+  try { data = await res.json(); } catch (e) { data = { error: 'No answer from the server. Check the connection.' }; }
+  if (!res.ok && data.result !== 'UNKNOWN') return showMealResult({ result: 'UNKNOWN', error: data.error || 'Could not serve. Check the connection.' });
+  showMealResult(data);
+  return data;
+}
+
+async function mealServeAnyway(personKey) {
+  const reason = await showPrompt('Why serve them anyway? The reason is kept.');
+  if (!reason) return;
+  await mealServe({ personKey, overrideReason: reason });
+}
+
+async function mealUndo(servingId) {
+  const res = await fetch('/api/meals/undo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ servingId }) });
+  const data = await res.json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not take it back.');
+  const box = document.getElementById('meal-result');
+  if (box) box.innerHTML = '<div class="rounded-2xl border border-slate-300 bg-white p-5 text-[15px] font-semibold text-slate-700">Taken back: not counted as served.</div>';
+  renderMeals();
+}
+
+// The camera stays open; the same code seen again within a few seconds is
+// read once.
+async function openMealScanner() {
+  const m = mealOf();
+  if (!m) return showToast('Choose the meal.');
+  const counter = m.counters.find((c) => c.sessionId === mealCounterId());
+  setText('meal-scan-title', `${m.title}${counter && m.counters.length > 1 ? ` · ${counter.hall}` : ''}`);
+  const line = document.getElementById('meal-scan-result');
+  line.className = 'p-4 text-center text-[15px] font-semibold text-slate-600';
+  line.textContent = 'Starting the camera…';
+  openModal('modal-meal-scan');
+  try {
+    if (!window.Html5Qrcode) await loadScriptOnce(DESK_SCANNER_SRC);
+    mealState.scanner = new window.Html5Qrcode('meal-scan-reader');
+    await mealState.scanner.start({ facingMode: 'environment' },
+      { fps: 10, qrbox: (w, h) => { const side = Math.floor(Math.min(w, h) * 0.75); return { width: side, height: side }; } },
+      (text) => onMealScan(text), () => {});
+    line.textContent = 'Point the camera at a badge or meal pass.';
+  } catch (e) {
+    line.textContent = 'The camera could not start. Allow camera access for this site, or find them by name.';
+  }
+}
+
+async function onMealScan(text) {
+  const now = Date.now();
+  if (text === mealState.lastScan.text && now - mealState.lastScan.at < 4000) return;
+  mealState.lastScan = { text, at: now };
+  const raw = String(text || '').trim();
+  const identifier = /^MP[A-Z2-9]{10}$/i.test(raw) ? raw.toUpperCase() : deskIdentifierFromScan(raw);
+  if (!identifier) return showMealResult({ result: 'UNKNOWN', error: 'That code is not a badge or meal pass.' });
+  await mealServe({ identifier });
+}
+
+async function closeMealScanner() {
+  const scanner = mealState.scanner;
+  mealState.scanner = null;
+  if (scanner) {
+    try { await scanner.stop(); } catch (e) { /* already stopped */ }
+    try { scanner.clear(); } catch (e) { /* nothing to clear */ }
+  }
+  closeModal('modal-meal-scan');
+}
+
+// No badge or pass: find them by name, mobile or ID, and serve from the list.
+function mealSearch() {
+  clearTimeout(mealState.searchTimer);
+  mealState.searchTimer = setTimeout(async () => {
+    const q = document.getElementById('meal-search').value.trim();
+    const box = document.getElementById('meal-search-results');
+    if (!box) return;
+    if (q.length < 2) { box.innerHTML = ''; return; }
+    const seq = ++mealState.searchSeq;
+    const res = await fetch(`/api/meals/search?q=${encodeURIComponent(q)}`);
+    const data = await res.json().catch(() => ({}));
+    if (seq !== mealState.searchSeq) return;
+    const people = data.people || [];
+    box.innerHTML = people.length ? people.map((p) => {
+      const key = esc(JSON.stringify(p.key));
+      return `<div class="py-2.5 flex items-center gap-3">
+        <div class="flex-1 min-w-0">
+          <p class="font-semibold text-slate-900 truncate">${esc(p.name)}</p>
+          <p class="text-sm text-slate-600 truncate">${esc([p.kindLabel, p.detail].filter(Boolean).join(' · '))}</p>
+          ${p.eligible ? '' : `<p class="text-sm text-rose-700">${esc(p.reason || '')}</p>`}
+        </div>
+        <button type="button" onclick='${p.eligible ? `mealServe({ personKey: ${key} })` : `mealServeAnyway(${key})`}' class="shrink-0 h-11 px-4 rounded-xl text-sm font-semibold ${p.eligible ? 'bg-navy hover:bg-indigo-700 text-white' : 'border border-rose-300 text-rose-700 hover:bg-rose-50'}">${p.eligible ? 'Serve' : 'Serve anyway'}</button>
+      </div>`;
+    }).join('') : '<p class="py-3 text-sm text-slate-500">Nobody found.</p>';
+  }, 250);
 }
 
 // --- CERTIFICATES (admin) ---

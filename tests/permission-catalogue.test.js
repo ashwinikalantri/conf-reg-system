@@ -225,6 +225,16 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/admin/reminders/paste/send': 'The send to pasted addresses. comms.custom_send, as POST /api/admin/reminders/custom-send before it.',
     'GET /api/admin/reminders/history': 'The Sent history: each send, its audience, subject, counts and sender. comms.reminders_view -- the same people could already see who each audience holds and when each was last reminded.',
     'GET /api/admin/reminders/history/:id': 'One send: the email as written and each recipient with what happened. comms.reminders_view.',
+    // --- Meals (31 Oct 2026) ---------------------------------------------------
+    // The meal counters. meals.scan for the counter (the new Volunteer – Meals
+    // role, and Super Admin); meals.view for the counts, the passes and the
+    // Meals report (Super Admin only until granted).
+    'GET /api/meals': 'The counter: every meal, the one on now, served and expected counts. meals.scan.',
+    'POST /api/meals/serve': 'Serves someone at a meal counter, once per meal, or says why not; served anyway only with a reason, which is kept. meals.scan.',
+    'POST /api/meals/undo': 'Takes back a serving entered by mistake: the volunteer who entered it, within ten minutes, or meals.view. meals.scan.',
+    'GET /api/meals/search': 'Finds someone at the counter by name, mobile, ID or email -- name, kind, ID and category, and whether they are served; no contact details. meals.scan.',
+    'GET /api/admin/meals/summary': 'Expected and served counts for each meal, by kind and counter, for the Overview. meals.view.',
+    'GET /api/admin/meals/passes.pdf': 'Prints meal passes (name, Faculty or Organiser, a QR) for faculty and organisers. meals.view.',
     'POST /api/desk/collect-cash': 'The seventh, and the only one NOT guarded by a desk.* key: it '
       + 'carries payments.add_payment, so Finance Admin reaches it too. That widening is recorded '
       + 'per-role in WIDENED_SINCE_BASELINE below.',
@@ -321,6 +331,12 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // deliberately, in a diff somebody reads -- rather than absorbed silently
   // into "every role runs the same reports".
   const REPORTS_ADDED_SINCE_BASELINE = {
+    meals: {
+      roles: ['SUPER_ADMIN'],
+      why: 'Each meal\'s expected and served counts, by counter, and who was served when -- names, '
+        + 'kinds and the volunteer, no contact details. Behind meals.view, which only Super Admin '
+        + 'holds until it is granted to another role.',
+    },
     summary: {
       roles: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC', 'OPERATIONS'],
       why: 'Headline counts and totals with no individual records. Opens for every role that could '
@@ -378,7 +394,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // Super Admin; the two coordinator roles that open it are new, so they are
   // not in the baseline this table is held against.
   const CLIENT_TODAY = {
-    SUPER_ADMIN: ['overview', 'desk', 'payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'faculty', 'attendance', 'certificates', 'certsettings', 'programme', 'general', 'activity'],
+    SUPER_ADMIN: ['overview', 'desk', 'payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'faculty', 'attendance', 'certificates', 'certsettings', 'meals', 'programme', 'general', 'activity'],
     FINANCE_ADMIN: ['overview', 'payments', 'statement', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
     ACADEMIC_REVIEWER: ['overview', 'abstracts', 'reports'],
     FINANCE_ACADEMIC: ['overview', 'payments', 'statement', 'abstracts', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
