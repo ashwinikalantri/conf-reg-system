@@ -10383,8 +10383,8 @@ app.put('/api/admin/certificates/settings', requirePermission('certificates.mana
   }
 });
 
-// Signatories: a name, a designation, and a signature (PNG or JPEG, on a
-// transparent or white ground).
+// Signatories: a name, a designation, and a signature (a PNG with a
+// transparent background, or a JPEG), stored byte for byte as uploaded.
 function decodeSignature(dataUri) {
   const m = /^data:(image\/(?:png|jpe?g));base64,([A-Za-z0-9+/=]+)$/i.exec(dataUri || '');
   if (!m) return { error: 'The signature must be a PNG or JPEG image.' };

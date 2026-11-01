@@ -263,3 +263,6 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
 @media (min-width: 1024px) {
   .gs-jump-btn[aria-current="page"] { background: #faf5e8; color: #1c3549; font-weight: 700; }
 }
+
+/* A signature's preview: checks wherever the image is transparent. */
+.sig-preview { background: repeating-conic-gradient(#e3e7eb 0% 25%, #fff 0% 50%) 0 0 / 12px 12px; }

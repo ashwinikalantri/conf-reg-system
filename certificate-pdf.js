@@ -179,6 +179,24 @@ function drawName(doc, name, y, size, color, maxWidth) {
 // Up to six in one row: each gets an equal share of the width, and with
 // more than four the type steps down so a name and its designation still
 // fit their share (a designation wraps to a second line).
+// A signature is drawn as uploaded, its transparency kept: no ground behind
+// it, whatever the page. pdfkit does that for every PNG but one that marks a
+// single colour as see-through (grey or RGB with a tRNS chunk, as image
+// optimisers write): it draws that colour as a solid box. Those alone go to
+// plain RGBA first.
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+function keepTransparent(image) {
+  if (!Buffer.isBuffer(image) || !image.subarray(0, 8).equals(PNG_SIGNATURE)) return image;
+  const colourKeyed = (image[25] === 0 || image[25] === 2) && image.includes('tRNS');
+  if (!colourKeyed) return image;
+  try {
+    const { PNG } = require('pngjs');
+    return PNG.sync.write(PNG.sync.read(image), { colorType: 6 });
+  } catch (e) {
+    return image;
+  }
+}
+
 function drawSignatures(doc, sigs, left, right, lineY, ink, muted, sigH = 40) {
   if (!sigs.length) return;
   const slot = (right - left) / sigs.length;
@@ -189,7 +207,7 @@ function drawSignatures(doc, sigs, left, right, lineY, ink, muted, sigH = 40) {
   sigs.forEach((s, i) => {
     const cx = left + slot * i + slot / 2;
     if (s.image) {
-      try { doc.image(s.image, cx - imgW / 2, lineY - sigH - 4, { fit: [imgW, sigH], align: 'center', valign: 'bottom' }); } catch (e) { /* not an image pdfkit reads */ }
+      try { doc.image(keepTransparent(s.image), cx - imgW / 2, lineY - sigH - 4, { fit: [imgW, sigH], align: 'center', valign: 'bottom' }); } catch (e) { /* not an image pdfkit reads */ }
     }
     doc.lineWidth(0.6).strokeColor(muted).moveTo(cx - lineHalf, lineY).lineTo(cx + lineHalf, lineY).stroke();
     doc.font('bold').fontSize(crowded ? 8 : 9.5).fillColor(ink).text(s.name || '', cx - textW / 2, lineY + 5, { width: textW, align: 'center' });
@@ -512,4 +530,4 @@ function renderMealPasses(passes, conference = {}) {
   });
 }
 
-module.exports = { renderCertificatePdf, renderHallPosters, renderMealPasses, certificateCopy, cmykToRgb, PAGE: { W, H } };
+module.exports = { renderCertificatePdf, renderHallPosters, renderMealPasses, certificateCopy, cmykToRgb, keepTransparent, PAGE: { W, H } };

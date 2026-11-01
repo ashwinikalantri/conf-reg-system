@@ -14482,7 +14482,7 @@ async function renderCertificateSettings() {
 
   document.getElementById('cs-signatories').innerHTML = d.signatories.map((s) => `
     <div class="flex flex-col sm:flex-row sm:items-center gap-2 p-3 border border-slate-200 rounded-xl ${s.active ? '' : 'opacity-60'}">
-      <div class="w-full sm:w-40 h-14 border border-dashed border-slate-300 rounded-lg flex items-center justify-center bg-slate-50 shrink-0">
+      <div class="sig-preview w-full sm:w-40 h-14 border border-dashed border-slate-300 rounded-lg flex items-center justify-center shrink-0">
         ${Number(s.has_signature) ? `<img src="/api/admin/certificates/signatories/${encodeURIComponent(s.id)}/signature?t=${Date.now()}" alt="Signature" class="max-h-12 max-w-full">` : '<span class="text-[11px] text-slate-400">No signature yet</span>'}
       </div>
       <div class="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
