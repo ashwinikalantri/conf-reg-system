@@ -178,7 +178,7 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     check('/favicon.ico is served on the website\'s own address', ico.status === 200);
     const heads = ['views/index.ejs', 'views/admin.ejs', 'views/setup.ejs', 'views/help/group-registration.ejs', 'views/website/partials/head.ejs']
       .map((f) => fs.readFileSync(appFile(...f.split('/')), 'utf8'));
-    check('...and named by every page: the portal, admin, setup, help and the website', heads.every((h) => /<link rel="icon" href="\/favicon\.ico" sizes="any">/.test(h) && /<link rel="apple-touch-icon" href="\/favicon-180\.png">/.test(h)));
+    check('...and named by every page, the same address on each (versioned, so no browser keeps an old icon): the portal, admin, setup, help and the website', heads.every((h) => /<link rel="icon" href="\/favicon\.ico\?v=mgims" sizes="any">/.test(h) && /<link rel="apple-touch-icon" href="\/favicon-180\.png\?v=mgims">/.test(h)));
     const ic = fs.readFileSync(appFile('public', 'favicon.ico'));
     check('...an icon file with the 32 and 48 pixel sizes in it', ic.readUInt16LE(2) === 1 && ic.readUInt16LE(4) === 2 && ic[6] === 32 && ic[22] === 48);
   }
