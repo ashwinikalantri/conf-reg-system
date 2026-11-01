@@ -192,7 +192,7 @@ const S = (id, date, start, end, extra = {}) => ({ id, session_date: date, start
     const setup = fs.readFileSync(appFile('views', 'admin', 'sections', 'general.ejs'), 'utf8');
     check('the halls and their QR posters are in Conference setup, for whoever may edit the programme',
       ['id="gs-card-halls"', 'id="prog-halls"', 'posters.pdf', 'onsubmit="addHall(event)"', 'id="gs-jump-halls"'].every((x) => setup.includes(x))
-      && !programmePage.includes('id="prog-halls"') && /const allowed = can\('programme\.manage'\);/.test(js) && /renderBackupStatus\(\);\n  loadHallsCard\(\);/.test(js));
+      && !programmePage.includes('id="prog-halls"') && /const allowed = can\('programme\.manage'\);/.test(js) && /loadHallsCard\(\);\n  loadCertificateSettingsCard\(\);/.test(js));
     check('the camera stays open, counting one badge once', /now - attState\.lastScan\.at < 4000/.test(js));
     check('the portal keeps a hall code until login, and takes it out of the address',
       /storageSet\('session', 'nqocn_hall', code\);\n\s*window\.history\.replaceState/.test(js) && /markFromHallCode\(\)\.then/.test(js));

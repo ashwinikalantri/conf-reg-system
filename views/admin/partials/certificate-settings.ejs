@@ -1,9 +1,9 @@
-    <!-- SETTINGS › CONFERENCE › CERTIFICATES (certificates.manage): the MMC
+    <!-- CONFERENCE SETUP › CERTIFICATES (certificates.manage): the MMC
          details, who earns points, the hours, the signatories, each
-         certificate's wording, and the design. renderCertificateSettings()
-         in app.js. -->
-    <section id="section-certsettings" class="hidden space-y-5">
-      <h2 class="text-lg font-bold text-slate-800">Certificate settings</h2>
+         certificate's wording, and the design. Shown and filled by
+         loadCertificateSettingsCard() in app.js. -->
+    <div id="gs-card-certificates" class="hidden space-y-5">
+      <h3 class="text-lg font-bold text-slate-800">Certificate settings</h3>
       <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm space-y-3">
         <h3 class="text-sm font-bold text-slate-800">MMC credit points</h3>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -49,4 +49,4 @@
           <button type="button" id="cs-background-remove" onclick="removeCertificateBackground()" class="hidden px-4 py-2 border border-slate-300 text-slate-700 font-semibold text-sm rounded-lg">Use the generated design</button>
         </div>
       </div>
-    </section>
+    </div>

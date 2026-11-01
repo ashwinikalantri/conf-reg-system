@@ -379,7 +379,7 @@ check('Lists & Settings is hidden until shown to an admin', /id="guests-settings
 check('the tab is a main tab, #faculty in the address, opened by guests.view', /const MAIN_TABS = \[[^\]]*'faculty'/.test(js)
   && /tabFaculty\.classList\.toggle\('hidden', !canSee\('faculty'\)\)/.test(js) && !/MAIN_TABS = \[[^\]]*'guests'/.test(js));
 check('coordinators land on it', /: canSee\('faculty'\) \? 'faculty'/.test(js));
-check('an old #guests link still opens it', /return tab === 'guests' \? 'faculty' : tab;/.test(js) && /const hashTab = tabFromHash\(\);/.test(js));
+check('an old #guests link still opens it', /\{ guests: 'faculty', certsettings: 'general' \}\[tab\] \|\| tab/.test(js) && /const hashTab = tabFromHash\(\);/.test(js));
 check('the tab and section are named faculty', /id="nav-tab-faculty" onclick="switchBackendTab\('faculty'\)"/.test(fs.readFileSync(appFile('views', 'admin', 'partials', 'nav-tabs.ejs'), 'utf8'))
   && /<section id="section-faculty"/.test(ejs));
 check('no import option', !/import/i.test(ejs));

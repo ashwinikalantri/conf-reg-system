@@ -447,15 +447,17 @@ const SECTION_PERMISSIONS = {
   faculty: { permission: 'guests.view' },
   // Taking attendance at a door, or watching the counts.
   attendance: { anyOf: ['attendance.mark', 'attendance.view'] },
-  // Certificates: who qualifies, issuing, those issued (a tab in the bar);
-  // and their wording, signatories and design (a Settings page).
+  // Certificates: who qualifies, issuing, those issued (Settings ›
+  // Conference). Their wording, signatories and design are in Conference
+  // setup, below.
   certificates: { permission: 'certificates.view' },
-  certsettings: { permission: 'certificates.manage' },
   // The meal counter (Settings › Conference › Meals).
   meals: { anyOf: ['meals.scan', 'meals.view'] },
   // The halls and sessions, in the Settings menu.
   programme: { permission: 'programme.manage' },
-  general: { permission: 'system.settings_view' },
+  // Conference setup. Certificate settings alone opens it too, showing only
+  // that card (renderGeneralSettings).
+  general: { anyOf: ['system.settings_view', 'certificates.manage'] },
   activity: { permission: 'system.activity_log' },
 };
 

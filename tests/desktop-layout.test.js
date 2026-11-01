@@ -111,8 +111,8 @@ check('...centred only while shown (never undoing .hidden on the delegate\'s pag
 
 console.log('\n== Admin: settings and the faculty list ==');
 check('Conference setup: a side menu on a desktop, a row on a phone', /<nav id="gs-jump" aria-label="Conference setup" class="flex flex-wrap[^"]*lg:flex-col/.test(setup)
-  && (setup.match(/data-target="gs-card-[a-z]+"/g) || []).length === 9 && /lg:grid lg:grid-cols-\[13rem_minmax\(0,1fr\)\]/.test(setup));
-check('...marking the card on screen', /function watchSettingsJump\(\)/.test(js) && /new IntersectionObserver/.test(js) && /renderBackupStatus\(\);\n  loadHallsCard\(\);\n  watchSettingsJump\(\);/.test(js));
+  && (setup.match(/data-target="gs-card-[a-z]+"/g) || []).length === 10 && /lg:grid lg:grid-cols-\[13rem_minmax\(0,1fr\)\]/.test(setup));
+check('...marking the card on screen', /function watchSettingsJump\(\)/.test(js) && /new IntersectionObserver/.test(js) && /loadHallsCard\(\);\n  loadCertificateSettingsCard\(\);\n  watchSettingsJump\(\);/.test(js));
 const listFn = js.slice(js.indexOf('function renderGuestList()'), js.indexOf('// A card per person, for a phone'));
 check('the faculty table: no Volunteers or Needs columns (both in the editor)', !/>Volunteers</.test(listFn) && !/Needs · Remarks/.test(listFn) && /colspan="7"/.test(listFn));
 check('...Sr and Faculty stay in place while it scrolls', /sticky left-0 z-20 bg-slate-50/.test(listFn) && /sticky left-10 z-10 bg-inherit/.test(listFn) && /guestRowTint\(g\) \|\| 'bg-white'/.test(listFn));

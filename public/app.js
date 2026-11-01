@@ -4119,8 +4119,6 @@ function applyRoleVisibility() {
   if (tabReports) tabReports.classList.toggle('hidden', !canSee('reports'));
   const tabFaculty = document.getElementById('nav-tab-faculty');
   if (tabFaculty) tabFaculty.classList.toggle('hidden', !canSee('faculty'));
-  const tabCertificates = document.getElementById('nav-tab-certificates');
-  if (tabCertificates) tabCertificates.classList.toggle('hidden', !canSee('certificates'));
 
   // The walk-in registration button now lives on the Front Desk tab
   // (#desk-register-btn, toggled in initFrontDesk) rather than in the
@@ -4140,7 +4138,7 @@ function applyRoleVisibility() {
   // own tab, from the same source that gated it above -- no separate list of
   // roles kept in step by hand.
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
-  const settingsItems = ['attendance', 'certsettings', 'meals', 'programme', 'programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount', 'roles'];
+  const settingsItems = ['attendance', 'certificates', 'meals', 'programme', 'programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount', 'roles'];
   settingsItems.forEach((key) => {
     const el = document.getElementById(`settings-item-${key}`);
     if (el) el.classList.toggle('hidden', !canSee(key));
@@ -4152,7 +4150,7 @@ function applyRoleVisibility() {
   // under it.
   if (settingsMenuBtn) settingsMenuBtn.classList.remove('hidden');
   const SETTINGS_GROUPS = {
-    conference: ['programme', 'programs', 'attendance', 'certsettings', 'meals'],
+    conference: ['programme', 'programs', 'attendance', 'certificates', 'meals'],
     fees: ['fees', 'discount', 'groupdiscount'],
     messages: ['reminders'],
     system: ['general', 'users', 'roles', 'activity'],
@@ -8700,11 +8698,22 @@ function watchSettingsJump() {
 }
 
 async function renderGeneralSettings() {
+  // Halls and Certificates are shown by their own permissions; a role that
+  // holds one of those but not the settings sees just that card.
+  const full = can('system.settings_view');
+  document.querySelectorAll('#section-general [id^="gs-card-"]').forEach((card) => {
+    if (card.id === 'gs-card-halls' || card.id === 'gs-card-certificates') return;
+    card.classList.toggle('hidden', !full);
+    const jump = document.querySelector(`#gs-jump [data-target="${card.id}"]`);
+    if (jump) jump.classList.toggle('hidden', !full);
+  });
+  loadHallsCard();
+  loadCertificateSettingsCard();
+  watchSettingsJump();
+  if (!full) return;
   // Independent of the settings fetch below, so a backup-status hiccup can't
   // stop the rest of the tab rendering.
   renderBackupStatus();
-  loadHallsCard();
-  watchSettingsJump();
   const res = await fetch('/api/admin/general-settings');
   if (!res.ok) return;
   const data = await res.json();
@@ -13312,9 +13321,9 @@ async function deleteGuestListValue(id) {
   renderGuests();
 }
 
-const SETTINGS_TABS = ['attendance', 'certsettings', 'meals', 'programme', 'programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
+const SETTINGS_TABS = ['attendance', 'certificates', 'meals', 'programme', 'programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
 // 'payments' and 'statement' are two screens of the Registration tab.
-const MAIN_TABS = ['overview', 'desk', 'payments', 'statement', 'abstracts', 'faculty', 'certificates', 'reports'];
+const MAIN_TABS = ['overview', 'desk', 'payments', 'statement', 'abstracts', 'faculty', 'reports'];
 
 // Which tabs each role may open -- the single source of truth used both to
 // pick the landing tab and to validate a tab restored from the URL, so a
@@ -13350,7 +13359,6 @@ function switchBackendTab(tab) {
   if (tab === 'faculty') renderGuests();
   if (tab === 'attendance') renderAttendance();
   if (tab === 'certificates') renderCertificates();
-  if (tab === 'certsettings') renderCertificateSettings();
   if (tab === 'meals') renderMeals();
   if (tab === 'programme') renderProgramme();
   if (tab === 'programs') renderBackendPrograms();
@@ -13405,11 +13413,12 @@ function switchBackendTab(tab) {
 // it with replaceState (no new history entry, so clicking through tabs doesn't
 // bury the previous page behind a dozen Back presses), which doesn't emit
 // hashchange, and the guard below ignores a tab already showing.
-// The tab named in the address. #guests was the Faculty tab's first name;
-// old bookmarks and links still open it.
+// The tab named in the address. #guests was the Faculty tab's first name, and
+// #certsettings a page before it moved into Conference setup; old bookmarks
+// and links still open them.
 function tabFromHash() {
   const tab = window.location.hash.slice(1);
-  return tab === 'guests' ? 'faculty' : tab;
+  return { guests: 'faculty', certsettings: 'general' }[tab] || tab;
 }
 
 window.addEventListener('hashchange', () => {
@@ -13997,8 +14006,8 @@ async function addHall(e) {
 }
 
 // --- The Attendance page (Settings › Conference). Certificates are their
-// own tab (#certificates) and their settings their own Settings page
-// (#certsettings); the Programme is its own Settings page too. ---
+// own Settings page (#certificates), their settings a card in Conference
+// setup; the Programme is its own Settings page too. ---
 async function renderAttendance() {
   await renderAttendanceView();
 }
@@ -14446,6 +14455,16 @@ async function revokeCertificate(id) {
 }
 
 // --- CERTIFICATE SETTINGS (admin) ---
+// --- CERTIFICATE SETTINGS (a card in Conference setup) ---
+function loadCertificateSettingsCard() {
+  const allowed = can('certificates.manage');
+  const card = document.getElementById('gs-card-certificates');
+  const jump = document.getElementById('gs-jump-certificates');
+  if (card) card.classList.toggle('hidden', !allowed);
+  if (jump) jump.classList.toggle('hidden', !allowed);
+  if (allowed) renderCertificateSettings();
+}
+
 async function renderCertificateSettings() {
   const res = await fetch('/api/admin/certificates/settings');
   if (!res.ok) return;

@@ -182,14 +182,20 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
     const view = fs.readFileSync(appFile('views', 'admin', 'sections', 'attendance.ejs'), 'utf8');
     const certView = fs.readFileSync(appFile('views', 'admin', 'sections', 'certificates.ejs'), 'utf8');
-    const setView = fs.readFileSync(appFile('views', 'admin', 'sections', 'certsettings.ejs'), 'utf8');
+    const setView = fs.readFileSync(appFile('views', 'admin', 'partials', 'certificate-settings.ejs'), 'utf8');
+    const setup = fs.readFileSync(appFile('views', 'admin', 'sections', 'general.ejs'), 'utf8');
     const navTabs = fs.readFileSync(appFile('views', 'admin', 'partials', 'nav-tabs.ejs'), 'utf8');
     const adminHeader = fs.readFileSync(appFile('views', 'admin', 'partials', 'header.ejs'), 'utf8');
-    check('Certificates are their own tab in the bar, their settings a Settings page under Conference (31 Oct)',
-      /<section id="section-certificates"/.test(certView) && /id="cert-list"/.test(certView) && /<section id="section-certsettings"/.test(setView) && /id="cs-templates"/.test(setView)
-      && /id="nav-tab-certificates" onclick="switchBackendTab\('certificates'\)"/.test(navTabs)
-      && /id="settings-item-attendance"[\s\S]*?id="settings-item-certsettings" onclick="selectSettingsTab\('certsettings'\)"[\s\S]*?id="settings-group-fees"/.test(adminHeader)
+    check('Certificates are a page under Settings › Conference, their settings a card in Conference setup (1 Nov)',
+      /<section id="section-certificates"/.test(certView) && /id="cert-list"/.test(certView) && /id="gs-card-certificates" class="hidden space-y-5"/.test(setView) && /id="cs-templates"/.test(setView)
+      && !navTabs.includes('certificates')
+      && /id="settings-item-attendance"[\s\S]*?id="settings-item-certificates" onclick="selectSettingsTab\('certificates'\)"[\s\S]*?id="settings-group-fees"/.test(adminHeader)
+      && !adminHeader.includes('certsettings')
+      && /id="gs-jump-certificates" data-target="gs-card-certificates"/.test(setup) && /include\('\.\.\/partials\/certificate-settings'\)/.test(setup)
+      && /certsettings: 'general'/.test(js)
       && !/data-att-view|att-view-certificates|att-view-settings/.test(view));
+    check('certificate settings alone opens Conference setup, showing only that card', require(appFile('permissions.js')).SECTION_PERMISSIONS.general.anyOf.includes('certificates.manage')
+      && /const full = can\('system\.settings_view'\);[\s\S]{0,400}?card\.classList\.toggle\('hidden', !full\)[\s\S]{0,300}?if \(!full\) return;/.test(js));
     check('issuing asks first', /async function issueCertificates\(scope\) \{[\s\S]{0,200}await showConfirm\(/.test(js));
     check('the portal card offers each download', /\/api\/certificates\/mine\/\$\{encodeURIComponent\(m\.id\)\}\.pdf/.test(js));
   } finally {
