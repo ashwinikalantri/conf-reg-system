@@ -4179,6 +4179,71 @@ function applyRoleVisibility() {
   });
 }
 
+// --- HELD EMAILS -----------------------------------------------------------
+// An email from a staff action waits on the server (holdEmail) until this
+// popup is answered: Send sends it, Cancel drops it, and the action itself
+// stands either way. Any reply that held one brings the popup up; one left
+// unanswered comes back at the next visit, and nothing goes out meanwhile.
+const heldEmails = { list: [], timer: null, busy: false };
+if (typeof window !== 'undefined' && window.fetch) {
+  const pageFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const res = await pageFetch(...args);
+    if (res.headers && res.headers.get('X-Held-Emails')) showHeldEmails();
+    return res;
+  };
+}
+
+// Waits a moment, so several held together are asked about together.
+function showHeldEmails() {
+  clearTimeout(heldEmails.timer);
+  heldEmails.timer = setTimeout(async () => {
+    const res = await fetch('/api/admin/held-emails');
+    if (!res.ok) return;
+    heldEmails.list = (await res.json()).emails || [];
+    renderHeldEmails();
+  }, 200);
+}
+
+function renderHeldEmails() {
+  const modal = document.getElementById('modal-held-email');
+  if (!modal) return;
+  const list = heldEmails.list;
+  modal.classList.toggle('hidden', !list.length);
+  if (!list.length) return;
+  const many = list.length > 1;
+  setText('held-email-title', many ? `Send these ${list.length} emails?` : 'Send this email?');
+  setText('held-email-send', many ? `Send ${list.length} emails` : 'Send');
+  document.getElementById('held-email-list').innerHTML = list.map((m) => `
+    <div class="py-3">
+      <p class="text-[13px] text-slate-500">To</p>
+      <p class="text-[15px] font-semibold text-slate-900 break-words">${esc(m.to_name ? `${m.to_name} · ${m.to_address}` : m.to_address)}</p>
+      <p class="text-[13px] text-slate-500 mt-2">Subject</p>
+      <p class="text-[15px] text-slate-900 break-words">${esc(m.subject)}</p>
+      <details class="mt-2">
+        <summary class="cursor-pointer min-h-[44px] flex items-center text-sm font-semibold text-navy">See the email</summary>
+        <iframe sandbox="" title="The email" srcdoc="${esc(m.html)}" class="w-full h-80 border border-slate-200 rounded-lg bg-white"></iframe>
+      </details>
+    </div>`).join('');
+}
+
+async function decideHeldEmails(send) {
+  if (heldEmails.busy || !heldEmails.list.length) return;
+  heldEmails.busy = true;
+  const buttons = ['held-email-send', 'held-email-cancel'].map((id) => document.getElementById(id));
+  buttons.forEach((b) => { b.disabled = true; });
+  const res = await fetch('/api/admin/held-emails/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: heldEmails.list.map((m) => m.id), send }) });
+  const data = await res.json().catch(() => ({}));
+  heldEmails.busy = false;
+  buttons.forEach((b) => { b.disabled = false; });
+  if (!data.success) return showToast(data.error || 'Could not do that. Check the connection and try again.');
+  if (data.failed) showToast(`${data.failed} could not be sent${data.sent ? `, ${data.sent} sent` : ''}. Check the Logs.`);
+  else if (send) showToast(data.sent === 1 ? 'Email sent.' : `${data.sent} emails sent.`, 'success');
+  else showToast(data.cancelled === 1 ? 'Email cancelled. Nothing was sent.' : `${data.cancelled} emails cancelled. Nothing was sent.`, 'success');
+  showHeldEmails();
+}
+
 async function initBackendPortal() {
   setupAdminDelegation();
 
@@ -4191,6 +4256,7 @@ async function initBackendPortal() {
   }
   const me = await meRes.json();
   activeAdminUser = me.user;
+  showHeldEmails();
   // Who is signed in, on the bar's account button and at the top of its menu.
   const meName = (me.user && me.user.full_name) || '';
   const meInitials = nameInitials(meName);
@@ -11739,7 +11805,7 @@ async function deskSaveAbstractExtension() {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ until, notify }),
   })).json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not allow late submission.');
-  showToast(`They may submit until ${formatFullDate(until)}.${notify ? (data.emailed ? ' They have been emailed.' : ' No email was sent — none on file, or email is off.') : ''}`, 'success');
+  showToast(`They may submit until ${formatFullDate(until)}.${notify && !data.emailed ? ' No email to send: none on file, or email is off.' : ''}`, 'success');
   deskReload();
 }
 
@@ -12888,8 +12954,7 @@ async function saveGuest(ev) {
   })).json().catch(() => ({}));
   if (btn) btn.disabled = false;
   if (!data.success) return showToast(data.error || 'Could not save.');
-  const told = (data.notified || []).map((s) => `the ${s === 'travel' ? 'transport' : 'accommodation'} volunteer`).join(' and ');
-  showToast(data.changed ? `Saved.${told ? ` Emailed ${told}.` : ''}` : 'Nothing changed.', 'success');
+  showToast(data.changed ? 'Saved.' : 'Nothing changed.', 'success');
   closeModal('modal-guest-edit');
   renderGuests();
 }

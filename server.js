@@ -590,10 +590,11 @@ function rebuildSesClient() {
 }
 rebuildSesClient();
 
-// Send an email if configured; never throws (notifications are best-effort).
-// The runtime notifyToggle.email switch lets a super admin silence all email.
+// Send an email if configured; never throws (notifications are best-effort),
+// and says whether it went. The runtime notifyToggle.email switch lets a super
+// admin silence all email.
 async function sendEmail(to, subject, html) {
-  if (!emailEnabled() || !notifyToggle.email || !to || !sesClient) return;
+  if (!emailEnabled() || !notifyToggle.email || !to || !sesClient) return false;
   try {
     await sesClient.send(new SendEmailCommand({
       FromEmailAddress: emailFromFormatted(),
@@ -601,9 +602,11 @@ async function sendEmail(to, subject, html) {
       Content: { Simple: { Subject: { Data: subject, Charset: 'UTF-8' }, Body: { Html: { Data: html, Charset: 'UTF-8' } } } },
     }));
     writeAuditRow('email', to, 'EMAIL_SENT', null, subject, null, null, null).catch(() => {});
+    return true;
   } catch (err) {
     console.error(`Email to ${to} failed:`, err.message);
     writeAuditRow('email', to, 'EMAIL_FAILED', null, `${subject} — ${err.message}`.slice(0, 300), null, null, null).catch(() => {});
+    return false;
   }
 }
 
@@ -611,6 +614,20 @@ async function sendEmail(to, subject, html) {
 async function notifyDelegate(phone, subject, html) {
   const u = await dbGet('SELECT email FROM users WHERE phone_number = ?', [phone]).catch(() => null);
   if (u && u.email) sendEmail(u.email, subject, html);
+}
+
+// An email a staff member's action would send is held, not sent: the action's
+// reply carries X-Held-Emails, the admin page asks Send or Cancel, and only
+// Send sends it (POST /api/admin/held-emails/decide). No answer, no email.
+// What a delegate's own action sends, and sign-in codes, go at once.
+async function holdEmail(req, phone, subject, html) {
+  if (!emailEnabled() || !notifyToggle.email) return false;
+  const u = await dbGet('SELECT email, full_name FROM users WHERE phone_number = ?', [phone]).catch(() => null);
+  if (!u || !u.email) return false;
+  const r = await dbRun(`INSERT INTO held_emails (to_address, to_name, subject, html, by_phone, status, created_at)
+    VALUES (?, ?, ?, ?, ?, 'PENDING', ?)`, [u.email, u.full_name || null, subject, html, req.session.phone, Date.now()]);
+  req.res.append('X-Held-Emails', String(r.lastID));
+  return true;
 }
 
 // The chrome itself lives in email-template.js, shared with the daily-digest
@@ -1962,6 +1979,20 @@ db.serialize(() => {
   db.run('CREATE UNIQUE INDEX IF NOT EXISTS meal_servings_once ON meal_servings (meal_key, person_key) WHERE removed_at IS NULL');
   // The printed meal pass for faculty and organisers: an unguessable code
   // for its QR, one per person.
+  // Emails from staff actions, waiting for Send or Cancel (holdEmail).
+  db.run(`
+    CREATE TABLE IF NOT EXISTS held_emails (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      to_address TEXT NOT NULL,
+      to_name TEXT,
+      subject TEXT NOT NULL,
+      html TEXT NOT NULL,
+      by_phone TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      decided_at INTEGER
+    )
+  `);
   db.run(`
     CREATE TABLE IF NOT EXISTS meal_passes (
       person_key TEXT PRIMARY KEY,
@@ -6600,7 +6631,7 @@ app.put('/api/registrations/:id/status', requirePermission('payments.decide'), a
     if (bankStatus !== existing.bank_status) {
       const reg = await dbGet('SELECT phone_number, delegate_name, registration_number FROM registrations WHERE id = ?', [req.params.id]);
       if (reg && bankStatus === 'BANK_VERIFIED') {
-        notifyDelegate(reg.phone_number, 'Registration Confirmed',
+        await holdEmail(req, reg.phone_number, 'Registration Confirmed',
           emailWrap('Your registration is confirmed',
             `<p>Dear ${escapeHtml(reg.delegate_name)},</p>
              <p>Your payment has been verified and your registration is <b>confirmed</b>.</p>
@@ -6622,7 +6653,7 @@ app.put('/api/registrations/:id/status', requirePermission('payments.decide'), a
           WRONG_CATEGORY: 'Please log in to the delegate portal to select the correct category and pay any balance due.',
           ID_DISCREPANCY: 'Please log in to the delegate portal to upload a valid student ID, or switch to an appropriate category.',
         }[reason] || 'Please log in to the delegate portal to review and resubmit.';
-        notifyDelegate(reg.phone_number, 'Action needed on your registration',
+        await holdEmail(req, reg.phone_number, 'Action needed on your registration',
           emailWrap('Your registration needs attention',
             `<p>Dear ${escapeHtml(reg.delegate_name)},</p>
              <p>Your registration could not be verified because ${escapeHtml(reasonText)}${note ? `: <i>${escapeHtml(note)}</i>` : ''}.</p>
@@ -6983,7 +7014,7 @@ app.post('/api/registrations/:id/revise-payment', requirePermission('payments.re
       req, entityType: 'registration', entityId: req.params.id, action: 'PAYMENT_REVISED',
       oldValue: reg.bank_status, newValue: `PARTIAL_PAYMENT (paid ₹${inr(summary.verifiedTotal)}, ₹${inr(remaining)} balance)`,
     });
-    notifyDelegate(reg.phone_number, 'Revised payment required — balance due',
+    await holdEmail(req, reg.phone_number, 'Revised payment required — balance due',
       emailWrap('A balance is due on your registration',
         `<p>Dear ${escapeHtml(reg.delegate_name)},</p>
          <p>Your registration category is now <b>${escapeHtml(reg.category_label)}</b> with a fee of <b>₹${inr(escapeHtml(reg.expected_amount))}</b>. We have received <b>₹${inr(escapeHtml(summary.verifiedTotal))}</b>.</p>
@@ -7635,20 +7666,20 @@ async function registerFromAdmin(req, res, next, complimentary) {
     }
 
     if (complimentary) {
-      notifyDelegate(phone, 'Registration confirmed',
+      await holdEmail(req, phone, 'Registration confirmed',
         emailWrap('Your registration is confirmed',
           `<p>Dear ${escapeHtml(name)},</p>
            <p>Your registration for the ${escapeHtml(CONFERENCE.name)} is <b>confirmed</b>. As faculty, your registration is complimentary — no payment is needed.</p>
            <p>Registration number: <b>${escapeHtml(regNo)}</b></p>${deskPassEmailHtml(regNo)}`));
     } else if (linkLater) {
-      notifyDelegate(phone, 'Payment received — verification pending',
+      await holdEmail(req, phone, 'Payment received — verification pending',
         emailWrap('We’ve received your payment details',
           `<p>Dear ${escapeHtml(name)},</p>
            <p>Your registration for the ${escapeHtml(CONFERENCE.name)} has been recorded and your payment is now <b>pending verification</b> by our team.</p>
            <p>Registration number: <b>${escapeHtml(regNo)}</b></p>
            <p>Your registration will be <b>confirmed once your payment is verified</b> against our bank statement — you’ll receive a confirmation email at that point.</p>`));
     } else {
-      notifyDelegate(phone, 'Registration confirmed',
+      await holdEmail(req, phone, 'Registration confirmed',
         emailWrap('Your registration is confirmed',
           `<p>Dear ${escapeHtml(name)},</p>
            <p>Your registration for the ${escapeHtml(CONFERENCE.name)} is <b>confirmed</b>.</p>
@@ -14029,7 +14060,7 @@ app.put('/api/abstracts/extensions/:phone', requirePermission('abstracts.extend_
     const emailed = !!req.body.notify && emailEnabled() && !!u.email;
     if (emailed) {
       const name = [u.salutation, u.full_name].filter(Boolean).join(' ') || 'Delegate';
-      notifyDelegate(phone, 'You may still submit your abstract',
+      await holdEmail(req, phone, 'You may still submit your abstract',
         emailWrap('Abstract submission — extended for you', `<p>Dear ${escapeHtml(name)},</p>
            <p>The organising committee has allowed you to submit your abstract for the ${escapeHtml(CONFERENCE.name)} after the general last date.</p>
            <div style="background:#eef3f6;border:1px solid #b9cedb;border-radius:10px;padding:.9rem 1.1rem;margin:1rem 0">
@@ -14182,13 +14213,13 @@ app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), asyn
     // Rejecting at the approval step IS a final decision (there is no
     // assignment step to follow), so that's the one case this step emails.
     if (status === 'REJECTED' && existing.status !== 'REJECTED') {
-      notifyDelegate(existing.phone_number, 'Your abstract submission — decision',
+      await holdEmail(req, existing.phone_number, 'Your abstract submission — decision',
         emailWrap('Abstract decision',
           `<p>Dear ${escapeHtml(existing.author_name)},</p>
            <p>Thank you for submitting your abstract, <b>"${escapeHtml(existing.title)}"</b>. After review by the scientific committee, we regret that it has not been accepted for the ${escapeHtml(CONFERENCE.name)}.</p>`));
     }
     if (status === 'REVISION_REQUESTED') {
-      notifyDelegate(existing.phone_number, 'Your abstract needs corrections',
+      await holdEmail(req, existing.phone_number, 'Your abstract needs corrections',
         emailWrap('Corrections requested',
           `<p>Dear ${escapeHtml(existing.author_name)},</p>
            <p>The scientific committee has reviewed your abstract, <b>"${escapeHtml(existing.title)}"</b>, and requests some corrections before it can be considered further:</p>
@@ -14229,7 +14260,7 @@ app.put('/api/abstracts/:id/allocation', requirePermission('abstracts.assign'), 
     if (isFirstAssignment || a.allocation !== allocation) {
       const kind = { ORAL: 'oral', POSTER: 'poster', AWARD: 'award' }[allocation];
       if (provisional) {
-        notifyDelegate(a.phone_number, 'Your abstract has been provisionally accepted — please register',
+        await holdEmail(req, a.phone_number, 'Your abstract has been provisionally accepted — please register',
           emailWrap('Abstract provisionally accepted', `<p>Dear ${escapeHtml(a.author_name)},</p>
              <p>We are pleased to inform you that your abstract <b>"${escapeHtml(a.title)}"</b> has been <b>provisionally accepted</b> for the ${escapeHtml(CONFERENCE.name)}, for <b>${kind} presentation</b>.</p>
              <div style="background:#eef3f6;border:1px solid #b9cedb;border-radius:10px;padding:.9rem 1.1rem;margin:1rem 0">
@@ -14238,13 +14269,55 @@ app.put('/api/abstracts/:id/allocation', requirePermission('abstracts.assign'), 
              </div>
              <p>Please log in at <b>${escapeHtml(PORTAL_URL)}</b> and complete your registration. Further details (time and venue) will be communicated separately.</p>`));
       } else {
-        notifyDelegate(a.phone_number, 'Your abstract has been accepted',
+        await holdEmail(req, a.phone_number, 'Your abstract has been accepted',
           emailWrap('Abstract accepted', `<p>Dear ${escapeHtml(a.author_name)},</p>
              <p>We are pleased to inform you that your abstract <b>"${escapeHtml(a.title)}"</b> has been <b>accepted</b> for the ${escapeHtml(CONFERENCE.name)}, for <b>${kind} presentation</b>.</p>
              <p>Further details (time and venue) will be communicated separately.</p>`));
       }
     }
     res.json({ success: true, provisional });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- HELD EMAILS ----------------------------------------------------------
+// Each person sees and decides only the emails their own actions held.
+app.get('/api/admin/held-emails', requireAuth, async (req, res, next) => {
+  try {
+    const emails = await dbAll(`SELECT id, to_address, to_name, subject, html FROM held_emails
+      WHERE by_phone = ? AND status = 'PENDING' ORDER BY id`, [req.session.phone]);
+    res.json({ success: true, emails });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/admin/held-emails/decide', requireAuth, async (req, res, next) => {
+  try {
+    const send = req.body.send === true;
+    const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
+    if (!ids.length) return res.status(400).json({ success: false, error: 'No emails chosen.' });
+    let sent = 0;
+    let failed = 0;
+    let cancelled = 0;
+    for (const id of ids) {
+      const row = await dbGet("SELECT * FROM held_emails WHERE id = ? AND by_phone = ? AND status = 'PENDING'", [id, req.session.phone]);
+      if (!row) continue;
+      // Claimed first, so a second click cannot send it twice.
+      const claim = await dbRun("UPDATE held_emails SET status = ?, decided_at = ? WHERE id = ? AND status = 'PENDING'", [send ? 'SENT' : 'CANCELLED', Date.now(), id]);
+      if (claim.changes !== 1) continue;
+      if (!send) {
+        cancelled++;
+        await recordAudit({ req, entityType: 'email', entityId: row.to_address, action: 'EMAIL_CANCELLED', oldValue: null, newValue: row.subject });
+      } else if (await sendEmail(row.to_address, row.subject, row.html)) {
+        sent++;
+      } else {
+        failed++;
+        await dbRun("UPDATE held_emails SET status = 'FAILED' WHERE id = ?", [id]);
+      }
+    }
+    res.json({ success: true, sent, failed, cancelled });
   } catch (err) {
     next(err);
   }
@@ -14908,7 +14981,7 @@ app.put('/api/guests/:id', requirePermission('guests.view'), async (req, res, ne
           <td style="padding:.35rem .6rem;border-bottom:1px solid #eef3f6;color:#46708c">${escapeHtml(c.label)}</td>
           <td style="padding:.35rem .6rem;border-bottom:1px solid #eef3f6;color:#64748b;text-decoration:line-through">${escapeHtml(shown(c, c.from))}</td>
           <td style="padding:.35rem .6rem;border-bottom:1px solid #eef3f6;color:#1c3549;font-weight:700">${escapeHtml(shown(c, c.to))}</td></tr>`).join('');
-      notifyDelegate(coord, `${side} details changed: ${g.name}`,
+      await holdEmail(req, coord, `${side} details changed: ${g.name}`,
         emailWrap(`${side} details changed`, `<p><b>${escapeHtml(req.session.name || 'A colleague')}</b> changed ${side.toLowerCase()} details for <b>${escapeHtml(g.name)}</b>, a faculty member you are looking after.</p>
           <table style="width:100%;border-collapse:collapse;font-size:.85rem;margin:.75rem 0">${rowsHtml}</table>
           <p>See the Faculty tab at <b>${escapeHtml(PORTAL_URL)}</b>.</p>`));
@@ -15032,6 +15105,9 @@ function auditRoutePermissions() {
       'POST /api/abstracts',
       'GET /api/abstracts/me',
       'PUT /api/abstracts/me/authors',
+      // Each person's own held emails only: the query is by who is signed in.
+      'GET /api/admin/held-emails',
+      'POST /api/admin/held-emails/decide',
     ]);
     const methods = Object.keys(layer.route.methods).map((m) => m.toUpperCase());
     const unlisted = methods.filter((m) => !GATED_INSIDE.has(`${m} ${routePath}`));

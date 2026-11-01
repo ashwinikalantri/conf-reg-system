@@ -78,7 +78,7 @@ const TEST = '/api/admin/reminders/audiences/abstract/test';
     const routeOf = (head) => { const i = src.indexOf(head); return src.slice(i, src.indexOf('\n});', i)); };
     const statusRoute = routeOf("app.put('/api/abstracts/:id/status'");
     // Every email this step can send sits under the one decision that needs it.
-    const guards = statusRoute.split('notifyDelegate(').slice(0, -1)
+    const guards = statusRoute.split('await holdEmail(').slice(0, -1)
       .map((before) => (before.match(/if \(status === '([A-Z_]+)'[^\n]*\)\s*\{\s*$/) || [])[1]);
     check('approval sends nothing: the only emails are for rejection and corrections',
       JSON.stringify(guards) === '["REJECTED","REVISION_REQUESTED"]', guards);

@@ -1,0 +1,14 @@
+  <!-- MODAL: AN EMAIL FROM A STAFF ACTION, waiting for an answer. Above every
+       other modal, and it does not close by itself: Send or Cancel.
+       renderHeldEmails() in app.js. -->
+  <div id="modal-held-email" class="hidden fixed inset-0 bg-slate-900/60 flex justify-center items-center p-4 z-[70]" role="dialog" aria-modal="true" aria-labelledby="held-email-title">
+    <div class="bg-white max-w-lg w-full max-h-full rounded-2xl p-5 shadow-card flex flex-col">
+      <h2 id="held-email-title" class="text-lg font-bold text-slate-900">Send this email?</h2>
+      <p class="text-sm text-slate-600 mt-1">Nothing has gone out yet. Cancel drops the email only: what you just did stays done.</p>
+      <div id="held-email-list" class="mt-2 divide-y divide-slate-100 overflow-y-auto min-h-0"></div>
+      <div class="flex gap-2 mt-3">
+        <button type="button" id="held-email-cancel" onclick="decideHeldEmails(false)" class="flex-1 h-11 border border-slate-300 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Cancel</button>
+        <button type="button" id="held-email-send" onclick="decideHeldEmails(true)" class="flex-1 h-11 bg-navy hover:bg-indigo-700 rounded-xl text-sm font-semibold text-white disabled:opacity-50">Send</button>
+      </div>
+    </div>
+  </div>
