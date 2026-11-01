@@ -132,6 +132,13 @@ check('the Meals report needs the counts', perms.REPORT_PERMISSIONS.meals === 'm
       && /: canSee\('meals'\) \? 'meals'/.test(js));
     check('the counter: meal, counter, scan, find by name; passes and report for the counts', ['id="meal-select"', 'id="meal-counter"', 'onclick="openMealScanner()"', 'id="meal-search"', 'href="/api/admin/meals/passes.pdf"'].every((x) => view.includes(x)));
     check('the answer fills the screen: green, amber, red', /bg-emerald-600 text-white[\s\S]*?Served anyway' : 'Serve'/.test(js) && /bg-amber-400 text-amber-950[\s\S]*?Already served/.test(js) && /bg-rose-700 text-white[\s\S]*?Not on the list/.test(js));
+    check('a scan answers over the camera at once, the name big; "Serve" clears itself, no Done to press',
+      view.includes('id="meal-scan-flash"') && /showMealFlash\(mealResultHtml\(d, true\), d\.result\)/.test(js) && /MEAL_FLASH_MS = \{ SERVE: \d+/.test(js)
+        && !/NOT_ELIGIBLE: \d+/.test(js.slice(js.indexOf('MEAL_FLASH_MS'), js.indexOf('MEAL_FLASH_MS') + 120)));
+    check('a phone needs no scrolling: meal and counter side by side, the search answer replaces its list, the camera clipped to the screen',
+      /<div class="flex gap-2 sm:gap-3">\s*<div class="flex-1 min-w-0">\s*<label for="meal-select"/.test(view) && /hidden sm:block text-\[15px\] text-slate-600">Scan each badge/.test(view)
+        && view.indexOf('id="meal-search"') < view.indexOf('id="meal-result"') && /if \(body\.personKey\) \{[\s\S]{0,200}?input\.value = ''/.test(js)
+        && /min-h-0 overflow-hidden[^"]*bg-black/.test(view) && view.includes('h-[100dvh]'));
     check('a meal pass is read as it is, a badge as the desk reads it', /\/\^MP\[A-Z2-9\]\{10\}\$\/i\.test\(raw\) \? raw\.toUpperCase\(\) : deskIdentifierFromScan\(raw\)/.test(js));
   } finally {
     for (const id of made.sessions) {

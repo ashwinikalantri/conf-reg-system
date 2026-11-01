@@ -13998,7 +13998,7 @@ async function renderAttendance() {
 // the counter where a meal is served at several places; then scan, or find
 // someone by name. Each answer fills the screen: Serve (green), Already
 // served (amber), Not on the list (red). The server decides (meals.js).
-const mealState = { meals: [], key: null, expected: null, scanner: null, lastScan: { text: '', at: 0 }, searchTimer: null, searchSeq: 0 };
+const mealState = { meals: [], key: null, expected: null, scanner: null, lastScan: { text: '', at: 0 }, searchTimer: null, searchSeq: 0, flashTimer: null };
 const mealOf = () => mealState.meals.find((m) => m.key === mealState.key) || null;
 const mealWhen = (m) => `${shortDateRange(m.date, m.date)}, ${guestTime12(m.start)}–${guestTime12(m.end)}`;
 
@@ -14073,7 +14073,7 @@ function renderMealCounts() {
   const counter = m.counters.find((c) => c.sessionId === mealCounterId());
   if (here) {
     here.classList.toggle('hidden', m.counters.length < 2 || !counter);
-    if (counter) here.textContent = `${counter.served} at ${counter.hall}`;
+    if (counter) here.textContent = `· ${counter.served} at ${counter.hall}`;
   }
 }
 
@@ -14083,37 +14083,71 @@ function mealResultHtml(d, big) {
   const who = `<p class="${big ? 'text-2xl' : 'text-xl'} font-bold leading-tight mt-1">${esc(p.name || '')}</p>
     <p class="text-[15px] opacity-90">${esc([p.kindLabel, p.detail].filter(Boolean).join(' · '))}</p>`;
   const key = esc(JSON.stringify(p.key || ''));
+  // Big over the camera and on a wide screen; a size down on a phone's page.
+  const pad = big ? 'p-5' : 'p-4';
+  const head = big ? 'text-3xl' : 'text-2xl';
   if (d.result === 'SERVE') {
-    return `<div class="rounded-2xl bg-emerald-600 text-white p-5">
-      <p class="text-3xl font-extrabold tracking-wide">${d.anyway ? 'Served anyway' : 'Serve'}</p>${who}
+    return `<div class="rounded-2xl bg-emerald-600 text-white ${pad}">
+      <p class="${head} font-extrabold tracking-wide">${d.anyway ? 'Served anyway' : 'Serve'}</p>${who}
       ${d.servingId ? `<button type="button" onclick="mealUndo(${Number(d.servingId)})" class="mt-3 h-11 px-4 rounded-xl bg-white/15 hover:bg-white/25 text-sm font-semibold">Undo, a mistake</button>` : ''}
     </div>`;
   }
   if (d.result === 'ALREADY') {
     const at = d.servedAt ? new Date(d.servedAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '';
-    return `<div class="rounded-2xl bg-amber-400 text-amber-950 p-5">
-      <p class="text-3xl font-extrabold tracking-wide">Already served</p>${who}
+    return `<div class="rounded-2xl bg-amber-400 text-amber-950 ${pad}">
+      <p class="${head} font-extrabold tracking-wide">Already served</p>${who}
       <p class="text-[15px] font-semibold mt-2">${esc([at && `at ${at}`, d.counter, d.by && `by ${d.by}`].filter(Boolean).join(', '))}</p>
     </div>`;
   }
   if (d.result === 'NOT_ELIGIBLE') {
-    return `<div class="rounded-2xl bg-rose-700 text-white p-5">
-      <p class="text-3xl font-extrabold tracking-wide">Not on the list</p>${who}
+    return `<div class="rounded-2xl bg-rose-700 text-white ${pad}">
+      <p class="${head} font-extrabold tracking-wide">Not on the list</p>${who}
       <p class="text-[15px] font-semibold mt-2">${esc(p.reason || '')}</p>
       <button type="button" onclick='mealServeAnyway(${key})' class="mt-3 h-11 px-4 rounded-xl bg-white/15 hover:bg-white/25 text-sm font-semibold">Serve anyway, with a reason</button>
     </div>`;
   }
-  return `<div class="rounded-2xl bg-slate-800 text-white p-5">
-    <p class="text-3xl font-extrabold tracking-wide">Not found</p>
+  return `<div class="rounded-2xl bg-slate-800 text-white ${pad}">
+    <p class="${head} font-extrabold tracking-wide">Not found</p>
     <p class="text-[15px] mt-1">${esc(d.error || 'Nobody found.')}</p>
   </div>`;
 }
 
+// How long an answer stays over the camera: "Serve" briefly, so the next
+// person can step up; "Already served" or "Not found" long enough to read.
+// "Not on the list" stays until tapped -- someone has to decide.
+const MEAL_FLASH_MS = { SERVE: 2500, ALREADY: 6000, UNKNOWN: 4000 };
+
+function hideMealFlash() {
+  clearTimeout(mealState.flashTimer);
+  const flash = document.getElementById('meal-scan-flash');
+  if (flash) { flash.classList.add('hidden'); flash.innerHTML = ''; }
+}
+
+function mealFlashTap(e) {
+  if (e.target.closest('button')) return;
+  hideMealFlash();
+}
+
+function showMealFlash(html, result) {
+  const flash = document.getElementById('meal-scan-flash');
+  if (!flash || !mealState.scanner) return;
+  clearTimeout(mealState.flashTimer);
+  flash.innerHTML = `${html}<p class="mt-3 text-center text-sm font-semibold text-white/80">Tap to scan the next</p>`;
+  flash.classList.remove('hidden');
+  if (MEAL_FLASH_MS[result]) mealState.flashTimer = setTimeout(hideMealFlash, MEAL_FLASH_MS[result]);
+}
+
 function showMealResult(d) {
   const box = document.getElementById('meal-result');
-  if (box) { box.innerHTML = mealResultHtml(d, true); box.classList.remove('hidden'); }
+  if (box) { box.innerHTML = mealResultHtml(d, window.innerWidth >= 640); box.classList.remove('hidden'); }
+  showMealFlash(mealResultHtml(d, true), d.result);
   const line = document.getElementById('meal-scan-result');
-  if (line && mealState.scanner) { line.className = 'p-3'; line.innerHTML = mealResultHtml(d, false); }
+  if (line && mealState.scanner) {
+    const p = d.person || {};
+    const word = { SERVE: d.anyway ? 'Served anyway' : 'Served', ALREADY: 'Already served', NOT_ELIGIBLE: 'Not on the list' }[d.result] || 'Not found';
+    line.className = 'p-4 text-center text-[15px] font-semibold text-slate-600';
+    line.textContent = p.name ? `Last: ${p.name} · ${word}` : `Last: ${word}`;
+  }
   if (navigator.vibrate) navigator.vibrate(d.result === 'SERVE' ? 60 : [90, 60, 90]);
   if (d.result === 'SERVE') {
     const m = mealOf();
@@ -14134,6 +14168,14 @@ async function mealServe(body) {
   let data = {};
   try { data = await res.json(); } catch (e) { data = { error: 'No answer from the server. Check the connection.' }; }
   if (!res.ok && data.result !== 'UNKNOWN') return showMealResult({ result: 'UNKNOWN', error: data.error || 'Could not serve. Check the connection.' });
+  // Served from the search: its answer takes the list's place, so a phone
+  // never has to scroll to see it.
+  if (body.personKey) {
+    const input = document.getElementById('meal-search');
+    if (input) { input.value = ''; input.blur(); }
+    const list = document.getElementById('meal-search-results');
+    if (list) list.innerHTML = '';
+  }
   showMealResult(data);
   return data;
 }
@@ -14149,7 +14191,9 @@ async function mealUndo(servingId) {
   const data = await res.json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not take it back.');
   const box = document.getElementById('meal-result');
-  if (box) box.innerHTML = '<div class="rounded-2xl border border-slate-300 bg-white p-5 text-[15px] font-semibold text-slate-700">Taken back: not counted as served.</div>';
+  const taken = '<div class="rounded-2xl border border-slate-300 bg-white p-5 text-[15px] font-semibold text-slate-700">Taken back: not counted as served.</div>';
+  if (box) box.innerHTML = taken;
+  showMealFlash(taken, 'UNKNOWN');
   renderMeals();
 }
 
@@ -14163,6 +14207,7 @@ async function openMealScanner() {
   const line = document.getElementById('meal-scan-result');
   line.className = 'p-4 text-center text-[15px] font-semibold text-slate-600';
   line.textContent = 'Starting the camera…';
+  hideMealFlash();
   openModal('modal-meal-scan');
   try {
     if (!window.Html5Qrcode) await loadScriptOnce(DESK_SCANNER_SRC);
@@ -14187,6 +14232,7 @@ async function onMealScan(text) {
 }
 
 async function closeMealScanner() {
+  hideMealFlash();
   const scanner = mealState.scanner;
   mealState.scanner = null;
   if (scanner) {

@@ -5,27 +5,30 @@
          says Serve, Already served or Not on the list, big. Whoever sees the
          counts (meals.view) also prints the meal passes and opens the Meals
          report. renderMeals() in app.js; the rules in meals.js. -->
-    <section id="section-meals" class="hidden max-w-2xl space-y-4">
+    <section id="section-meals" class="hidden max-w-2xl space-y-3 sm:space-y-4">
+      <!-- On a phone it all fits on one screen, no scrolling: the heading
+           alone, the meal and counter side by side, the count and whether it
+           is being served on one line, the scan button; then the search,
+           whose answer replaces the list it came from. -->
       <div>
-        <h2 class="text-2xl font-bold text-slate-900">Meals</h2>
-        <p class="text-[15px] text-slate-600">Scan each badge or meal pass. Everyone is served once a meal, whichever counter.</p>
+        <h2 class="text-xl sm:text-2xl font-bold text-slate-900">Meals</h2>
+        <p class="hidden sm:block text-[15px] text-slate-600">Scan each badge or meal pass. Everyone is served once a meal, whichever counter.</p>
       </div>
 
-      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label for="meal-select" class="block text-sm font-semibold text-slate-600 mb-1">Meal</label>
-            <select id="meal-select" onchange="mealChosen()" class="w-full h-12 px-3 border border-slate-300 rounded-xl text-[15px] bg-white outline-none"></select>
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-3 sm:p-4 space-y-2.5 sm:space-y-3">
+        <div class="flex gap-2 sm:gap-3">
+          <div class="flex-1 min-w-0">
+            <label for="meal-select" class="block text-xs sm:text-sm font-semibold text-slate-600 mb-1">Meal</label>
+            <select id="meal-select" onchange="mealChosen()" class="w-full h-11 sm:h-12 px-2.5 sm:px-3 border border-slate-300 rounded-xl text-[15px] bg-white outline-none"></select>
           </div>
-          <div id="meal-counter-box" class="hidden">
-            <label for="meal-counter" class="block text-sm font-semibold text-slate-600 mb-1">Counter</label>
-            <select id="meal-counter" onchange="mealCounterChosen()" class="w-full h-12 px-3 border border-slate-300 rounded-xl text-[15px] bg-white outline-none"></select>
+          <div id="meal-counter-box" class="hidden flex-1 min-w-0">
+            <label for="meal-counter" class="block text-xs sm:text-sm font-semibold text-slate-600 mb-1">Counter</label>
+            <select id="meal-counter" onchange="mealCounterChosen()" class="w-full h-11 sm:h-12 px-2.5 sm:px-3 border border-slate-300 rounded-xl text-[15px] bg-white outline-none"></select>
           </div>
         </div>
-        <p id="meal-status" class="text-sm font-semibold"></p>
-        <div class="flex items-baseline gap-x-5 gap-y-1 flex-wrap">
-          <p class="text-[15px] text-slate-600"><b id="meal-served" class="text-2xl font-bold text-slate-900 tabular-nums">0</b> served <span id="meal-expected-line"></span></p>
-          <p id="meal-here-line" class="hidden text-sm text-slate-600"></p>
+        <div class="flex items-baseline justify-between gap-x-4 gap-y-0.5 flex-wrap">
+          <p class="text-[15px] text-slate-600"><b id="meal-served" class="text-2xl font-bold text-slate-900 tabular-nums">0</b> served <span id="meal-expected-line"></span> <span id="meal-here-line" class="hidden text-sm"></span></p>
+          <p id="meal-status" class="text-sm font-semibold"></p>
         </div>
         <button type="button" id="meal-scan-btn" onclick="openMealScanner()" class="w-full h-14 rounded-xl bg-navy hover:bg-indigo-700 text-white text-lg font-bold flex items-center justify-center gap-2">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M7 12h10"/></svg>
@@ -33,15 +36,15 @@
         </button>
       </div>
 
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-3 sm:p-4">
+        <label for="meal-search" class="block text-xs sm:text-sm font-semibold text-slate-600 mb-1">No badge or pass? Find them</label>
+        <input id="meal-search" type="search" oninput="mealSearch()" placeholder="Name, mobile or ID" autocomplete="off" class="w-full h-11 sm:h-12 px-3 border border-slate-300 rounded-xl text-[15px] outline-none focus:ring-2 focus:ring-indigo-200">
+        <div id="meal-search-results" class="mt-1 divide-y divide-slate-100 max-h-[13.5rem] overflow-y-auto empty:hidden"></div>
+      </div>
+
       <!-- The last person, big: Serve (green), Already served (amber), Not on
            the list (red), Not found. -->
       <div id="meal-result" class="hidden" role="status" aria-live="polite"></div>
-
-      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-        <label for="meal-search" class="block text-sm font-semibold text-slate-600 mb-1">No badge or pass? Find them</label>
-        <input id="meal-search" type="search" oninput="mealSearch()" placeholder="Name, mobile or ID" autocomplete="off" class="w-full h-12 px-3 border border-slate-300 rounded-xl text-[15px] outline-none focus:ring-2 focus:ring-indigo-200">
-        <div id="meal-search-results" class="mt-2 divide-y divide-slate-100"></div>
-      </div>
 
       <div id="meal-admin" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-wrap gap-2 items-center">
         <p class="text-sm text-slate-600 flex-1 min-w-[12rem]">Faculty and organisers without a badge QR get a meal pass, eight to a page.</p>
@@ -53,12 +56,18 @@
     <!-- The camera, full screen on a phone: it stays open, one badge after
          another; the result shows under it. -->
     <div id="modal-meal-scan" class="hidden fixed inset-0 bg-slate-900/80 flex justify-center items-stretch sm:items-center p-0 sm:p-4 z-50">
-      <div class="bg-white max-w-md w-full sm:rounded-2xl shadow-card flex flex-col h-full sm:h-auto">
-        <div class="p-4 border-b border-slate-100 flex items-center gap-2">
+      <div class="bg-white max-w-md w-full sm:rounded-2xl shadow-card flex flex-col h-[100dvh] sm:h-auto overflow-hidden">
+        <div class="px-4 py-2.5 sm:p-4 border-b border-slate-100 flex items-center gap-2">
           <p id="meal-scan-title" class="font-bold text-slate-800 text-[15px] flex-1"></p>
           <button type="button" onclick="closeMealScanner()" class="h-11 px-4 border border-slate-300 rounded-xl text-sm font-semibold text-slate-700">Done</button>
         </div>
-        <div id="meal-scan-reader" class="w-full bg-black flex-1 sm:flex-none sm:min-h-[18rem]"></div>
+        <!-- The answer covers the camera the moment a code is read: the
+             person's name, big. "Serve" clears itself for the next person;
+             a tap clears any answer. showMealResult() in app.js. -->
+        <div class="relative flex-1 min-h-0 overflow-hidden sm:flex-none flex flex-col justify-center bg-black">
+          <div id="meal-scan-reader" class="w-full sm:min-h-[18rem]"></div>
+          <div id="meal-scan-flash" class="hidden absolute inset-0 z-10 p-3 flex flex-col justify-center bg-slate-900/70" onclick="mealFlashTap(event)" role="alert"></div>
+        </div>
         <div id="meal-scan-result" class="p-4 text-center text-[15px] font-semibold text-slate-600" role="status" aria-live="polite">Point the camera at a badge or meal pass.</div>
       </div>
     </div>
