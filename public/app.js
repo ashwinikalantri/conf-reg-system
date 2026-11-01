@@ -11528,17 +11528,27 @@ function deskWhoCard(user, reg, checkedIn, guest) {
   const faculty = guest
     ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-indigo-100 text-indigo-800 border-indigo-300" title="On the faculty list${guest.overall_status ? ` · ${esc(guest.overall_status)}` : ''}">Faculty</span>` : '';
 
+  // Their QR, the one on their badge: scanned from this screen (at a meal
+  // counter, say) when they have no badge with them; tap for it full size.
+  const regNo = (reg && reg.registration_number) || user.registration_number || '';
+  const qr = regNo
+    ? `<a href="/api/qr/${encodeURIComponent(regNo)}.png" target="_blank" rel="noopener" title="Open the QR full size" class="shrink-0 block rounded-lg border border-slate-200 p-1 bg-white hover:border-slate-400">
+        <img id="desk-record-qr" src="/api/qr/${encodeURIComponent(regNo)}.png" alt="QR code for ${esc(regNo)}" width="96" height="96" class="w-24 h-24 block"></a>` : '';
+
   return deskCard('Delegate', `
-    <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
-      <div class="min-w-0">
-        <p class="font-bold text-slate-800">${esc([user.salutation, user.full_name].filter(Boolean).join(' '))}</p>
-        <p class="text-xs text-slate-500">${esc(reg ? reg.category_label : 'No registration yet')}</p>
+    <div class="flex items-start gap-3 mb-3">
+      <div class="flex-1 min-w-0 flex items-start justify-between gap-3 flex-wrap">
+        <div class="min-w-0">
+          <p class="font-bold text-slate-800">${esc([user.salutation, user.full_name].filter(Boolean).join(' '))}</p>
+          <p class="text-xs text-slate-500">${esc(reg ? reg.category_label : 'No registration yet')}</p>
+        </div>
+        <div class="flex flex-wrap gap-1.5">
+          ${regNo ? `<span class="text-[11px] font-mono text-slate-500">${esc(regNo)}</span>` : ''}
+          ${faculty}
+          ${arrival}
+        </div>
       </div>
-      <div class="flex flex-wrap gap-1.5">
-        ${(reg && reg.registration_number) || user.registration_number ? `<span class="text-[11px] font-mono text-slate-500">${esc((reg && reg.registration_number) || user.registration_number)}</span>` : ''}
-        ${faculty}
-        ${arrival}
-      </div>
+      ${qr}
     </div>
     <dl class="grid grid-cols-2 sm:grid-cols-3 gap-3">
       ${deskField('Mobile', user.phone)}${deskField('Email', user.email)}
