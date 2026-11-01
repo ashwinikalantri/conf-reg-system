@@ -180,34 +180,53 @@ function drawName(doc, name, y, size, color, maxWidth) {
 // more than four the type steps down so a name and its designation still
 // fit their share (a designation wraps to a second line).
 // A signature is drawn as uploaded, its transparency kept: no ground behind
-// it, whatever the page. pdfkit does that for every PNG but one that marks a
-// single colour as see-through (grey or RGB with a tRNS chunk, as image
-// optimisers write): it draws that colour as a solid box. Those alone go to
-// plain RGBA first.
+// it, whatever the page. Two things happen only here, never to the stored
+// file. The clear margin around the ink is cut off, so the ink, not the empty
+// canvas, fills the space it is given. And a PNG that marks one colour as
+// see-through (grey or RGB with a tRNS chunk, as image optimisers write) goes
+// to plain RGBA: pdfkit would draw that colour as a solid box.
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-function keepTransparent(image) {
+const INK_ALPHA = 16;   // fainter than this is the file's edge, not ink
+function fitSignature(image) {
   if (!Buffer.isBuffer(image) || !image.subarray(0, 8).equals(PNG_SIGNATURE)) return image;
-  const colourKeyed = (image[25] === 0 || image[25] === 2) && image.includes('tRNS');
-  if (!colourKeyed) return image;
   try {
     const { PNG } = require('pngjs');
-    return PNG.sync.write(PNG.sync.read(image), { colorType: 6 });
+    const src = PNG.sync.read(image);
+    let left = src.width, top = src.height, right = -1, bottom = -1;
+    for (let y = 0; y < src.height; y++) {
+      for (let x = 0; x < src.width; x++) {
+        if (src.data[(y * src.width + x) * 4 + 3] <= INK_ALPHA) continue;
+        if (x < left) left = x;
+        if (x > right) right = x;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
+    }
+    if (right < 0) return image;
+    const width = right - left + 1;
+    const height = bottom - top + 1;
+    const colourKeyed = (image[25] === 0 || image[25] === 2) && image.includes('tRNS');
+    if (width === src.width && height === src.height && !colourKeyed) return image;
+    const out = new PNG({ width, height });
+    PNG.bitblt(src, out, left, top, width, height, 0, 0);
+    return PNG.sync.write(out, { colorType: 6 });
   } catch (e) {
     return image;
   }
 }
 
-function drawSignatures(doc, sigs, left, right, lineY, ink, muted, sigH = 40) {
+function drawSignatures(doc, sigs, left, right, lineY, ink, muted, sigH = 52) {
   if (!sigs.length) return;
   const slot = (right - left) / sigs.length;
   const crowded = sigs.length > 4;
   const textW = Math.min(176, slot - 2);
   const lineHalf = Math.min(72, slot / 2 - 8);
-  const imgW = Math.min(130, slot - 12);
+  // A signature may run wider than its line, but stops short of the next.
+  const imgW = Math.min(140, slot - 10);
   sigs.forEach((s, i) => {
     const cx = left + slot * i + slot / 2;
     if (s.image) {
-      try { doc.image(keepTransparent(s.image), cx - imgW / 2, lineY - sigH - 4, { fit: [imgW, sigH], align: 'center', valign: 'bottom' }); } catch (e) { /* not an image pdfkit reads */ }
+      try { doc.image(fitSignature(s.image), cx - imgW / 2, lineY - sigH - 3, { fit: [imgW, sigH], align: 'center', valign: 'bottom' }); } catch (e) { /* not an image pdfkit reads */ }
     }
     doc.lineWidth(0.6).strokeColor(muted).moveTo(cx - lineHalf, lineY).lineTo(cx + lineHalf, lineY).stroke();
     doc.font('bold').fontSize(crowded ? 8 : 9.5).fillColor(ink).text(s.name || '', cx - textW / 2, lineY + 5, { width: textW, align: 'center' });
@@ -244,8 +263,9 @@ function onArtwork(doc, opts, PH) {
   richText(doc, opts.body, mid - bodyW / 2, y(0.575), bodyW, 11, 3, C.linenInk);
 
   // The signatures run wider than the text: from beside the QR to the
-  // motif's edge.
-  drawSignatures(doc, (opts.signatories || []).slice(0, 6), 118, W * 0.87, y(0.775), C.linenInk, C.linenMuted, 28);
+  // motif's edge. Each as tall as the room left under the wording allows.
+  const sigRoom = y(0.775) - doc.y - 9;
+  drawSignatures(doc, (opts.signatories || []).slice(0, 6), 118, W * 0.87, y(0.775), C.linenInk, C.linenMuted, Math.max(28, Math.min(48, sigRoom)));
 
   // The sponsors, on a soft white band so every logo reads on linen.
   if (opts.logos && opts.logos.length) {
@@ -530,4 +550,4 @@ function renderMealPasses(passes, conference = {}) {
   });
 }
 
-module.exports = { renderCertificatePdf, renderHallPosters, renderMealPasses, certificateCopy, cmykToRgb, keepTransparent, PAGE: { W, H } };
+module.exports = { renderCertificatePdf, renderHallPosters, renderMealPasses, certificateCopy, cmykToRgb, fitSignature, PAGE: { W, H } };

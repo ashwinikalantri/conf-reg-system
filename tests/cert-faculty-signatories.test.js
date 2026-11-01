@@ -34,19 +34,27 @@ const images = (pdf) => (pdf.toString('latin1').match(/\/Subtype \/Image/g) || [
     {
       // A 2×1 PNG, as an optimiser writes it: RGB, white marked see-through by a tRNS chunk.
       const zlib = require('zlib');
-      const { keepTransparent, renderCertificatePdf } = require(appFile('certificate-pdf.js'));
+      const { fitSignature, renderCertificatePdf } = require(appFile('certificate-pdf.js'));
       const { PNG } = require('pngjs');
       const crc32 = (b) => { let c = ~0; for (const x of b) { c ^= x; for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xedb88320 : c >>> 1; } return ~c >>> 0; };
       const chunk = (t, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const body = Buffer.concat([Buffer.from(t), d]); const r = Buffer.alloc(4); r.writeUInt32BE(crc32(body)); return Buffer.concat([l, body, r]); };
       const ihdr = Buffer.from([0, 0, 0, 2, 0, 0, 0, 1, 8, 2, 0, 0, 0]);
       const keyed = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('tRNS', Buffer.from([0, 255, 0, 255, 0, 255])),
         chunk('IDAT', zlib.deflateSync(Buffer.from([0, 10, 20, 120, 255, 255, 255]))), chunk('IEND', Buffer.alloc(0))]);
-      const fixed = keepTransparent(keyed);
+      const fixed = fitSignature(keyed);
       const px = PNG.sync.read(fixed).data;
-      check('a PNG that marks one colour see-through keeps it so, the ink solid', fixed[25] === 6 && px[3] === 255 && px[0] === 10 && px[7] === 0, [fixed[25], ...px]);
-      const rgba = new PNG({ width: 2, height: 1 }); rgba.data.fill(0); rgba.data[3] = 255;
-      const plain = PNG.sync.write(rgba);
-      check('...any other PNG is drawn as uploaded, and a JPEG', keepTransparent(plain) === plain && keepTransparent(Buffer.from([0xff, 0xd8, 0xff])).length === 3);
+      check('a PNG that marks one colour see-through keeps it so', fixed[25] === 6 && px[3] === 255 && px[0] === 10, [fixed[25], ...px]);
+      check('...and the clear margin is cut off, so the ink fills the space', PNG.sync.read(fixed).width === 1);
+      const canvas = new PNG({ width: 40, height: 20 }); canvas.data.fill(0);
+      for (let x = 10; x < 30; x++) for (let y = 8; y < 12; y++) canvas.data[(y * 40 + x) * 4 + 3] = 255;
+      const plain = PNG.sync.write(canvas);
+      const cut = PNG.sync.read(fitSignature(plain));
+      check('...an ordinary transparent PNG too, the ink untouched', cut.width === 20 && cut.height === 4 && cut.data.every((v, i) => i % 4 !== 3 || v === 255), [cut.width, cut.height]);
+      const full = new PNG({ width: 2, height: 1 }); full.data.fill(255);
+      const whole = PNG.sync.write(full);
+      check('...one with no margin is drawn as uploaded, and a JPEG', fitSignature(whole) === whole && fitSignature(Buffer.from([0xff, 0xd8, 0xff])).length === 3);
+      check('...an empty one does not stop the certificate', Buffer.isBuffer(fitSignature(PNG.sync.write(new PNG({ width: 2, height: 2 })))));
+      check('the signature has room: up to 48pt on the artwork as the wording allows, wider than the line', /Math\.max\(28, Math\.min\(48, sigRoom\)\)/.test(fs.readFileSync(appFile('certificate-pdf.js'), 'utf8')) && /const imgW = Math\.min\(140, slot - 10\);/.test(fs.readFileSync(appFile('certificate-pdf.js'), 'utf8')));
       const pdfOf = async (image) => (await renderCertificatePdf({ kind: 'MMC', title: 'C', name: 'N', body: 'x', conference: { name: 'C', acronym: 'C' }, certNo: 'X', signatories: [{ name: 'S', designation: 'D', image }], logos: [] })).toString('latin1');
       check('...both reach the certificate with a transparency mask, no ground behind', /\/SMask/.test(await pdfOf(keyed)) && /\/SMask/.test(await pdfOf(plain)));
       check('the file is kept byte for byte: no re-encoding on the way in or out', /return \{ buffer, ext: \/png\/i\.test\(m\[1\]\) \? 'png' : 'jpg' \};/.test(fs.readFileSync(appFile('server.js'), 'utf8'))
