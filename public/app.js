@@ -8674,27 +8674,21 @@ async function requestBackupNow() {
   await renderBackupStatus();
 }
 
-// Conference setup's side menu (a desktop): the card on screen is marked.
-let settingsJumpWatched = false;
-function watchSettingsJump() {
-  if (settingsJumpWatched || typeof IntersectionObserver !== 'function') return;
-  const buttons = [...document.querySelectorAll('#gs-jump .gs-jump-btn')];
-  if (!buttons.length) return;
-  settingsJumpWatched = true;
-  const mark = (id) => buttons.forEach((b) => {
-    const on = b.dataset.target === id;
-    b.classList.toggle('lg:bg-gold-50', on);
-    b.classList.toggle('lg:text-navy', on);
-    b.classList.toggle('lg:font-bold', on);
-    if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+// Conference setup: each part (a gs-card-*) is a page of its own, chosen from
+// the page's menu. The part asked for, or the first this role may open.
+let setupPage = 'conference';
+function showSetupPage(page) {
+  const cards = [...document.querySelectorAll('#section-general [id^="gs-card-"]')];
+  const open = cards.filter((c) => !c.classList.contains('hidden'));
+  const wanted = open.find((c) => c.id === `gs-card-${page || setupPage}`) || open[0];
+  if (!wanted) return;
+  setupPage = wanted.id.replace('gs-card-', '');
+  cards.forEach((c) => c.classList.toggle('gs-off', c !== wanted));
+  document.querySelectorAll('#gs-jump .gs-jump-btn').forEach((b) => {
+    if (b.dataset.target === wanted.id) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
-  const seen = new Map();
-  const io = new IntersectionObserver((entries) => {
-    entries.forEach((e) => seen.set(e.target.id, e.isIntersecting ? e.intersectionRatio : 0));
-    const first = buttons.map((b) => b.dataset.target).find((id) => (seen.get(id) || 0) > 0);
-    if (first) mark(first);
-  }, { rootMargin: '-15% 0px -55% 0px', threshold: [0, 0.01] });
-  buttons.forEach((b) => { const card = document.getElementById(b.dataset.target); if (card) io.observe(card); });
+  if (currentBackendTab === 'general') history.replaceState(null, '', `#general/${setupPage}`);
+  window.scrollTo(0, 0);
 }
 
 async function renderGeneralSettings() {
@@ -8709,7 +8703,7 @@ async function renderGeneralSettings() {
   });
   loadHallsCard();
   loadCertificateSettingsCard();
-  watchSettingsJump();
+  showSetupPage();
   if (!full) return;
   // Independent of the settings fetch below, so a backup-status hiccup can't
   // stop the rest of the tab rendering.
@@ -13415,14 +13409,17 @@ function switchBackendTab(tab) {
 // hashchange, and the guard below ignores a tab already showing.
 // The tab named in the address. #guests was the Faculty tab's first name, and
 // #certsettings a page before it moved into Conference setup; old bookmarks
-// and links still open them.
+// and links still open them. #general/sms is a part of Conference setup.
 function tabFromHash() {
-  const tab = window.location.hash.slice(1);
+  const [tab, part] = window.location.hash.slice(1).split('/');
+  if (tab === 'certsettings') setupPage = 'certificates';
+  if (tab === 'general' && part) setupPage = part;
   return { guests: 'faculty', certsettings: 'general' }[tab] || tab;
 }
 
 window.addEventListener('hashchange', () => {
   const tab = tabFromHash();
+  if (tab === 'general' && tab === currentBackendTab) return showSetupPage();
   if (!tab || tab === currentBackendTab || !activeAdminUser) return;
   if (allowedBackendTabs().includes(tab)) switchBackendTab(tab);
 });

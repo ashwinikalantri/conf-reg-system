@@ -112,7 +112,24 @@ check('...centred only while shown (never undoing .hidden on the delegate\'s pag
 console.log('\n== Admin: settings and the faculty list ==');
 check('Conference setup: a side menu on a desktop, a row on a phone', /<nav id="gs-jump" aria-label="Conference setup" class="flex flex-wrap[^"]*lg:flex-col/.test(setup)
   && (setup.match(/data-target="gs-card-[a-z]+"/g) || []).length === 10 && /lg:grid lg:grid-cols-\[13rem_minmax\(0,1fr\)\]/.test(setup));
-check('...marking the card on screen', /function watchSettingsJump\(\)/.test(js) && /new IntersectionObserver/.test(js) && /loadHallsCard\(\);\n  loadCertificateSettingsCard\(\);\n  watchSettingsJump\(\);/.test(js));
+check('...each part a page of its own: the menu shows one, marks it, and keeps it in the address', /function showSetupPage\(page\)/.test(js) && /loadHallsCard\(\);\n  loadCertificateSettingsCard\(\);\n  showSetupPage\(\);/.test(js)
+  && (setup.match(/onclick="showSetupPage\('[a-z]+'\)"/g) || []).length === 10 && !/scrollIntoView|watchSettingsJump/.test(setup) && !/watchSettingsJump|IntersectionObserver\(\(entries\) => \{\n    entries\.forEach\(\(e\) => seen/.test(js)
+  && /\.gs-off \{ display: none; \}/.test(css) && /\.gs-jump-btn\[aria-current="page"\]/.test(css) && /<div class="min-w-0">/.test(setup));
+{
+  // showSetupPage on a stand-in page: conference, sms, and halls (which this role may not open).
+  const fn = js.slice(js.indexOf('function showSetupPage(page)'), js.indexOf('async function renderGeneralSettings()'));
+  const fake = (id, hidden) => { const set = new Set(hidden ? ['hidden'] : []); return { id, classList: { contains: (c) => set.has(c), toggle: (c, on) => (on ? set.add(c) : set.delete(c)) } }; };
+  const cards = [fake('gs-card-conference'), fake('gs-card-halls', true), fake('gs-card-sms')];
+  const btn = (id) => { const b = { dataset: { target: id }, current: null, setAttribute(k, v) { b.current = v; }, removeAttribute() { b.current = null; } }; return b; };
+  const btns = cards.map((c) => btn(c.id));
+  const hashes = [];
+  const sb = { document: { querySelectorAll: (q) => (q.includes('gs-jump') ? btns : cards) }, history: { replaceState: (a, b, h) => hashes.push(h) }, window: { scrollTo() {} }, currentBackendTab: 'general' };
+  require('vm').runInNewContext(`let setupPage = 'conference'; ${fn}; this.show = showSetupPage;`, sb);
+  sb.show('sms');
+  check('...choosing a part shows it alone', cards[2].classList.contains('gs-off') === false && cards[0].classList.contains('gs-off') && btns[2].current === 'page' && btns[0].current === null && hashes.pop() === '#general/sms');
+  sb.show('halls');
+  check('...a part this role may not open falls back to the first it may', !cards[0].classList.contains('gs-off') && cards[1].classList.contains('gs-off') && hashes.pop() === '#general/conference');
+}
 const listFn = js.slice(js.indexOf('function renderGuestList()'), js.indexOf('// A card per person, for a phone'));
 check('the faculty table: no Volunteers or Needs columns (both in the editor)', !/>Volunteers</.test(listFn) && !/Needs · Remarks/.test(listFn) && /colspan="7"/.test(listFn));
 check('...Sr and Faculty stay in place while it scrolls', /sticky left-0 z-20 bg-slate-50/.test(listFn) && /sticky left-10 z-10 bg-inherit/.test(listFn) && /guestRowTint\(g\) \|\| 'bg-white'/.test(listFn));

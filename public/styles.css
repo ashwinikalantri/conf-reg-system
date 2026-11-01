@@ -254,3 +254,12 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
 .rep-item[aria-current="true"] b { font-weight: 700; }
 .rep-item span { font-size: 13px; color: #51606d; }
 .rep-item.hidden, .rep-group.hidden { display: none; }
+
+/* Conference setup: one part on screen at a time (showSetupPage). The menu's
+   current page: navy on a phone's row of buttons, pale gold in the side menu,
+   as the bar marks its own. */
+.gs-off { display: none; }
+.gs-jump-btn[aria-current="page"] { background: #1c3549; border-color: #1c3549; color: #fff; }
+@media (min-width: 1024px) {
+  .gs-jump-btn[aria-current="page"] { background: #faf5e8; color: #1c3549; font-weight: 700; }
+}
