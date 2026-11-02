@@ -368,6 +368,9 @@ check('a room type alone, a room number alone', /Double/.test(psb.stayOf({ room_
 check('nothing entered gives nothing (the list says Not set)', psb.stayOf({}) === '' && psb.leg() === '');
 check('arranging their own stay says so, not the details kept from before', /Arranging their own stay/.test(psb.stayOf({ stay_not_needed: 1, accommodation: 'Yatri Nivas' }))
   && !/Yatri/.test(psb.stayOf({ stay_not_needed: 1, accommodation: 'Yatri Nivas' })));
+const shared = psb.stayOf({ accommodation: 'Yatri Nivas', room_no: '102', flags: { sharedRoom: ['Dr A Rao', 'Dr B <Shah>'] } });
+check('sharing a room: who with, under the stay', /Yatri Nivas · 102[\s\S]*Sharing with Dr A Rao, Dr B &lt;Shah&gt;/.test(shared), shared);
+check('...and nothing about sharing when alone', !/Sharing/.test(psb.stayOf({ accommodation: 'Yatri Nivas', room_no: '101', flags: { sharedRoom: [] } })));
 const partLeg = psb.leg(null, null, 'Flight', '6E 123', null, null, 'Pending');
 check('a flight number or status with no date yet is shown', /Flight · 6E 123/.test(partLeg) && /Pending/.test(partLeg) && !/No vehicle/.test(partLeg));
 check('"No vehicle" only once there is a date to meet', /No vehicle/.test(psb.leg('2026-11-20')));

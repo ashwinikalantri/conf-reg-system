@@ -12689,7 +12689,10 @@ function guestStayHtml(g) {
   const dates = g.checkin_date && g.checkout_date ? shortDateRange(g.checkin_date, g.checkout_date)
     : g.checkin_date ? `From ${formatFullDate(g.checkin_date)}` : g.checkout_date ? `Until ${formatFullDate(g.checkout_date)}` : '';
   const detail = [g.room_type, dates, nightsLabel(guestNights(g.checkin_date, g.checkout_date))].filter(Boolean).map(esc).join(' · ');
-  return [place ? `<p class="font-semibold text-slate-800">${place}</p>` : '', detail ? `<p class="text-xs text-slate-500">${detail}</p>` : ''].join('');
+  // Who else is in the room (guests.js flags.sharedRoom), purple like its chip.
+  const mates = (g.flags && g.flags.sharedRoom) || [];
+  return [place ? `<p class="font-semibold text-slate-800">${place}</p>` : '', detail ? `<p class="text-xs text-slate-500">${detail}</p>` : '',
+    mates.length ? `<p class="text-xs font-semibold text-violet-700 mt-0.5">Sharing with ${esc(mates.join(', '))}</p>` : ''].join('');
 }
 
 // Read what a coordinator types: "9:30 pm", "930p", "9.30 PM", "21:30",
