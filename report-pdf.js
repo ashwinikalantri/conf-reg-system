@@ -25,6 +25,8 @@ const MARGIN = { top: 34, bottom: 40, left: 34, right: 34 };
 const PAD_X = 5;
 const PAD_Y = 4;
 const CELL_SIZE = 8;
+// A QR code's side in a report (sec.qr): big enough to scan off paper.
+const QR_PT = 56;
 const TH_SIZE = 6.8;
 const TH_SPACING = 0.3;
 
@@ -86,6 +88,7 @@ function numericColumns(sec) {
 function columnWidths(doc, sec, total) {
   const natural = [];
   const minimum = [];
+  const qrCol = sec.qr ? sec.qr.column : -1;
   // Headings are drawn letter-spaced; widthOfString does not count that, so
   // it is added here -- without it a heading like AMOUNT is measured a hair
   // narrower than it is drawn, and wraps mid-word.
@@ -95,6 +98,12 @@ function columnWidths(doc, sec, total) {
     const head = spaced(String(col).toUpperCase());
     const headWord = Math.max(...String(col).toUpperCase().split(/\s+/).map(spaced));
     doc.font('body').fontSize(CELL_SIZE);
+    // A QR column is as wide as the code drawn in it.
+    if (i === qrCol) {
+      natural.push(Math.max(head, QR_PT) + 2 * PAD_X);
+      minimum.push(Math.max(headWord, QR_PT) + 2 * PAD_X);
+      return;
+    }
     let longest = 0;
     let longestWord = 0;
     for (const r of sec.rows) {
@@ -179,7 +188,9 @@ function renderReportPdf(rep, meta) {
     };
 
     const rowTexts = sec.rows.map((r) => sec.columns.map((_, i) => String(r[i] == null ? '' : r[i])));
-    const rowHeights = rowTexts.map((cells) => Math.max(...cells.map((t, i) => cellHeight(t, widths[i], 'body', CELL_SIZE))));
+    const qrCol = sec.qr ? sec.qr.column : -1;
+    const qrPng = (sec.qr && sec.qr.png) || [];
+    const rowHeights = rowTexts.map((cells) => Math.max(...cells.map((t, i) => (i === qrCol ? QR_PT + 2 * PAD_Y : cellHeight(t, widths[i], 'body', CELL_SIZE)))));
     const titleH = sec.name ? 22 : 0;
 
     // Never strand a section title, or a header row, at the foot of a page:
@@ -210,6 +221,10 @@ function renderReportPdf(rep, meta) {
       if (r % 2 === 1) doc.rect(left, y, width, h).fill(C.zebra);
       cells.forEach((t, i) => {
         doc.rect(xs[i], y, widths[i], h).lineWidth(0.5).stroke(C.rule);
+        if (i === qrCol) {
+          if (qrPng[r]) doc.image(qrPng[r], xs[i] + (widths[i] - QR_PT) / 2, y + PAD_Y, { width: QR_PT, height: QR_PT });
+          return;
+        }
         doc.font('body').fontSize(CELL_SIZE).fillColor(C.ink)
           .text(t, xs[i] + PAD_X, y + PAD_Y, { width: widths[i] - 2 * PAD_X, align: numeric[i] ? 'right' : 'left', features: ['tnum'] });
       });

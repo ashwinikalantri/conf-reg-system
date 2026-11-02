@@ -4175,6 +4175,7 @@ function applyRoleVisibility() {
   const reportCards = {
     'report-summary': 'reports.summary',
     'report-delegates': 'reports.delegates',
+    'report-badges': 'reports.delegates',
     'report-delegate-programs': 'reports.delegate_programs',
     'report-payments': 'reports.payments',
     'report-workshops': 'reports.programs',
@@ -10135,14 +10136,14 @@ async function downloadReport(type, format, extraQuery) {
 // noise; a quiet text line scans more like a real sentence. A value whose
 // column name signals it's an amount or a status gets a touch of color
 // inline instead, so the one or two things worth a glance still stand out.
-function reportRowCardHtml(row, columns) {
+function reportRowCardHtml(row, columns, qrIdx = -1) {
   const titleKeys = ['Delegate', 'Name', 'Title'];
   const subKeys = ['Reg No', 'Author', 'Mobile'];
   let titleIdx = columns.findIndex((c) => titleKeys.includes(c));
   if (titleIdx === -1) titleIdx = Math.min(1, columns.length - 1);
   let subIdx = columns.findIndex((c, i) => subKeys.includes(c) && i !== titleIdx);
   if (subIdx === -1) subIdx = titleIdx === 0 ? Math.min(1, columns.length - 1) : 0;
-  let restIdxs = columns.map((_, i) => i).filter((i) => i !== titleIdx && i !== subIdx);
+  let restIdxs = columns.map((_, i) => i).filter((i) => i !== titleIdx && i !== subIdx && i !== qrIdx);
 
   // Registered Delegates is the one report with enough extra fields (Age,
   // Gender, Mobile, Email, Designation, Institution, District, State,
@@ -10219,10 +10220,15 @@ function reportRowCardHtml(row, columns) {
       ${locationParts.length ? `<p class="text-[12px] text-slate-400 mt-1 leading-relaxed">${locationParts.join(dot)}</p>` : ''}`;
   }
 
-  return `
+  const body = `
     ${titleBlock}
     ${restParts.length ? `<p class="text-[12px] text-slate-500 mt-1.5 leading-relaxed">${restParts.join(dot)}</p>` : ''}
     ${locationParts.length ? `<p class="text-[12px] text-slate-400 mt-1 leading-relaxed">${locationParts.join(dot)}</p>` : ''}`;
+  // A QR code (Conference badge) sits beside the rest.
+  if (qrIdx !== -1 && row[qrIdx]) {
+    return `<div class="flex items-start justify-between gap-3"><div class="min-w-0">${body}</div>${reportQrImg(row[qrIdx], 64)}</div>`;
+  }
+  return body;
 }
 
 // The Summary, read as figures: the three that matter most first, then each
@@ -10270,6 +10276,9 @@ function reportSummaryHtml(rep) {
   </div>`;
 }
 
+// A report's QR code (sec.qr), from the address in its cell.
+const reportQrImg = (src, size) => `<img src="${esc(src)}" alt="QR code" width="${size}" height="${size}" loading="lazy" class="shrink-0 bg-white">`;
+
 // A report opened in the page: its title, Excel and PDF at its top, then the
 // Summary as figures, or a line list with its headings kept in view and a
 // search that narrows what is shown (the download is always the whole).
@@ -10299,8 +10308,8 @@ async function viewReport(type, extraQuery) {
           </tr></thead>
           <tbody class="divide-y divide-slate-100 report-tbody">
             ${sec.rows.length ? sec.rows.map((r) => `<tr class="report-row">
-                <td class="py-3 px-3 block sm:hidden">${reportRowCardHtml(r, sec.columns)}</td>
-                ${r.map((c) => `<td class="py-2 px-3 hidden sm:table-cell whitespace-nowrap">${esc(c)}</td>`).join('')}
+                <td class="py-3 px-3 block sm:hidden">${reportRowCardHtml(r, sec.columns, sec.qr ? sec.qr.column : -1)}</td>
+                ${r.map((c, i) => `<td class="py-2 px-3 hidden sm:table-cell whitespace-nowrap">${sec.qr && i === sec.qr.column ? (c ? reportQrImg(c, 72) : '') : esc(c)}</td>`).join('')}
               </tr>`).join('')
     : `<tr class="report-empty-row"><td colspan="${sec.columns.length}" class="py-4 px-3 text-center text-slate-500">No records</td></tr>`}
           </tbody>

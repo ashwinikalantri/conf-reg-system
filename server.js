@@ -13646,6 +13646,31 @@ async function buildReport(type, opts = {}) {
     return { title: 'Summary — Headline Figures', kind: 'summary', sections };
   }
 
+  // Conference badge: what goes on each badge, for confirmed registrations
+  // (as Registered Delegates counts them), with the QR the desks scan -- it
+  // holds the Reg No. The QR column is the image's web address, so the CSV
+  // carries it into a mail merge or a bulk badge design; `qr` tells the page
+  // and the PDF to draw it, from the code in column `of`.
+  if (type === 'badges') {
+    const rows = (await dbAll(
+      `SELECT registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number AS phone_number,
+         u.designation, u.institution
+         FROM registrations
+         LEFT JOIN users u ON u.phone_number = registrations.phone_number
+         WHERE registrations.bank_status = 'BANK_VERIFIED'
+         ORDER BY registrations.registration_number`)).map(withDelegateSalutation);
+    const base = String(PORTAL_URL).replace(/\/+$/, '');
+    const qrUrl = (no) => (no && DESK_PASS_RE.test(no) ? `${base}/api/qr/${encodeURIComponent(no)}.png` : '');
+    return {
+      title: 'Conference Badge',
+      sections: [{
+        columns: ['Reg No', 'Name', 'Designation', 'Institution', 'QR Code'],
+        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.designation, r.institution, qrUrl(r.registration_number)]),
+        qr: { column: 4, of: 0 },
+      }],
+    };
+  }
+
   if (type === 'delegates') {
     const rows = (await dbAll(
       `SELECT registrations.id, registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number AS phone_number,
@@ -13901,7 +13926,11 @@ function toCsv(rep) {
 function reportHtml(rep, opts = {}) {
   const table = (sec) => {
     const th = sec.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join('');
-    const trs = sec.rows.map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('') ||
+    const qrCol = sec.qr ? sec.qr.column : -1;
+    const td = (c, i) => (i === qrCol
+      ? `<td>${c ? `<img src="${escapeHtml(c)}" alt="QR code" width="72" height="72" style="display:block">` : ''}</td>`
+      : `<td>${escapeHtml(c)}</td>`);
+    const trs = sec.rows.map((r) => `<tr>${r.map(td).join('')}</tr>`).join('') ||
       `<tr><td colspan="${sec.columns.length}" style="text-align:center;color:#94a3b8">No records</td></tr>`;
     return `${sec.name ? `<h2>${escapeHtml(sec.name)}${rep.kind === 'summary' ? '' : ` <span class="count">(${sec.rows.length})</span>`}</h2>` : ''}
       <table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
@@ -14012,6 +14041,12 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
     const pdfHref = `/api/admin/reports/${encodeURIComponent(type)}?format=pdf`
       + (req.query.optionId ? `&optionId=${encodeURIComponent(req.query.optionId)}` : '');
     if (req.query.format === 'pdf') {
+      // The QR images, made here as the /api/qr route makes them.
+      for (const sec of rep.sections) {
+        if (!sec.qr) continue;
+        sec.qr.png = await Promise.all(sec.rows.map((r) => (r[sec.qr.column]
+          ? QRCode.toBuffer(String(r[sec.qr.of]), { type: 'png', width: 300, margin: 2, errorCorrectionLevel: 'M' }) : null)));
+      }
       const pdf = await renderReportPdf(rep, {
         heading: reportHeading(rep), subline: reportSubline(rep), footer: reportHeading(rep),
       });

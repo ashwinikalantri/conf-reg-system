@@ -407,6 +407,8 @@ const ROUTE_PERMISSIONS = {
 // name. So they map by name rather than by route.
 const REPORT_PERMISSIONS = {
   delegates: 'reports.delegates',
+  // The same people as Registered Delegates, fewer details: the same permission.
+  badges: 'reports.delegates',
   'delegate-programs': 'reports.delegate_programs',
   payments: 'reports.payments',
   workshops: 'reports.programs',

@@ -331,6 +331,12 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // deliberately, in a diff somebody reads -- rather than absorbed silently
   // into "every role runs the same reports".
   const REPORTS_ADDED_SINCE_BASELINE = {
+    badges: {
+      roles: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'FINANCE_ACADEMIC', 'OPERATIONS'],
+      why: 'What goes on each badge: Reg No, name, designation, institution and the QR of the Reg No, '
+        + 'for confirmed registrations -- a subset of Registered Delegates, with no contact details, so '
+        + 'it rides on reports.delegates and reaches exactly the roles that report does.',
+    },
     meals: {
       roles: ['SUPER_ADMIN'],
       why: 'Each meal\'s expected and served counts, by counter, and who was served when -- names, '
