@@ -13649,7 +13649,7 @@ async function buildReport(type, opts = {}) {
   if (type === 'delegates') {
     const rows = (await dbAll(
       `SELECT registrations.id, registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number AS phone_number,
-         registrations.payment_mode, registrations.expected_amount, registrations.discount_code,
+         registrations.payment_mode, registrations.expected_amount, registrations.discount_code, registrations.category_label,
          registrations.discount_applied_at, registrations.submitted_at, u.age, u.gender, u.designation, u.institution, u.district, u.state, u.pincode, u.country, u.email, u.phone
          FROM registrations
          LEFT JOIN users u ON u.phone_number = registrations.phone_number
@@ -13669,8 +13669,8 @@ async function buildReport(type, opts = {}) {
     return {
       title: 'Registered Delegates',
       sections: [{
-        columns: ['Reg No', 'Name', 'Age', 'Gender', 'Mobile', 'Email', 'Designation', 'Institution', 'District', 'State', 'Pincode', 'Country', 'Payment Date'],
-        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.age, r.gender, displayPhone(r), r.email, r.designation, r.institution, r.district, r.state, r.pincode, r.country || 'India',
+        columns: ['Reg No', 'Name', 'Category', 'Age', 'Gender', 'Mobile', 'Email', 'Designation', 'Institution', 'District', 'State', 'Pincode', 'Country', 'Payment Date'],
+        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.category_label, r.age, r.gender, displayPhone(r), r.email, r.designation, r.institution, r.district, r.state, r.pincode, r.country || 'India',
           paymentDates(r.id) || noPaymentDate(r)]),
       }],
     };

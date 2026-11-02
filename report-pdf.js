@@ -101,7 +101,9 @@ function columnWidths(doc, sec, total) {
       const v = String(r[i] == null ? '' : r[i]);
       if (!v) continue;
       longest = Math.max(longest, doc.widthOfString(v));
-      for (const w of v.split(/\s+/)) longestWord = Math.max(longestWord, doc.widthOfString(w));
+      // With the space after it: that is how pdfkit measures a word when it
+      // wraps, so a column exactly the bare word wide still breaks it.
+      for (const w of v.split(/\s+/)) longestWord = Math.max(longestWord, doc.widthOfString(`${w} `));
     }
     natural.push(Math.max(head, longest) + 2 * PAD_X);
     // A long token such as an email should not claim a whole column's
@@ -111,7 +113,20 @@ function columnWidths(doc, sec, total) {
   const sumN = natural.reduce((a, b) => a + b, 0);
   if (sumN <= total) return natural.map((n) => (n * total) / sumN);
   const sumM = minimum.reduce((a, b) => a + b, 0);
-  if (sumM >= total) return minimum.map((m) => (m * total) / sumM);
+  if (sumM >= total) {
+    // Too many columns for even their longest words: cap the widest (an
+    // email, say) so the narrow ones -- a Reg No, a date -- stay whole,
+    // rather than shrinking every column alike.
+    const sorted = [...minimum].sort((a, b) => a - b);
+    let left = total;
+    let cap = total;
+    for (let i = 0; i < sorted.length; i++) {
+      const even = left / (sorted.length - i);
+      if (sorted[i] > even) { cap = even; break; }
+      left -= sorted[i];
+    }
+    return minimum.map((m) => Math.min(m, cap));
+  }
   const give = (total - sumM) / (sumN - sumM);
   return natural.map((n, i) => minimum[i] + (n - minimum[i]) * give);
 }

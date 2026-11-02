@@ -61,6 +61,10 @@ const N = String(Date.now()).slice(-7);
     check('...with both instalment dates, earliest first', drow && drow[dcol] === '12 Sep 2026; 3 Oct 2026', drow && drow[dcol]);
     const dlegacy = del.rows.find((r) => r[0] === `PL${N}`);
     check('...and the older-style link\'s date', dlegacy && dlegacy[dcol] === '20 Aug 2026', dlegacy && dlegacy[dcol]);
+    const ccol = del.columns.indexOf('Category');
+    check('Registered Delegates has a Category column, after the name', ccol === del.columns.indexOf('Name') + 1, del.columns);
+    const want = await db.get('SELECT category_label FROM registrations WHERE registration_number = ?', [`PR${N}`]);
+    check('...with the category they registered under', drow && want && drow[ccol] === want.category_label, drow && drow[ccol]);
     const delCsv = await call('GET', '/api/admin/reports/delegates?format=csv', null, admin);
     check('...in the Excel download too', delCsv.status === 200 && delCsv.raw.includes('Payment Date') && delCsv.raw.includes('20 Aug 2026'));
   } finally {
