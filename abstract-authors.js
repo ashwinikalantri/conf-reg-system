@@ -9,7 +9,7 @@
 //
 // Pure, so it can be tested on its own; the routes are in server.js.
 
-const MAX_AUTHORS = 6;
+const MAX_AUTHORS = 10;
 const MAX_NAME = 120;
 
 const tidy = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();

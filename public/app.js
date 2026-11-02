@@ -2226,7 +2226,7 @@ const authorEditors = {};
 // From GET /api/abstracts/me: { open, deadline, max } for their own list.
 let cachedAbstractAuthorsWindow = null;
 
-function setAuthorEditor(cid, list, { max = 6, renamePresenting = false } = {}) {
+function setAuthorEditor(cid, list, { max = 10, renamePresenting = false } = {}) {
   authorEditors[cid] = { list: (list || []).map((a) => ({ name: a.name || '', presenting: !!a.presenting })), max, renamePresenting };
   renderAuthorEditor(cid);
 }
@@ -2331,7 +2331,7 @@ function openAbstractAuthors(id) {
   const win = admin ? abstractsAuthorsWindow : cachedAbstractAuthorsWindow;
   abstractAuthorsTarget = admin ? { mode: 'admin', id: abs.id } : { mode: 'me' };
   setText('abstract-authors-title', abs.title || '');
-  setAuthorEditor('abstract-authors-list', abs.authors || [], { max: (win && win.max) || 6, renamePresenting: admin });
+  setAuthorEditor('abstract-authors-list', abs.authors || [], { max: (win && win.max) || 10, renamePresenting: admin });
   setText('abstract-authors-deadline', admin
     ? (abs.author_name ? `Submitted by ${abs.author_name}` : '')
     : (win && win.deadline ? `Can be changed until ${formatFullDate(win.deadline)}` : ''));
@@ -3253,7 +3253,7 @@ function openModal(id) {
     // (REVISION_REQUESTED -- the only status that leaves the dashboard
     // button enabled here, see loadAbstractStatus) gets the form prefilled
     // with what they already submitted; anyone else gets a blank form.
-    const maxAuthors = (cachedAbstractAuthorsWindow && cachedAbstractAuthorsWindow.max) || 6;
+    const maxAuthors = (cachedAbstractAuthorsWindow && cachedAbstractAuthorsWindow.max) || 10;
     if (cachedOwnAbstract && cachedOwnAbstract.status === 'REVISION_REQUESTED') {
       prefillAbstractFormForRevision(cachedOwnAbstract);
       setAuthorEditor('abstract-form-authors', cachedOwnAbstract.authors, { max: maxAuthors });
@@ -9382,7 +9382,7 @@ async function buildAbstractAuthorsBody() {
   <ol style="font-size:.9rem;color:#1c3549;margin:.5rem 0 0;padding-left:1.2rem">
     <li>Log in to the portal with the account you used to submit the abstract.</li>
     <li>On the <b>Abstract</b> card, tap <b>Add authors</b>.</li>
-    <li>Add each co-author's full name (up to 6 authors in all), use the arrows to put them in order, and save.</li>
+    <li>Add each co-author's full name (up to 10 authors in all), use the arrows to put them in order, and save.</li>
   </ol>
 </div>
 <p>You stay on the list as the presenting author, and can be placed anywhere in the order. Your abstract itself is not changed. If you are the only author, open the list and save it as it is.</p>

@@ -1,7 +1,7 @@
 // Every author of an abstract, in order.
 //
 // Abstracts first stored only the delegate who submitted them. The owner's
-// decisions (2026-10-30): names only; at most six; the submitter stays on
+// decisions (2026-10-30): names only; at most ten (six until 2026-11-02); the submitter stays on
 // the list as the presenting author, at any position, and cannot be removed
 // or renamed by the delegate; delegates change their list until a "last date
 // for authors" set in Conference setup, admins at any time; the text of the
@@ -39,8 +39,8 @@ check('a list in any order, the presenting author anywhere',
   JSON.stringify(A.cleanAuthors([{ name: ' B  Shah ' }, me, 'C Iyer']).authors) === JSON.stringify([{ name: 'B Shah', presenting: false }, me, { name: 'C Iyer', presenting: false }]));
 check('blank rows are left out', A.cleanAuthors([me, { name: '  ' }, { name: 'D Das' }]).authors.length === 2);
 check('there must be exactly one presenting author', !!A.cleanAuthors([{ name: 'X' }]).error && !!A.cleanAuthors([me, { name: 'Y', presenting: true }]).error);
-check('six at most', !A.cleanAuthors([me, ...[1, 2, 3, 4, 5].map((i) => `Author ${'ABCDE'[i - 1]}`)]).error
-  && /at most 6/.test(A.cleanAuthors([me, ...'ABCDEF'.split('').map((c) => `Author ${c}`)]).error), A.MAX_AUTHORS);
+check('ten at most', !A.cleanAuthors([me, ...'ABCDEFGHI'.split('').map((c) => `Author ${c}`)]).error
+  && /at most 10/.test(A.cleanAuthors([me, ...'ABCDEFGHIJ'.split('').map((c) => `Author ${c}`)]).error), A.MAX_AUTHORS);
 check('the same name twice is refused, whatever the case or full stops', /twice/.test(A.cleanAuthors([me, 'Dr. B Shah', 'dr b shah']).error || ''));
 check('a name needs letters', !!A.cleanAuthors([me, '1234']).error);
 check('the presenting author\'s name is fixed when told to be', A.cleanAuthors([{ name: 'Someone Else', presenting: true }], { presentingName: 'Asha Rao' }).authors[0].name === 'Asha Rao');
@@ -80,7 +80,7 @@ check('as text, * marks the presenting author', A.authorsText([{ name: 'B Shah' 
     await call('POST', '/api/abstracts', { ...ABSTRACT, title: `Rejected ${N}` }, cookies.rejected);
     const sole = await mine(cookies.sole);
     check('one sent without: the submitter alone, not yet given', sole.abstract.authors.length === 1 && sole.abstract.authors[0].presenting && sole.abstract.authors_given === false, sole.abstract.authors);
-    check('...and the delegate is told the window', sole.authorsWindow.open === true && sole.authorsWindow.deadline === istDay(3) && sole.authorsWindow.max === 6, sole.authorsWindow);
+    check('...and the delegate is told the window', sole.authorsWindow.open === true && sole.authorsWindow.deadline === istDay(3) && sole.authorsWindow.max === 10, sole.authorsWindow);
 
     console.log('\n== The delegate adds and orders them ==');
     const before = await db.get('SELECT title, background, word_count, status FROM abstracts WHERE phone_number = ?', [phones.sole]);
@@ -91,7 +91,7 @@ check('as text, * marks the presenting author', A.authorsText([{ name: 'B Shah' 
     const same = await db.get('SELECT title, background, word_count, status FROM abstracts WHERE phone_number = ?', [phones.sole]);
     check('nothing else about the abstract changed', JSON.stringify(before) === JSON.stringify(same));
     check('a list without them is refused', (await putMine(cookies.sole, [{ name: 'Only Others' }])).status === 400);
-    check('seven are refused', (await putMine(cookies.sole, [me, ...'ABCDEF'.split('').map((c) => ({ name: `Author ${c}` }))])).status === 400);
+    check('eleven are refused', (await putMine(cookies.sole, [me, ...'ABCDEFGHIJ'.split('').map((c) => ({ name: `Author ${c}` }))])).status === 400);
     const solo = await putMine(cookies.sole, [{ name: 'x', presenting: true }]);
     check('the only author can confirm just themselves', solo.body.success === true && (await mine(cookies.sole)).abstract.authors_given === true);
     const audit = await db.get(`SELECT old_value, new_value FROM audit_log WHERE action = 'ABSTRACT_AUTHORS_UPDATED'
@@ -120,7 +120,7 @@ check('as text, * marks the presenting author', A.authorsText([{ name: 'B Shah' 
     const row = list.abstracts.find((a) => a.id === teamId);
     check('the admin list carries it, and whether it was given', row && row.authors.length === 3 && row.authors_given === true
       && list.abstracts.find((a) => a.title === `Rejected ${N}`).authors_given === false, row);
-    check('...and the window', list.authorsWindow && list.authorsWindow.open === false && list.authorsWindow.max === 6, list.authorsWindow);
+    check('...and the window', list.authorsWindow && list.authorsWindow.open === false && list.authorsWindow.max === 10, list.authorsWindow);
     const pdf = await call('GET', `/api/abstracts/${teamId}/pdf`, null, admin);
     check('the PDF still downloads', pdf.status === 200);
     const pdfSrc = fs.readFileSync(appFile('abstract-pdf.js'), 'utf8');
