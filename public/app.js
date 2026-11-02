@@ -4898,15 +4898,18 @@ async function renderBackendOverview() {
   let noRoom = 0;
   let undecided = 0;
   let notSignedUp = 0;
+  let noProgramme = 0;
   show('overview-faculty', !!(faculty && faculty.guests));
   if (faculty && faculty.dashboard) {
     const live = (faculty.guests || []).filter((g) => !g.cancelled);
     noRoom = Number(faculty.dashboard.noAccommodation) || 0;
     undecided = live.filter((g) => !String(g.pickup_status || '').trim()).length;
     notSignedUp = Number(faculty.dashboard.notSignedUp) || 0;
+    noProgramme = Number(faculty.dashboard.noProgramme) || 0;
     setText('ov-rooms', noRoom);
     setText('ov-pickups', undecided);
     setText('ov-signup', notSignedUp);
+    setText('ov-noprog', noProgramme);
     setText('ov-signup-sub', `${live.length - notSignedUp} of ${live.length} have a portal account`);
   }
   if (faculty && faculty.guests) {
@@ -4930,7 +4933,8 @@ async function renderBackendOverview() {
   show('ov-q-rooms', seesFaculty && noRoom > 0);
   show('ov-q-pickups', seesFaculty && undecided > 0);
   show('ov-q-signup', seesFaculty && notSignedUp > 0);
-  show('overview-queues-faculty', seesFaculty && noRoom + undecided + notSignedUp > 0);
+  show('ov-q-noprog', seesFaculty && noProgramme > 0);
+  show('overview-queues-faculty', seesFaculty && noRoom + undecided + notSignedUp + noProgramme > 0);
 
   // A row earns its place by being reachable AND having something in it.
   // A list of zeroes tells the desk less than one sentence.
@@ -4949,7 +4953,7 @@ async function renderBackendOverview() {
     registrations: seesPayments && (pending > 0 || balanceCount > 0),
     'the bank statement': seesStatement && unmatched > 0,
     abstracts: seesAbstracts && underReview > 0,
-    faculty: seesFaculty && noRoom + undecided + notSignedUp > 0,
+    faculty: seesFaculty && noRoom + undecided + notSignedUp + noProgramme > 0,
   };
   const mine = [seesPayments && 'registrations', seesStatement && 'the bank statement',
     seesAbstracts && 'abstracts', seesFaculty && 'faculty'].filter(Boolean);
@@ -12306,6 +12310,7 @@ const GUEST_FLAG_STYLES = {
   sharedRoom: 'bg-violet-100 text-violet-800 border-violet-300',
   vehicleClash: 'bg-amber-100 text-amber-800 border-amber-300',
   notRegistered: 'bg-sky-100 text-sky-800 border-sky-300',
+  noProgramme: 'bg-white text-violet-700 border-violet-300 border-dashed',
   own: 'bg-white text-slate-600 border-slate-300',
 };
 const guestPill = (cls, text, title) =>
@@ -12326,6 +12331,7 @@ function guestFlagChips(g) {
   if (g.complimentary) out.push(guestPill('bg-gold-50 text-gold-700 border-gold-300', 'Complimentary'));
   if (f.notSignedUp) out.push(guestPill(GUEST_FLAG_STYLES.notRegistered, 'Not signed up'));
   else if (f.notRegistered) out.push(guestPill(GUEST_FLAG_STYLES.notRegistered, 'Not registered'));
+  if (f.noProgramme) out.push(guestPill(GUEST_FLAG_STYLES.noProgramme, 'No programme', 'Not a speaker or chair in any session yet'));
   return out.join(' ');
 }
 // Red outranks orange on the row itself; purple is a chip only (sharing a
@@ -12434,6 +12440,7 @@ function fillGuestFilters() {
     guestPill(GUEST_FLAG_STYLES.noAccommodation, 'Red: no accommodation'),
     guestPill(GUEST_FLAG_STYLES.sharedRoom, 'Purple: shares a room (check it is intended)'),
     guestPill(GUEST_FLAG_STYLES.vehicleClash, `Vehicle used twice within ${guestData.settings.clashMinutes} min`),
+    guestPill(GUEST_FLAG_STYLES.noProgramme, 'Dashed: no session in the programme yet'),
   ].join(' ');
   // Shown on desktop; folded under "Colour key" on a phone.
   for (const id of ['guests-legend', 'guests-legend-mobile']) {

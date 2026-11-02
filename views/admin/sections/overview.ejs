@@ -74,7 +74,7 @@
               <span class="ov-go">Review Desk</span>
             </button>
           </div>
-          <!-- Faculty: the rooms, pickups and accounts still to settle
+          <!-- Faculty: the rooms, pickups, accounts and programme still to settle
                (guests.view). Each opens the Faculty tab, filtered. -->
           <div id="overview-queues-faculty" class="empty:hidden">
             <button type="button" id="ov-q-rooms" onclick="openFacultyFlag('noAccommodation')" class="ov-row hidden">
@@ -90,6 +90,11 @@
             <button type="button" id="ov-q-signup" onclick="openFacultyFlag('notSignedUp')" class="ov-row hidden">
               <span id="ov-signup" class="skeleton ov-n text-navy">0</span>
               <span class="min-w-0"><span class="block font-semibold text-slate-900">Faculty not signed up</span><span id="ov-signup-sub" class="block text-sm text-slate-600">no portal account linked</span></span>
+              <span class="ov-go">Faculty</span>
+            </button>
+            <button type="button" id="ov-q-noprog" onclick="openFacultyFlag('noProgramme')" class="ov-row hidden">
+              <span id="ov-noprog" class="skeleton ov-n text-violet-700">0</span>
+              <span class="min-w-0"><span class="block font-semibold text-slate-900">Faculty with no programme</span><span class="block text-sm text-slate-600">not a speaker or chair in any session yet</span></span>
               <span class="ov-go">Faculty</span>
             </button>
           </div>

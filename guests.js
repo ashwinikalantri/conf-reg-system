@@ -449,6 +449,8 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
         notRegistered: !Number(g.registered),
         // Added by name, not yet linked to an account.
         notSignedUp: !g.linked,
+        // Not a speaker, facilitator, chair or moderator in any session yet.
+        noProgramme: !cancelled && !(g.sessions || []).length,
       },
     };
   });
@@ -551,6 +553,7 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
     noAccommodation: rows.filter((g) => g.flags.noAccommodation).length,
     notRegistered: live.filter((g) => !Number(g.registered)).length,
     notSignedUp: live.filter((g) => !g.linked).length,
+    noProgramme: rows.filter((g) => g.flags.noProgramme).length,
     sharedRooms: [...byRoom.values()].filter((gs) => gs.length > 1).length,
     vehicleClashes: clashes.length,
     arrivals: movement('arrival_date', 'arrival_time', 'arrival_point', 'pickup_status'),
@@ -586,6 +589,7 @@ const CSV_COLUMNS = [
     g.flags.sharedRoom.length ? `Shares room with ${g.flags.sharedRoom.join(', ')}` : '',
     ...g.flags.vehicleClash,
     g.flags.notSignedUp ? 'Not signed up' : g.flags.notRegistered ? 'Not registered' : '',
+    g.flags.noProgramme ? 'No programme' : '',
   ].filter(Boolean).join('; ')],
 ];
 function guestsCsv(rows) {

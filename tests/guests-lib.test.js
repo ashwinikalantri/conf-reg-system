@@ -279,6 +279,15 @@ check('not signed up is its own flag', unl.guests[0].flags.notSignedUp === true 
 check('...and both count as not registered', unl.dashboard.notRegistered === 2 && unl.dashboard.notSignedUp === 1);
 const csvU = G.guestsCsv(unl.guests);
 check('the CSV says which', csvU.includes('Not signed up') && csvU.includes('Signed up, not registered'));
+const prog = G.buildBoard({ guests: [
+  { id: 1, name: 'Speaker', linked: true, registered: 1, sessions: [{ role: 'Speaker', title: 'Talk' }] },
+  { id: 2, name: 'Chair', linked: true, registered: 1, sessions: [{ role: 'Chair', title: 'Panel' }] },
+  { id: 3, name: 'Nothing Yet', linked: true, registered: 1, sessions: [] },
+  { id: 4, name: 'Gone', linked: true, registered: 1, sessions: [], overall_status: 'Cancelled' },
+], lists, settings, today });
+check('no session as speaker or chair is flagged No programme', prog.guests.map((g) => g.flags.noProgramme).join() === 'false,false,true,false');
+check('...counted, cancelled left out', prog.dashboard.noProgramme === 1);
+check('...and the CSV warns of it', G.guestsCsv(prog.guests).split('\r\n').filter((l) => l.includes('No programme')).length === 1);
 
 console.log('\n== The table migration ==');
 const sqlite3 = require('sqlite3');

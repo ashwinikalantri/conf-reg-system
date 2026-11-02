@@ -84,9 +84,9 @@ const GUESTS = { dashboard: { noAccommodation: 2, notSignedUp: 1 }, guests: [
 (async () => {
   console.log('\n== The page ==');
   check('one "Waiting on you" list, rows not tiles', /<h3 class="text-lg font-bold text-slate-900">Waiting on you<\/h3>/.test(view)
-    && (view.match(/class="ov-row hidden"/g) || []).length === 7 && /\.ov-row \{ display: grid;/.test(css) && /\.ov-row\.hidden \{ display: none; \}/.test(css));
+    && (view.match(/class="ov-row hidden"/g) || []).length === 8 && /\.ov-row \{ display: grid;/.test(css) && /\.ov-row\.hidden \{ display: none; \}/.test(css));
   check('...money first: balance due, then approvals, the statement, abstracts, faculty',
-    ['ov-q-balance', 'ov-q-payments', 'ov-q-statement', 'ov-q-abstracts', 'ov-q-rooms', 'ov-q-pickups', 'ov-q-signup']
+    ['ov-q-balance', 'ov-q-payments', 'ov-q-statement', 'ov-q-abstracts', 'ov-q-rooms', 'ov-q-pickups', 'ov-q-signup', 'ov-q-noprog']
       .every((id, i, a) => !i || view.indexOf(`id="${id}"`) > view.indexOf(`id="${a[i - 1]}"`)));
   check('balance due opens Registration on that list', /id="ov-q-balance" onclick="setPaymentFilter\('balance'\); switchBackendTab\('payments'\)"/.test(view));
   check('registrations, workshops, money, abstracts, faculty and the map', ['overview-regs', 'overview-workshops', 'overview-money', 'overview-abstracts', 'overview-faculty', 'delegate-map']
