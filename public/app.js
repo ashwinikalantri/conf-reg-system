@@ -2903,9 +2903,14 @@ function setTopupPaymentMode(mode) {
   if (input2) input2.placeholder = isNeft ? 'Transaction reference no.' : '12-digit UTR No.';
 }
 
-function openTopupModal() {
+async function openTopupModal() {
   const reg = currentRegistration;
   if (!reg || !(reg.remaining > 0)) return showToast('No outstanding balance to pay.');
+  // The UPI ID, payee and bank details come from /api/fees, which nothing
+  // else on the dashboard loads: without this the QR had no payee (pa=) and
+  // payment apps refused it.
+  if (!OFFICIAL_UPI_ID) await loadFees();
+  if (!OFFICIAL_UPI_ID) return showToast('Payment details could not be loaded. Check your connection and try again.');
   const balance = Number(reg.remaining);
   setText('topup-amount-display', `₹${inr(balance)}`);
   document.getElementById('topup-utr').value = '';
