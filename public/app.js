@@ -4124,6 +4124,10 @@ function applyRoleVisibility() {
   if (tabReports) tabReports.classList.toggle('hidden', !canSee('reports'));
   const tabFaculty = document.getElementById('nav-tab-faculty');
   if (tabFaculty) tabFaculty.classList.toggle('hidden', !canSee('faculty'));
+  // Front Desk's drop-down shows when the role may open any of its four.
+  const deskWrap = document.getElementById('desk-menu-wrap');
+  if (deskWrap) deskWrap.classList.toggle('hidden', ![tabDesk, tabPayments, tabAbstracts, tabFaculty].some((t) => t && !t.classList.contains('hidden')));
+  updateDeskMenuBadge();
 
   // The walk-in registration button now lives on the Front Desk tab
   // (#desk-register-btn, toggled in initFrontDesk) rather than in the
@@ -5059,6 +5063,7 @@ async function renderBackendPayments() {
   setText('metric-balance-amount', `₹${inr(totalBalanceDue)} outstanding`);
   setText('metric-rejected-count', rejected.length);
   setText('badge-pending-payments', needsDecision.length);
+  updateDeskMenuBadge();
 
   tbody.innerHTML = needsDecision.map(paymentRowHtml).join('');
   if (!needsDecision.length) {
@@ -10568,6 +10573,7 @@ async function renderBackendAbstracts() {
   const abstracts = abstractsMissingAuthorsOnly ? all.filter((a) => a.authors && !a.authors_given && a.status !== 'REJECTED') : all;
   const underReview = all.filter(a => (a.status || 'UNDER_REVIEW') === 'UNDER_REVIEW');
   setText('badge-pending-abstracts', underReview.length);
+  updateDeskMenuBadge();
 
   if (!abstracts.length) {
     approvalBox.innerHTML = `<p class="text-sm text-slate-500 p-4">${all.length ? 'Every abstract has its author list.' : 'No abstracts submitted yet.'}</p>`;
@@ -11237,7 +11243,7 @@ function switchActivityLog(tab) {
 // Settings and the account are drop-downs, each opened by its button; below
 // it, everything is one panel, #admin-menu, opened by ☰. Each opens by the
 // "open" class, and its button says so in aria-expanded.
-const ADMIN_MENUS = [['settings-menu', 'settings-menu-btn'], ['admin-me-menu', 'admin-me-btn'], ['admin-menu', 'admin-menu-btn']];
+const ADMIN_MENUS = [['desk-menu', 'desk-menu-btn'], ['settings-menu', 'settings-menu-btn'], ['admin-me-menu', 'admin-me-btn'], ['admin-menu', 'admin-menu-btn']];
 function setAdminMenu(menuId, open) {
   const pair = ADMIN_MENUS.find(([m]) => m === menuId);
   const menu = document.getElementById(menuId);
@@ -11258,6 +11264,21 @@ function toggleSettingsMenu(forceHide) {
   toggleAdminMenuById('settings-menu');
 }
 function toggleAdminMeMenu() { toggleAdminMenuById('admin-me-menu'); }
+function toggleDeskMenu() { toggleAdminMenuById('desk-menu'); }
+// Front Desk's screens, under its drop-down (nav-tabs.ejs); 'statement' is
+// Registration's second screen.
+const DESK_MENU_TABS = ['desk', 'payments', 'statement', 'abstracts', 'faculty'];
+// The drop-down's own badge: what waits on a decision inside it -- payments
+// to approve and abstracts to review -- since its items are out of sight.
+function updateDeskMenuBadge() {
+  const n = ['payments', 'abstracts'].reduce((sum, t) => {
+    const item = document.getElementById(`nav-tab-${t}`);
+    const badge = document.getElementById(`badge-pending-${t}`);
+    return sum + (item && !item.classList.contains('hidden') && badge ? Number(badge.textContent) || 0 : 0);
+  }, 0);
+  const el = document.getElementById('badge-desk-menu');
+  if (el) { el.textContent = String(n); el.classList.toggle('hidden', !n); }
+}
 function toggleAdminMenu() { toggleAdminMenuById('admin-menu'); }
 function selectSettingsTab(tab) {
   switchBackendTab(tab);
@@ -13460,6 +13481,8 @@ function switchBackendTab(tab) {
   });
   const settingsBtn = document.getElementById('settings-menu-btn');
   if (settingsBtn) settingsBtn.setAttribute('aria-current', SETTINGS_TABS.includes(tab) ? 'page' : 'false');
+  const deskBtn = document.getElementById('desk-menu-btn');
+  if (deskBtn) deskBtn.setAttribute('aria-current', DESK_MENU_TABS.includes(tab) ? 'page' : 'false');
   closeAdminMenus();
 
   // Registration's sub-menu, while either of its two screens is open and the

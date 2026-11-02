@@ -211,6 +211,9 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
 #nav-tabs .cbar-link { width: 100%; font-size: 16px; min-height: 46px; padding: 0 14px; }
 #nav-tabs .cbar-link > span:last-child:not(:first-child) { margin-left: auto; }
 #settings-menu, #admin-me-menu { display: flex; flex-direction: column; }
+/* Front Desk's drop-down (nav-tabs.ejs): on the one panel its four rows sit among the desks. */
+#desk-menu { display: flex; flex-direction: column; }
+#desk-menu .cbar-item > span { display: none; }
 #settings-menu .cbar-cols { display: flex; flex-direction: column; }
 #admin-me-head { display: none; }
 /* On the one panel, Settings' first group follows the desks, so it keeps its rule. */
@@ -224,6 +227,9 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
   #admin-me-wrap { margin-left: auto; }
   #settings-menu, #admin-me-menu { display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; background: #fff; border: 1px solid #e3e7eb; border-radius: 14px; box-shadow: 0 16px 40px rgba(19, 33, 45, 0.16); padding: 8px; }
   #settings-menu.open, #admin-me-menu.open { display: flex; }
+  #desk-menu { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; width: 320px; background: #fff; border: 1px solid #e3e7eb; border-radius: 14px; box-shadow: 0 16px 40px rgba(19, 33, 45, 0.16); padding: 8px; }
+  #desk-menu.open { display: flex; }
+  #desk-menu .cbar-item > span { display: block; }
   #settings-menu { width: 680px; }
   #settings-menu .cbar-cols { flex-direction: row; gap: 8px; align-items: flex-start; }
   #settings-menu .cbar-cols > div { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }

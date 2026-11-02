@@ -15,6 +15,12 @@ const js = read('public', 'app.js');
 console.log('\n== Registration and its sub-menu ==');
 check('the tab bar has one Registration tab', /id="nav-tab-payments"[\s\S]*?Registration/.test(tabs));
 check('...and no separate Bank Statement or Attendance tab', !/nav-tab-statement|nav-tab-attendance/.test(tabs));
+// 2026-11-02: Registration, Review Desk and Faculty moved under Front Desk.
+const deskMenu = (tabs.match(/<div id="desk-menu">([\s\S]*?)<\/div>\n          <\/div>/) || [])[1] || '';
+check('Front Desk is a drop-down holding the desk, Registration, Review Desk and Faculty, in that order',
+  ['nav-tab-desk', 'nav-tab-payments', 'nav-tab-abstracts', 'nav-tab-faculty'].every((id, i, a) => deskMenu.includes(`id="${id}"`) && (!i || deskMenu.indexOf(id) > deskMenu.indexOf(a[i - 1]))));
+check('...between Overview and Reports in the bar', tabs.indexOf('nav-tab-overview') < tabs.indexOf('desk-menu-btn') && tabs.indexOf('id="desk-menu"') < tabs.indexOf('nav-tab-reports')
+  && !deskMenu.includes('nav-tab-reports') && !deskMenu.includes('nav-tab-overview'));
 check('the sub-menu offers Approval and Bank statement',
   /id="reg-subtab-payments"[^>]*switchBackendTab\('payments'\)/.test(subtabs) && /id="reg-subtab-statement"[^>]*switchBackendTab\('statement'\)/.test(subtabs));
 check('...drawn once, above both sections',

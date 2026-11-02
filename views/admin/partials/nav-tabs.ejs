@@ -1,11 +1,20 @@
-        <!-- The desks: links in the conference bar from 1200px, the first
+        <!-- The desks: links in the conference bar from 1320px, the first
              rows of the ☰ panel below it. The one open is marked by
-             aria-current (switchBackendTab), pale gold as on the website. -->
+             aria-current (switchBackendTab), pale gold as on the website.
+             Front Desk is a drop-down from 1320px holding the desk itself,
+             Registration, Review Desk and Faculty; in the ☰ panel they are
+             rows like the rest. Its badge adds up what waits on a decision
+             (updateDeskMenuBadge). -->
         <nav id="nav-tabs" aria-label="Desks">
           <button type="button" id="nav-tab-overview" onclick="switchBackendTab('overview')" class="cbar-link">Overview</button>
-          <button type="button" id="nav-tab-desk" onclick="switchBackendTab('desk')" class="cbar-link">Front Desk</button>
-          <button type="button" id="nav-tab-payments" onclick="switchBackendTab('payments')" class="cbar-link"><span>Registration</span><span id="badge-pending-payments" class="bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span></button>
-          <button type="button" id="nav-tab-abstracts" onclick="switchBackendTab('abstracts')" class="cbar-link"><span>Review Desk</span><span id="badge-pending-abstracts" class="bg-indigo-100 text-indigo-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span></button>
-          <button type="button" id="nav-tab-faculty" onclick="switchBackendTab('faculty')" class="cbar-link hidden"><span>Faculty</span><span id="badge-faculty-count" class="hidden bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded-full font-bold">0</span></button>
+          <div id="desk-menu-wrap" class="relative shrink-0">
+            <button type="button" id="desk-menu-btn" onclick="toggleDeskMenu()" aria-haspopup="true" aria-expanded="false" class="cbar-link cbar-drop">Front Desk <span id="badge-desk-menu" class="hidden bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span><svg class="cbar-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+            <div id="desk-menu">
+              <button type="button" id="nav-tab-desk" onclick="switchBackendTab('desk')" class="cbar-item"><b>Front Desk</b><span>Find a delegate, check in, walk-ins</span></button>
+              <button type="button" id="nav-tab-payments" onclick="switchBackendTab('payments')" class="cbar-item"><b>Registration <span id="badge-pending-payments" class="bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span></b><span>Payments to approve, the bank statement</span></button>
+              <button type="button" id="nav-tab-abstracts" onclick="switchBackendTab('abstracts')" class="cbar-item"><b>Review Desk <span id="badge-pending-abstracts" class="bg-indigo-100 text-indigo-800 text-xs px-2 py-0.5 rounded-full font-bold">0</span></b><span>Abstracts to review and allot</span></button>
+              <button type="button" id="nav-tab-faculty" onclick="switchBackendTab('faculty')" class="cbar-item hidden"><b>Faculty <span id="badge-faculty-count" class="hidden bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded-full font-bold">0</span></b><span>Travel, stay and the programme</span></button>
+            </div>
+          </div>
           <button type="button" id="nav-tab-reports" onclick="switchBackendTab('reports')" class="cbar-link">Reports</button>
         </nav>

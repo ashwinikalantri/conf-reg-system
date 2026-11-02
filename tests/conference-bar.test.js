@@ -70,7 +70,7 @@ check('desks inline and drop-downs from 1320px; one ☰ panel below', /#admin-me
   vm.createContext(sb);
   const start = js.indexOf('const ADMIN_MENUS');
   const end = js.indexOf('// Settings sub-menu tabs (each is now its own');
-  vm.runInContext(`${js.slice(start, end)}\nglobalThis.__f = { toggleSettingsMenu, toggleAdminMeMenu, toggleAdminMenu, closeAdminMenus };`, sb);
+  vm.runInContext(`${js.slice(start, end)}\nglobalThis.__f = { toggleSettingsMenu, toggleAdminMeMenu, toggleAdminMenu, closeAdminMenus, toggleDeskMenu, updateDeskMenuBadge };`, sb);
   const f = sb.__f;
   const open = (id) => el(id).classList.contains('open');
   f.toggleSettingsMenu();
@@ -85,8 +85,23 @@ check('desks inline and drop-downs from 1320px; one ☰ panel below', /#admin-me
   f.toggleSettingsMenu();
   handlers.click.forEach((h) => h({ target: {} }));
   check('a click outside closes it', !open('settings-menu'));
+  f.toggleDeskMenu();
+  check('Front Desk drops down, and its button says so', open('desk-menu') && el('desk-menu-btn').getAttribute('aria-expanded') === 'true');
+  f.toggleSettingsMenu();
+  check('...Settings opening closes it', open('settings-menu') && !open('desk-menu'));
+  f.closeAdminMenus();
+  el('badge-pending-payments').textContent = '3';
+  el('badge-pending-abstracts').textContent = '4';
+  f.updateDeskMenuBadge();
+  check('its badge adds up payments and abstracts waiting', el('badge-desk-menu').textContent === '7' && !el('badge-desk-menu').classList.contains('hidden'));
+  el('nav-tab-abstracts').classList.add('hidden');
+  f.updateDeskMenuBadge();
+  check('...counting only what the role may open', el('badge-desk-menu').textContent === '3');
+  el('badge-pending-payments').textContent = '0';
+  f.updateDeskMenuBadge();
+  check('...and hides at nothing waiting', el('badge-desk-menu').classList.contains('hidden'));
 }
-check('opening a desk or a Settings screen closes the menus', /settingsBtn\.setAttribute\('aria-current', SETTINGS_TABS\.includes\(tab\) \? 'page' : 'false'\);\s*closeAdminMenus\(\);/.test(js)
+check('opening a desk or a Settings screen closes the menus', /deskBtn\.setAttribute\('aria-current', DESK_MENU_TABS\.includes\(tab\) \? 'page' : 'false'\);\s*closeAdminMenus\(\);/.test(js)
   && /function selectSettingsTab\(tab\) \{\s*switchBackendTab\(tab\);\s*closeAdminMenus\(\);/.test(js));
 
 // Initials for the account button.
