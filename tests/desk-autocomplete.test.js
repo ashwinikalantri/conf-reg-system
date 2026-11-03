@@ -213,8 +213,10 @@ const tick = (ms) => new Promise((r) => setTimeout(r, ms));
   h5.sandbox.deskSuggestKey({ key: 'ArrowDown', preventDefault() {} });
   h5.sandbox.deskSuggestKey({ key: 'Enter', preventDefault() { prevented = true; } });
   check('with a selection, Enter takes it instead', prevented === true);
-  check('...and puts the account key in the box, not the typed name',
-    h5.els['desk-search'].value === person(1).phone_number, h5.els['desk-search'].value);
+  // The Reg No, not the account key: an email signup's key is an internal id
+  // the lookup cannot resolve (3 Nov 2026).
+  check('...and puts their Reg No in the box, not the typed name',
+    h5.els['desk-search'].value === person(1).registration_number, h5.els['desk-search'].value);
 
   console.log('\n== Nobody matching is said out loud ==');
   // Silence would look like the search had not run. The desk needs to know

@@ -11177,6 +11177,10 @@ async function deskFindDelegate(identifier) {
     `SELECT u.* FROM registrations r JOIN users u ON u.phone_number = r.phone_number
       WHERE UPPER(r.registration_number) = UPPER(?)`, [q]);
   if (byReg) return { user: byReg };
+  // The account key itself, exactly: for an account signed up by email it is
+  // an internal id (u_...) that matches none of the above.
+  const byKey = await dbGet('SELECT * FROM users WHERE phone_number = ?', [q]);
+  if (byKey) return { user: byKey };
 
   // Name, last. Substring rather than exact -- nobody at a desk types a full
   // legal name correctly first time -- so this can legitimately match several

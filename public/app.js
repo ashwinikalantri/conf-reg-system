@@ -11741,9 +11741,11 @@ function deskSuggestKey(event) {
 async function deskSuggestPick(i) {
   const picked = deskSuggestions[i];
   if (!picked) return;
-  // The phone number is the account key, so resolving by it is exact -- the
-  // name that was typed might still be ambiguous.
-  document.getElementById('desk-search').value = picked.phone_number;
+  // By the Reg No, which every account has and the lookup resolves exactly
+  // -- not the account key, which for an account signed up by email is an
+  // internal id (u_...) that is no phone, email, ID or name, so picking such
+  // a person used to find nobody. The typed name might still be ambiguous.
+  document.getElementById('desk-search').value = picked.registration_number || picked.phone_number;
   deskSuggestClose();
   await deskLookup();
 }
@@ -11789,7 +11791,7 @@ async function deskLookup(event) {
 function renderDeskCandidates(list) {
   const box = document.getElementById('desk-candidates');
   document.getElementById('desk-candidate-list').innerHTML = list.map((c) => `
-    <button type="button" onclick="deskPick('${esc(c.phone_number)}')"
+    <button type="button" onclick="deskPick('${esc(c.registration_number || c.phone_number)}')"
             class="w-full text-left p-3 border border-slate-200 rounded-xl hover:bg-slate-50 flex items-center justify-between gap-3">
       <span class="min-w-0">
         <span class="block font-bold text-sm text-slate-800 truncate">${esc(c.full_name || '—')}</span>
@@ -11800,8 +11802,9 @@ function renderDeskCandidates(list) {
   box.classList.remove('hidden');
 }
 
-async function deskPick(phone) {
-  document.getElementById('desk-search').value = phone;
+// A shortlisted person, by their Reg No (see deskSuggestPick).
+async function deskPick(identifier) {
+  document.getElementById('desk-search').value = identifier;
   await deskLookup();
 }
 
