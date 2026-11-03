@@ -341,6 +341,18 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // deliberately, in a diff somebody reads -- rather than absorbed silently
   // into "every role runs the same reports".
   const REPORTS_ADDED_SINCE_BASELINE = {
+    volunteers: {
+      roles: ['OPERATIONS', 'SUPER_ADMIN'],
+      why: 'Everyone in the Volunteer category or holding a volunteer role, with contact details, areas, '
+        + 'registration and how many faculty they look after: behind reports.users, as the All accounts '
+        + 'report, which already lists every account with its contact details and roles.',
+    },
+    faculty: {
+      roles: ['SUPER_ADMIN'],
+      why: 'The Faculty tab as a report (who, registration, sessions, travel, stay), behind guests.view -- '
+        + 'exactly the people who already see that tab, so nobody gains a detail they could not see. Of the '
+        + 'baseline roles only Super Admin holds it; the coordinators and transport/accommodation volunteers do too.',
+    },
     badges: {
       roles: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'FINANCE_ACADEMIC', 'OPERATIONS'],
       why: 'What goes on each badge: Reg No, name, designation, institution and the QR of the Reg No, '

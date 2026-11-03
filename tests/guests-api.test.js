@@ -42,8 +42,9 @@ const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `
     const ac = await signIn(P.ac);
     const me = async (c) => (await call('GET', '/api/auth/me', null, c)).body;
     const tcMe = await me(tc);
-    check('the transport coordinator opens the Guests tab, and nothing else',
-      tcMe.sections && tcMe.sections.faculty === true && Object.entries(tcMe.sections).filter(([, v]) => v).length === 1, tcMe.sections);
+    // ...and Reports, for the Faculty report alone (3 Nov 2026).
+    check('the transport coordinator opens the Guests tab and Reports, and nothing else',
+      tcMe.sections && tcMe.sections.faculty === true && tcMe.sections.reports === true && Object.entries(tcMe.sections).filter(([, v]) => v).length === 2, tcMe.sections);
     check('...holding view, shared edit and travel',
       ['guests.view', 'guests.edit', 'guests.travel'].every((k) => tcMe.permissions.includes(k)) && !tcMe.permissions.includes('guests.stay') && !tcMe.permissions.includes('guests.manage'));
     const acMe = await me(ac);

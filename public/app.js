@@ -1023,14 +1023,16 @@ function renderBadge(reg) {
   if (!pass || !/^[A-Za-z0-9-]{3,32}$/.test(reg.registration_number || '')) return;
   const c = conferenceInfo;
   const d = currentDelegate || {};
-  const role = reg.is_faculty_member ? 'FACULTY' : 'DELEGATE';
+  // Faculty first; someone in the Volunteer category is a volunteer, not a delegate.
+  const role = reg.is_faculty_member ? 'FACULTY' : reg.is_volunteer ? 'VOLUNTEER' : 'DELEGATE';
   setText('badge-acronym', (c.acronym || '').toUpperCase());
   setText('badge-conference', c.name || '');
   setText('badge-when', [shortDateRange(c.startDate, c.endDate), c.location].filter(Boolean).join(' · '));
   const ribbon = document.getElementById('badge-role');
   ribbon.textContent = role;
   ribbon.classList.toggle('bg-[#b08d3c]', role === 'FACULTY');
-  ribbon.classList.toggle('bg-[#2f5673]', role !== 'FACULTY');
+  ribbon.classList.toggle('bg-[#3d7a5a]', role === 'VOLUNTEER');
+  ribbon.classList.toggle('bg-[#2f5673]', role === 'DELEGATE');
   setText('badge-name', reg.delegate_name || [d.salutation, d.full_name || d.name].filter(Boolean).join(' '));
   setText('badge-designation', d.designation || '');
   setText('badge-institution', d.institution || d.institute || '');
@@ -4217,6 +4219,8 @@ function applyRoleVisibility() {
     'report-summary': 'reports.summary',
     'report-delegates': 'reports.delegates',
     'report-badges': 'reports.delegates',
+    'report-faculty': 'guests.view',
+    'report-volunteers': 'reports.users',
     'report-delegate-programs': 'reports.delegate_programs',
     'report-payments': 'reports.payments',
     'report-workshops': 'reports.programs',
@@ -11832,7 +11836,8 @@ function deskWhoCard(user, reg, checkedIn, guest) {
     ? `<a href="/api/qr/${encodeURIComponent(regNo)}.png" target="_blank" rel="noopener" title="Open the QR full size" class="shrink-0 block rounded-lg border border-slate-200 p-1 bg-white hover:border-slate-400">
         <img id="desk-record-qr" src="/api/qr/${encodeURIComponent(regNo)}.png" alt="QR code for ${esc(regNo)}" width="96" height="96" class="w-24 h-24 block"></a>` : '';
 
-  return deskCard('Delegate', `
+  // Registered in the Volunteer category: a volunteer, not a delegate.
+  return deskCard(reg && reg.category_key === 'volunteer' ? 'Volunteer' : 'Delegate', `
     <div class="flex items-start gap-3 mb-3">
       <div class="flex-1 min-w-0 flex items-start justify-between gap-3 flex-wrap">
         <div class="min-w-0">

@@ -59,18 +59,19 @@ function currentMeal(meals, now = Date.now()) {
 // Who someone is, for the counter, and whether they are served.
 // facts: { staff, faculty (on the list, not cancelled), facultyCancelled,
 //          regStatus (their registration's bank_status, or null) }
-// -> { eligible, kind ('FACULTY' | 'ORGANISER' | 'DELEGATE' | null), reason }
-const KIND_LABEL = { FACULTY: 'Faculty', ORGANISER: 'Organiser', DELEGATE: 'Delegate' };
+//          volunteer (registered in the Volunteer category) }
+// -> { eligible, kind ('FACULTY' | 'ORGANISER' | 'VOLUNTEER' | 'DELEGATE' | null), reason }
+const KIND_LABEL = { FACULTY: 'Faculty', ORGANISER: 'Organiser', VOLUNTEER: 'Volunteer', DELEGATE: 'Delegate' };
 function decide(facts) {
   if (facts.faculty) return { eligible: true, kind: 'FACULTY', reason: null };
   if (facts.staff) return { eligible: true, kind: 'ORGANISER', reason: null };
-  if (facts.regStatus === 'BANK_VERIFIED') return { eligible: true, kind: 'DELEGATE', reason: null };
+  if (facts.regStatus === 'BANK_VERIFIED') return { eligible: true, kind: facts.volunteer ? 'VOLUNTEER' : 'DELEGATE', reason: null };
   const reason = facts.facultyCancelled ? 'Taken off the Faculty list (cancelled).'
     : facts.regStatus === 'PARTIAL_PAYMENT' ? 'Balance due: send them to the registration desk.'
       : facts.regStatus === 'PENDING' ? 'Payment not yet approved: send them to the registration desk.'
         : facts.regStatus === 'REJECTED' ? 'Registration rejected: send them to the registration desk.'
           : 'Not registered for the conference: send them to the registration desk.';
-  return { eligible: false, kind: facts.regStatus ? 'DELEGATE' : null, reason };
+  return { eligible: false, kind: facts.regStatus ? (facts.volunteer ? 'VOLUNTEER' : 'DELEGATE') : null, reason };
 }
 
 // A meal pass's code: "MP" and ten letters or digits, no look-alikes.

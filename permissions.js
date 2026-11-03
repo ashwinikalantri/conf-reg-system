@@ -418,6 +418,10 @@ const REPORT_PERMISSIONS = {
   delegates: 'reports.delegates',
   // The same people as Registered Delegates, fewer details: the same permission.
   badges: 'reports.delegates',
+  // The Faculty tab as a report: whoever sees that tab.
+  faculty: 'guests.view',
+  // Volunteers, with contact details and roles: as the All accounts report.
+  volunteers: 'reports.users',
   'delegate-programs': 'reports.delegate_programs',
   payments: 'reports.payments',
   workshops: 'reports.programs',
@@ -445,7 +449,7 @@ const SECTION_PERMISSIONS = {
   statement: { permission: 'statement.view' },
   abstracts: { permission: 'abstracts.view' },
   reports: { anyOf: ['meals.view', 'reports.delegates', 'reports.delegate_programs', 'reports.payments',
-    'reports.programs', 'reports.abstracts', 'reports.users', 'reports.summary'] },
+    'reports.programs', 'reports.abstracts', 'reports.users', 'reports.summary', 'guests.view'] },
   users: { permission: 'users.view' },
   roles: { permission: 'users.manage_roles' },
   fees: { permission: 'masters.fees_view' },

@@ -3048,6 +3048,9 @@ async function backfillNewSystemPermissions() {
 // The volunteer roles, one per area. A delegate may hold any of them and
 // stay a delegate (3 Nov 2026): registered, on the delegate lists, with
 // their badge and certificate -- and that area's screens besides.
+// The Volunteer registration category (staff allot only, free): someone
+// registered in it is a volunteer, never shown or counted as a delegate.
+const VOLUNTEER_CATEGORY = 'volunteer';
 const VOLUNTEER_ROLE_KEYS = new Set(SYSTEM_ROLES.filter((r) => r.key.startsWith('VOLUNTEER_')).map((r) => r.key));
 // Every role a person holds: their main role, then any additional ones. A
 // delegate's additional roles can only be volunteer roles.
@@ -5114,6 +5117,8 @@ async function ownRegistration(phone) {
   reg.remaining = summary.remaining;
   reg.pending_txn_count = summary.txns.filter((t) => t.txn_status === 'PENDING').length;
   reg.selections = await fetchRegistrationSelections(row.id);
+  // In the Volunteer category: their badge says VOLUNTEER.
+  reg.is_volunteer = row.category_key === VOLUNTEER_CATEGORY;
   // On the faculty list (and not cancelled): their badge says FACULTY.
   reg.is_faculty_member = !!(await dbGet(
     'SELECT 1 AS yes FROM guests WHERE phone_number = ? AND COALESCE(overall_status, \'\') != ?', [phone, guestLib.CANCELLED]).catch(() => null));
@@ -9611,12 +9616,13 @@ async function mealPerson(key) {
   if (!u) return null;
   const guests = await dbAll('SELECT overall_status FROM guests WHERE phone_number = ?', [u.phone_number]);
   const onList = guests.some((g) => !isCancelledGuest(g));
-  const reg = await dbGet('SELECT registration_number, category_label, bank_status FROM registrations WHERE phone_number = ?', [u.phone_number]);
+  const reg = await dbGet('SELECT registration_number, category_key, category_label, bank_status FROM registrations WHERE phone_number = ?', [u.phone_number]);
   return {
     key: u.phone_number,
     name: reminderName(u.salutation, u.full_name) || (reg && reg.registration_number) || 'Unnamed account',
     detail: [(reg && reg.registration_number) || u.registration_number, reg && reg.category_label].filter(Boolean).join(' · '),
-    ...mealsLib.decide({ staff: !NOT_STAFF_ROLES.has(u.role), faculty: onList, facultyCancelled: !onList && guests.length > 0, regStatus: reg ? reg.bank_status : null }),
+    ...mealsLib.decide({ staff: !NOT_STAFF_ROLES.has(u.role), faculty: onList, facultyCancelled: !onList && guests.length > 0, regStatus: reg ? reg.bank_status : null,
+      volunteer: !!reg && reg.category_key === VOLUNTEER_CATEGORY }),
   };
 }
 const publicMealPerson = (p) => ({ key: p.key, name: p.name, detail: p.detail, eligible: p.eligible, kind: p.kind,
@@ -9642,9 +9648,9 @@ async function mealFind(identifier, personKey) {
   return person ? { person } : { error: 'Nobody found.' };
 }
 
-// Everyone a meal is for, by kind: confirmed delegates, faculty (not
-// cancelled) and organisers, each person once (faculty first, then
-// organiser, then delegate).
+// Everyone a meal is for, by kind: confirmed delegates, volunteers, faculty
+// (not cancelled) and organisers, each person once (faculty first, then
+// organiser, then volunteer or delegate).
 async function mealExpected() {
   const kinds = new Map();
   for (const g of await dbAll('SELECT id, phone_number, overall_status FROM guests')) {
@@ -9653,10 +9659,10 @@ async function mealExpected() {
   for (const u of await dbAll('SELECT phone_number, role FROM users')) {
     if (!NOT_STAFF_ROLES.has(u.role) && !kinds.has(u.phone_number)) kinds.set(u.phone_number, 'ORGANISER');
   }
-  for (const r of await dbAll("SELECT phone_number FROM registrations WHERE bank_status = 'BANK_VERIFIED'")) {
-    if (!kinds.has(r.phone_number)) kinds.set(r.phone_number, 'DELEGATE');
+  for (const r of await dbAll("SELECT phone_number, category_key FROM registrations WHERE bank_status = 'BANK_VERIFIED'")) {
+    if (!kinds.has(r.phone_number)) kinds.set(r.phone_number, r.category_key === VOLUNTEER_CATEGORY ? 'VOLUNTEER' : 'DELEGATE');
   }
-  const count = { DELEGATE: 0, FACULTY: 0, ORGANISER: 0 };
+  const count = { DELEGATE: 0, VOLUNTEER: 0, FACULTY: 0, ORGANISER: 0 };
   for (const k of kinds.values()) count[k]++;
   return { ...count, total: kinds.size, keys: kinds };
 }
@@ -9672,7 +9678,7 @@ async function mealCounts(meals) {
     return {
       ...m, window: mealsLib.mealWindow(m),
       served: mine.reduce((n, r) => n + r.n, 0), anyway: mine.reduce((n, r) => n + (r.anyway || 0), 0),
-      byKind: { DELEGATE: kind('DELEGATE'), FACULTY: kind('FACULTY'), ORGANISER: kind('ORGANISER') },
+      byKind: { DELEGATE: kind('DELEGATE'), VOLUNTEER: kind('VOLUNTEER'), FACULTY: kind('FACULTY'), ORGANISER: kind('ORGANISER') },
       counters: m.counters.map((c) => ({ ...c, served: mine.filter((r) => r.session_id === c.sessionId).reduce((n, r) => n + r.n, 0) })),
     };
   });
@@ -9686,7 +9692,7 @@ app.get('/api/meals', requirePermission('meals.scan'), async (req, res, next) =>
     const current = mealsLib.currentMeal(meals);
     const expected = await mealExpected();
     res.json({ success: true, meals: await mealCounts(meals), current: current ? current.key : null,
-      expected: { DELEGATE: expected.DELEGATE, FACULTY: expected.FACULTY, ORGANISER: expected.ORGANISER, total: expected.total } });
+      expected: { DELEGATE: expected.DELEGATE, VOLUNTEER: expected.VOLUNTEER, FACULTY: expected.FACULTY, ORGANISER: expected.ORGANISER, total: expected.total } });
   } catch (err) {
     next(err);
   }
@@ -9778,7 +9784,7 @@ app.get('/api/admin/meals/summary', requirePermission('meals.view'), async (req,
     const expected = await mealExpected();
     const current = mealsLib.currentMeal(meals);
     res.json({ success: true, meals: await mealCounts(meals), current: current ? current.key : null,
-      expected: { DELEGATE: expected.DELEGATE, FACULTY: expected.FACULTY, ORGANISER: expected.ORGANISER, total: expected.total } });
+      expected: { DELEGATE: expected.DELEGATE, VOLUNTEER: expected.VOLUNTEER, FACULTY: expected.FACULTY, ORGANISER: expected.ORGANISER, total: expected.total } });
   } catch (err) {
     next(err);
   }
@@ -13748,10 +13754,85 @@ async function buildReport(type, opts = {}) {
   // holds the Reg No. The QR column is the image's web address, so the CSV
   // carries it into a mail merge or a bulk badge design; `qr` tells the page
   // and the PDF to draw it, from the code in column `of`.
+  // Volunteers: everyone registered in the Volunteer category or holding a
+  // volunteer role (as their main role or on top of Delegate) -- who they
+  // are, their areas, their registration, and the faculty assigned to them.
+  if (type === 'volunteers') {
+    const AREA = { VOLUNTEER_REGISTRATION: 'Registration', VOLUNTEER_MEALS: 'Meals', VOLUNTEER_TRANSPORT: 'Transport', VOLUNTEER_ACCOMMODATION: 'Accommodation' };
+    const STATUS = { BANK_VERIFIED: 'Confirmed', PENDING: 'Pending', PARTIAL_PAYMENT: 'Balance due', REJECTED: 'Rejected' };
+    const people = await dbAll(
+      `SELECT u.phone_number, u.phone, u.salutation, u.full_name, u.email, u.designation, u.institution, u.role,
+              r.registration_number, r.category_key, r.category_label, r.bank_status
+         FROM users u LEFT JOIN registrations r ON r.phone_number = u.phone_number
+        WHERE u.role IN (${[...VOLUNTEER_ROLE_KEYS].map(() => '?').join(',')})
+           OR u.phone_number IN (SELECT phone_number FROM user_roles WHERE role_key IN (${[...VOLUNTEER_ROLE_KEYS].map(() => '?').join(',')}))
+           OR r.category_key = ?`,
+      [...VOLUNTEER_ROLE_KEYS, ...VOLUNTEER_ROLE_KEYS, VOLUNTEER_CATEGORY]);
+    const extra = await dbAll('SELECT phone_number, role_key FROM user_roles');
+    const guests = await dbAll('SELECT transport_coordinator, accommodation_coordinator, overall_status FROM guests');
+    const live = guests.filter((g) => !isCancelledGuest(g));
+    const rows = people.map((p) => {
+      const roles = [p.role, ...extra.filter((e) => e.phone_number === p.phone_number).map((e) => e.role_key)];
+      const areas = Object.keys(AREA).filter((k) => roles.includes(k)).map((k) => AREA[k]);
+      const transport = live.filter((g) => g.transport_coordinator === p.phone_number).length;
+      const stay = live.filter((g) => g.accommodation_coordinator === p.phone_number).length;
+      return [
+        reminderName(p.salutation, p.full_name) || p.phone_number, displayPhone(p), p.email || '', p.designation || '', p.institution || '',
+        areas.join(', '), p.registration_number || '',
+        !p.bank_status ? 'Not registered' : `${p.category_key === VOLUNTEER_CATEGORY ? 'Volunteer' : (p.category_label || 'Registered')} · ${STATUS[p.bank_status] || p.bank_status}`,
+        [transport && `Transport ${transport}`, stay && `Stay ${stay}`].filter(Boolean).join(', '),
+      ];
+    }).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    return {
+      title: 'Volunteers',
+      sections: [{
+        columns: ['Name', 'Mobile', 'Email', 'Designation', 'Institution', 'Areas', 'Reg No', 'Registration', 'Faculty Assigned'],
+        rows,
+      }],
+    };
+  }
+
+  // Faculty: the Faculty tab's list as a report, one detail to a column --
+  // who they are, their registration, their sessions, how they come and go,
+  // where they stay. Cancelled ones last.
+  if (type === 'faculty') {
+    const { board } = await guestBoard();
+    const day = (d) => (d ? attendanceLib.dateRange(d, d) : '');
+    const when = (d, t) => (d ? `${day(d)}${t ? ` ${guestLib.to12h(t)}` : ''}` : '');
+    const join = (...v) => v.filter((x) => x != null && String(x).trim()).join(' · ');
+    const leg = (g, status, vehicle) => (guestLib.transferNotRequired(g[status]) ? 'Not required' : join(g[vehicle], g[status]));
+    const guests = [...board.guests].sort((a, b) => (a.cancelled ? 1 : 0) - (b.cancelled ? 1 : 0) || String(a.name || '').localeCompare(String(b.name || '')));
+    return {
+      title: 'Faculty',
+      sections: [{
+        columns: ['Name', 'Designation', 'Institution', 'Mobile', 'Email', 'Reg No', 'Registration', 'Sessions',
+          'Arrival', 'Arrival By', 'Arrival Point', 'Pickup', 'Departure', 'Departure By', 'Departure Point', 'Drop',
+          'Stay', 'Stay Dates', 'Sharing With', 'Volunteers', 'Special Needs', 'Status'],
+        rows: guests.map((raw) => {
+          const g = guestLib.travelInUse(raw);
+          const ownStay = Number(g.stay_not_needed);
+          const nights = g.nights ? `${g.nights} night${g.nights === 1 ? '' : 's'}` : '';
+          return [
+            g.name, g.designation || '', g.institution || '', g.phone || '', g.email || '', g.registration_number || '',
+            !g.linked ? 'Not signed up' : g.complimentary ? 'Complimentary' : Number(g.registered) ? 'Registered' : 'Not registered',
+            (g.sessions || []).map((s) => `${s.role}: ${s.title} (${join(day(s.date), s.start && guestLib.to12h(s.start), s.hall)})`).join('; '),
+            when(g.arrival_date, g.arrival_time), join(g.arrival_mode, g.arrival_number), g.arrival_point || '', leg(raw, 'pickup_status', 'pickup_vehicle'),
+            when(g.departure_date, g.departure_time), join(g.departure_mode, g.departure_number), g.departure_point || '', leg(raw, 'drop_status', 'drop_vehicle'),
+            ownStay ? 'Own stay' : join(g.accommodation, g.room_no && `Room ${g.room_no}`, g.room_type),
+            ownStay ? '' : join(g.checkin_date && g.checkout_date ? attendanceLib.dateRange(g.checkin_date, g.checkout_date) : day(g.checkin_date || g.checkout_date), nights),
+            ownStay ? '' : (g.flags.sharedRoom || []).join(', '),
+            join(g.transport_coordinator_name && `Transport: ${g.transport_coordinator_name}`, g.accommodation_coordinator_name && `Stay: ${g.accommodation_coordinator_name}`),
+            g.special_needs || '', g.overall_status || '',
+          ];
+        }),
+      }],
+    };
+  }
+
   if (type === 'badges') {
     const rows = (await dbAll(
       `SELECT registrations.id, registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number AS phone_number,
-         registrations.discount_applied_at, registrations.submitted_at, u.designation, u.institution
+         registrations.discount_applied_at, registrations.submitted_at, registrations.category_key, u.designation, u.institution
          FROM registrations
          LEFT JOIN users u ON u.phone_number = registrations.phone_number
          WHERE registrations.bank_status = 'BANK_VERIFIED'
@@ -13772,14 +13853,19 @@ async function buildReport(type, opts = {}) {
     const confirmedOn = (r) => lastPaid[r.id]
       || ((r.discount_applied_at || r.submitted_at) ? istDateString(r.discount_applied_at || r.submitted_at) : '9999-12-31');
     rows.sort((a, b) => confirmedOn(a).localeCompare(confirmedOn(b)) || String(a.registration_number).localeCompare(String(b.registration_number)));
+    const facultyPhones = new Set((await dbAll('SELECT phone_number, overall_status FROM guests WHERE phone_number IS NOT NULL'))
+      .filter((g) => !isCancelledGuest(g)).map((g) => g.phone_number));
     const base = portalBase();
     const qrUrl = (no) => (no && DESK_PASS_RE.test(no) ? `${base}/api/qr/${encodeURIComponent(no)}.png` : '');
     return {
       title: 'Conference Badge',
       sections: [{
-        columns: ['Reg No', 'Name', 'Designation', 'Institution', 'QR Code'],
-        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.designation, r.institution, qrUrl(r.registration_number)]),
-        qr: { column: 4, of: 0 },
+        // Role: what the badge says -- Faculty (on the list, not cancelled),
+        // Volunteer (the Volunteer category), else Delegate.
+        columns: ['Reg No', 'Name', 'Designation', 'Institution', 'Role', 'QR Code'],
+        rows: rows.map((r) => [r.registration_number, r.delegate_name, r.designation, r.institution,
+          facultyPhones.has(r.phone_number) ? 'Faculty' : r.category_key === VOLUNTEER_CATEGORY ? 'Volunteer' : 'Delegate', qrUrl(r.registration_number)]),
+        qr: { column: 5, of: 0 },
       }],
     };
   }
@@ -13791,8 +13877,9 @@ async function buildReport(type, opts = {}) {
          registrations.discount_applied_at, registrations.submitted_at, u.age, u.gender, u.designation, u.institution, u.district, u.state, u.pincode, u.country, u.email, u.phone
          FROM registrations
          LEFT JOIN users u ON u.phone_number = registrations.phone_number
-         WHERE registrations.bank_status = 'BANK_VERIFIED'
-         ORDER BY registrations.registration_number`)).map(withDelegateSalutation);
+         WHERE registrations.bank_status = 'BANK_VERIFIED' AND COALESCE(registrations.category_key, '') != ?
+         ORDER BY registrations.registration_number`, [VOLUNTEER_CATEGORY])).map(withDelegateSalutation);
+    // Volunteers are in their own report, not here.
     const paymentDates = await reportPaymentDates();
     // No bank credit to date: a complimentary registration takes the day it
     // was added, and one a discount code made free the day the code was
@@ -13987,8 +14074,8 @@ async function buildReport(type, opts = {}) {
     const when = (m) => `${attendanceLib.shortDate(m.date)}, ${attendanceLib.to12(m.start)}–${attendanceLib.to12(m.end)}`;
     const sections = [{
       name: 'Meals',
-      columns: ['Meal', 'When', 'Expected', 'Served', 'Delegates', 'Faculty', 'Organisers', 'Served anyway'],
-      rows: meals.map((m) => [m.title, when(m), expected.total, m.served, m.byKind.DELEGATE, m.byKind.FACULTY, m.byKind.ORGANISER, m.anyway]),
+      columns: ['Meal', 'When', 'Expected', 'Served', 'Delegates', 'Volunteers', 'Faculty', 'Organisers', 'Served anyway'],
+      rows: meals.map((m) => [m.title, when(m), expected.total, m.served, m.byKind.DELEGATE, m.byKind.VOLUNTEER, m.byKind.FACULTY, m.byKind.ORGANISER, m.anyway]),
     }, {
       name: 'By counter',
       columns: ['Meal', 'Counter', 'Served'],

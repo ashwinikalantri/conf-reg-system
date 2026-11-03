@@ -142,8 +142,10 @@ function columnWidths(doc, sec, total) {
 
 function renderReportPdf(rep, meta) {
   const PDF = loadPdfKit();
+  // A wide report (the Faculty one) on A3, so its columns stay readable.
+  const wide = rep.sections.some((s) => s.columns.length > 14);
   const doc = new PDF({
-    size: 'A4', layout: 'landscape', margins: MARGIN, bufferPages: true,
+    size: wide ? 'A3' : 'A4', layout: 'landscape', margins: MARGIN, bufferPages: true,
     info: { Title: meta.heading, Creator: meta.footer || meta.heading },
   });
   doc.registerFont('body', path.join(FONT_DIR, 'NotoSans-Regular.ttf'));
