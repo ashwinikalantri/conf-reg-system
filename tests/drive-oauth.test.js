@@ -4,6 +4,7 @@ const { call, check, report, appFile, dataDir, ADMIN } = require('./harness');
 fs=require('fs'), path=require('path'), sqlite3=require('sqlite3');
 const db=new sqlite3.Database(process.argv[2]);
 const get=(s,p=[])=>new Promise(r=>db.get(s,p,(e,x)=>r(x)));
+const run=(s,p=[])=>new Promise((ok,no)=>db.run(s,p,(e)=>e?no(e):ok()));
 const login=async(id)=>{let r=await call('POST','/api/auth/login-otp',{identifier:id});
   if(!r.body||!r.body.success) return null;
   r=await call('POST','/api/auth/login',{identifier:id,otp:r.body.devOtp});
@@ -71,6 +72,24 @@ const rm=(f)=>{try{fs.unlinkSync(f)}catch{}};
  check('a refusal at Google is reported, not swallowed',
    denied.status===400 && /not connected/i.test(denied.raw) && /access_denied/.test(denied.raw));
  check('still nothing written', !fs.existsSync(F_LINK));
+
+ console.log('\n== ...and does accept a genuine one (3 Nov 2026) ==');
+ // The state used to be set on req.session, which loadSession rebuilds from
+ // the database on every request: it was gone by the callback, and every
+ // real sign-in came back "That link has expired".
+ const st=new URL((await call('GET','/api/admin/backup/drive-oauth/start',null,admin)).location).searchParams.get('state');
+ const back=await call('GET',`/api/admin/backup/drive-callback?code=fake-code&state=${st}`,null,admin);
+ check('Google\'s return with the state it was sent is matched to the session', back.status===400 && !/expired/i.test(back.raw) && /Could not complete the connection/.test(back.raw), back.raw.slice(0,300));
+ const again=await call('GET',`/api/admin/backup/drive-callback?code=fake-code&state=${st}`,null,admin);
+ check('...once only', again.status===400 && /expired/i.test(again.raw));
+ const st2=new URL((await call('GET','/api/admin/backup/drive-oauth/start',null,admin)).location).searchParams.get('state');
+ const other=await login(ADMIN);
+ const cross=await call('GET',`/api/admin/backup/drive-callback?code=fake-code&state=${st2}`,null,other);
+ check('...and only in the session that started it', cross.status===400 && /expired/i.test(cross.raw));
+ await run(`update sessions set drive_oauth_state = ? where drive_oauth_state like ?`, [`${st2}:${Date.now() - 16 * 60 * 1000}`, `${st2}:%`]);
+ const stale=await call('GET',`/api/admin/backup/drive-callback?code=fake-code&state=${st2}`,null,admin);
+ check('...within 15 minutes', stale.status===400 && /expired/i.test(stale.raw));
+ check('nothing written by any of them', !fs.existsSync(F_LINK));
 
  console.log('\n== Why this exists at all ==');
  const src=fs.readFileSync(appFile('server.js'),'utf8');

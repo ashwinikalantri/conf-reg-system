@@ -2251,6 +2251,11 @@ db.serialize(() => {
       expires_at INTEGER NOT NULL
     )
   `);
+  // The Google Drive sign-in's state, "<value>:<ms>", between the Connect
+  // click and Google's return. On the session row because req.session is
+  // rebuilt from it on every request (loadSession): a value set on the
+  // object alone was gone by the callback.
+  db.run('ALTER TABLE sessions ADD COLUMN drive_oauth_state TEXT', () => {});
 
   // Append-only audit trail of administrative state changes (who did what,
   // to which record, and when).
@@ -10907,12 +10912,13 @@ app.post('/api/admin/backup/drive-oauth/config', requirePermission('system.backu
 
 // Send the admin to Google. A browser navigation, not a fetch, so the session
 // cookie rides along and the callback can tell it is the same person.
-app.get('/api/admin/backup/drive-oauth/start', requirePermission('system.backups'), (req, res) => {
+app.get('/api/admin/backup/drive-oauth/start', requirePermission('system.backups'), async (req, res, next) => {
+  try {
   if (!driveOauthConfigured()) {
     return res.status(400).send(driveResultPage('Google Drive is not set up yet', 'Add the OAuth client ID and secret in Settings first.', false));
   }
   const state = crypto.randomBytes(16).toString('hex');
-  req.session.driveOauthState = state;
+  await dbRun('UPDATE sessions SET drive_oauth_state = ? WHERE token_hash = ?', [`${state}:${Date.now()}`, req.session.tokenHash]);
   const url = 'https://accounts.google.com/o/oauth2/auth?' + new URLSearchParams({
     client_id: process.env.DRIVE_CLIENT_ID,
     redirect_uri: driveRedirectUri(),
@@ -10926,7 +10932,12 @@ app.get('/api/admin/backup/drive-oauth/start', requirePermission('system.backups
     state,
   }).toString();
   res.redirect(url);
+  } catch (err) {
+    next(err);
+  }
 });
+// How long the sign-in at Google may take before its return is refused.
+const DRIVE_OAUTH_STATE_MS = 15 * 60 * 1000;
 
 // A plain page, because this is a browser landing rather than an API call.
 function driveResultPage(title, detail, ok) {
@@ -10958,9 +10969,12 @@ app.get('/api/admin/backup/drive-callback', requirePermission('system.backups'),
       return res.status(400).send(driveResultPage('Google Drive was not connected',
         `Google reported: ${req.query.error}. Nothing has changed.`, false));
     }
-    const state = req.session.driveOauthState;
-    delete req.session.driveOauthState;
-    if (!state || state !== String(req.query.state || '')) {
+    // Used once: read, then cleared, whatever the outcome.
+    const row = await dbGet('SELECT drive_oauth_state FROM sessions WHERE token_hash = ?', [req.session.tokenHash]);
+    await dbRun('UPDATE sessions SET drive_oauth_state = NULL WHERE token_hash = ?', [req.session.tokenHash]);
+    const [state, at] = String((row && row.drive_oauth_state) || '').split(':');
+    const fresh = Number(at) && Date.now() - Number(at) < DRIVE_OAUTH_STATE_MS;
+    if (!state || !fresh || state !== String(req.query.state || '')) {
       return res.status(400).send(driveResultPage('That link has expired',
         'Start again from Settings so the request can be matched to your session.', false));
     }
