@@ -13,7 +13,9 @@ const grab=(n)=>{let i=js.indexOf('function '+n+'(');
 // and program options served exactly as the real endpoints do.
 function build(earlyUntil, conf) {
   const sandbox={
-    conferenceInfo: conf,
+    // Opened at the old address: the links still go to the new one, from
+    // /api/conference (3 Nov 2026).
+    conferenceInfo: { portalUrl:'https://nqocn2026.mgims.ac.in/portal', siteUrl:'https://nqocn2026.mgims.ac.in', ...conf },
     window:{ location:{ origin:'https://registration.mgims.ac.in' } },
     document:{ getElementById:()=>null },
     fetch:(url)=>Promise.resolve({ json:()=>Promise.resolve(
@@ -28,6 +30,7 @@ function build(earlyUntil, conf) {
     ${grab('earlyBirdDeadline')} ${grab('buildEarlyBirdReminderBody')} ${grab('buildEarlyBirdExtensionBody')}
     ${grab('buildAbstractExtensionBody')} ${grab('buildGroupDiscountBody')} ${grab('buildAbstractRegistrationMandatoryBody')} ${grab('buildAbstractAuthorsBody')}
     ${js.match(/const MGIMS_BOTTLE_DEADLINE = '[^']*';/)[0]} ${grab('buildMgimsRegisterBody')}
+    ${js.match(/const portalHomeUrl = [^\n]+/)[0]} ${js.match(/const siteUrl = [^\n]+/)[0]}
     ${js.match(/const steelButton = [\s\S]*?<\/p>`;/)[0]}
     ${js.match(/const reminderSignOff = [^\n]+/)[0]}
     ${grab('buildRegistrationReminderBody')} ${grab('buildBalanceDueBody')} ${grab('buildCodeHolderBody')} ${grab('buildVerifyEmailBody')} ${grab('buildCertificateReadyBody')} ${grab('buildMgimsVerifyBody')}
@@ -53,7 +56,7 @@ const CONF={ name:'International Conference on Healthcare Quality & Patient Safe
  check('...and that a later registration cannot have one customised', /not be possible to customise your bottle/.test(mBody));
  check('an @mgims.ac.in address, once verified, gets the Early Bird fee with no code', /@mgims\.ac\.in/.test(mBody) && /Early Bird fee/.test(mBody) && /no code to enter/i.test(mBody) && /Verify your email/.test(mBody));
  check('it carries the conference dates and venue, and a Register button',
-   mBody.includes('21 November 2026') && mBody.includes('Fixture Hall, Testville') && mBody.includes('href="https://registration.mgims.ac.in"'));
+   mBody.includes('21 November 2026') && mBody.includes('Fixture Hall, Testville') && mBody.includes('href="https://nqocn2026.mgims.ac.in/portal"') && !mBody.includes('registration.mgims'));
  check('in the steel palette, not indigo', mBody.includes('#2f5673') && !/#4f46e5|#6366f1|indigo/i.test(mBody));
 
  console.log('\n== The extension template ==');
@@ -70,11 +73,10 @@ const CONF={ name:'International Conference on Healthcare Quality & Patient Safe
    body.includes('21 November 2026') && body.includes('Fixture Hall, Testville'));
  check('it lists the programme groups live', /<b>3<\/b> Workshops/.test(body) && /<b>2<\/b> QI Practices/.test(body));
  // The only real addresses left in the suite, and deliberately so: this
- // asserts the links the app puts in the email. The portal URL comes from the
- // window stubbed above; the conference website is hardcoded in the template,
- // so checking anything else would not be checking the template.
- check('both buttons are present',
-   body.includes('https://registration.mgims.ac.in') && body.includes('https://nqocn2026.mgims.ac.in'));
+ // asserts the links the app puts in the email. The portal URL comes from
+ // conferenceInfo (the server's), never the address the page was opened at.
+ check('both buttons are present, both at the conference\'s own address',
+   body.includes('https://nqocn2026.mgims.ac.in/portal') && body.includes('https://nqocn2026.mgims.ac.in') && !body.includes('registration.mgims'));
  check('no fee table (per the standing instruction)', !/₹|Rs\.?\s*\d|early_fee/i.test(body));
  // Strip comments first: a date in a doc comment explaining the formatter is
  // fine, a date baked into the email copy is not.
@@ -152,7 +154,7 @@ const CONF={ name:'International Conference on Healthcare Quality & Patient Safe
    /applied when you pay/.test(gBody) && /gather the group first/.test(gBody));
  check('it links to the how-to page rather than repeating it',
    gBody.includes('/help/group-registration'));
- check('...and to the portal to finish registering', gBody.includes('https://registration.mgims.ac.in'));
+ check('...and to the portal to finish registering', gBody.includes('https://nqocn2026.mgims.ac.in/portal') && gBody.includes('https://nqocn2026.mgims.ac.in/help/group-registration'));
  // The builder reads OFFERS when its fetch resolves, so the list has to stay
  // empty until the body is actually built -- restoring it synchronously
  // refilled it before the template ever looked.

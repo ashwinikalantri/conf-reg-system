@@ -23,6 +23,11 @@ let conferenceInfo = {
   location: '',
   dateLabel: '',
 };
+// Links staff send (reminders, codes) go to the conference's own address,
+// whichever address this page was opened at: the portal is /portal there,
+// its root the website. Both come from /api/conference.
+const portalHomeUrl = () => conferenceInfo.portalUrl || `${window.location.origin}/portal`;
+const siteUrl = () => conferenceInfo.siteUrl || window.location.origin;
 
 async function loadConferenceInfo() {
   try {
@@ -7980,7 +7985,7 @@ function openShareDiscountModal(id) {
     scopeLine = `\nFor anyone with a verified @${c.scope_value} email address — applied automatically at payment.`;
   }
   const expiryLine = c.expires_at ? `\nValid through ${formatDMY(c.expires_at)}.` : '';
-  const portalUrl = window.location.origin;
+  const portalUrl = portalHomeUrl();
 
   // Deliberately emoji-free: emoji in this message rendered as tofu/blanks on
   // some recipients' devices, so the structure comes from WhatsApp's own
@@ -9174,7 +9179,7 @@ async function buildRegistrationReminderBody() {
   return `<p>Dear {{name}},</p>
 <p>Thank you for signing up for the ${esc(c.name || 'conference')}${when ? ` (${when})` : ''}. Your registration is not complete yet &mdash; your account is set up, but we have not received your registration and payment.</p>
 <p>Completing it takes only a couple of minutes.</p>
-${steelButton(window.location.origin, 'Complete My Registration')}
+${steelButton(portalHomeUrl(), 'Complete My Registration')}
 <p>If you have already registered, please ignore this email.</p>
 ${reminderSignOff()}`;
 }
@@ -9185,7 +9190,7 @@ async function buildBalanceDueBody() {
   return `<p>Dear {{name}},</p>
 <p>Thank you for registering for the ${esc(c.name || 'conference')}. Your registration has a balance of <b>{{amount}}</b> still due.</p>
 <p>Please log in and complete your payment at your earliest convenience to confirm your place.</p>
-${steelButton(window.location.origin, 'Pay My Balance')}
+${steelButton(portalHomeUrl(), 'Pay My Balance')}
 <p>If you have already paid, please ignore this email.</p>
 ${reminderSignOff()}`;
 }
@@ -9198,7 +9203,7 @@ async function buildCodeHolderBody() {
 <p>A personal code was issued to you for <b>${esc(c.name || 'the conference')}</b>, and it has not been used yet.</p>
 {{codes}}
 <p>Register on the portal and, when you choose your category, your code is applied for you automatically. You can also enter it under <b>Apply promo code</b>. It is yours alone, and works through the end of its last date.</p>
-${steelButton(window.location.origin, 'Register Now')}
+${steelButton(portalHomeUrl(), 'Register Now')}
 ${reminderSignOff()}`;
 }
 
@@ -9215,7 +9220,7 @@ async function buildCertificateReadyBody() {
   <li>Click <b>Download</b> for each certificate.</li>
 </ol>
 <p>Each certificate carries a QR code and a certificate number, which anyone can use to check it is genuine.</p>
-${steelButton(window.location.origin, 'Download My Certificate')}
+${steelButton(portalHomeUrl(), 'Download My Certificate')}
 ${reminderSignOff()}`;
 }
 
@@ -9236,7 +9241,7 @@ async function buildMgimsVerifyBody() {
   <li>On your dashboard, click <b>Verify now</b>.</li>
   <li>Enter the code we email you to your @mgims.ac.in address.</li>
 </ol>
-${steelButton(window.location.origin, 'Log In and Verify')}
+${steelButton(portalHomeUrl(), 'Log In and Verify')}
 ${reminderSignOff()}`;
 }
 
@@ -9253,7 +9258,7 @@ async function buildVerifyEmailBody() {
   <li>On your dashboard, click <b>Verify Now</b>.</li>
   <li>Enter the code we email you.</li>
 </ol>
-${steelButton(window.location.origin, 'Log In and Verify')}
+${steelButton(portalHomeUrl(), 'Log In and Verify')}
 ${reminderSignOff()}`;
 }
 
@@ -9289,7 +9294,7 @@ ${dateRange || c.location ? `<table style="width:100%;margin:1rem 0;font-size:.8
 </table>` : ''}
 ${programLine ? `<p>Alongside the main conference, there are ${programLine}</p>` : ''}
 <p style="text-align:center;margin:1.5rem 0">
-  <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">Register Now</a>
+  <a href="${portalHomeUrl()}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">Register Now</a>
   <a href="https://nqocn2026.mgims.ac.in" style="background:#fff;color:#4f46e5;border:2px solid #4f46e5;padding:.65rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">Visit Conference Website</a>
 </p>
 <p>If you've already registered, please disregard this email.</p>`;
@@ -9340,7 +9345,7 @@ ${dateRange || c.location ? `<table style="width:100%;margin:1rem 0;font-size:.8
 </table>` : ''}
 ${programLine ? `<p>Alongside the main conference, there are ${programLine}</p>` : ''}
 <p style="text-align:center;margin:1.5rem 0">
-  <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">Register Now</a>
+  <a href="${portalHomeUrl()}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">Register Now</a>
   <a href="https://nqocn2026.mgims.ac.in" style="background:#fff;color:#4f46e5;border:2px solid #4f46e5;padding:.65rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">Visit Conference Website</a>
 </p>
 <p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
@@ -9378,7 +9383,7 @@ async function buildMgimsRegisterBody() {
   <li>Complete your registration and payment. The Early Bird fee is shown at payment.</li>
 </ol>
 <p style="text-align:center;margin:1.5rem 0">
-  <a href="${window.location.origin}" style="background:#2f5673;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Register Now</a>
+  <a href="${portalHomeUrl()}" style="background:#2f5673;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Register Now</a>
 </p>
 <p>If you have already registered, thank you &mdash; please ignore this message.</p>
 <p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
@@ -9402,7 +9407,7 @@ async function buildAbstractAuthorsBody() {
 </div>
 <p>You stay on the list as the presenting author, and can be placed anywhere in the order. Your abstract itself is not changed. If you are the only author, open the list and save it as it is.</p>
 <p style="text-align:center;margin:1.5rem 0">
-  <a href="${window.location.origin}" style="background:#1c3549;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Add Authors</a>
+  <a href="${portalHomeUrl()}" style="background:#1c3549;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Add Authors</a>
 </p>
 <p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
 }
@@ -9428,7 +9433,7 @@ ${dateRange || c.location ? `<table style="width:100%;margin:1rem 0;font-size:.8
   ${c.location ? `<tr><td style="padding:.2rem 0;color:#64748b">📍 Venue</td><td style="padding:.2rem 0;font-weight:600">${esc(c.location)}</td></tr>` : ''}
 </table>` : ''}
 <p style="text-align:center;margin:1.5rem 0">
-  <a href="${window.location.origin}" style="background:#2f5673;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Register Now</a>
+  <a href="${portalHomeUrl()}" style="background:#2f5673;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Register Now</a>
 </p>
 <p>If you have registered in the last day or so, please ignore this message.</p>
 <p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
@@ -9460,7 +9465,7 @@ ${dateRange || c.location ? `<table style="width:100%;margin:1rem 0;font-size:.8
   ${c.location ? `<tr><td style="padding:.2rem 0;color:#64748b">📍 Venue</td><td style="padding:.2rem 0;font-weight:600">${esc(c.location)}</td></tr>` : ''}
 </table>` : ''}
 <p style="text-align:center;margin:1.5rem 0">
-  <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Submit Your Abstract</a>
+  <a href="${portalHomeUrl()}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Submit Your Abstract</a>
 </p>
 <p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
 }
@@ -9494,8 +9499,8 @@ ${offers.length ? `<table style="width:100%;border-collapse:collapse;margin:1.25
 </table>` : ''}
 <p><b>How it works:</b> everyone signs up on the portal, one of you starts a group and adds the others by their registered mobile number or email address, and each person then pays their own reduced fee. The one thing to get right is the order &mdash; the discount is applied when you pay, so gather the group first.</p>
 <p style="text-align:center;margin:1.5rem 0">
-  <a href="${window.location.origin}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">Complete Your Registration</a>
-  <a href="${window.location.origin}/help/group-registration" style="background:#fff;color:#4f46e5;border:2px solid #4f46e5;padding:.65rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">How Group Registration Works</a>
+  <a href="${portalHomeUrl()}" style="background:#4f46e5;color:#fff;padding:.75rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">Complete Your Registration</a>
+  <a href="${siteUrl()}/help/group-registration" style="background:#fff;color:#4f46e5;border:2px solid #4f46e5;padding:.65rem 1.5rem;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block;margin:0 .35rem">How Group Registration Works</a>
 </p>
 <p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
 }

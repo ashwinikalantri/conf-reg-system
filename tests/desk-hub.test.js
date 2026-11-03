@@ -34,7 +34,7 @@ const vm = require('vm');
   const confirmedEmails = (src.match(/emailWrap\('Your registration is confirmed'[\s\S]*?\)\);/g) || []);
   check('every "registration confirmed" email carries it', confirmedEmails.length === 4 && confirmedEmails.every((e) => /deskPassEmailHtml\(/.test(e)), confirmedEmails.length);
   check('...and no other email', (src.match(/deskPassEmailHtml\(/g) || []).length === 4 + 0 && !/verification pending[\s\S]{0,400}deskPassEmailHtml/.test(src));
-  check('...served from the portal\'s own address (email clients block inline images)', /src="\$\{escapeHtml\(String\(PORTAL_URL\)/.test(src));
+  check('...served from the portal\'s own address (email clients block inline images)', /src="\$\{escapeHtml\(portalBase\(\)\)\}\/api\/qr\//.test(src));
   check('the dashboard shows it with the registration number', /id="desk-pass" class="hidden/.test(dash) && /desk-pass-qr'\)\.src = `\/api\/qr\/\$\{encodeURIComponent\(reg\.registration_number\)\}\.png`/.test(js));
   check('the Front Desk record shows it too, on the Delegate card, full size on a tap', /function deskWhoCard[\s\S]*?const regNo = \(reg && reg\.registration_number\) \|\| user\.registration_number[\s\S]*?<a href="\/api\/qr\/\$\{encodeURIComponent\(regNo\)\}\.png" target="_blank"[\s\S]*?id="desk-record-qr"[\s\S]*?\$\{qr\}/.test(js));
 

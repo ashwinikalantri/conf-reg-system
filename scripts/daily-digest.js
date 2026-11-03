@@ -45,7 +45,8 @@ const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 let CONFERENCE_NAME = 'International Conference on Healthcare Quality & Patient Safety 2026';
 let CONFERENCE_ACRONYM = 'NQOCN 2026';
 let CONFERENCE_LOCATION = 'MGIMS, Sevagram, Wardha';
-const PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
+// The conference's own address since 3 Nov 2026 (the old one redirects here).
+const PORTAL_URL = String(process.env.PORTAL_URL || 'https://nqocn2026.mgims.ac.in').replace(/\/+$/, '');
 let EMAIL_FROM = (process.env.SES_FROM || '').trim();
 let EMAIL_FROM_NAME = process.env.SES_FROM_NAME || 'NQOCN 2026';
 let EMAIL_REGION = (process.env.AWS_REGION || '').trim();

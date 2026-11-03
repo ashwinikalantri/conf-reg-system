@@ -78,7 +78,7 @@ const S = (id, date, start, end, extra = {}) => ({ id, session_date: date, start
     check('only the programme\'s editors may add one', (await call('POST', '/api/admin/programme/halls', { name: 'X' }, desk)).status === 403);
     const prog = (await call('GET', '/api/admin/programme', null, admin)).body;
     const h = prog.halls.find((x) => x.id === hall.id);
-    check('each hall has its own unguessable code, and the address its QR carries', /^[A-Z2-9]{8}$/.test(h.code) && h.url.endsWith(`/?hall=${h.code}`));
+    check('each hall has its own unguessable code, and the address its QR carries', /^[A-Z2-9]{8}$/.test(h.code) && h.url.endsWith(`/portal?hall=${h.code}`) && h.url.startsWith('https://nqocn2026.mgims.ac.in/'), h.url);
     const post = (b) => call('POST', '/api/admin/programme/sessions', b, admin);
     check('a session needs a hall, a date, times in order and a title',
       (await post({ hallId: hall.id, date: today, start: '10:00', end: '09:00', title: 'x' })).status === 400

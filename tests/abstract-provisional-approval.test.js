@@ -187,16 +187,16 @@ const TEST = '/api/admin/reminders/audiences/abstract/test';
     check('...nor about one already rejected', !/provisional/i.test(sb.header({ ...base, status: 'REJECTED', author_registered: 0 })));
 
     console.log('\n== The reminder template ==');
-    const tsb = { conferenceInfo: { name: 'Fixture Conference', acronym: 'FIXCON', location: 'Sevagram', startDate: '2026-11-20', endDate: '2026-11-22' },
+    const tsb = { conferenceInfo: { name: 'Fixture Conference', acronym: 'FIXCON', location: 'Sevagram', startDate: '2026-11-20', endDate: '2026-11-22', portalUrl: 'https://conference.example/portal' },
       window: { location: { origin: 'https://portal.example' } }, Number, String };
     vm.createContext(tsb);
-    vm.runInContext([grab('esc'), grab('formatFullDate'), grab('buildAbstractRegistrationMandatoryBody')].join('\n')
+    vm.runInContext([grab('esc'), grab('formatFullDate'), js.match(/const portalHomeUrl = [^\n]+/)[0], grab('buildAbstractRegistrationMandatoryBody')].join('\n')
       + '\nglobalThis.body = buildAbstractRegistrationMandatoryBody();', tsb);
     const body = tsb.body;
     check('it greets each author and names their abstract', /\{\{name\}\}/.test(body) && /\{\{title\}\}/.test(body));
     check('it says registration is mandatory for presentation', /Registration is mandatory for presentation/.test(body));
     check('...and that approval stays provisional until they register', /provisional &mdash; pending registration/.test(body));
-    check('...with a way to register', /href="https:\/\/portal\.example"[^>]*>Register Now</.test(body));
+    check('...with a way to register, at the conference\'s address rather than the page\'s', /href="https:\/\/conference\.example\/portal"[^>]*>Register Now</.test(body));
     check('in the house palette, not the old indigo', !/#4f46e5|#4338ca|#c7d2fe|#eef2ff/i.test(body));
     check('the template is offered for this audience, and is what it starts with',
       /'abstract-registration-mandatory': \{\n\s*label: [^\n]+\n\s*audiences: \['abstract'\],/.test(js)

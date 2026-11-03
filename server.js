@@ -283,7 +283,14 @@ const CONFERENCE = {
   authorsDeadline: '',
 };
 // `let`: admin-editable, applies immediately (read fresh wherever it's used).
-let PORTAL_URL = process.env.PORTAL_URL || 'https://registration.mgims.ac.in';
+// The conference's own address since 3 Nov 2026; the old one
+// (registration.mgims.ac.in, OLD_HOSTS) redirects here, so links already
+// sent keep working. Its root is the website; the portal is /portal.
+let PORTAL_URL = process.env.PORTAL_URL || 'https://nqocn2026.mgims.ac.in';
+const portalBase = () => String(PORTAL_URL).replace(/\/+$/, '');
+// Where a delegate signs in, and where staff do.
+const portalHome = () => `${portalBase()}/portal`;
+const adminHome = () => `${portalBase()}/admin`;
 
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -5149,6 +5156,9 @@ app.get('/api/conference', (req, res) => {
     abstractSubmissionOpen: abstractSubmissionOpen(),
     authorsDeadline: CONFERENCE.authorsDeadline,
     abstractAuthorsOpen: abstractAuthorsOpen(),
+    // For links staff send (reminders, codes): the portal at its own address.
+    portalUrl: portalHome(),
+    siteUrl: portalBase(),
   });
 });
 
@@ -5462,7 +5472,7 @@ app.get('/api/qr/:code.png', async (req, res, next) => {
 // (email clients block inline data images), and what to do with it.
 const deskPassEmailHtml = (regNo) => (regNo && DESK_PASS_RE.test(regNo)
   ? `<div style="text-align:center;margin:1.25rem 0;padding:1rem;border:1px solid #b9cedb;border-radius:12px;background:#eef3f6">
-       <img src="${escapeHtml(String(PORTAL_URL).replace(/\/+$/, ''))}/api/qr/${encodeURIComponent(regNo)}.png" alt="QR code for ${escapeHtml(regNo)}" width="160" height="160" style="display:block;margin:0 auto">
+       <img src="${escapeHtml(portalBase())}/api/qr/${encodeURIComponent(regNo)}.png" alt="QR code for ${escapeHtml(regNo)}" width="160" height="160" style="display:block;margin:0 auto">
        <p style="margin:.5rem 0 0;font-weight:700;color:#1c3549;font-family:monospace">${escapeHtml(regNo)}</p>
        <p style="margin:.25rem 0 0;font-size:.8rem;color:#244560">Show this at the registration desk to be found at once.</p>
      </div>` : '');
@@ -9154,7 +9164,7 @@ const newHallCode = () => {
   const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   return Array.from(crypto.randomBytes(8), (b) => abc[b % abc.length]).join('');
 };
-const hallUrl = (code) => `${String(PORTAL_URL).replace(/\/+$/, '')}/?hall=${code}`;
+const hallUrl = (code) => `${portalBase()}/portal?hall=${code}`;
 
 // Every session, with its hall, its option, and whether it is a workshop's
 // (an option in a group that takes attendance -- these earn a workshop
@@ -10844,7 +10854,11 @@ app.post('/api/admin/backup/drive-link', requirePermission('system.backups'), as
 // The refresh token that IS a credential still goes straight to the backup
 // script and is never stored here.
 const driveOauthConfigured = () => !!process.env.DRIVE_CLIENT_ID && !!process.env.DRIVE_CLIENT_SECRET;
-const driveRedirectUri = () => `${String(PORTAL_URL || '').replace(/\/+$/, '')}/api/admin/backup/drive-callback`;
+// Not the portal's address: Google sends the admin back only to an address
+// registered on the OAuth client, which is the old one. Google lands there,
+// and the old-host redirect brings them here with the code. To move it, add
+// the new address to the client in Google Cloud and set DRIVE_REDIRECT_URI.
+const driveRedirectUri = () => process.env.DRIVE_REDIRECT_URI || 'https://registration.mgims.ac.in/api/admin/backup/drive-callback';
 
 // Exchange an authorization code for tokens. Uses the node-fetch already in
 // this file rather than global fetch, so it behaves the same on the Node 16 a
@@ -12133,7 +12147,7 @@ app.get('/api/admin/discount-codes/:id/share', requirePermission('discounts.view
     <div class="discount">${discountLine}</div>
     <p>${scopeLine}</p>
     <p>${expiryLine}</p>
-    <p>Register at <b>${escapeHtml(PORTAL_URL)}</b> and enter this code under "Apply promo code" on the payment step.</p>
+    <p>Register at <b>${escapeHtml(portalHome())}</b> and enter this code under "Apply promo code" on the payment step.</p>
     <div class="actions"><button onclick="window.print()">Print / Save as PDF</button></div>
   </div>
 </body></html>`);
@@ -12168,7 +12182,7 @@ app.post('/api/admin/discount-codes/:id/email', requirePermission('discounts.man
         <p style="font-size:.82rem;color:#475569;margin:.3rem 0">${scopeLine}</p>
         <p style="font-size:.82rem;color:#475569;margin:.3rem 0">${expiryLine}</p>
       </div>
-      <p style="font-size:.85rem;color:#334155">Register at <b>${escapeHtml(PORTAL_URL)}</b> and enter this code under "Apply promo code" on the payment step.</p>`;
+      <p style="font-size:.85rem;color:#334155">Register at <b>${escapeHtml(portalHome())}</b> and enter this code under "Apply promo code" on the payment step.</p>`;
     const subject = `${CONFERENCE.acronym} — Your Discount Code`;
     await sendEmail(to, subject, emailWrap(subject, body));
 
@@ -13653,13 +13667,29 @@ async function buildReport(type, opts = {}) {
   // and the PDF to draw it, from the code in column `of`.
   if (type === 'badges') {
     const rows = (await dbAll(
-      `SELECT registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number AS phone_number,
-         u.designation, u.institution
+      `SELECT registrations.id, registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number AS phone_number,
+         registrations.discount_applied_at, registrations.submitted_at, u.designation, u.institution
          FROM registrations
          LEFT JOIN users u ON u.phone_number = registrations.phone_number
          WHERE registrations.bank_status = 'BANK_VERIFIED'
          ORDER BY registrations.registration_number`)).map(withDelegateSalutation);
-    const base = String(PORTAL_URL).replace(/\/+$/, '');
+    // In the order they were confirmed: the day of the last verified payment
+    // (its bank credit's date once matched, else the day it was sent in);
+    // one with nothing to pay, the day it was made free (or registered).
+    const lastPaid = {};
+    const paidOn = (regId, iso) => { if (iso && (!lastPaid[regId] || iso > lastPaid[regId])) lastPaid[regId] = iso; };
+    for (const t of await dbAll(
+      `SELECT pt.registration_id, pt.submitted_at, b.post_date FROM payment_transactions pt
+         LEFT JOIN bank_statement_transactions b ON b.id = pt.bank_txn_id
+        WHERE pt.txn_status = 'VERIFIED'`)) {
+      paidOn(t.registration_id, t.post_date ? String(t.post_date).slice(0, 10) : (t.submitted_at ? istDateString(t.submitted_at) : null));
+    }
+    for (const c of await dbAll(
+      `SELECT r.id, b.post_date FROM registrations r JOIN bank_statement_transactions b ON b.id = r.bank_txn_id`)) paidOn(c.id, String(c.post_date || '').slice(0, 10));
+    const confirmedOn = (r) => lastPaid[r.id]
+      || ((r.discount_applied_at || r.submitted_at) ? istDateString(r.discount_applied_at || r.submitted_at) : '9999-12-31');
+    rows.sort((a, b) => confirmedOn(a).localeCompare(confirmedOn(b)) || String(a.registration_number).localeCompare(String(b.registration_number)));
+    const base = portalBase();
     const qrUrl = (no) => (no && DESK_PASS_RE.test(no) ? `${base}/api/qr/${encodeURIComponent(no)}.png` : '');
     return {
       title: 'Conference Badge',
@@ -14103,7 +14133,7 @@ app.put('/api/abstracts/extensions/:phone', requirePermission('abstracts.extend_
              <p style="margin:.3rem 0 0;font-size:1.15rem;font-weight:800;color:#1c3549">${escapeHtml(formatDMY(until))}</p>
              <p style="margin:.3rem 0 0;font-size:.8rem;color:#244560">Submission closes at the end of this day (IST).</p>
            </div>
-           <p>Log in at <b>${escapeHtml(PORTAL_URL)}</b> and use <b>Submit Abstract</b> on your dashboard.</p>`));
+           <p>Log in at <b>${escapeHtml(portalHome())}</b> and use <b>Submit Abstract</b> on your dashboard.</p>`));
     }
     res.json({ success: true, emailed });
   } catch (err) {
@@ -14302,7 +14332,7 @@ app.put('/api/abstracts/:id/allocation', requirePermission('abstracts.assign'), 
                <p style="margin:0;font-weight:700;color:#1c3549">Registration is mandatory for presentation</p>
                <p style="margin:.35rem 0 0;color:#244560">Our records show you have not yet registered for the conference. The acceptance is provisional until you do: an abstract can only be presented by a registered delegate.</p>
              </div>
-             <p>Please log in at <b>${escapeHtml(PORTAL_URL)}</b> and complete your registration. Further details (time and venue) will be communicated separately.</p>`));
+             <p>Please log in at <b>${escapeHtml(portalHome())}</b> and complete your registration. Further details (time and venue) will be communicated separately.</p>`));
       } else {
         await holdEmail(req, a.phone_number, 'Your abstract has been accepted',
           emailWrap('Abstract accepted', `<p>Dear ${escapeHtml(a.author_name)},</p>
@@ -15019,7 +15049,7 @@ app.put('/api/guests/:id', requirePermission('guests.view'), async (req, res, ne
       await holdEmail(req, coord, `${side} details changed: ${g.name}`,
         emailWrap(`${side} details changed`, `<p><b>${escapeHtml(req.session.name || 'A colleague')}</b> changed ${side.toLowerCase()} details for <b>${escapeHtml(g.name)}</b>, a faculty member you are looking after.</p>
           <table style="width:100%;border-collapse:collapse;font-size:.85rem;margin:.75rem 0">${rowsHtml}</table>
-          <p>See the Faculty tab at <b>${escapeHtml(PORTAL_URL)}</b>.</p>`));
+          <p>See the Faculty tab at <b>${escapeHtml(adminHome())}</b>.</p>`));
       notified.push(side.toLowerCase());
     }
     res.json({ success: true, changed: changes.length, notified });
