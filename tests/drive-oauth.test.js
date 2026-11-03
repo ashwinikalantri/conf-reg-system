@@ -27,7 +27,7 @@ const rm=(f)=>{try{fs.unlinkSync(f)}catch{}};
  const oauth0=st0.body.driveOauth;
  check('status reports whether sign-in is set up', oauth0 && typeof oauth0.configured==='boolean', oauth0);
  check('and gives the redirect URI to register',
-   /^https?:\/\/.+\/api\/admin\/backup\/drive-callback$/.test(oauth0.redirectUri||''), oauth0.redirectUri);
+   oauth0.redirectUri === 'https://nqocn2026.mgims.ac.in/api/admin/backup/drive-callback', oauth0.redirectUri);
  check('the secret is never sent to the browser', !/client_secret|clientSecret/i.test(st0.raw), st0.raw.slice(0,200));
  if (!oauth0.configured) {
    const s=await call('GET','/api/admin/backup/drive-oauth/start',null,admin);

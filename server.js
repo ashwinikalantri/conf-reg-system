@@ -10854,11 +10854,10 @@ app.post('/api/admin/backup/drive-link', requirePermission('system.backups'), as
 // The refresh token that IS a credential still goes straight to the backup
 // script and is never stored here.
 const driveOauthConfigured = () => !!process.env.DRIVE_CLIENT_ID && !!process.env.DRIVE_CLIENT_SECRET;
-// Not the portal's address: Google sends the admin back only to an address
-// registered on the OAuth client, which is the old one. Google lands there,
-// and the old-host redirect brings them here with the code. To move it, add
-// the new address to the client in Google Cloud and set DRIVE_REDIRECT_URI.
-const driveRedirectUri = () => process.env.DRIVE_REDIRECT_URI || 'https://registration.mgims.ac.in/api/admin/backup/drive-callback';
+// Google sends the admin back only to an address registered on the OAuth
+// client, so this must match it exactly: the conference's own address
+// (DRIVE_REDIRECT_URI overrides, for a client registered elsewhere).
+const driveRedirectUri = () => process.env.DRIVE_REDIRECT_URI || `${portalBase()}/api/admin/backup/drive-callback`;
 
 // Exchange an authorization code for tokens. Uses the node-fetch already in
 // this file rather than global fetch, so it behaves the same on the Node 16 a
