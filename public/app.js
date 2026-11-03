@@ -2082,6 +2082,9 @@ function showAbstractCard(show) {
   if (reg) reg.classList.toggle('md:col-span-2', !show);
 }
 
+// The ePoster template (one PowerPoint slide), on the website.
+const EPOSTER_TEMPLATE_URL = '/website/files/nqocn-2026-eposter-template.pptx';
+
 async function loadAbstractStatus() {
   const tag = document.getElementById('abstract-status-tag');
   const btn = document.getElementById('abstract-action-btn');
@@ -2134,6 +2137,10 @@ async function loadAbstractStatus() {
           desc.innerHTML = registered
             ? `Your abstract has been <b>accepted for ${kind} presentation</b>. Details will be communicated.`
             : `Your abstract has been <b>provisionally accepted for ${kind} presentation</b>, pending your registration.`;
+          // A poster is made on the conference's ePoster template.
+          if (abs.allocation === 'POSTER') {
+            desc.innerHTML += ` <a href="${EPOSTER_TEMPLATE_URL}" download class="block mt-1.5 font-semibold text-navy underline">Download the ePoster template (PowerPoint)</a>`;
+          }
         } else if (abs.status === 'ACCEPTED') {
           desc.innerHTML = registered
             ? 'Your abstract has been <b>accepted</b>. The presentation format will be communicated.'

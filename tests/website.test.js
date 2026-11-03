@@ -83,6 +83,17 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     const cats = await db.all('SELECT label FROM fee_categories WHERE active = 1');
     check('every active fee category is on the fees table', cats.length > 0 && cats.every((c) => got.registration.includes(c.label.replace(/&/g, '&amp;'))), cats.map((c) => c.label));
     check('the fee that applies today is marked', /class="now"/.test(got.registration));
+    // The last fee is online too, not only at the venue (3 Nov 2026).
+    const feeWas = await db.get('SELECT early_until, regular_until, late_until FROM fee_config WHERE id = 1');
+    try {
+      await db.run("UPDATE fee_config SET early_until = '2026-01-01', regular_until = '2026-01-02', late_until = '2026-01-10' WHERE id = 1");
+      const last = (await call('GET', '/website/registration', null, null)).raw || '';
+      check('after the late date: still open online, at the last fee', /Registration is open, online or at the venue/.test(last)
+        && !/Online registration has closed/.test(last) && /online or at the venue<\/small>/.test(last) && /After 10 Jan · now/.test(last));
+      check('...and Register now stays', /class="btn btn-gold" href="[^"]*">Register now</.test(last));
+    } finally {
+      await db.run('UPDATE fee_config SET early_until = ?, regular_until = ?, late_until = ? WHERE id = 1', [feeWas.early_until, feeWas.regular_until, feeWas.late_until]);
+    }
     const opt = await db.get(`SELECT o.name FROM program_options o JOIN program_groups g ON g.id = o.group_id WHERE o.active = 1 AND g.active = 1 AND COALESCE(g.invite_only, 0) = 0 LIMIT 1`);
     if (opt) check('a workshop is listed, with its seats', got.workshops.includes(opt.name.replace(/&/g, '&amp;')) && /seats left|Full/.test(got.workshops), opt.name);
 
@@ -95,6 +106,13 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
       && ['Background', 'Aim statement', 'Methods', 'Results', 'Conclusions'].every((h) => (sample.raw || '').includes(`<h3>${h}</h3>`)));
     check('...linked from the guidelines, with no PDF', got.abstracts.includes('href="/website/sample-abstract"') && !/\.pdf/.test(got.abstracts));
     check('...in the menu under Registration', /href="\/website\/sample-abstract" aria-current="page"/.test(sample.raw || '') && /<summary class="here">Registration/.test(sample.raw || ''));
+    // The ePoster template (3 Nov 2026): a PowerPoint file, offered on the guidelines.
+    check('the ePoster template is offered on the guidelines', got.abstracts.includes('href="/website/files/nqocn-2026-eposter-template.pptx" download'));
+    const tpl = await call('GET', '/website/files/nqocn-2026-eposter-template.pptx', null, null);
+    check('...and downloads as a PowerPoint file', tpl.status === 200 && /presentationml/.test(tpl.headers['content-type'] || ''), tpl.headers['content-type']);
+    const portalJs = require('fs').readFileSync(require('./harness').appFile('public', 'app.js'), 'utf8');
+    check('...and from the portal\'s Abstract card once a poster is allotted', /const EPOSTER_TEMPLATE_URL = '\/website\/files\/nqocn-2026-eposter-template\.pptx'/.test(portalJs)
+      && /if \(abs\.allocation === 'POSTER'\) \{\s*desc\.innerHTML \+= ` <a href="\$\{EPOSTER_TEMPLATE_URL\}" download/.test(portalJs));
 
     console.log('\n== On its own address, at the root ==');
     const home = await asSite('/');

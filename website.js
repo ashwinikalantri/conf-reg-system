@@ -147,14 +147,16 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
       { key: 'early', label: 'Early bird', until: config.early_until },
       { key: 'regular', label: 'Standard', until: config.regular_until },
       { key: 'late', label: 'Late', until: config.late_until },
-      { key: 'spot', label: 'On the spot', until: null },
+      // The last fee is not only at the venue: online registration stays
+      // open, at the same fee (owner, 3 Nov 2026).
+      { key: 'spot', label: config.late_until ? `After ${dateShort(config.late_until)}` : 'Final', until: null },
     ];
     const at = phases.findIndex((p) => p.key === phase);
-    phases.forEach((p, i) => { p.state = i < at ? 'past' : i === at ? 'now' : 'later'; p.untilText = p.until ? `till ${dateShort(p.until)}` : 'at the venue'; });
+    phases.forEach((p, i) => { p.state = i < at ? 'past' : i === at ? 'now' : 'later'; p.untilText = p.until ? `till ${dateShort(p.until)}` : 'online or at the venue'; });
     const now = phases[at];
     const note = phase === 'spot'
-      ? 'Online registration has closed. Register on the spot at the venue.'
-      : `The ${now.label.toLowerCase()} fee applies until ${dateShort(now.until)}.${phase === 'late' ? ' After that, register on the spot at the venue.' : ''}`;
+      ? 'Registration is open, online or at the venue, at the fee in the last column.'
+      : `The ${now.label.toLowerCase()} fee applies until ${dateShort(now.until)}.${phase === 'late' ? ' After that, the last column applies, online or at the venue.' : ''}`;
     return { phase, phases, note };
   }
 
