@@ -108,6 +108,9 @@ async function waitForServer(port, child, log) {
   console.log(dim(seeded.stdout.trim().split('\n').map((l) => `  ${l}`).join('\n')));
 
   const port = Number(process.env.TEST_PORT) || await freePort();
+  // Where the app's Zenodo calls go: a stand-in that tests/zenodo.test.js
+  // starts on this port. Never the real Zenodo.
+  const zenodoPort = await freePort();
   let log = '';
   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: work,
@@ -117,6 +120,8 @@ async function waitForServer(port, child, log) {
       DB_PATH: dbPath,
       OTP_ECHO: '1',            // tests read the code out of the response
       NODE_ENV: 'test',
+      ZENODO_API_BASE: `http://127.0.0.1:${zenodoPort}`,
+      ZENODO_TOKEN: '', ZENODO_COMMUNITY: '', ZENODO_SANDBOX: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -150,7 +155,7 @@ async function waitForServer(port, child, log) {
   for (const file of files) {
     const res = spawnSync(process.execPath, [path.join(__dirname, file), dbPath], {
       encoding: 'utf8',
-      env: { ...process.env, TEST_PORT: String(port) },
+      env: { ...process.env, TEST_PORT: String(port), ZENODO_MOCK_PORT: String(zenodoPort) },
       timeout: FILE_TIMEOUT_MS,
       killSignal: 'SIGKILL',
     });

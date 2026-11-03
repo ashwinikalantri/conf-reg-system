@@ -39,6 +39,7 @@ const councilsLib = require('./councils');
 const certificatePdfLib = require('./certificate-pdf');
 const { renderAbstractPdf } = require('./abstract-pdf');
 const abstractAuthorsLib = require('./abstract-authors');
+const zenodoLib = require('./zenodo');
 const QRCode = require('qrcode');
 // Shared with scripts/daily-digest.js -- see the note there about why the
 // email chrome is not just the app's own CSS.
@@ -2192,6 +2193,12 @@ db.serialize(() => {
     // the submitter is shown alone.
     if (!names.includes('authors')) db.run('ALTER TABLE abstracts ADD COLUMN authors TEXT');
     if (!names.includes('authors_updated_at')) db.run('ALTER TABLE abstracts ADD COLUMN authors_updated_at INTEGER');
+    // Zenodo (zenodo.js): the presenting author's consent, then the record --
+    // DRAFT (DOI reserved) or PUBLISHED -- and the last error, if any.
+    for (const [col, type] of [['zenodo_consent', 'INTEGER'], ['zenodo_consent_at', 'INTEGER'], ['zenodo_id', 'TEXT'], ['zenodo_doi', 'TEXT'],
+      ['zenodo_url', 'TEXT'], ['zenodo_state', 'TEXT'], ['zenodo_at', 'INTEGER'], ['zenodo_error', 'TEXT']]) {
+      if (!names.includes(col)) db.run(`ALTER TABLE abstracts ADD COLUMN ${col} ${type}`);
+    }
 
     // Enforce one abstract per author: drop duplicates (keep the latest) BEFORE
     // creating the unique index. Sequenced so the index can't fail on dupes.
@@ -6169,9 +6176,10 @@ async function saveAbstractAuthors(req, row, list) {
 // name already shown.
 app.put('/api/abstracts/me/authors', requireAuth, async (req, res, next) => {
   try {
-    const row = await dbGet('SELECT id, status, author_name, authors FROM abstracts WHERE phone_number = ?', [req.session.phone]);
+    const row = await dbGet('SELECT id, status, author_name, authors, zenodo_state FROM abstracts WHERE phone_number = ?', [req.session.phone]);
     if (!row) return res.status(404).json({ success: false, error: 'You have not submitted an abstract.' });
     if (row.status === 'REJECTED') return res.status(409).json({ success: false, error: 'This abstract was not accepted, so its authors cannot be changed.' });
+    if (row.zenodo_state === 'PUBLISHED') return res.status(409).json({ success: false, error: 'Your abstract is published with a DOI, so its authors are fixed. To correct them, write to the organisers.' });
     if (!abstractAuthorsOpen()) {
       return res.status(403).json({ success: false, code: 'AUTHORS_CLOSED',
         error: `Authors could be changed until ${formatDMY(CONFERENCE.authorsDeadline)}. To correct them now, write to the organisers.` });
@@ -6187,13 +6195,35 @@ app.put('/api/abstracts/me/authors', requireAuth, async (req, res, next) => {
   }
 });
 
+// The presenting author's consent to publish their accepted abstract on
+// Zenodo with a DOI (CC BY 4.0). Theirs to give or take back until it is
+// published; after that the record is permanent.
+app.put('/api/abstracts/me/zenodo-consent', requireAuth, async (req, res, next) => {
+  try {
+    const row = await dbGet('SELECT id, status, zenodo_consent, zenodo_state FROM abstracts WHERE phone_number = ?', [req.session.phone]);
+    if (!row) return res.status(404).json({ success: false, error: 'You have not submitted an abstract.' });
+    if (row.status !== 'ACCEPTED') return res.status(409).json({ success: false, error: 'Only an accepted abstract can be published.' });
+    if (row.zenodo_state === 'PUBLISHED') return res.status(409).json({ success: false, error: 'Your abstract is already published with a DOI, and a published record cannot be withdrawn.' });
+    const consent = (req.body || {}).consent === true;
+    if (Number(row.zenodo_consent || 0) !== (consent ? 1 : 0)) {
+      await dbRun('UPDATE abstracts SET zenodo_consent = ?, zenodo_consent_at = ? WHERE id = ?', [consent ? 1 : 0, Date.now(), row.id]);
+      await recordAudit({ req, entityType: 'abstract', entityId: row.id, action: consent ? 'ZENODO_CONSENT_GIVEN' : 'ZENODO_CONSENT_WITHDRAWN',
+        oldValue: row.zenodo_consent ? 'agreed' : 'not agreed', newValue: consent ? 'agreed' : 'not agreed' });
+    }
+    res.json({ success: true, consent });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // The caller's own abstract (for the dashboard status), or null.
 app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
   try {
     const row = await dbGet(
       `SELECT id, format, title, status, allocation, revision_note,
               background, aim, methods, results, conclusion, keywords, word_count,
-              author_name, authors, authors_updated_at
+              author_name, authors, authors_updated_at,
+              zenodo_consent, zenodo_state, zenodo_doi, zenodo_url
          FROM abstracts WHERE phone_number = ?`,
       [req.session.phone]
     );
@@ -13937,14 +13967,15 @@ async function buildReport(type, opts = {}) {
   }
   if (type === 'abstracts') {
     const rows = await dbAll(
-      `SELECT title, author_name, authors, format, phone_number FROM abstracts WHERE status = 'ACCEPTED' ORDER BY title`);
+      `SELECT title, author_name, authors, format, phone_number, zenodo_state, zenodo_doi FROM abstracts WHERE status = 'ACCEPTED' ORDER BY title`);
     return {
       title: 'Accepted Abstracts',
       sections: [{
         // Authors in order, * marking the presenting author; Presenting
-        // Author is the delegate who submitted it.
-        columns: ['Title', 'Authors', 'Presenting Author', 'Format', 'Mobile'],
-        rows: rows.map((r) => [r.title, abstractAuthorsLib.authorsText(abstractAuthorsLib.effectiveAuthors(r)), r.author_name, r.format, r.phone_number]),
+        // Author is the delegate who submitted it. DOI once published on Zenodo.
+        columns: ['Title', 'Authors', 'Presenting Author', 'Format', 'Mobile', 'DOI'],
+        rows: rows.map((r) => [r.title, abstractAuthorsLib.authorsText(abstractAuthorsLib.effectiveAuthors(r)), r.author_name, r.format, r.phone_number,
+          r.zenodo_state === 'PUBLISHED' && r.zenodo_doi ? `https://doi.org/${r.zenodo_doi}` : '']),
       }],
     };
   }
@@ -14279,6 +14310,195 @@ app.get('/api/abstracts/:id/pdf', requirePermission('abstracts.view'), async (re
   }
 });
 
+// --- ZENODO: accepted abstracts with a DOI (zenodo.js) ----------------------
+// Settings in .env like the other secrets: ZENODO_TOKEN (never sent to a
+// page), ZENODO_COMMUNITY (default nqocn2026), ZENODO_SANDBOX ("1" for
+// sandbox.zenodo.org, for trial runs).
+const zenodoSettings = () => ({
+  token: process.env.ZENODO_TOKEN || '',
+  community: process.env.ZENODO_COMMUNITY || 'nqocn2026',
+  sandbox: process.env.ZENODO_SANDBOX === '1',
+});
+const zenodoBase = () => zenodoLib.apiBase({ sandbox: zenodoSettings().sandbox });
+const ZENODO_LICENSE_LINE = 'Published under a Creative Commons Attribution 4.0 International licence (CC BY 4.0).';
+const zenodoConference = () => ({
+  name: CONFERENCE.name, acronym: CONFERENCE.acronym, dates: formatConferenceDates(), place: CONFERENCE.location, url: portalBase(),
+});
+// What still stands between an abstract and Zenodo, in words; empty when nothing.
+async function zenodoBlockers(row) {
+  const out = [];
+  if (row.status !== 'ACCEPTED') out.push('not accepted');
+  if (!row.zenodo_consent) out.push('the presenting author has not agreed');
+  if (!(await authorHasRegistered(row.phone_number))) out.push('the presenting author has not registered');
+  return out;
+}
+// One request at a time per abstract: a double click must not make two drafts.
+const zenodoBusy = new Set();
+const zenodoRow = (id) => dbGet(`SELECT a.*, u.institution FROM abstracts a LEFT JOIN users u ON u.phone_number = a.phone_number WHERE a.id = ?`, [id]);
+async function zenodoFailed(req, id, err, what) {
+  await dbRun('UPDATE abstracts SET zenodo_error = ? WHERE id = ?', [String(err.message || err).slice(0, 500), id]);
+  console.error(`Zenodo ${what} for abstract ${id} failed:`, err.message);
+}
+
+app.get('/api/admin/zenodo', requirePermission('abstracts.publish'), async (req, res, next) => {
+  try {
+    const z = zenodoSettings();
+    const rows = await dbAll(`SELECT a.id, a.title, a.author_name, a.authors, a.allocation, a.zenodo_consent, a.zenodo_consent_at, a.zenodo_state,
+        a.zenodo_doi, a.zenodo_url, a.zenodo_at, a.zenodo_error, ${authorRegisteredSql('a.phone_number')} AS registered
+        FROM abstracts a WHERE a.status = 'ACCEPTED' ORDER BY a.id`);
+    res.json({
+      success: true,
+      settings: { configured: !!z.token, community: z.community, sandbox: z.sandbox, site: zenodoBase() },
+      authorsOpen: abstractAuthorsOpen(), authorsDeadline: CONFERENCE.authorsDeadline,
+      abstracts: rows.map((r) => ({
+        id: r.id, title: r.title, author: r.author_name, authors: abstractAuthorsLib.authorsText(abstractAuthorsLib.effectiveAuthors(r)),
+        allocation: r.allocation, registered: !!r.registered, consent: !!r.zenodo_consent, consentAt: r.zenodo_consent_at,
+        state: r.zenodo_state || null, doi: r.zenodo_doi || null, url: r.zenodo_url || null, at: r.zenodo_at || null, error: r.zenodo_error || null,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The token is written, never read back; blank leaves it as it is.
+app.put('/api/admin/zenodo/settings', requirePermission('abstracts.publish'), async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const before = zenodoSettings();
+    const community = body.community !== undefined ? String(body.community).trim().toLowerCase() : before.community;
+    if (!zenodoLib.COMMUNITY_RE.test(community)) return res.status(400).json({ success: false, error: 'The community is its short name from its Zenodo address, e.g. nqocn2026.' });
+    const token = body.token !== undefined ? String(body.token).trim() : '';
+    if (/[\r\n\s]/.test(token)) return res.status(400).json({ success: false, error: 'A token has no spaces or line breaks.' });
+    const sandbox = body.sandbox !== undefined ? !!body.sandbox : before.sandbox;
+    if (token) writeEnvVar('ZENODO_TOKEN', token);
+    writeEnvVar('ZENODO_COMMUNITY', community);
+    writeEnvVar('ZENODO_SANDBOX', sandbox ? '1' : '0');
+    await recordAudit({ req, entityType: 'zenodo', entityId: 'settings', action: 'ZENODO_SETTINGS',
+      oldValue: `community ${before.community}, ${before.sandbox ? 'sandbox' : 'zenodo.org'}${before.token ? ', token set' : ''}`,
+      newValue: `community ${community}, ${sandbox ? 'sandbox' : 'zenodo.org'}${token ? ', new token' : before.token ? ', token kept' : ''}` });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/admin/zenodo/check', requirePermission('abstracts.publish'), async (req, res) => {
+  const z = zenodoSettings();
+  if (!z.token) return res.status(400).json({ success: false, error: 'Add your Zenodo token first.' });
+  try {
+    const r = await zenodoLib.check(fetch, zenodoBase(), z.token, z.community);
+    res.json({ success: true, communityFound: r.communityFound, community: z.community, site: zenodoBase() });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.status === 401 || err.status === 403
+      ? 'Zenodo did not accept the token. Make a new one with deposit:write and deposit:actions, on the same site (sandbox or zenodo.org).'
+      : `Could not reach Zenodo: ${err.message}` });
+  }
+});
+
+// Step 1: the record as a draft, with its DOI reserved and the PDF that
+// carries it. Sending again refreshes the draft (authors corrected, say).
+app.post('/api/admin/zenodo/abstracts/:id/draft', requirePermission('abstracts.publish'), async (req, res, next) => {
+  const id = Number(req.params.id);
+  const z = zenodoSettings();
+  if (!z.token) return res.status(400).json({ success: false, error: 'Add your Zenodo token first.' });
+  if (zenodoBusy.has(id)) return res.status(409).json({ success: false, error: 'This abstract is already being sent.' });
+  zenodoBusy.add(id);
+  try {
+    const row = await zenodoRow(id);
+    if (!row) return res.status(404).json({ success: false, error: 'Abstract not found.' });
+    if (row.zenodo_state === 'PUBLISHED') return res.status(409).json({ success: false, error: 'Already published.' });
+    const blockers = await zenodoBlockers(row);
+    if (blockers.length) return res.status(409).json({ success: false, error: `Not yet: ${blockers.join('; ')}.` });
+    const base = zenodoBase();
+    try {
+      let draft = null;
+      if (row.zenodo_id) {
+        try { draft = await zenodoLib.getDraft(fetch, base, z.token, row.zenodo_id); } catch (e) { if (e.status !== 404 && e.status !== 410) throw e; }
+      }
+      if (!draft) draft = await zenodoLib.createDraft(fetch, base, z.token);
+      const authors = abstractAuthorsLib.effectiveAuthors(row);
+      const conference = zenodoConference();
+      const metadata = zenodoLib.recordMetadata({ abstract: row, authors, institution: row.institution || '', conference, community: z.community, today: istDateString() });
+      const updated = await zenodoLib.putMetadata(fetch, base, z.token, draft.id, metadata);
+      const doi = updated.doi || draft.doi;
+      const pdf = await renderAbstractPdf({ ...row, author_list: authors }, {
+        conference: { name: CONFERENCE.name, acronym: CONFERENCE.acronym },
+        publication: { doi, conferenceLine: `${conference.acronym || conference.name}, ${conference.dates}, ${conference.place}`, license: ZENODO_LICENSE_LINE },
+      });
+      await zenodoLib.putFile(fetch, base, z.token, draft.bucket, `${String(CONFERENCE.acronym || 'abstract').replace(/[^A-Za-z0-9]+/g, '')}-abstract-${row.id}.pdf`, pdf);
+      await dbRun(`UPDATE abstracts SET zenodo_id = ?, zenodo_doi = ?, zenodo_url = ?, zenodo_state = 'DRAFT', zenodo_at = ?, zenodo_error = NULL WHERE id = ?`,
+        [String(draft.id), doi, updated.url || draft.url, Date.now(), row.id]);
+      await recordAudit({ req, entityType: 'abstract', entityId: row.id, action: 'ZENODO_DRAFT', oldValue: row.zenodo_state || null, newValue: `Draft ${draft.id}, DOI reserved ${doi || '—'}` });
+      res.json({ success: true, state: 'DRAFT', doi, url: updated.url || draft.url });
+    } catch (err) {
+      await zenodoFailed(req, row.id, err, 'draft');
+      res.status(502).json({ success: false, error: err.message });
+    }
+  } catch (err) {
+    next(err);
+  } finally {
+    zenodoBusy.delete(id);
+  }
+});
+
+// A draft can be thrown away (it never had a DOI in use); a record cannot.
+app.delete('/api/admin/zenodo/abstracts/:id/draft', requirePermission('abstracts.publish'), async (req, res, next) => {
+  const id = Number(req.params.id);
+  const z = zenodoSettings();
+  if (zenodoBusy.has(id)) return res.status(409).json({ success: false, error: 'This abstract is being sent.' });
+  zenodoBusy.add(id);
+  try {
+    const row = await zenodoRow(id);
+    if (!row) return res.status(404).json({ success: false, error: 'Abstract not found.' });
+    if (row.zenodo_state !== 'DRAFT') return res.status(409).json({ success: false, error: row.zenodo_state === 'PUBLISHED' ? 'A published record cannot be removed.' : 'There is no draft.' });
+    try {
+      await zenodoLib.discardDraft(fetch, zenodoBase(), z.token, row.zenodo_id);
+    } catch (err) {
+      if (err.status !== 404 && err.status !== 410) { await zenodoFailed(req, row.id, err, 'discard'); return res.status(502).json({ success: false, error: err.message }); }
+    }
+    await dbRun('UPDATE abstracts SET zenodo_id = NULL, zenodo_doi = NULL, zenodo_url = NULL, zenodo_state = NULL, zenodo_at = ?, zenodo_error = NULL WHERE id = ?', [Date.now(), row.id]);
+    await recordAudit({ req, entityType: 'abstract', entityId: row.id, action: 'ZENODO_DRAFT_DISCARDED', oldValue: `Draft ${row.zenodo_id}`, newValue: null });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  } finally {
+    zenodoBusy.delete(id);
+  }
+});
+
+// Step 2: publish. Permanent: the record and its DOI stay for good.
+app.post('/api/admin/zenodo/abstracts/:id/publish', requirePermission('abstracts.publish'), async (req, res, next) => {
+  const id = Number(req.params.id);
+  const z = zenodoSettings();
+  if (!z.token) return res.status(400).json({ success: false, error: 'Add your Zenodo token first.' });
+  if (zenodoBusy.has(id)) return res.status(409).json({ success: false, error: 'This abstract is already being sent.' });
+  zenodoBusy.add(id);
+  try {
+    const row = await zenodoRow(id);
+    if (!row) return res.status(404).json({ success: false, error: 'Abstract not found.' });
+    if (row.zenodo_state === 'PUBLISHED') return res.json({ success: true, state: 'PUBLISHED', doi: row.zenodo_doi, url: row.zenodo_url });
+    if (row.zenodo_state !== 'DRAFT' || !row.zenodo_id) return res.status(409).json({ success: false, error: 'Send it as a draft first.' });
+    const blockers = await zenodoBlockers(row);
+    if (blockers.length) return res.status(409).json({ success: false, error: `Not yet: ${blockers.join('; ')}.` });
+    try {
+      const done = await zenodoLib.publish(fetch, zenodoBase(), z.token, row.zenodo_id);
+      const doi = done.doi || row.zenodo_doi;
+      await dbRun(`UPDATE abstracts SET zenodo_state = 'PUBLISHED', zenodo_doi = ?, zenodo_url = ?, zenodo_at = ?, zenodo_error = NULL WHERE id = ?`,
+        [doi, done.url || row.zenodo_url, Date.now(), row.id]);
+      await recordAudit({ req, entityType: 'abstract', entityId: row.id, action: 'ZENODO_PUBLISHED', oldValue: `Draft ${row.zenodo_id}`, newValue: `DOI ${doi}` });
+      res.json({ success: true, state: 'PUBLISHED', doi, url: done.url || row.zenodo_url });
+    } catch (err) {
+      await zenodoFailed(req, row.id, err, 'publish');
+      res.status(502).json({ success: false, error: err.message });
+    }
+  } catch (err) {
+    next(err);
+  } finally {
+    zenodoBusy.delete(id);
+  }
+});
+
 // Step 1 of abstract review: Approval. Accept/reject/reset/send-back-for-
 // corrections. Deliberately silent for UNDER_REVIEW/ACCEPTED -- no delegate
 // email fires there. Approving the abstract of an author who has not
@@ -14305,9 +14525,13 @@ app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), asyn
       return res.status(400).json({ success: false, error: 'Enter a note explaining what the delegate needs to correct.' });
     }
 
-    const existing = await dbGet('SELECT status, phone_number, author_name, title FROM abstracts WHERE id = ?', [req.params.id]);
+    const existing = await dbGet('SELECT status, phone_number, author_name, title, zenodo_state FROM abstracts WHERE id = ?', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ success: false, error: 'Abstract not found.' });
+    }
+    // Published with a DOI: the record is permanent, so the decision stands.
+    if (existing.zenodo_state === 'PUBLISHED' && status !== 'ACCEPTED') {
+      return res.status(409).json({ success: false, error: 'This abstract is published on Zenodo with a DOI, so it stays accepted.' });
     }
     const provisional = status === 'ACCEPTED' && !(await authorHasRegistered(existing.phone_number));
 
@@ -15223,6 +15447,8 @@ function auditRoutePermissions() {
       'POST /api/abstracts',
       'GET /api/abstracts/me',
       'PUT /api/abstracts/me/authors',
+      // The presenting author's own consent to Zenodo, on their own abstract.
+      'PUT /api/abstracts/me/zenodo-consent',
       // Each person's own held emails only: the query is by who is signed in.
       'GET /api/admin/held-emails',
       'POST /api/admin/held-emails/decide',

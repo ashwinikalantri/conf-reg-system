@@ -2082,6 +2082,29 @@ function showAbstractCard(show) {
   if (reg) reg.classList.toggle('md:col-span-2', !show);
 }
 
+// Zenodo, on the Abstract card once accepted: the presenting author agrees
+// (or not) to the abstract being published with a DOI; once it is, the DOI.
+function abstractZenodoHtml(abs) {
+  if (abs.zenodo_state === 'PUBLISHED' && abs.zenodo_doi) {
+    return `<span class="block mt-2 text-slate-700">Published on Zenodo: <a href="https://doi.org/${esc(abs.zenodo_doi)}" target="_blank" rel="noopener" class="font-semibold text-navy underline">doi.org/${esc(abs.zenodo_doi)}</a></span>`;
+  }
+  return `<span class="block mt-3 pt-3 border-t border-slate-100">
+      <label class="flex items-start gap-2 cursor-pointer">
+        <input type="checkbox" id="zenodo-consent" class="mt-1" ${abs.zenodo_consent ? 'checked' : ''} onchange="saveZenodoConsent(this)">
+        <span><b>Publish my abstract with a DOI.</b> On Zenodo, open access, in the ${esc(conferenceInfo.acronym || 'conference')} collection, under a CC BY 4.0 licence, with every author as listed here. Once published it cannot be withdrawn.</span>
+      </label>
+    </span>`;
+}
+async function saveZenodoConsent(box) {
+  box.disabled = true;
+  const data = await (await fetch('/api/abstracts/me/zenodo-consent', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ consent: box.checked }),
+  })).json().catch(() => ({}));
+  box.disabled = false;
+  if (!data.success) { box.checked = !box.checked; return showToast(data.error || 'Could not save that. Try again.'); }
+  showToast(box.checked ? 'Thank you. The organisers will publish it with a DOI.' : 'Your abstract will not be published.', 'success');
+}
+
 // The ePoster template (one PowerPoint slide), on the website.
 const EPOSTER_TEMPLATE_URL = '/website/files/nqocn-2026-eposter-template.pptx';
 
@@ -2157,6 +2180,7 @@ async function loadAbstractStatus() {
       if (desc && !registered && abs.status !== 'REJECTED') {
         desc.innerHTML += ' <span class="block mt-1.5 text-amber-800 font-semibold">Registration is mandatory for presentation &mdash; you have not registered yet.</span>';
       }
+      if (desc && abs.status === 'ACCEPTED') desc.insertAdjacentHTML('beforeend', abstractZenodoHtml(abs));
       if (previewToggle) previewToggle.classList.remove('hidden');
       if (previewBox) previewBox.classList.add('hidden'); // collapsed by default each load
     } else {
@@ -4154,6 +4178,8 @@ function applyRoleVisibility() {
   // not get a section full of buttons the server would refuse -- which is
   // what happened before this, silently, since the allocation call never
   // read its response.
+  const zenodoBlock = document.getElementById('abstracts-zenodo-block');
+  if (zenodoBlock) zenodoBlock.classList.toggle('hidden', !can('abstracts.publish'));
   const assignBlock = document.getElementById('abstracts-assignment-block');
   if (assignBlock) assignBlock.classList.toggle('hidden', !can('abstracts.assign'));
 
@@ -10600,7 +10626,130 @@ function abstractAuthorsReviewHtml(a) {
   </div>`;
 }
 
+// --- ZENODO (Review Desk, Step 3) -------------------------------------------
+// Accepted abstracts with a DOI: settings, then per abstract Send as draft
+// (DOI reserved) and Publish (permanent). The server does the calls; see
+// zenodo.js and /api/admin/zenodo.
+let zenodoData = null;
+const zenodoBusyIds = new Set();
+async function renderZenodo() {
+  const block = document.getElementById('abstracts-zenodo-block');
+  if (!block || !can('abstracts.publish')) return;
+  const data = await (await fetch('/api/admin/zenodo')).json().catch(() => ({}));
+  if (!data.success) { setText('zenodo-status', 'Zenodo: could not load'); return; }
+  zenodoData = data;
+  const s = data.settings;
+  const site = s.sandbox ? 'the Zenodo Sandbox (trial)' : 'zenodo.org';
+  setText('zenodo-status', s.configured ? `Zenodo: set up for ${site} · community ${s.community}` : 'Zenodo: not set up yet. Open to add your token');
+  const setup = document.getElementById('zenodo-setup');
+  if (setup && !s.configured) setup.open = true;
+  const comm = document.getElementById('zenodo-community');
+  if (comm && document.activeElement !== comm) comm.value = s.community;
+  const sb = document.getElementById('zenodo-sandbox');
+  if (sb) sb.checked = !!s.sandbox;
+
+  const list = data.abstracts;
+  const ready = list.filter((a) => a.consent && a.registered && !a.state);
+  const drafts = list.filter((a) => a.state === 'DRAFT' && a.consent && a.registered);
+  const published = list.filter((a) => a.state === 'PUBLISHED');
+  const chip = (n, label, tone) => `<span class="text-xs font-semibold px-2.5 py-1 rounded-full border ${tone}">${n} ${label}</span>`;
+  document.getElementById('zenodo-summary').innerHTML = [
+    chip(list.length, 'accepted', 'bg-slate-50 text-slate-700 border-slate-200'),
+    chip(list.filter((a) => a.consent).length, 'agreed', 'bg-slate-50 text-slate-700 border-slate-200'),
+    chip(drafts.length, 'drafts', 'bg-gold-50 text-gold-700 border-gold-300'),
+    chip(published.length, 'published', 'bg-emerald-50 text-emerald-700 border-emerald-200'),
+    s.configured && ready.length ? `<button type="button" onclick="zenodoBulk('draft')" class="ml-auto px-3 py-1.5 border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold rounded-lg">Send ${ready.length} as drafts</button>` : '',
+    s.configured && drafts.length ? `<button type="button" onclick="zenodoBulk('publish')" class="${ready.length ? '' : 'ml-auto '}px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Publish ${drafts.length} drafts</button>` : '',
+  ].join('');
+  const authorsNote = data.authorsOpen
+    ? `<p class="px-4 py-2.5 text-xs text-amber-800 bg-amber-50 border-b border-amber-100">Delegates can still change their authors${data.authorsDeadline ? ` until ${esc(formatFullDate(data.authorsDeadline))}` : ''}. Publish after that, or a record may list authors that later change in the portal.</p>` : '';
+  document.getElementById('zenodo-list').innerHTML = authorsNote + (list.length ? list.map((a) => {
+    const busy = zenodoBusyIds.has(a.id);
+    const state = a.state === 'PUBLISHED'
+      ? `<a href="https://doi.org/${esc(a.doi)}" target="_blank" rel="noopener" class="text-xs font-semibold text-emerald-700 underline">DOI ${esc(a.doi)}</a>`
+      : a.state === 'DRAFT'
+        ? `<span class="text-xs text-gold-700">Draft · DOI reserved ${esc(a.doi || '')}${a.url ? ` · <a href="${esc(a.url)}" target="_blank" rel="noopener" class="underline">check it on Zenodo</a>` : ''}</span>` : '';
+    const why = [!a.consent && 'author has not agreed', !a.registered && 'not registered'].filter(Boolean).join(' · ');
+    const actions = a.state === 'PUBLISHED' || !s.configured || why ? '' : [
+      `<button type="button" ${busy ? 'disabled' : ''} onclick="zenodoDraft(${a.id})" class="px-2.5 py-1 border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold rounded-lg disabled:opacity-50">${a.state === 'DRAFT' ? 'Send again' : 'Send as draft'}</button>`,
+      a.state === 'DRAFT' ? `<button type="button" ${busy ? 'disabled' : ''} onclick="zenodoPublish(${a.id})" class="px-2.5 py-1 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:opacity-50">Publish</button>` : '',
+      a.state === 'DRAFT' ? `<button type="button" ${busy ? 'disabled' : ''} onclick="zenodoDiscard(${a.id})" class="px-2.5 py-1 text-rose-700 hover:bg-rose-50 text-xs font-semibold rounded-lg disabled:opacity-50">Discard draft</button>` : '',
+    ].join(' ');
+    return `<div class="px-4 py-3 flex flex-wrap items-start gap-x-4 gap-y-1.5">
+        <div class="min-w-0 flex-1">
+          <p class="text-sm font-semibold text-slate-800">#${esc(a.id)} · ${esc(a.title || 'Untitled')}</p>
+          <p class="text-xs text-slate-500">${esc(a.authors)}</p>
+          ${state ? `<p class="mt-0.5">${state}</p>` : ''}
+          ${why && a.state !== 'PUBLISHED' ? `<p class="text-xs text-slate-400 mt-0.5">Waiting: ${esc(why)}</p>` : ''}
+          ${a.error ? `<p class="text-xs text-rose-700 mt-0.5">Last attempt failed: ${esc(a.error)}</p>` : ''}
+        </div>
+        <div class="flex flex-wrap gap-1.5 shrink-0">${busy ? '<span class="text-xs text-slate-500">Working…</span>' : actions}</div>
+      </div>`;
+  }).join('') : '<p class="px-4 py-6 text-sm text-slate-500 text-center">No accepted abstracts yet.</p>');
+}
+async function saveZenodoSettings() {
+  const token = document.getElementById('zenodo-token').value.trim();
+  const body = { community: document.getElementById('zenodo-community').value.trim(), sandbox: document.getElementById('zenodo-sandbox').checked };
+  if (token) body.token = token;
+  const data = await (await fetch('/api/admin/zenodo/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not save.');
+  document.getElementById('zenodo-token').value = '';
+  showToast('Zenodo settings saved.', 'success');
+  renderZenodo();
+}
+async function checkZenodo() {
+  const data = await (await fetch('/api/admin/zenodo/check', { method: 'POST' })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not reach Zenodo.');
+  showToast(data.communityFound === false
+    ? `Token works, but there is no community "${data.community}" on that site.`
+    : `Connected. Community "${data.community}" found.`, data.communityFound === false ? undefined : 'success');
+}
+async function zenodoCall(id, method, path) {
+  zenodoBusyIds.add(id);
+  renderZenodo();
+  const data = await (await fetch(`/api/admin/zenodo/abstracts/${id}/${path}`, { method })).json().catch(() => ({ success: false, error: 'No answer from the server.' }));
+  zenodoBusyIds.delete(id);
+  return data;
+}
+async function zenodoDraft(id) {
+  const data = await zenodoCall(id, 'POST', 'draft');
+  if (!data.success) showToast(data.error || 'Could not send the draft.');
+  else showToast(`Draft ready. DOI reserved: ${data.doi || '—'}`, 'success');
+  renderZenodo();
+}
+async function zenodoPublish(id) {
+  if (!(await showConfirm(`Publish abstract #${id} on Zenodo? Its record and DOI are permanent: it cannot be unpublished or deleted.`, 'Publish'))) return;
+  const data = await zenodoCall(id, 'POST', 'publish');
+  if (!data.success) showToast(data.error || 'Could not publish.');
+  else showToast(`Published. DOI ${data.doi}`, 'success');
+  renderZenodo();
+}
+async function zenodoDiscard(id) {
+  if (!(await showConfirm(`Discard the Zenodo draft for abstract #${id}? Its reserved DOI is given up.`, 'Discard'))) return;
+  const data = await zenodoCall(id, 'DELETE', 'draft');
+  if (!data.success) showToast(data.error || 'Could not discard the draft.');
+  renderZenodo();
+}
+// One after another, so each result is seen and a failure stops nothing else.
+async function zenodoBulk(kind) {
+  const list = (zenodoData && zenodoData.abstracts) || [];
+  const ids = kind === 'draft'
+    ? list.filter((a) => a.consent && a.registered && !a.state).map((a) => a.id)
+    : list.filter((a) => a.state === 'DRAFT' && a.consent && a.registered).map((a) => a.id);
+  if (!ids.length) return;
+  if (kind === 'publish' && !(await showConfirm(`Publish ${ids.length} abstract(s) on Zenodo? Every record and DOI is permanent.`, `Publish ${ids.length}`))) return;
+  let ok = 0;
+  const failed = [];
+  for (const id of ids) {
+    const data = await zenodoCall(id, 'POST', kind);
+    if (data.success) ok += 1; else failed.push(`#${id}`);
+    renderZenodo();
+  }
+  showToast(`${kind === 'draft' ? 'Drafts sent' : 'Published'}: ${ok}${failed.length ? `. Failed: ${failed.join(', ')}. See the reason on each.` : '.'}`, failed.length ? undefined : 'success');
+}
+
 async function renderBackendAbstracts() {
+  renderZenodo();
   const res = await fetch('/api/abstracts');
   const approvalBox = document.getElementById('abstracts-approval-container');
   const assignBox = document.getElementById('abstracts-assignment-container');

@@ -235,6 +235,16 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'GET /api/meals/search': 'Finds someone at the counter by name, mobile, ID or email -- name, kind, ID and category, and whether they are served; no contact details. meals.scan.',
     'GET /api/admin/meals/summary': 'Expected and served counts for each meal, by kind and counter, for the Overview. meals.view.',
     'GET /api/admin/meals/passes.pdf': 'Prints meal passes (name, Faculty or Organiser, a QR) for faculty and organisers. meals.view.',
+    // --- Zenodo (3 Nov 2026) ---------------------------------------------------
+    // Accepted abstracts published with a DOI. All under the new
+    // abstracts.publish, which only Super Admin holds (grants all) until a
+    // role is given it; no other role gains anything.
+    'GET /api/admin/zenodo': 'The Zenodo panel: settings (never the token) and each accepted abstract with its author\'s consent and record. abstracts.publish.',
+    'PUT /api/admin/zenodo/settings': 'Sets the Zenodo token (written to .env, never read back), community and sandbox switch. abstracts.publish.',
+    'POST /api/admin/zenodo/check': 'Tests the token and that the community exists. abstracts.publish.',
+    'POST /api/admin/zenodo/abstracts/:id/draft': 'Sends one consented, registered, accepted abstract to Zenodo as a draft with its DOI reserved. abstracts.publish.',
+    'DELETE /api/admin/zenodo/abstracts/:id/draft': 'Discards an unpublished draft. abstracts.publish.',
+    'POST /api/admin/zenodo/abstracts/:id/publish': 'Publishes a draft: a permanent record and DOI. abstracts.publish.',
     'POST /api/desk/collect-cash': 'The seventh, and the only one NOT guarded by a desk.* key: it '
       + 'carries payments.add_payment, so Finance Admin reaches it too. That widening is recorded '
       + 'per-role in WIDENED_SINCE_BASELINE below.',

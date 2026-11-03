@@ -80,10 +80,14 @@ const STATUS_LABEL = {
   UNDER_REVIEW: 'Under review', ACCEPTED: 'Approved', REJECTED: 'Rejected', REVISION_REQUESTED: 'Corrections requested',
 };
 
-// abstract: the abstracts row. opts: { conference: { name, acronym } }
+// abstract: the abstracts row. opts: { conference: { name, acronym },
+// publication }. publication -- { doi, conferenceLine, license } -- is the
+// public copy put on Zenodo: the conference and the DOI instead of the
+// review status, allotment and any corrections note.
 function renderAbstractPdf(abstract, opts = {}) {
   const Doc = pdfkit();
   const conf = opts.conference || {};
+  const pub = opts.publication || null;
   return new Promise((resolve, reject) => {
     const doc = new Doc({
       size: 'A4', margin: MARGIN, bufferPages: true,
@@ -124,16 +128,24 @@ function renderAbstractPdf(abstract, opts = {}) {
       if (authors.length > 1) {
         doc.font('body').fontSize(8).fillColor(C.muted).text('Presenting author underlined', MARGIN, doc.y + 1, { width });
       }
-      const status = STATUS_LABEL[abstract.status || 'UNDER_REVIEW'] || abstract.status;
-      const meta = [`Abstract #${abstract.id}`, abstract.format, status, abstract.allocation ? `Allotted: ${abstract.allocation.charAt(0)}${abstract.allocation.slice(1).toLowerCase()}` : '']
-        .filter(Boolean).join('  ·  ');
-      doc.font('body').fontSize(9).fillColor(C.muted).text(meta, MARGIN, doc.y + 2, { width });
+      if (pub) {
+        if (abstract.institution) doc.font('body').fontSize(9).fillColor(C.muted).text(abstract.institution, MARGIN, doc.y + 2, { width });
+        doc.font('body').fontSize(9).fillColor(C.muted).text([`Abstract #${abstract.id}`, pub.conferenceLine].filter(Boolean).join('  ·  '), MARGIN, doc.y + 2, { width });
+        if (pub.doi) {
+          doc.font('bold').fontSize(9).fillColor(C.navy).text(`DOI: https://doi.org/${pub.doi}`, MARGIN, doc.y + 2, { width, link: `https://doi.org/${pub.doi}` });
+        }
+      } else {
+        const status = STATUS_LABEL[abstract.status || 'UNDER_REVIEW'] || abstract.status;
+        const meta = [`Abstract #${abstract.id}`, abstract.format, status, abstract.allocation ? `Allotted: ${abstract.allocation.charAt(0)}${abstract.allocation.slice(1).toLowerCase()}` : '']
+          .filter(Boolean).join('  ·  ');
+        doc.font('body').fontSize(9).fillColor(C.muted).text(meta, MARGIN, doc.y + 2, { width });
+      }
       doc.moveDown(0.8);
       doc.lineWidth(0.5).strokeColor(C.rule).moveTo(MARGIN, doc.y).lineTo(W - MARGIN, doc.y).stroke();
       doc.moveDown(0.9);
 
       // A corrections note belongs with the abstract it was written for.
-      if (abstract.status === 'REVISION_REQUESTED' && abstract.revision_note) {
+      if (!pub && abstract.status === 'REVISION_REQUESTED' && abstract.revision_note) {
         doc.font('bold').fontSize(8).fillColor('#b45309').text('CORRECTIONS REQUESTED', MARGIN, doc.y, { width, characterSpacing: 0.5 });
         doc.moveDown(0.2);
         drawRuns(doc, [{ text: abstract.revision_note, bold: false, italic: false, script: '' }], MARGIN, width, 10, '#92400e');
@@ -156,9 +168,13 @@ function renderAbstractPdf(abstract, opts = {}) {
         doc.font('bold').fontSize(9).fillColor(C.ink).text('Keywords: ', MARGIN, doc.y, { width, continued: true })
           .font('body').text(unescapeHtml(String(abstract.keywords)));
       }
-      if (abstract.word_count) {
+      if (abstract.word_count && !pub) {
         doc.moveDown(0.3);
         doc.font('body').fontSize(8).fillColor(C.muted).text(`${abstract.word_count} words`, MARGIN, doc.y, { width });
+      }
+      if (pub && pub.license) {
+        doc.moveDown(0.8);
+        doc.font('body').fontSize(8).fillColor(C.muted).text(pub.license, MARGIN, doc.y, { width });
       }
 
       // Page numbers, once the page count is known.

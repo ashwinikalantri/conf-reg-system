@@ -112,6 +112,9 @@ const PERMISSIONS = [
   // rule everyone else is held to; set from that delegate's Front Desk page,
   // so held by Super Admin and the Front Desk.
   ['abstracts.extend_deadline', 'abstracts', 'Allow late submission', 'Let a named delegate submit an abstract after the last date, until a date chosen for them.'],
+  // Zenodo: a permanent public record with a DOI, so its own key, held by
+  // Super Admin until granted to a role.
+  ['abstracts.publish', 'abstracts', 'Publish abstracts with DOIs', 'Set up Zenodo, send accepted abstracts whose authors agreed as drafts, and publish them with a DOI. Publishing cannot be undone.'],
 
   // --- Guest coordination ---
   // Faculty guests' travel and stay. Split the way the work is: travel to the
@@ -306,6 +309,12 @@ const ROUTE_PERMISSIONS = {
   'PUT /api/abstracts/:id/allocation': 'abstracts.assign',
   'PUT /api/abstracts/extensions/:phone': 'abstracts.extend_deadline',
   'DELETE /api/abstracts/extensions/:phone': 'abstracts.extend_deadline',
+  'GET /api/admin/zenodo': 'abstracts.publish',
+  'PUT /api/admin/zenodo/settings': 'abstracts.publish',
+  'POST /api/admin/zenodo/check': 'abstracts.publish',
+  'POST /api/admin/zenodo/abstracts/:id/draft': 'abstracts.publish',
+  'DELETE /api/admin/zenodo/abstracts/:id/draft': 'abstracts.publish',
+  'POST /api/admin/zenodo/abstracts/:id/publish': 'abstracts.publish',
   'GET /api/guests': 'guests.view',
   'GET /api/guests/export.csv': 'guests.view',
   'GET /api/guests/candidates': 'guests.edit',
