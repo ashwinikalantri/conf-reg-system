@@ -81,18 +81,28 @@
           <input id="zenodo-enabled" type="checkbox" class="mt-1" onchange="setZenodoEnabled(this)">
           <span class="text-sm text-slate-700"><b>Publishing with DOIs is on</b><span class="block text-slate-500">When on, authors of accepted abstracts see the consent box in the portal, and the Review Desk shows Step 3 to send drafts and publish. When off, neither shows and nothing can be sent; consents already given are kept.</span></span>
         </label>
+        <!-- Where drafts and records go. Switching saves at once; each site
+             keeps its own token, so switching back needs nothing pasted. -->
+        <fieldset class="rounded-xl border border-slate-200 p-3">
+          <legend class="px-1 text-xs font-semibold text-slate-600">Where to publish</legend>
+          <label class="flex items-start gap-2 text-sm text-slate-700 py-1 cursor-pointer"><input type="radio" name="zenodo-site" value="zenodo" class="mt-1" onchange="setZenodoSite(false)">
+            <span><b>zenodo.org</b> <span class="text-slate-500">· real, permanent DOIs</span></span></label>
+          <label class="flex items-start gap-2 text-sm text-slate-700 py-1 cursor-pointer"><input type="radio" name="zenodo-site" value="sandbox" class="mt-1" onchange="setZenodoSite(true)">
+            <span><b>Zenodo Sandbox</b> <span class="text-slate-500">· a trial: its DOIs are not real, and a record there does not count on zenodo.org</span></span></label>
+        </fieldset>
         <div class="grid sm:grid-cols-2 gap-3">
-          <label class="block text-xs font-semibold text-slate-600">Personal access token
-            <input id="zenodo-token" type="password" autocomplete="new-password" placeholder="Paste a token to set or replace it" class="mt-1 w-full h-9 px-3 border border-slate-300 rounded-lg text-xs font-mono outline-none">
-            <span class="block mt-1 font-normal text-[11px] text-slate-500">On Zenodo: your account › Applications › Personal access tokens › New token, with <b>deposit:write</b> and <b>deposit:actions</b>. Kept on the server, never shown again.</span>
+          <label class="block text-xs font-semibold text-slate-600">zenodo.org token <span id="zenodo-live-token-state" class="font-normal text-slate-500"></span>
+            <input id="zenodo-live-token" type="password" autocomplete="new-password" placeholder="Paste a token to set or replace it" class="mt-1 w-full h-9 px-3 border border-slate-300 rounded-lg text-xs font-mono outline-none">
           </label>
-          <label class="block text-xs font-semibold text-slate-600">Community
-            <input id="zenodo-community" placeholder="nqocn2026" class="mt-1 w-full h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-            <span class="block mt-1 font-normal text-[11px] text-slate-500">Its short name, from zenodo.org/communities/<b>nqocn2026</b>.</span>
+          <label class="block text-xs font-semibold text-slate-600">Sandbox token <span id="zenodo-sandbox-token-state" class="font-normal text-slate-500"></span>
+            <input id="zenodo-sandbox-token" type="password" autocomplete="new-password" placeholder="Paste a token to set or replace it" class="mt-1 w-full h-9 px-3 border border-slate-300 rounded-lg text-xs font-mono outline-none">
           </label>
         </div>
-        <label class="flex items-start gap-2 text-sm text-slate-700"><input id="zenodo-sandbox" type="checkbox" class="mt-1">
-          <span>Use the Zenodo Sandbox, for a trial run. Its DOIs are not real. It needs its own account, token and community at sandbox.zenodo.org.</span></label>
+        <p class="text-[11px] text-slate-500">Make each on its own site: your account › Applications › Personal access tokens › New token, with <b>deposit:write</b> and <b>deposit:actions</b> (sandbox.zenodo.org has separate accounts). Kept on the server, never shown again.</p>
+        <label class="block text-xs font-semibold text-slate-600 sm:w-1/2">Community
+          <input id="zenodo-community" placeholder="nqocn2026" class="mt-1 w-full h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+          <span class="block mt-1 font-normal text-[11px] text-slate-500">Its short name, from zenodo.org/communities/<b>nqocn2026</b>. The Sandbox needs one of the same name.</span>
+        </label>
         <div class="flex flex-wrap gap-2">
           <button type="button" onclick="saveZenodoSettings()" class="px-4 py-2 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Save</button>
           <button type="button" onclick="checkZenodo()" class="px-4 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg">Test connection</button>

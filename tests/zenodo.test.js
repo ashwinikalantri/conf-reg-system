@@ -81,23 +81,29 @@ const server = http.createServer((req, res) => {
     console.log('\n== Who may ==');
     check('the front desk may not', (await call('GET', '/api/admin/zenodo', null, desk)).status === 403);
     let z = (await call('GET', '/api/admin/zenodo', null, admin)).body;
-    check('a super admin may; off, not set up yet, community nqocn2026 by default', z.success && z.settings.enabled === false && z.settings.configured === false && z.settings.community === 'nqocn2026');
+    check('a super admin may; off, not set up yet, zenodo.org, community nqocn2026 by default', z.settings.sandbox === false && z.success && z.settings.enabled === false && z.settings.configured === false && z.settings.community === 'nqocn2026');
     check('...accepted abstracts only are listed', z.abstracts.length >= 2 && z.abstracts.every((a) => typeof a.consent === 'boolean'));
     check('nothing goes before it is on and has a token', [400, 409].includes((await call('POST', `/api/admin/zenodo/abstracts/${abs.id}/draft`, null, admin)).status) && mock.created === 0);
 
     console.log('\n== Setting up ==');
     check('a community must be a Zenodo short name', (await call('PUT', '/api/admin/zenodo/settings', { community: 'NQOCN 2026!' }, admin)).status === 400);
-    await call('PUT', '/api/admin/zenodo/settings', { token: 'wrong-token', community: 'nqocn2026', sandbox: false }, admin);
+    await call('PUT', '/api/admin/zenodo/settings', { liveToken: 'wrong-token', community: 'nqocn2026', sandbox: false }, admin);
     const badCheck = await call('POST', '/api/admin/zenodo/check', null, admin);
     check('a token Zenodo refuses is reported as such', badCheck.status === 502 && /did not accept the token/.test(badCheck.body.error), badCheck.body);
-    await call('PUT', '/api/admin/zenodo/settings', { token: GOOD }, admin);
+    await call('PUT', '/api/admin/zenodo/settings', { liveToken: GOOD }, admin);
     const goodCheck = await call('POST', '/api/admin/zenodo/check', null, admin);
     check('a good token, and the community found', goodCheck.body.success && goodCheck.body.communityFound === true, goodCheck.body);
     const zr = await call('GET', '/api/admin/zenodo', null, admin);
     check('set up now, and the token is never sent back', zr.body.settings.configured === true && !zr.raw.includes(GOOD));
     check('...it is kept in .env', fs.readFileSync(path.join(dataDir(), '.env'), 'utf8').includes(`ZENODO_TOKEN=${GOOD}`));
-    const sAudit = await db.get("SELECT new_value FROM audit_log WHERE action = 'ZENODO_SETTINGS' ORDER BY id DESC LIMIT 1");
-    check('...and the activity log never holds it', sAudit && !sAudit.new_value.includes(GOOD) && /new token/.test(sAudit.new_value), sAudit);
+    check('...one token per site: zenodo.org set, the Sandbox not', zr.body.settings.liveTokenSet === true && zr.body.settings.sandboxTokenSet === false && zr.body.settings.sandbox === false);
+    await call('PUT', '/api/admin/zenodo/settings', { sandbox: true }, admin);
+    const noSandbox = await call('POST', '/api/admin/zenodo/check', null, admin);
+    check('switched to the Sandbox, it asks for the Sandbox token', noSandbox.status === 400 && /Sandbox token/.test(noSandbox.body.error), noSandbox.body);
+    await call('PUT', '/api/admin/zenodo/settings', { sandbox: false }, admin);
+    check('...and switching back needs nothing pasted again', (await call('POST', '/api/admin/zenodo/check', null, admin)).body.success === true);
+    const sAudit = (await db.all("SELECT new_value FROM audit_log WHERE action LIKE 'ZENODO_%'")).map((r) => r.new_value || '');
+    check('...and the activity log notes a new token, never the token', sAudit.some((v) => /new zenodo\.org token/.test(v)) && !sAudit.some((v) => v.includes(GOOD)), sAudit);
 
     console.log('\n== Switched off, nothing is offered or sent ==');
     const meOff = await loginOtp(abs.phone_number);
@@ -145,6 +151,8 @@ const server = http.createServer((req, res) => {
     check('the author sees the DOI', mine.zenodo_state === 'PUBLISHED' && mine.zenodo_doi === pub.body.doi);
     const rep = (await call('GET', '/api/admin/reports/abstracts?format=json', null, admin)).body.report.sections[0];
     const row = rep.rows.find((r) => r[0] === 'Accepted, not yet assigned');
+    st = await db.get('SELECT zenodo_site FROM abstracts WHERE id = ?', [abs.id]);
+    check('...on zenodo.org', st.zenodo_site === 'zenodo');
     check('the Accepted abstracts report gives the DOI', rep.columns.includes('DOI') && row[rep.columns.indexOf('DOI')] === `https://doi.org/${pub.body.doi}`);
 
     console.log('\n== After publishing, it stays as it is ==');
@@ -167,6 +175,15 @@ const server = http.createServer((req, res) => {
     st = await zstate(abs2.id);
     check('the draft can be discarded, on Zenodo too', gone.body.success && st.zenodo_state === null && !mock.deps.has(Number(st.zenodo_id || 0)) && mock.deps.size === 1);
 
+    console.log('\n== A record on one site does not count on the other ==');
+    await db.run("UPDATE abstracts SET zenodo_site = 'sandbox' WHERE id = ?", [abs.id]);
+    const asSandbox = (await call('GET', '/api/abstracts/me', null, me)).body.abstract;
+    check('a Sandbox DOI is never shown to the author as real', asSandbox.zenodo_doi === null && asSandbox.zenodo_state === null);
+    const rowSb = (await call('GET', '/api/admin/zenodo', null, admin)).body.abstracts.find((a) => a.id === abs.id);
+    check('...the Review Desk says where it is, and offers zenodo.org afresh', rowSb.state === null && /^Published on the Sandbox/.test(rowSb.elsewhere), rowSb);
+    check('...and a Sandbox record does not lock the abstract', (await call('PUT', '/api/abstracts/me/zenodo-consent', { consent: true }, me)).body.success === true);
+    await db.run("UPDATE abstracts SET zenodo_site = 'zenodo' WHERE id = ?", [abs.id]);
+
     console.log('\n== Switched off again ==');
     await call('PUT', '/api/admin/zenodo/settings', { enabled: false }, admin);
     const after = (await call('GET', '/api/abstracts/me', null, me)).body.abstract;
@@ -175,7 +192,8 @@ const server = http.createServer((req, res) => {
     const general = fs.readFileSync(appFile('views', 'admin', 'sections', 'general.ejs'), 'utf8');
     const reviewDesk = fs.readFileSync(appFile('views', 'admin', 'sections', 'abstracts.ejs'), 'utf8');
     check('the settings and switch are in Conference setup, not on the Review Desk', /id="gs-card-zenodo"/.test(general) && /id="zenodo-enabled"/.test(general)
-      && /id="zenodo-token"/.test(general) && !/id="zenodo-token"/.test(reviewDesk) && /showSetupPage\('zenodo'\)/.test(reviewDesk));
+      && /id="zenodo-live-token"/.test(general) && /id="zenodo-sandbox-token"/.test(general) && /name="zenodo-site" value="sandbox"/.test(general)
+      && !/zenodo-live-token/.test(reviewDesk) && /showSetupPage\('zenodo'\)/.test(reviewDesk));
   } finally {
     await db.run(`UPDATE abstracts SET zenodo_consent = NULL, zenodo_consent_at = NULL, zenodo_id = NULL, zenodo_doi = NULL, zenodo_url = NULL,
       zenodo_state = NULL, zenodo_at = NULL, zenodo_error = NULL, status = 'ACCEPTED' WHERE id IN (?, ?)`, [abs.id, abs2.id]);

@@ -10685,6 +10685,7 @@ async function renderZenodo() {
           <p class="text-xs text-slate-500">${esc(a.authors)}</p>
           ${state ? `<p class="mt-0.5">${state}</p>` : ''}
           ${why && a.state !== 'PUBLISHED' ? `<p class="text-xs text-slate-400 mt-0.5">Waiting: ${esc(why)}</p>` : ''}
+          ${a.elsewhere ? `<p class="text-xs text-slate-400 mt-0.5">${esc(a.elsewhere)}: not counted here.</p>` : ''}
           ${a.error ? `<p class="text-xs text-rose-700 mt-0.5">Last attempt failed: ${esc(a.error)}</p>` : ''}
         </div>
         <div class="flex flex-wrap gap-1.5 shrink-0">${busy ? '<span class="text-xs text-slate-500">Working…</span>' : actions}</div>
@@ -10707,9 +10708,18 @@ async function loadZenodoSetupCard() {
   if (on) on.checked = !!s.enabled;
   const comm = document.getElementById('zenodo-community');
   if (comm && document.activeElement !== comm) comm.value = s.community;
-  const sb = document.getElementById('zenodo-sandbox');
-  if (sb) sb.checked = !!s.sandbox;
-  setText('zenodo-setup-status', [s.enabled ? 'On' : 'Off', s.sandbox ? 'Sandbox (trial DOIs)' : 'zenodo.org', `community ${s.community}`, s.configured ? 'token saved' : 'no token yet'].join(' · '));
+  document.querySelectorAll('input[name="zenodo-site"]').forEach((r) => { r.checked = r.value === (s.sandbox ? 'sandbox' : 'zenodo'); });
+  setText('zenodo-live-token-state', s.liveTokenSet ? '· saved' : '· not set');
+  setText('zenodo-sandbox-token-state', s.sandboxTokenSet ? '· saved' : '· not set');
+  setText('zenodo-setup-status', [s.enabled ? 'On' : 'Off', s.sandbox ? 'Sandbox (trial DOIs)' : 'zenodo.org', `community ${s.community}`,
+    s.configured ? 'token saved' : `no ${s.sandbox ? 'Sandbox' : 'zenodo.org'} token yet`].join(' · '));
+}
+// Switches where drafts and records go, at once.
+async function setZenodoSite(sandbox) {
+  const data = await (await fetch('/api/admin/zenodo/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sandbox }) })).json().catch(() => ({}));
+  if (!data.success) showToast(data.error || 'Could not switch.');
+  else showToast(sandbox ? 'Now using the Zenodo Sandbox (trial DOIs).' : 'Now using zenodo.org (real DOIs).', 'success');
+  loadZenodoSetupCard();
 }
 async function setZenodoEnabled(box) {
   box.disabled = true;
@@ -10720,21 +10730,25 @@ async function setZenodoEnabled(box) {
   loadZenodoSetupCard();
 }
 async function saveZenodoSettings() {
-  const token = document.getElementById('zenodo-token').value.trim();
-  const body = { community: document.getElementById('zenodo-community').value.trim(), sandbox: document.getElementById('zenodo-sandbox').checked };
-  if (token) body.token = token;
+  const liveToken = document.getElementById('zenodo-live-token').value.trim();
+  const sandboxToken = document.getElementById('zenodo-sandbox-token').value.trim();
+  const body = { community: document.getElementById('zenodo-community').value.trim() };
+  if (liveToken) body.liveToken = liveToken;
+  if (sandboxToken) body.sandboxToken = sandboxToken;
   const data = await (await fetch('/api/admin/zenodo/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not save.');
-  document.getElementById('zenodo-token').value = '';
+  document.getElementById('zenodo-live-token').value = '';
+  document.getElementById('zenodo-sandbox-token').value = '';
   showToast('Zenodo settings saved.', 'success');
   loadZenodoSetupCard();
 }
 async function checkZenodo() {
   const data = await (await fetch('/api/admin/zenodo/check', { method: 'POST' })).json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not reach Zenodo.');
+  const where = data.sandbox ? 'the Sandbox' : 'zenodo.org';
   showToast(data.communityFound === false
-    ? `Token works, but there is no community "${data.community}" on that site.`
-    : `Connected. Community "${data.community}" found.`, data.communityFound === false ? undefined : 'success');
+    ? `The ${where} token works, but there is no community "${data.community}" there.`
+    : `Connected to ${where}. Community "${data.community}" found.`, data.communityFound === false ? undefined : 'success');
 }
 async function zenodoCall(id, method, path) {
   zenodoBusyIds.add(id);
