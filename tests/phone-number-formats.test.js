@@ -5,7 +5,11 @@ const db=new sqlite3.Database(process.argv[2], sqlite3.OPEN_READONLY);
 const all=(q)=>new Promise((r,j)=>db.all(q,(e,x)=>e?j(e):r(x)));
 (async()=>{
 console.log('\n== EXISTING accounts still log in, however the number is typed ==');
-const u=(await all("SELECT phone_number FROM users WHERE phone_verified = 1 AND phone_number GLOB '[6-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' ORDER BY RANDOM() LIMIT 1"))[0];
+// A seeded account (90000..., 90001...): suites that run earlier create
+// their own phone-verified accounts and change some of their numbers -- one
+// left without a display phone, one moved to another number -- and a random
+// pick that landed on one failed "user.phone is E.164" for no fault here.
+const u=(await all("SELECT phone_number FROM users WHERE phone_verified = 1 AND phone_number GLOB '9000[01][0-9][0-9][0-9][0-9][0-9]' ORDER BY RANDOM() LIMIT 1"))[0];
 const N=u.phone_number;
 const spellings=[N, `+91${N}`, `91${N}`, `0${N}`, `+91 ${N.slice(0,5)} ${N.slice(5)}`, `+91-${N}`];
 for(const sp of spellings){
