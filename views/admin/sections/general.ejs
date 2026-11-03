@@ -9,6 +9,7 @@
         <button type="button" data-target="gs-card-conference" onclick="showSetupPage('conference')" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Conference</button>
         <button type="button" id="gs-jump-halls" data-target="gs-card-halls" onclick="showSetupPage('halls')" class="hidden px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Halls</button>
         <button type="button" id="gs-jump-certificates" data-target="gs-card-certificates" onclick="showSetupPage('certificates')" class="hidden px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Certificates</button>
+        <button type="button" id="gs-jump-zenodo" data-target="gs-card-zenodo" onclick="showSetupPage('zenodo')" class="hidden px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Zenodo</button>
         <button type="button" data-target="gs-card-sms" onclick="showSetupPage('sms')" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">SMS</button>
         <button type="button" data-target="gs-card-email" onclick="showSetupPage('email')" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Email</button>
         <button type="button" data-target="gs-card-payment" onclick="showSetupPage('payment')" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Payment</button>
@@ -68,6 +69,35 @@
       </div>
 
 <%- include('../partials/certificate-settings') %>
+      <!-- Zenodo DOIs for accepted abstracts (abstracts.publish): the switch,
+           the token, community and sandbox. loadZenodoSetupCard() in app.js;
+           the drafts and publishing are on the Review Desk, Step 3. -->
+      <div id="gs-card-zenodo" class="hidden bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+        <div>
+          <h3 class="text-lg font-bold text-slate-900">Zenodo DOIs</h3>
+          <p class="text-sm text-slate-600">Publish accepted abstracts on Zenodo, each with its own DOI, once its presenting author agrees. <span id="zenodo-setup-status" class="font-semibold"></span></p>
+        </div>
+        <label class="flex items-start gap-3 rounded-xl border border-slate-200 p-3 cursor-pointer">
+          <input id="zenodo-enabled" type="checkbox" class="mt-1" onchange="setZenodoEnabled(this)">
+          <span class="text-sm text-slate-700"><b>Publishing with DOIs is on</b><span class="block text-slate-500">When on, authors of accepted abstracts see the consent box in the portal, and the Review Desk shows Step 3 to send drafts and publish. When off, neither shows and nothing can be sent; consents already given are kept.</span></span>
+        </label>
+        <div class="grid sm:grid-cols-2 gap-3">
+          <label class="block text-xs font-semibold text-slate-600">Personal access token
+            <input id="zenodo-token" type="password" autocomplete="new-password" placeholder="Paste a token to set or replace it" class="mt-1 w-full h-9 px-3 border border-slate-300 rounded-lg text-xs font-mono outline-none">
+            <span class="block mt-1 font-normal text-[11px] text-slate-500">On Zenodo: your account › Applications › Personal access tokens › New token, with <b>deposit:write</b> and <b>deposit:actions</b>. Kept on the server, never shown again.</span>
+          </label>
+          <label class="block text-xs font-semibold text-slate-600">Community
+            <input id="zenodo-community" placeholder="nqocn2026" class="mt-1 w-full h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+            <span class="block mt-1 font-normal text-[11px] text-slate-500">Its short name, from zenodo.org/communities/<b>nqocn2026</b>.</span>
+          </label>
+        </div>
+        <label class="flex items-start gap-2 text-sm text-slate-700"><input id="zenodo-sandbox" type="checkbox" class="mt-1">
+          <span>Use the Zenodo Sandbox, for a trial run. Its DOIs are not real. It needs its own account, token and community at sandbox.zenodo.org.</span></label>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" onclick="saveZenodoSettings()" class="px-4 py-2 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Save</button>
+          <button type="button" onclick="checkZenodo()" class="px-4 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg">Test connection</button>
+        </div>
+      </div>
 
       <!-- SMS -->
       <div id="gs-card-sms" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">

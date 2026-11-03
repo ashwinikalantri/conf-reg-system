@@ -2090,6 +2090,8 @@ function abstractZenodoHtml(abs) {
   if (abs.zenodo_state === 'PUBLISHED' && abs.zenodo_doi) {
     return `<span class="block mt-2 text-slate-700">Published on Zenodo: <a href="https://doi.org/${esc(abs.zenodo_doi)}" target="_blank" rel="noopener" class="font-semibold text-navy underline">doi.org/${esc(abs.zenodo_doi)}</a></span>`;
   }
+  // Offered only while publishing with DOIs is switched on.
+  if (!abs.zenodo_enabled) return '';
   return `<span class="block mt-3 pt-3 border-t border-slate-100">
       <label class="flex items-start gap-2 cursor-pointer">
         <input type="checkbox" id="zenodo-consent" class="mt-1" ${abs.zenodo_consent ? 'checked' : ''} onchange="saveZenodoConsent(this)">
@@ -4180,8 +4182,9 @@ function applyRoleVisibility() {
   // not get a section full of buttons the server would refuse -- which is
   // what happened before this, silently, since the allocation call never
   // read its response.
+  // Zenodo's Step 3 shows once renderZenodo() knows it is switched on.
   const zenodoBlock = document.getElementById('abstracts-zenodo-block');
-  if (zenodoBlock) zenodoBlock.classList.toggle('hidden', !can('abstracts.publish'));
+  if (zenodoBlock && !can('abstracts.publish')) zenodoBlock.classList.add('hidden');
   const assignBlock = document.getElementById('abstracts-assignment-block');
   if (assignBlock) assignBlock.classList.toggle('hidden', !can('abstracts.assign'));
 
@@ -8843,17 +8846,18 @@ function showSetupPage(page) {
 }
 
 async function renderGeneralSettings() {
-  // Halls and Certificates are shown by their own permissions; a role that
+  // Halls, Certificates and Zenodo are shown by their own permissions; a role that
   // holds one of those but not the settings sees just that card.
   const full = can('system.settings_view');
   document.querySelectorAll('#section-general [id^="gs-card-"]').forEach((card) => {
-    if (card.id === 'gs-card-halls' || card.id === 'gs-card-certificates') return;
+    if (card.id === 'gs-card-halls' || card.id === 'gs-card-certificates' || card.id === 'gs-card-zenodo') return;
     card.classList.toggle('hidden', !full);
     const jump = document.querySelector(`#gs-jump [data-target="${card.id}"]`);
     if (jump) jump.classList.toggle('hidden', !full);
   });
   loadHallsCard();
   loadCertificateSettingsCard();
+  loadZenodoSetupCard();
   showSetupPage();
   if (!full) return;
   // Independent of the settings fetch below, so a backup-status hiccup can't
@@ -10643,14 +10647,10 @@ async function renderZenodo() {
   if (!data.success) { setText('zenodo-status', 'Zenodo: could not load'); return; }
   zenodoData = data;
   const s = data.settings;
-  const site = s.sandbox ? 'the Zenodo Sandbox (trial)' : 'zenodo.org';
-  setText('zenodo-status', s.configured ? `Zenodo: set up for ${site} · community ${s.community}` : 'Zenodo: not set up yet. Open to add your token');
-  const setup = document.getElementById('zenodo-setup');
-  if (setup && !s.configured) setup.open = true;
-  const comm = document.getElementById('zenodo-community');
-  if (comm && document.activeElement !== comm) comm.value = s.community;
-  const sb = document.getElementById('zenodo-sandbox');
-  if (sb) sb.checked = !!s.sandbox;
+  // Switched off in Conference setup: no Step 3 at all.
+  block.classList.toggle('hidden', !s.enabled);
+  if (!s.enabled) return;
+  setText('zenodo-status', s.configured ? `Sending to ${s.sandbox ? 'the Zenodo Sandbox (trial DOIs)' : 'zenodo.org'}, community ${s.community}.` : 'No token yet: add it there first.');
 
   const list = data.abstracts;
   const ready = list.filter((a) => a.consent && a.registered && !a.state);
@@ -10691,6 +10691,34 @@ async function renderZenodo() {
       </div>`;
   }).join('') : '<p class="px-4 py-6 text-sm text-slate-500 text-center">No accepted abstracts yet.</p>');
 }
+// Conference setup › Zenodo: the switch and the settings (abstracts.publish).
+async function loadZenodoSetupCard() {
+  const card = document.getElementById('gs-card-zenodo');
+  if (!card) return;
+  const allowed = can('abstracts.publish');
+  card.classList.toggle('hidden', !allowed);
+  const jump = document.getElementById('gs-jump-zenodo');
+  if (jump) jump.classList.toggle('hidden', !allowed);
+  if (!allowed) return;
+  const data = await (await fetch('/api/admin/zenodo')).json().catch(() => ({}));
+  if (!data.success) return;
+  const s = data.settings;
+  const on = document.getElementById('zenodo-enabled');
+  if (on) on.checked = !!s.enabled;
+  const comm = document.getElementById('zenodo-community');
+  if (comm && document.activeElement !== comm) comm.value = s.community;
+  const sb = document.getElementById('zenodo-sandbox');
+  if (sb) sb.checked = !!s.sandbox;
+  setText('zenodo-setup-status', [s.enabled ? 'On' : 'Off', s.sandbox ? 'Sandbox (trial DOIs)' : 'zenodo.org', `community ${s.community}`, s.configured ? 'token saved' : 'no token yet'].join(' · '));
+}
+async function setZenodoEnabled(box) {
+  box.disabled = true;
+  const data = await (await fetch('/api/admin/zenodo/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: box.checked }) })).json().catch(() => ({}));
+  box.disabled = false;
+  if (!data.success) { box.checked = !box.checked; return showToast(data.error || 'Could not change that.'); }
+  showToast(box.checked ? 'Publishing with DOIs is on.' : 'Publishing with DOIs is off.', 'success');
+  loadZenodoSetupCard();
+}
 async function saveZenodoSettings() {
   const token = document.getElementById('zenodo-token').value.trim();
   const body = { community: document.getElementById('zenodo-community').value.trim(), sandbox: document.getElementById('zenodo-sandbox').checked };
@@ -10699,7 +10727,7 @@ async function saveZenodoSettings() {
   if (!data.success) return showToast(data.error || 'Could not save.');
   document.getElementById('zenodo-token').value = '';
   showToast('Zenodo settings saved.', 'success');
-  renderZenodo();
+  loadZenodoSetupCard();
 }
 async function checkZenodo() {
   const data = await (await fetch('/api/admin/zenodo/check', { method: 'POST' })).json().catch(() => ({}));

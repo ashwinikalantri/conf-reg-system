@@ -17,33 +17,14 @@
         <p class="text-xs text-slate-500 mb-3">Assign oral or poster presentation. The delegate's decision email is sent from here.</p>
         <div id="abstracts-assignment-container" class="space-y-4"></div>
       </div>
-      <!-- Step 3, Zenodo (abstracts.publish only; renderZenodo()): accepted
+      <!-- Step 3, Zenodo (abstracts.publish only, and only while it is
+           switched on in Conference setup › Zenodo; renderZenodo()): accepted
            abstracts whose presenting author agreed, sent as drafts with the
            DOI reserved, then published -- which cannot be undone. -->
       <div id="abstracts-zenodo-block" class="hidden pt-4 border-t border-slate-200">
         <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 3 · Publish with DOIs (Zenodo)</h3>
         <p class="text-xs text-slate-500 mb-3">Only accepted abstracts whose presenting author agreed in the portal, and who has registered. Send as a draft to check it on Zenodo with its DOI reserved, then publish. A published record and its DOI are permanent.</p>
-        <details id="zenodo-setup" class="bg-white border border-slate-200 rounded-xl mb-3">
-          <summary class="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-800"><span id="zenodo-status">Zenodo</span></summary>
-          <div class="px-4 pb-4 space-y-3">
-            <div class="grid sm:grid-cols-2 gap-3">
-              <label class="block text-xs font-semibold text-slate-600">Personal access token
-                <input id="zenodo-token" type="password" autocomplete="new-password" placeholder="Paste a token to set or replace it" class="mt-1 w-full h-9 px-3 border border-slate-300 rounded-lg text-xs font-mono outline-none">
-                <span class="block mt-1 font-normal text-[11px] text-slate-500">On Zenodo: your account › Applications › Personal access tokens › New token, with <b>deposit:write</b> and <b>deposit:actions</b>. Kept on the server, never shown again.</span>
-              </label>
-              <label class="block text-xs font-semibold text-slate-600">Community
-                <input id="zenodo-community" placeholder="nqocn2026" class="mt-1 w-full h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-                <span class="block mt-1 font-normal text-[11px] text-slate-500">Its short name, from zenodo.org/communities/<b>nqocn2026</b>.</span>
-              </label>
-            </div>
-            <label class="flex items-start gap-2 text-sm text-slate-700"><input id="zenodo-sandbox" type="checkbox" class="mt-1">
-              <span>Use the Zenodo Sandbox, for a trial run. Its DOIs are not real. It needs its own account, token and community at sandbox.zenodo.org.</span></label>
-            <div class="flex flex-wrap gap-2">
-              <button type="button" onclick="saveZenodoSettings()" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Save</button>
-              <button type="button" onclick="checkZenodo()" class="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg">Test connection</button>
-            </div>
-          </div>
-        </details>
+        <p class="text-xs text-slate-500 mb-3">Settings and the on/off switch: <button type="button" onclick="switchBackendTab('general'); showSetupPage('zenodo')" class="font-semibold text-indigo-700 underline">Conference setup › Zenodo</button>. <span id="zenodo-status"></span></p>
         <div id="zenodo-summary" class="flex flex-wrap items-center gap-2 mb-3"></div>
         <div id="zenodo-list" class="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100"></div>
       </div>

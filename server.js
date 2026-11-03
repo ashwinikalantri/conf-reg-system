@@ -6205,6 +6205,7 @@ app.put('/api/abstracts/me/authors', requireAuth, async (req, res, next) => {
 // published; after that the record is permanent.
 app.put('/api/abstracts/me/zenodo-consent', requireAuth, async (req, res, next) => {
   try {
+    if (!zenodoSettings().enabled) return res.status(409).json({ success: false, error: 'Publishing abstracts with a DOI is not open.' });
     const row = await dbGet('SELECT id, status, zenodo_consent, zenodo_state FROM abstracts WHERE phone_number = ?', [req.session.phone]);
     if (!row) return res.status(404).json({ success: false, error: 'You have not submitted an abstract.' });
     if (row.status !== 'ACCEPTED') return res.status(409).json({ success: false, error: 'Only an accepted abstract can be published.' });
@@ -6233,7 +6234,8 @@ app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
       [req.session.phone]
     );
     res.json({
-      abstract: row ? abstractWithAuthors(row) : null,
+      // zenodo_enabled: whether to offer the DOI consent box (Conference setup › Zenodo).
+      abstract: row ? { ...abstractWithAuthors(row), zenodo_enabled: zenodoSettings().enabled } : null,
       // Whether they may still add or reorder the authors themselves.
       authorsWindow: { open: abstractAuthorsOpen(), deadline: CONFERENCE.authorsDeadline, max: abstractAuthorsLib.MAX_AUTHORS },
       registered: await authorHasRegistered(req.session.phone),
@@ -14398,14 +14400,18 @@ app.get('/api/abstracts/:id/pdf', requirePermission('abstracts.view'), async (re
 });
 
 // --- ZENODO: accepted abstracts with a DOI (zenodo.js) ----------------------
-// Settings in .env like the other secrets: ZENODO_TOKEN (never sent to a
-// page), ZENODO_COMMUNITY (default nqocn2026), ZENODO_SANDBOX ("1" for
-// sandbox.zenodo.org, for trial runs).
+// Settings in .env like the other secrets: ZENODO_ENABLED ("1" turns the
+// feature on: the authors' consent box, the Review Desk's Step 3, drafts and
+// publishing; off by default), ZENODO_TOKEN (never sent to a page),
+// ZENODO_COMMUNITY (default nqocn2026), ZENODO_SANDBOX ("1" for
+// sandbox.zenodo.org, for trial runs). Set in Conference setup › Zenodo.
 const zenodoSettings = () => ({
+  enabled: process.env.ZENODO_ENABLED === '1',
   token: process.env.ZENODO_TOKEN || '',
   community: process.env.ZENODO_COMMUNITY || 'nqocn2026',
   sandbox: process.env.ZENODO_SANDBOX === '1',
 });
+const ZENODO_OFF = 'Publishing with DOIs is switched off. Turn it on in Conference setup › Zenodo.';
 const zenodoBase = () => zenodoLib.apiBase({ sandbox: zenodoSettings().sandbox });
 const ZENODO_LICENSE_LINE = 'Published under a Creative Commons Attribution 4.0 International licence (CC BY 4.0).';
 const zenodoConference = () => ({
@@ -14435,7 +14441,7 @@ app.get('/api/admin/zenodo', requirePermission('abstracts.publish'), async (req,
         FROM abstracts a WHERE a.status = 'ACCEPTED' ORDER BY a.id`);
     res.json({
       success: true,
-      settings: { configured: !!z.token, community: z.community, sandbox: z.sandbox, site: zenodoBase() },
+      settings: { enabled: z.enabled, configured: !!z.token, community: z.community, sandbox: z.sandbox, site: zenodoBase() },
       authorsOpen: abstractAuthorsOpen(), authorsDeadline: CONFERENCE.authorsDeadline,
       abstracts: rows.map((r) => ({
         id: r.id, title: r.title, author: r.author_name, authors: abstractAuthorsLib.authorsText(abstractAuthorsLib.effectiveAuthors(r)),
@@ -14458,12 +14464,15 @@ app.put('/api/admin/zenodo/settings', requirePermission('abstracts.publish'), as
     const token = body.token !== undefined ? String(body.token).trim() : '';
     if (/[\r\n\s]/.test(token)) return res.status(400).json({ success: false, error: 'A token has no spaces or line breaks.' });
     const sandbox = body.sandbox !== undefined ? !!body.sandbox : before.sandbox;
+    const enabled = body.enabled !== undefined ? body.enabled === true : before.enabled;
     if (token) writeEnvVar('ZENODO_TOKEN', token);
     writeEnvVar('ZENODO_COMMUNITY', community);
     writeEnvVar('ZENODO_SANDBOX', sandbox ? '1' : '0');
-    await recordAudit({ req, entityType: 'zenodo', entityId: 'settings', action: 'ZENODO_SETTINGS',
-      oldValue: `community ${before.community}, ${before.sandbox ? 'sandbox' : 'zenodo.org'}${before.token ? ', token set' : ''}`,
-      newValue: `community ${community}, ${sandbox ? 'sandbox' : 'zenodo.org'}${token ? ', new token' : before.token ? ', token kept' : ''}` });
+    writeEnvVar('ZENODO_ENABLED', enabled ? '1' : '0');
+    const describe = (s, tokenNote) => `${s.enabled ? 'on' : 'off'}, community ${s.community}, ${s.sandbox ? 'sandbox' : 'zenodo.org'}${tokenNote}`;
+    await recordAudit({ req, entityType: 'zenodo', entityId: 'settings', action: enabled !== before.enabled ? (enabled ? 'ZENODO_ON' : 'ZENODO_OFF') : 'ZENODO_SETTINGS',
+      oldValue: describe(before, before.token ? ', token set' : ''),
+      newValue: describe({ enabled, community, sandbox }, token ? ', new token' : before.token ? ', token kept' : '') });
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -14488,6 +14497,7 @@ app.post('/api/admin/zenodo/check', requirePermission('abstracts.publish'), asyn
 app.post('/api/admin/zenodo/abstracts/:id/draft', requirePermission('abstracts.publish'), async (req, res, next) => {
   const id = Number(req.params.id);
   const z = zenodoSettings();
+  if (!z.enabled) return res.status(409).json({ success: false, error: ZENODO_OFF });
   if (!z.token) return res.status(400).json({ success: false, error: 'Add your Zenodo token first.' });
   if (zenodoBusy.has(id)) return res.status(409).json({ success: false, error: 'This abstract is already being sent.' });
   zenodoBusy.add(id);
@@ -14558,6 +14568,7 @@ app.delete('/api/admin/zenodo/abstracts/:id/draft', requirePermission('abstracts
 app.post('/api/admin/zenodo/abstracts/:id/publish', requirePermission('abstracts.publish'), async (req, res, next) => {
   const id = Number(req.params.id);
   const z = zenodoSettings();
+  if (!z.enabled) return res.status(409).json({ success: false, error: ZENODO_OFF });
   if (!z.token) return res.status(400).json({ success: false, error: 'Add your Zenodo token first.' });
   if (zenodoBusy.has(id)) return res.status(409).json({ success: false, error: 'This abstract is already being sent.' });
   zenodoBusy.add(id);

@@ -472,7 +472,7 @@ const SECTION_PERMISSIONS = {
   programme: { permission: 'programme.manage' },
   // Conference setup. Certificate settings alone opens it too, showing only
   // that card (renderGeneralSettings).
-  general: { anyOf: ['system.settings_view', 'certificates.manage'] },
+  general: { anyOf: ['system.settings_view', 'certificates.manage', 'abstracts.publish'] },
   activity: { permission: 'system.activity_log' },
 };
 

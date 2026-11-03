@@ -121,7 +121,7 @@ async function waitForServer(port, child, log) {
       OTP_ECHO: '1',            // tests read the code out of the response
       NODE_ENV: 'test',
       ZENODO_API_BASE: `http://127.0.0.1:${zenodoPort}`,
-      ZENODO_TOKEN: '', ZENODO_COMMUNITY: '', ZENODO_SANDBOX: '',
+      ZENODO_TOKEN: '', ZENODO_COMMUNITY: '', ZENODO_SANDBOX: '', ZENODO_ENABLED: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

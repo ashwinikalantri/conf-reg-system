@@ -111,9 +111,9 @@ check('...centred only while shown (never undoing .hidden on the delegate\'s pag
 
 console.log('\n== Admin: settings and the faculty list ==');
 check('Conference setup: a side menu on a desktop, a row on a phone', /<nav id="gs-jump" aria-label="Conference setup" class="flex flex-wrap[^"]*lg:flex-col/.test(setup)
-  && (setup.match(/data-target="gs-card-[a-z]+"/g) || []).length === 10 && /lg:grid lg:grid-cols-\[13rem_minmax\(0,1fr\)\]/.test(setup));
-check('...each part a page of its own: the menu shows one, marks it, and keeps it in the address', /function showSetupPage\(page\)/.test(js) && /loadHallsCard\(\);\n  loadCertificateSettingsCard\(\);\n  showSetupPage\(\);/.test(js)
-  && (setup.match(/onclick="showSetupPage\('[a-z]+'\)"/g) || []).length === 10 && !/scrollIntoView|watchSettingsJump/.test(setup) && !/watchSettingsJump|IntersectionObserver\(\(entries\) => \{\n    entries\.forEach\(\(e\) => seen/.test(js)
+  && (setup.match(/data-target="gs-card-[a-z]+"/g) || []).length === 11 && /lg:grid lg:grid-cols-\[13rem_minmax\(0,1fr\)\]/.test(setup));
+check('...each part a page of its own: the menu shows one, marks it, and keeps it in the address', /function showSetupPage\(page\)/.test(js) && /loadHallsCard\(\);\n  loadCertificateSettingsCard\(\);\n  loadZenodoSetupCard\(\);\n  showSetupPage\(\);/.test(js)
+  && (setup.match(/onclick="showSetupPage\('[a-z]+'\)"/g) || []).length === 11 && !/scrollIntoView|watchSettingsJump/.test(setup) && !/watchSettingsJump|IntersectionObserver\(\(entries\) => \{\n    entries\.forEach\(\(e\) => seen/.test(js)
   && /\.gs-off \{ display: none; \}/.test(css) && /\.gs-jump-btn\[aria-current="page"\]/.test(css) && /<div class="min-w-0">/.test(setup));
 {
   // showSetupPage on a stand-in page: conference, sms, and halls (which this role may not open).

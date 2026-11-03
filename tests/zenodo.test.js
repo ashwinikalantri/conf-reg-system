@@ -81,9 +81,9 @@ const server = http.createServer((req, res) => {
     console.log('\n== Who may ==');
     check('the front desk may not', (await call('GET', '/api/admin/zenodo', null, desk)).status === 403);
     let z = (await call('GET', '/api/admin/zenodo', null, admin)).body;
-    check('a super admin may; not set up yet, community nqocn2026 by default', z.success && z.settings.configured === false && z.settings.community === 'nqocn2026');
+    check('a super admin may; off, not set up yet, community nqocn2026 by default', z.success && z.settings.enabled === false && z.settings.configured === false && z.settings.community === 'nqocn2026');
     check('...accepted abstracts only are listed', z.abstracts.length >= 2 && z.abstracts.every((a) => typeof a.consent === 'boolean'));
-    check('nothing goes before a token is set', (await call('POST', `/api/admin/zenodo/abstracts/${abs.id}/draft`, null, admin)).status === 400);
+    check('nothing goes before it is on and has a token', [400, 409].includes((await call('POST', `/api/admin/zenodo/abstracts/${abs.id}/draft`, null, admin)).status) && mock.created === 0);
 
     console.log('\n== Setting up ==');
     check('a community must be a Zenodo short name', (await call('PUT', '/api/admin/zenodo/settings', { community: 'NQOCN 2026!' }, admin)).status === 400);
@@ -98,6 +98,18 @@ const server = http.createServer((req, res) => {
     check('...it is kept in .env', fs.readFileSync(path.join(dataDir(), '.env'), 'utf8').includes(`ZENODO_TOKEN=${GOOD}`));
     const sAudit = await db.get("SELECT new_value FROM audit_log WHERE action = 'ZENODO_SETTINGS' ORDER BY id DESC LIMIT 1");
     check('...and the activity log never holds it', sAudit && !sAudit.new_value.includes(GOOD) && /new token/.test(sAudit.new_value), sAudit);
+
+    console.log('\n== Switched off, nothing is offered or sent ==');
+    const meOff = await loginOtp(abs.phone_number);
+    const offCard = (await call('GET', '/api/abstracts/me', null, meOff)).body.abstract;
+    check('the author is not offered the consent box', offCard.zenodo_enabled === false);
+    check('...and cannot give consent', (await call('PUT', '/api/abstracts/me/zenodo-consent', { consent: true }, meOff)).status === 409);
+    const offDraft = await call('POST', `/api/admin/zenodo/abstracts/${abs.id}/draft`, null, admin);
+    check('no draft can be sent', offDraft.status === 409 && /switched off/.test(offDraft.body.error) && mock.created === 0, offDraft.body);
+    await call('PUT', '/api/admin/zenodo/settings', { enabled: true }, admin);
+    check('switched on in Conference setup', (await call('GET', '/api/admin/zenodo', null, admin)).body.settings.enabled === true
+      && !!(await db.get("SELECT 1 FROM audit_log WHERE action = 'ZENODO_ON'")));
+    check('...the author is offered it now', (await call('GET', '/api/abstracts/me', null, meOff)).body.abstract.zenodo_enabled === true);
 
     console.log('\n== The author agrees ==');
     const blocked = await call('POST', `/api/admin/zenodo/abstracts/${abs.id}/draft`, null, admin);
@@ -154,6 +166,16 @@ const server = http.createServer((req, res) => {
     const gone = await call('DELETE', `/api/admin/zenodo/abstracts/${abs2.id}/draft`, null, admin);
     st = await zstate(abs2.id);
     check('the draft can be discarded, on Zenodo too', gone.body.success && st.zenodo_state === null && !mock.deps.has(Number(st.zenodo_id || 0)) && mock.deps.size === 1);
+
+    console.log('\n== Switched off again ==');
+    await call('PUT', '/api/admin/zenodo/settings', { enabled: false }, admin);
+    const after = (await call('GET', '/api/abstracts/me', null, me)).body.abstract;
+    check('a published DOI still shows to its author', after.zenodo_enabled === false && after.zenodo_doi === pub.body.doi);
+    check('...and nothing more can be published', (await call('POST', `/api/admin/zenodo/abstracts/${abs2.id}/publish`, null, admin)).status === 409);
+    const general = fs.readFileSync(appFile('views', 'admin', 'sections', 'general.ejs'), 'utf8');
+    const reviewDesk = fs.readFileSync(appFile('views', 'admin', 'sections', 'abstracts.ejs'), 'utf8');
+    check('the settings and switch are in Conference setup, not on the Review Desk', /id="gs-card-zenodo"/.test(general) && /id="zenodo-enabled"/.test(general)
+      && /id="zenodo-token"/.test(general) && !/id="zenodo-token"/.test(reviewDesk) && /showSetupPage\('zenodo'\)/.test(reviewDesk));
   } finally {
     await db.run(`UPDATE abstracts SET zenodo_consent = NULL, zenodo_consent_at = NULL, zenodo_id = NULL, zenodo_doi = NULL, zenodo_url = NULL,
       zenodo_state = NULL, zenodo_at = NULL, zenodo_error = NULL, status = 'ACCEPTED' WHERE id IN (?, ?)`, [abs.id, abs2.id]);
