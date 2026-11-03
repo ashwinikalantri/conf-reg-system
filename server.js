@@ -1376,7 +1376,7 @@ async function resolveFee(categoryKey) {
   if (!cat) return null;
   const phase = currentPhase(await getFeeConfig());
   const fee = { early: cat.early_fee, regular: cat.regular_fee, late: cat.late_fee, spot: cat.spot_fee }[phase];
-  return { amount: fee, label: cat.label, phase };
+  return { amount: fee, label: cat.label, phase, staffOnly: !!Number(cat.staff_only) };
 }
 
 // The fee tiers a code can charge, named as on the fee master.
@@ -2365,6 +2365,10 @@ db.serialize(() => {
       sort_order INTEGER NOT NULL DEFAULT 0
     )
   `);
+  // A category only staff may allot (Volunteer, 3 Nov 2026): kept out of the
+  // delegate's own form and the website's fee table, refused from the
+  // delegate's own submission, and offered at the desk and in Lock category.
+  db.run('ALTER TABLE fee_categories ADD COLUMN staff_only INTEGER NOT NULL DEFAULT 0', () => {});
   db.run(`
     CREATE TABLE IF NOT EXISTS fee_config (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -4597,6 +4601,11 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     if (!feeInfo) {
       return res.status(400).json({ success: false, error: 'Invalid delegate category.' });
     }
+    // A staff-only category is allotted by the desk, never chosen here --
+    // unless the desk has already locked this registration to it.
+    if (feeInfo.staffOnly && !(prev && prev.category_locked)) {
+      return res.status(400).json({ success: false, error: 'That category is allotted by the registration desk. Choose your own category.' });
+    }
     const categoryLabel = feeInfo.label;
 
     // Validate the full set of chosen program options against every active
@@ -5189,7 +5198,11 @@ app.get('/api/fees', requireAuth, async (req, res, next) => {
   try {
     const config = await getFeeConfig();
     const phase = currentPhase(config);
-    const cats = await dbAll('SELECT category_key, label, subtitle, early_fee, regular_fee, late_fee, spot_fee, requires_student_id FROM fee_categories WHERE active = 1 ORDER BY sort_order, id');
+    // Staff-only categories go to whoever registers delegates at the desk,
+    // marked, so the delegate's own form can leave them out.
+    const staffSees = sessionCan(req, 'payments.desk_register') || sessionCan(req, 'payments.complimentary');
+    const cats = (await dbAll('SELECT category_key, label, subtitle, early_fee, regular_fee, late_fee, spot_fee, requires_student_id, staff_only FROM fee_categories WHERE active = 1 ORDER BY sort_order, id'))
+      .filter((c) => staffSees || !Number(c.staff_only));
     const { eligibleCategories } = await certificateSettings();
     res.json({
       // The councils a Doctor or Medical PG chooses from (see councils.js).
@@ -5204,6 +5217,7 @@ app.get('/api/fees', requireAuth, async (req, res, next) => {
         subtitle: c.subtitle || '',
         fee: { early: c.early_fee, regular: c.regular_fee, late: c.late_fee, spot: c.spot_fee }[phase],
         requiresStudentId: !!c.requires_student_id,
+        staffOnly: !!Number(c.staff_only),
         // Doctors and Medical PGs give their Medical Council registration.
         asksCouncilNumber: eligibleCategories.includes(c.category_key),
       })),
@@ -12706,6 +12720,7 @@ app.put('/api/admin/fees/config', requirePermission('masters.fees_manage'), asyn
 app.post('/api/admin/fees/categories', requirePermission('masters.fees_manage'), async (req, res, next) => {
   try {
     const { categoryKey, label, subtitle } = req.body;
+    const staffOnly = req.body.staffOnly ? 1 : 0;
     const f = feeFields(req.body);
     if (!categoryKey || !/^[a-z0-9_]+$/.test(categoryKey)) {
       return res.status(400).json({ success: false, error: 'Category key must be lowercase letters, digits, or underscores.' });
@@ -12718,14 +12733,14 @@ app.post('/api/admin/fees/categories', requirePermission('masters.fees_manage'),
     if (!sid) return res.status(400).json({ success: false, error: 'Choose a discipline and level for the student ID requirement.' });
     const max = await dbGet('SELECT COALESCE(MAX(sort_order), -1) AS m FROM fee_categories');
     const result = await dbRun(
-      'INSERT INTO fee_categories (category_key, label, subtitle, early_fee, regular_fee, late_fee, spot_fee, active, sort_order, requires_student_id) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)',
-      [categoryKey, String(label).trim(), subtitle ? String(subtitle).trim() : '', f.early, f.regular, f.late, f.spot, max.m + 1, sid.requiresStudentId ? 1 : 0]
+      'INSERT INTO fee_categories (category_key, label, subtitle, early_fee, regular_fee, late_fee, spot_fee, active, sort_order, requires_student_id, staff_only) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)',
+      [categoryKey, String(label).trim(), subtitle ? String(subtitle).trim() : '', f.early, f.regular, f.late, f.spot, max.m + 1, sid.requiresStudentId ? 1 : 0, staffOnly]
     );
     await recordAudit({
       req, entityType: 'fee_category', entityId: result.lastID,
       action: 'FEE_CATEGORY_CREATE', oldValue: null,
       newValue: `${categoryKey} "${String(label).trim()}" — early ₹${inr(f.early)}, regular ₹${inr(f.regular)}, late ₹${inr(f.late)}, spot ₹${inr(f.spot)}`
-        + (sid.requiresStudentId ? ', requires student ID' : ''),
+        + (sid.requiresStudentId ? ', requires student ID' : '') + (staffOnly ? ', allotted by staff only' : ''),
     });
     res.json({ success: true });
   } catch (err) {
@@ -12767,10 +12782,12 @@ app.put('/api/admin/fees/categories/:id', requirePermission('masters.fees_manage
     }
     const updated = {
       active: active !== undefined ? (active ? 1 : 0) : existing.active,
+      // Absent means no change, like active.
+      staffOnly: req.body.staffOnly !== undefined ? (req.body.staffOnly ? 1 : 0) : Number(existing.staff_only) || 0,
     };
     await dbRun(
-      'UPDATE fee_categories SET label = ?, subtitle = ?, early_fee = ?, regular_fee = ?, late_fee = ?, spot_fee = ?, active = ?, requires_student_id = ? WHERE id = ?',
-      [label, subtitle, f.early, f.regular, f.late, f.spot, updated.active, sid.requiresStudentId ? 1 : 0, req.params.id]
+      'UPDATE fee_categories SET label = ?, subtitle = ?, early_fee = ?, regular_fee = ?, late_fee = ?, spot_fee = ?, active = ?, requires_student_id = ?, staff_only = ? WHERE id = ?',
+      [label, subtitle, f.early, f.regular, f.late, f.spot, updated.active, sid.requiresStudentId ? 1 : 0, updated.staffOnly, req.params.id]
     );
     // registrations.category_label is a snapshot taken when the delegate
     // registered, and it -- not the master row -- is what receipts, CSV
@@ -12787,11 +12804,12 @@ app.put('/api/admin/fees/categories/:id', requirePermission('masters.fees_manage
       renamed = r.changes || 0;
     }
     const idNote = (v) => v.requiresStudentId ? ', requires student ID' : '';
+    const staffNote = (on) => (on ? ', allotted by staff only' : '');
     await recordAudit({
       req, entityType: 'fee_category', entityId: req.params.id,
       action: 'FEE_CATEGORY_UPDATE',
-      oldValue: `${existing.label} — early ₹${inr(existing.early_fee)}, regular ₹${inr(existing.regular_fee)}, late ₹${inr(existing.late_fee)}, spot ₹${inr(existing.spot_fee)}, ${existing.active ? 'active' : 'inactive'}${idNote({ requiresStudentId: !!existing.requires_student_id })}`,
-      newValue: `${label} — early ₹${inr(f.early)}, regular ₹${inr(f.regular)}, late ₹${inr(f.late)}, spot ₹${inr(f.spot)}, ${updated.active ? 'active' : 'inactive'}${idNote(sid)}`
+      oldValue: `${existing.label} — early ₹${inr(existing.early_fee)}, regular ₹${inr(existing.regular_fee)}, late ₹${inr(existing.late_fee)}, spot ₹${inr(existing.spot_fee)}, ${existing.active ? 'active' : 'inactive'}${idNote({ requiresStudentId: !!existing.requires_student_id })}${staffNote(Number(existing.staff_only))}`,
+      newValue: `${label} — early ₹${inr(f.early)}, regular ₹${inr(f.regular)}, late ₹${inr(f.late)}, spot ₹${inr(f.spot)}, ${updated.active ? 'active' : 'inactive'}${idNote(sid)}${staffNote(updated.staffOnly)}`
         + (label !== existing.label ? ` — renamed from "${existing.label}", ${renamed} registration(s) updated` : ''),
     });
     res.json({ success: true, renamed });

@@ -2741,8 +2741,10 @@ async function loadFees() {
     const sel = document.getElementById('payment-category');
     if (sel) {
       const current = sel.value;
+      // A staff-only category (Volunteer) is the desk's to allot, never a
+      // delegate's to choose -- not even a staff member registering themselves.
       sel.innerHTML = '<option value="">-- Select Category --</option>' +
-        (data.categories || []).map((c) => `<option value="${esc(c.key)}">${esc(c.label)}${c.subtitle ? ' — ' + esc(c.subtitle) : ''} — ₹${inr(Number(c.fee))}</option>`).join('');
+        (data.categories || []).filter((c) => !c.staffOnly).map((c) => `<option value="${esc(c.key)}">${esc(c.label)}${c.subtitle ? ' — ' + esc(c.subtitle) : ''} — ₹${inr(Number(c.fee))}</option>`).join('');
       if (current) sel.value = current;
     }
   } catch (e) {
@@ -7646,7 +7648,8 @@ async function renderBackendFees() {
       <td class="p-4 text-sm text-slate-700 tabular-nums">₹${inr(c.spot_fee)}</td>
       <td class="p-4 text-sm">${c.requires_student_id
         ? `<span class="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">${ICON('gradcap')}Required</span>`
-        : '<span class="text-slate-400">—</span>'}</td>
+        : '<span class="text-slate-400">—</span>'}${Number(c.staff_only)
+        ? `<span class="block mt-1 w-max text-[10px] font-bold text-gold-700 bg-gold-50 border border-gold-300 rounded-full px-2 py-0.5" title="Not offered to delegates or on the website">Staff allot only</span>` : ''}</td>
       <td class="p-4 text-right whitespace-nowrap">
         <button class="fee-edit px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(c.id)}">Edit</button>
       </td>
@@ -7847,6 +7850,7 @@ async function handleAddFeeCategory(e) {
     lateFee: Number(document.getElementById('new-fee-late').value),
     spotFee: Number(document.getElementById('new-fee-spot').value),
     requiresStudentId: document.getElementById('new-fee-studentid').checked,
+    staffOnly: !!(document.getElementById('new-fee-staffonly') || {}).checked,
   };
   const data = await (await fetch('/api/admin/fees/categories', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
@@ -7882,6 +7886,7 @@ function openFeeCategoryModal(id) {
   set('fc-spot', c.spot_fee);
   const check = (elId, on) => { const el = document.getElementById(elId); if (el) el.checked = !!on; };
   check('fc-studentid', c.requires_student_id);
+  check('fc-staffonly', Number(c.staff_only));
   check('fc-active', c.active);
 
   // Renaming rewrites registrations.category_label for everyone in the
@@ -7942,6 +7947,7 @@ async function saveFeeCategoryModal() {
       lateFee: Number(val('fc-late')),
       spotFee: Number(val('fc-spot')),
       requiresStudentId: on('fc-studentid'),
+      staffOnly: on('fc-staffonly') ? 1 : 0,
       active: on('fc-active') ? 1 : 0,
     }),
   })).json();

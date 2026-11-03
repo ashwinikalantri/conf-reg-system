@@ -278,7 +278,7 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
     },
 
     async registration() {
-      const cats = await d.dbAll('SELECT label, early_fee, regular_fee, late_fee, spot_fee FROM fee_categories WHERE active = 1 ORDER BY sort_order, id');
+      const cats = await d.dbAll('SELECT label, early_fee, regular_fee, late_fee, spot_fee FROM fee_categories WHERE active = 1 AND COALESCE(staff_only, 0) = 0 ORDER BY sort_order, id');
       const fee = await feeState();
       return {
         fee,
