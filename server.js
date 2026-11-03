@@ -3034,13 +3034,25 @@ async function backfillNewSystemPermissions() {
 // shipped with. A role that is simply absent from a cache that DID load is
 // denied: that is a role someone deleted, not a database that is broken, and
 // the two must not be treated alike.
-// Every role a person holds: their main role, then any additional ones.
-// Additional roles count only for staff -- a delegate's main role is
-// DELEGATE, and nothing else is read for them.
+// The volunteer roles, one per area. A delegate may hold any of them and
+// stay a delegate (3 Nov 2026): registered, on the delegate lists, with
+// their badge and certificate -- and that area's screens besides.
+const VOLUNTEER_ROLE_KEYS = new Set(SYSTEM_ROLES.filter((r) => r.key.startsWith('VOLUNTEER_')).map((r) => r.key));
+// Every role a person holds: their main role, then any additional ones. A
+// delegate's additional roles can only be volunteer roles.
 async function rolesOfUser(phone, mainRole) {
-  if (!mainRole || mainRole === 'DELEGATE') return [mainRole].filter(Boolean);
-  const extra = await dbAll('SELECT role_key FROM user_roles WHERE phone_number = ? ORDER BY role_key', [phone]);
-  return [mainRole, ...extra.map((r) => r.role_key).filter((k) => k !== mainRole)];
+  if (!mainRole) return [];
+  const extra = (await dbAll('SELECT role_key FROM user_roles WHERE phone_number = ? ORDER BY role_key', [phone]))
+    .map((r) => r.role_key).filter((k) => k !== mainRole && (mainRole !== 'DELEGATE' || VOLUNTEER_ROLE_KEYS.has(k)));
+  return [mainRole, ...extra];
+}
+// May these roles open the admin page? Any staff role does; Delegate alone does not.
+const rolesOpenAdmin = (roles) => (roles || []).some((r) => r !== 'DELEGATE' && isKnownAdminRole(r));
+// The signed-in person as their own page gets them, with whether the admin
+// page opens to them (staff, or a delegate who volunteers): the portal's
+// Admin link reads it.
+async function userForPage(user) {
+  return { ...omitPasswordHash(user), admin_access: rolesOpenAdmin(await rolesOfUser(user.phone_number, user.role)) };
 }
 // May any of these roles do this?
 const rolesCan = (roles, permission) => (roles || []).some((r) => can(r, permission));
@@ -3049,12 +3061,17 @@ const sessionCan = (req, permission) => !!req.session && rolesCan(req.session.ro
 
 // Every staff account with all its roles, for "who could do X" lists (the
 // cash collectors, the guest coordinators).
+// Delegates who volunteer are among them, holding Delegate and their
+// volunteer roles.
 async function staffWithRoles() {
-  const staff = await dbAll("SELECT phone_number, salutation, full_name, role FROM users WHERE role IS NOT NULL AND role != 'DELEGATE' ORDER BY full_name");
   const extra = await dbAll('SELECT phone_number, role_key FROM user_roles');
   const byPhone = new Map();
   for (const e of extra) { if (!byPhone.has(e.phone_number)) byPhone.set(e.phone_number, []); byPhone.get(e.phone_number).push(e.role_key); }
-  return staff.map((u) => ({ ...u, roles: [u.role, ...(byPhone.get(u.phone_number) || []).filter((k) => k !== u.role)] }));
+  const staff = await dbAll(`SELECT phone_number, salutation, full_name, role FROM users
+    WHERE role IS NOT NULL AND (role != 'DELEGATE' OR phone_number IN (SELECT phone_number FROM user_roles)) ORDER BY full_name`);
+  return staff.map((u) => ({ ...u, roles: [u.role, ...(byPhone.get(u.phone_number) || [])
+    .filter((k) => k !== u.role && (u.role !== 'DELEGATE' || VOLUNTEER_ROLE_KEYS.has(k)))] }))
+    .filter((u) => u.role !== 'DELEGATE' || u.roles.length > 1);
 }
 
 function can(roleKey, permission) {
@@ -3887,7 +3904,7 @@ app.get('/admin', (req, res) => {
     return res.status(503).send(
       noticePage('Under maintenance', `<p style="margin:0">${escapeHtml(maintenance.message)}</p>`));
   }
-  if (!isKnownAdminRole(req.session.role)) {
+  if (!rolesOpenAdmin(req.session.roles || [req.session.role])) {
     return res.status(403).send(
       noticePage('Not authorised', '<p style="margin:0">Your account does not have administrative access.</p>'));
   }
@@ -4300,7 +4317,7 @@ app.post('/api/auth/register', async (req, res, next) => {
     const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [userKey]);
     await startSession(userKey, user.role, res);
     recordLogin(userKey, user.full_name, user.role); // fire-and-forget
-    res.json({ success: true, user: omitPasswordHash(user) });
+    res.json({ success: true, user: await userForPage(user) });
   } catch (err) {
     next(err);
   }
@@ -4340,7 +4357,7 @@ app.post('/api/auth/login', async (req, res, next) => {
 
     await startSession(user.phone_number, user.role, res);
     recordLogin(user.phone_number, user.full_name, user.role); // fire-and-forget
-    res.json({ success: true, user: omitPasswordHash(user) });
+    res.json({ success: true, user: await userForPage(user) });
   } catch (err) {
     next(err);
   }
@@ -4391,7 +4408,7 @@ app.post('/api/auth/login-password', async (req, res, next) => {
 
     await startSession(phone, user.role, res);
     recordLogin(phone, user.full_name, user.role); // fire-and-forget
-    res.json({ success: true, user: omitPasswordHash(user) });
+    res.json({ success: true, user: await userForPage(user) });
   } catch (err) {
     next(err);
   }
@@ -4496,7 +4513,7 @@ app.post('/api/auth/verify-contact/confirm', requireAuth, async (req, res, next)
     // A code that was waiting on this address may lower what they owe.
     const repriced = channel === 'email' ? await repriceWithBestCode(req, req.session.phone) : null;
     const user = await dbGet('SELECT * FROM users WHERE phone_number = ?', [req.session.phone]);
-    res.json({ success: true, user: omitPasswordHash(user), ...(repriced ? { repriced } : {}) });
+    res.json({ success: true, user: await userForPage(user), ...(repriced ? { repriced } : {}) });
   } catch (err) {
     next(err);
   }
@@ -4535,7 +4552,7 @@ app.get('/api/auth/me', requireAuth, async (req, res, next) => {
     const permissions = [...new Set(roles.flatMap((r) => permissionsOf(r)))];
     const sections = {};
     for (const key of Object.keys(SECTION_PERMISSIONS)) sections[key] = roles.some((r) => sectionVisible(r, key));
-    res.json({ success: true, user: omitPasswordHash(user), roles, permissions, sections });
+    res.json({ success: true, user: { ...omitPasswordHash(user), admin_access: rolesOpenAdmin(roles) }, roles, permissions, sections });
   } catch (err) {
     next(err);
   }
@@ -8227,7 +8244,7 @@ app.get('/api/users', requirePermission('users.view'), async (req, res, next) =>
     const extraBy = new Map();
     for (const e of extraRows) { if (!extraBy.has(e.phone_number)) extraBy.set(e.phone_number, []); extraBy.get(e.phone_number).push(e.role_key); }
     const shaped = (rows || []).map((u) => ({
-      extra_roles: u.role && u.role !== 'DELEGATE' ? (extraBy.get(u.phone_number) || []).filter((k) => k !== u.role) : [],
+      extra_roles: u.role ? (extraBy.get(u.phone_number) || []).filter((k) => k !== u.role && (u.role !== 'DELEGATE' || VOLUNTEER_ROLE_KEYS.has(k))) : [],
       ...u,
       program_selections: u.registration_id ? (selByReg.get(u.registration_id) || []) : [],
     }));
@@ -8559,11 +8576,14 @@ app.put('/api/users/:phone/role', requirePermission('users.assign_role'), async 
     const before = await dbGet('SELECT role FROM users WHERE phone_number = ?', [req.params.phone]);
     if (!before) return res.status(404).json({ success: false, error: 'User not found.' });
     await dbRun('UPDATE users SET role = ? WHERE phone_number = ?', [role, req.params.phone]);
-    // A delegate holds no staff roles, and Super Admin already holds
-    // everything; either way any additional roles go. The new main role is
-    // not also kept as an additional one.
-    if (role === 'DELEGATE' || role === 'SUPER_ADMIN') {
+    // Super Admin already holds everything, so any additional roles go; a
+    // delegate keeps only volunteer ones. The new main role is not also
+    // kept as an additional one.
+    if (role === 'SUPER_ADMIN') {
       await dbRun('DELETE FROM user_roles WHERE phone_number = ?', [req.params.phone]);
+    } else if (role === 'DELEGATE') {
+      await dbRun(`DELETE FROM user_roles WHERE phone_number = ? AND role_key NOT IN (${[...VOLUNTEER_ROLE_KEYS].map(() => '?').join(',')})`,
+        [req.params.phone, ...VOLUNTEER_ROLE_KEYS]);
     } else {
       await dbRun('DELETE FROM user_roles WHERE phone_number = ? AND role_key = ?', [req.params.phone, role]);
     }
@@ -8584,8 +8604,10 @@ app.put('/api/users/:phone/roles', requirePermission('users.assign_role'), async
   try {
     const target = await dbGet('SELECT phone_number, role FROM users WHERE phone_number = ?', [req.params.phone]);
     if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
-    if (!target.role || target.role === 'DELEGATE') {
-      return res.status(400).json({ success: false, error: 'Additional roles are for staff. Give them a staff role first.' });
+    if (!target.role) return res.status(400).json({ success: false, error: 'This account has no role.' });
+    // A delegate stays a delegate: only volunteer roles go on top.
+    if (target.role === 'DELEGATE' && (Array.isArray(req.body && req.body.roles) ? req.body.roles : []).some((k) => !VOLUNTEER_ROLE_KEYS.has(String(k)))) {
+      return res.status(400).json({ success: false, error: 'A delegate can be given volunteer roles only. For a staff role, change their main role.' });
     }
     if (target.role === 'SUPER_ADMIN') {
       return res.status(400).json({ success: false, error: 'A Super Admin already holds every permission.' });

@@ -225,8 +225,9 @@ function showToast(message, type = 'error') {
 // the same gap in POST /api/users, PUT /api/users/:phone/role and the
 // /admin page's own gate before it was fixed -- this is the client-side
 // instance of the identical mistake, caught in the same sweep.
+// A delegate who volunteers gets it too (admin_access, from the server).
 function isAdminUser() {
-  return !!currentDelegate && !!currentDelegate.role && currentDelegate.role !== 'DELEGATE';
+  return !!currentDelegate && !!currentDelegate.role && (currentDelegate.role !== 'DELEGATE' || !!currentDelegate.admin_access);
 }
 
 // Human-readable role names for display (raw values keep their underscores).
@@ -4278,7 +4279,9 @@ async function initBackendPortal() {
   const meBox = document.getElementById('admin-me-initials');
   if (meBox && meInitials) meBox.textContent = meInitials;
   setText('admin-me-name', meName);
-  setText('admin-me-role', (me.roles && me.roles.length ? me.roles : [me.user && me.user.role]).filter(Boolean).map(roleLabel).join(', '));
+  // A delegate who volunteers reads as their volunteer roles here.
+  const myRoles = (me.roles && me.roles.length ? me.roles : [me.user && me.user.role]).filter(Boolean);
+  setText('admin-me-role', (myRoles.length > 1 ? myRoles.filter((r) => r !== 'DELEGATE') : myRoles).map(roleLabel).join(', '));
   myPermissions = new Set(me.permissions || []);
   mySections = me.sections || {};
 
@@ -7276,8 +7279,26 @@ async function saveUserDetailEdit() {
 // (a main role that already holds everything). What the person may do is
 // everything any of their roles allows. See PUT /api/users/:phone/roles.
 function userDetailExtraRolesHtml(u, canAssign) {
-  if (!u.role || u.role === 'DELEGATE' || u.role === 'SUPER_ADMIN') return '';
+  if (!u.role || u.role === 'SUPER_ADMIN') return '';
   const held = (userDetailData && userDetailData.extraRoles) || [];
+  // A delegate who volunteers stays a delegate: the volunteer roles only,
+  // on top. They then open the admin page for that area's screens.
+  if (u.role === 'DELEGATE') {
+    const areas = cachedRoleOptions.filter((r) => /^VOLUNTEER_/.test(r.key));
+    if (!canAssign) {
+      return held.length ? `<p class="text-[11px] text-slate-500 mt-2">Volunteer: ${esc(held.map(roleLabel).join(', '))}</p>` : '';
+    }
+    if (!areas.length) return '';
+    return `<div class="mt-3 pt-3 border-t border-slate-100">
+      <p class="text-xs font-semibold text-slate-700">Volunteer</p>
+      <p class="text-[11px] text-slate-500 mb-2">They stay a delegate, and can also open the admin page for each area ticked.</p>
+      <div id="user-detail-extra-roles" class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">${areas.map((r) => `
+        <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+          <input type="checkbox" value="${esc(r.key)}" ${held.includes(r.key) ? 'checked' : ''}> ${esc(r.label)}
+        </label>`).join('')}</div>
+      <button type="button" onclick="saveUserDetailExtraRoles()" class="mt-2 px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Save volunteer roles</button>
+    </div>`;
+  }
   const options = cachedRoleOptions.filter((r) => r.key !== 'SUPER_ADMIN' && r.key !== u.role);
   if (!canAssign) {
     return `<p class="text-[11px] text-slate-500 mt-2">Additional roles: ${held.length ? esc(held.map(roleLabel).join(', ')) : 'none'}</p>`;
@@ -7301,7 +7322,8 @@ async function saveUserDetailExtraRoles() {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roles }),
   })).json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not save the roles.');
-  showToast(roles.length ? 'Additional roles saved.' : 'Additional roles removed.', 'success');
+  const delegate = userDetailData && userDetailData.user && userDetailData.user.role === 'DELEGATE';
+  showToast(delegate ? (roles.length ? 'Volunteer roles saved.' : 'No longer a volunteer.') : (roles.length ? 'Additional roles saved.' : 'Additional roles removed.'), 'success');
   await loadBackendUsers();
   await openUserDetail(userDetailPhone);
 }
