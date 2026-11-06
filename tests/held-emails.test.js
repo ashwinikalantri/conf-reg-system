@@ -13,7 +13,7 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
 
   console.log('\n== What is held ==');
   const held = src.match(/await holdEmail\(req, [^,]+, ('[^']+'|`[^`]+`)/g) || [];
-  check('each staff action holds its email', held.length === 12, held.length);
+  check('each staff action holds its email', held.length === 13, held.length);
   const routeOf = (at) => { const i = src.lastIndexOf('\napp.', at); return src.slice(i, src.indexOf('\n', i + 1)); };
   const left = [];
   for (const m of src.matchAll(/notifyDelegate\(/g)) {

@@ -2193,6 +2193,16 @@ db.serialize(() => {
     // the submitter is shown alone.
     if (!names.includes('authors')) db.run('ALTER TABLE abstracts ADD COLUMN authors TEXT');
     if (!names.includes('authors_updated_at')) db.run('ALTER TABLE abstracts ADD COLUMN authors_updated_at INTEGER');
+    // The last date (IST) for corrections asked for with REVISION_REQUESTED;
+    // NULL for a request made before there was one.
+    if (!names.includes('revision_until')) db.run('ALTER TABLE abstracts ADD COLUMN revision_until TEXT');
+    // A reviewer asking the author to complete the abstract (results still
+    // awaited, say) without changing its status: what is missing, the last
+    // date, who asked and when, and when the author last updated it.
+    for (const [col, type] of [['complete_note', 'TEXT'], ['complete_until', 'TEXT'], ['complete_requested_at', 'INTEGER'],
+      ['complete_requested_by', 'TEXT'], ['completed_at', 'INTEGER']]) {
+      if (!names.includes(col)) db.run(`ALTER TABLE abstracts ADD COLUMN ${col} ${type}`);
+    }
     // Zenodo (zenodo.js): the presenting author's consent, then the record --
     // DRAFT (DOI reserved) or PUBLISHED -- and the last error, if any.
     for (const [col, type] of [['zenodo_consent', 'INTEGER'], ['zenodo_consent_at', 'INTEGER'], ['zenodo_id', 'TEXT'], ['zenodo_doi', 'TEXT'],
@@ -6043,6 +6053,14 @@ const ABSTRACT_SECTIONS = ['background', 'aim', 'methods', 'results', 'conclusio
 const ABSTRACT_SECTION_LABELS = { background: 'Background', aim: 'Aim', methods: 'Methods', results: 'Results', conclusion: 'Conclusion' };
 const ABSTRACT_MAX_WORDS = 400;
 
+// The two ways a submitted abstract reopens for its author, each until a last
+// date (IST, inclusive): corrections (status REVISION_REQUESTED, back to
+// review on resubmission) and completion (status kept -- an accepted abstract
+// stays accepted, with its format).
+const abstractRevisionOpen = (a) => !!a && a.status === 'REVISION_REQUESTED' && (!a.revision_until || istDateString() <= a.revision_until);
+const abstractCompletionOpen = (a) => !!a && !!a.complete_until && a.status !== 'REJECTED' && a.status !== 'REVISION_REQUESTED'
+  && istDateString() <= a.complete_until;
+
 app.post('/api/abstracts', requireAuth, async (req, res, next) => {
   try {
     // Closed after the deadline -- checked first, so a late submitter is told
@@ -6054,14 +6072,20 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
     // A person given a later date of their own (abstract_extensions) is held
     // to that date instead.
     const window = await abstractSubmissionWindowFor(req.session.phone);
-    if (!window.open) {
-      const own = await dbGet('SELECT status FROM abstracts WHERE phone_number = ?', [req.session.phone]);
-      if (!own || own.status !== 'REVISION_REQUESTED') {
-        return res.status(403).json({
-          success: false, code: 'ABSTRACT_SUBMISSION_CLOSED',
-          error: `Abstract submission closed on ${formatDMY(window.deadline)}.`,
-        });
-      }
+    const mine = await dbGet('SELECT id, status, revision_until, complete_until, zenodo_state, zenodo_site FROM abstracts WHERE phone_number = ?', [req.session.phone]);
+    // Asked for corrections or completion, but the last date has gone.
+    if (mine && mine.status === 'REVISION_REQUESTED' && !abstractRevisionOpen(mine)) {
+      return res.status(403).json({ success: false, error: `The last date for corrections was ${formatDMY(mine.revision_until)}. Write to the organisers if you still need to send them.` });
+    }
+    const completing = abstractCompletionOpen(mine);
+    if (completing && zenodoFrozen(mine)) {
+      return res.status(409).json({ success: false, error: 'Your abstract is published with a DOI, so it cannot be changed.' });
+    }
+    if (!window.open && !abstractRevisionOpen(mine) && !completing) {
+      return res.status(403).json({
+        success: false, code: 'ABSTRACT_SUBMISSION_CLOSED',
+        error: `Abstract submission closed on ${formatDMY(window.deadline)}.`,
+      });
     }
     const { format, title } = req.body;
     if (!title || !String(title).trim()) {
@@ -6097,8 +6121,8 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
     // see PUT /api/abstracts/:id/status) reopens this same endpoint for that
     // delegate, as an update rather than blocking or requiring a second
     // insert. Any other existing status stays locked.
-    const prev = await dbGet('SELECT id, status FROM abstracts WHERE phone_number = ?', [req.session.phone]);
-    if (prev && prev.status !== 'REVISION_REQUESTED') {
+    const prev = mine;
+    if (prev && !abstractRevisionOpen(prev) && !completing) {
       return res.status(409).json({ success: false, error: 'You have already submitted an abstract; it cannot be changed.' });
     }
 
@@ -6119,11 +6143,26 @@ app.post('/api/abstracts', requireAuth, async (req, res, next) => {
     const cleanTitle = abstractTitle.cleanTitle(title);
     if (!cleanTitle) return res.status(400).json({ success: false, error: 'Abstract title is required.' });
     const isResubmission = !!prev;
-    if (isResubmission) {
+    if (completing) {
+      // Completing: the content changes, the decision does not.
       await dbRun(
         `UPDATE abstracts SET
            format = ?, title = ?, background = ?, aim = ?, methods = ?, results = ?, conclusion = ?,
-           keywords = ?, word_count = ?, status = 'UNDER_REVIEW', revision_note = NULL
+           keywords = ?, word_count = ?, completed_at = ?
+         WHERE id = ?`,
+        [format, cleanTitle, sections.background, sections.aim, sections.methods, sections.results, sections.conclusion,
+         keywords, wordCount, Date.now(), prev.id]);
+      if (authorsJson !== undefined) {
+        await dbRun('UPDATE abstracts SET authors = ?, authors_updated_at = ? WHERE id = ?', [authorsJson, Date.now(), prev.id]);
+      }
+      await recordAudit({ req, entityType: 'abstract', entityId: prev.id, action: 'ABSTRACT_COMPLETED',
+        oldValue: `Asked to complete by ${prev.complete_until}`, newValue: `Updated by the author (${prev.status}, unchanged)` });
+      return res.json({ success: true, completed: true });
+    } else if (isResubmission) {
+      await dbRun(
+        `UPDATE abstracts SET
+           format = ?, title = ?, background = ?, aim = ?, methods = ?, results = ?, conclusion = ?,
+           keywords = ?, word_count = ?, status = 'UNDER_REVIEW', revision_note = NULL, revision_until = NULL
          WHERE id = ?`,
         [format, cleanTitle, sections.background, sections.aim, sections.methods, sections.results, sections.conclusion,
          keywords, wordCount, prev.id]
@@ -6231,7 +6270,8 @@ app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
       `SELECT id, format, title, status, allocation, revision_note,
               background, aim, methods, results, conclusion, keywords, word_count,
               author_name, authors, authors_updated_at,
-              zenodo_consent, zenodo_state, zenodo_doi, zenodo_url, zenodo_site
+              zenodo_consent, zenodo_state, zenodo_doi, zenodo_url, zenodo_site,
+              revision_until, complete_note, complete_until, completed_at
          FROM abstracts WHERE phone_number = ?`,
       [req.session.phone]
     );
@@ -6241,7 +6281,9 @@ app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
       abstract: row ? (() => {
         const v = zenodoView(row);
         const { zenodo_site: _site, ...rest } = abstractWithAuthors(row);
-        return { ...rest, zenodo_state: v.state, zenodo_doi: v.doi, zenodo_url: v.url, zenodo_enabled: zenodoSettings().enabled };
+        return { ...rest, zenodo_state: v.state, zenodo_doi: v.doi, zenodo_url: v.url, zenodo_enabled: zenodoSettings().enabled,
+          // Whether they may edit it now: corrections or completion, before its last date.
+          revision_open: abstractRevisionOpen(row), completion_open: abstractCompletionOpen(row) };
       })() : null,
       // Whether they may still add or reorder the authors themselves.
       authorsWindow: { open: abstractAuthorsOpen(), deadline: CONFERENCE.authorsDeadline, max: abstractAuthorsLib.MAX_AUTHORS },
@@ -9291,9 +9333,11 @@ async function programmeSessions() {
   for (const s of sessions) {
     const p = people.get(s.id) || null;
     s.people = p;
+    // Faculty taken off the list (Cancelled) are left out of the lines
+    // everyone reads; the editor still has them, marked, to remove.
     if (p) {
-      s.speakers = peopleLib.joinPeople(p.speakers.map((x) => x.name)) || null;
-      s.chairs = peopleLib.joinPeople(p.chairs.map((x) => x.name)) || null;
+      s.speakers = peopleLib.joinPeople(p.speakers.filter((x) => !x.cancelled).map((x) => x.name)) || null;
+      s.chairs = peopleLib.joinPeople(p.chairs.filter((x) => !x.cancelled).map((x) => x.name)) || null;
     }
   }
   return sessions;
@@ -9317,7 +9361,7 @@ async function sessionPeople() {
   for (const r of rows) {
     if (!out.has(r.session_id)) out.set(r.session_id, { speakers: [], chairs: [] });
     const list = out.get(r.session_id)[r.role === 'chair' ? 'chairs' : 'speakers'];
-    if (r.guest_id != null && dir.has(r.guest_id)) list.push({ guestId: r.guest_id, name: dir.get(r.guest_id).name });
+    if (r.guest_id != null && dir.has(r.guest_id)) list.push({ guestId: r.guest_id, name: dir.get(r.guest_id).name, cancelled: dir.get(r.guest_id).cancelled });
     else if (r.name) list.push({ text: r.name, name: r.name });
   }
   return out;
@@ -14666,6 +14710,12 @@ app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), asyn
     if (status === 'REVISION_REQUESTED' && !note) {
       return res.status(400).json({ success: false, error: 'Enter a note explaining what the delegate needs to correct.' });
     }
+    // ...and a last date to send them by.
+    const until = status === 'REVISION_REQUESTED' ? String(req.body.until || '').trim() : null;
+    if (status === 'REVISION_REQUESTED') {
+      if (!DATE_RE.test(until)) return res.status(400).json({ success: false, error: 'Choose the last date for the corrections.' });
+      if (until < istDateString()) return res.status(400).json({ success: false, error: 'That date has already gone. Choose today or later.' });
+    }
 
     const existing = await dbGet('SELECT status, phone_number, author_name, title, zenodo_state, zenodo_site FROM abstracts WHERE id = ?', [req.params.id]);
     if (!existing) {
@@ -14681,9 +14731,9 @@ app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), asyn
     // status other than REVISION_REQUESTED clears its note, the same way
     // allocation only ever means something while status is ACCEPTED.
     if (status === 'ACCEPTED') {
-      await dbRun('UPDATE abstracts SET status = ?, revision_note = NULL WHERE id = ?', [status, req.params.id]);
+      await dbRun('UPDATE abstracts SET status = ?, revision_note = NULL, revision_until = NULL WHERE id = ?', [status, req.params.id]);
     } else {
-      await dbRun('UPDATE abstracts SET status = ?, allocation = NULL, revision_note = ? WHERE id = ?', [status, note, req.params.id]);
+      await dbRun('UPDATE abstracts SET status = ?, allocation = NULL, revision_note = ?, revision_until = ? WHERE id = ?', [status, note, until, req.params.id]);
     }
     await recordAudit({
       req,
@@ -14691,7 +14741,7 @@ app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), asyn
       entityId: req.params.id,
       action: 'ABSTRACT_STATUS_CHANGE',
       oldValue: existing.status,
-      newValue: status,
+      newValue: status === 'REVISION_REQUESTED' ? `${status} (by ${until})` : status,
     });
 
     // Rejecting at the approval step IS a final decision (there is no
@@ -14708,9 +14758,55 @@ app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), asyn
           `<p>Dear ${escapeHtml(existing.author_name)},</p>
            <p>The scientific committee has reviewed your abstract, <b>"${escapeHtml(existing.title)}"</b>, and requests some corrections before it can be considered further:</p>
            <blockquote style="margin:0.75rem 0;padding:0.5rem 1rem;border-left:3px solid #b9cedb;color:#334155">${escapeHtml(note)}</blockquote>
-           <p>Please log in to the portal, update your abstract, and resubmit it for review.</p>`));
+           <p>Please log in at <b>${escapeHtml(portalHome())}</b>, update your abstract, and resubmit it for review by <b>${escapeHtml(formatFullDayDate(until))}</b>.</p>`));
     }
     res.json({ success: true, provisional });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Ask an author to complete their abstract (results still awaited, a section
+// left thin) by a date, without changing its status: an accepted abstract
+// stays accepted, with its format. Chosen per abstract; the author may edit
+// it until the date (POST /api/abstracts), and the desk sees when they did.
+app.put('/api/abstracts/:id/completion', requirePermission('abstracts.review'), async (req, res, next) => {
+  try {
+    const note = String((req.body && req.body.note) || '').trim();
+    const until = String((req.body && req.body.until) || '').trim();
+    if (!note) return res.status(400).json({ success: false, error: 'Say what the author needs to complete.' });
+    if (note.length > 2000) return res.status(400).json({ success: false, error: 'Keep the note under 2000 characters.' });
+    if (!DATE_RE.test(until)) return res.status(400).json({ success: false, error: 'Choose the last date to complete it by.' });
+    if (until < istDateString()) return res.status(400).json({ success: false, error: 'That date has already gone. Choose today or later.' });
+    const a = await dbGet('SELECT id, status, phone_number, author_name, title, complete_until, zenodo_state, zenodo_site FROM abstracts WHERE id = ?', [req.params.id]);
+    if (!a) return res.status(404).json({ success: false, error: 'Abstract not found.' });
+    if (a.status === 'REJECTED') return res.status(409).json({ success: false, error: 'This abstract was not accepted.' });
+    if (a.status === 'REVISION_REQUESTED') return res.status(409).json({ success: false, error: 'It is already back with the author for corrections.' });
+    if (zenodoFrozen(a)) return res.status(409).json({ success: false, error: 'It is published on Zenodo with a DOI, so it cannot be changed.' });
+    await dbRun('UPDATE abstracts SET complete_note = ?, complete_until = ?, complete_requested_at = ?, complete_requested_by = ?, completed_at = NULL WHERE id = ?',
+      [note, until, Date.now(), req.session.name || req.session.phone, a.id]);
+    await recordAudit({ req, entityType: 'abstract', entityId: a.id, action: 'ABSTRACT_COMPLETION_REQUESTED',
+      oldValue: a.complete_until ? `Asked before, by ${a.complete_until}` : null, newValue: `By ${until}: ${note.slice(0, 200)}` });
+    await holdEmail(req, a.phone_number, 'Please complete your abstract',
+      emailWrap('Please complete your abstract',
+        `<p>Dear ${escapeHtml(a.author_name)},</p>
+         <p>The scientific committee asks you to complete your abstract, <b>"${escapeHtml(a.title)}"</b>:</p>
+         <blockquote style="margin:0.75rem 0;padding:0.5rem 1rem;border-left:3px solid #b9cedb;color:#334155">${escapeHtml(note)}</blockquote>
+         <p>Please log in at <b>${escapeHtml(portalHome())}</b> and use <b>Update Abstract</b> on your dashboard by <b>${escapeHtml(formatFullDayDate(until))}</b>.${a.status === 'ACCEPTED' ? ' Your abstract stays accepted.' : ''}</p>`));
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/abstracts/:id/completion', requirePermission('abstracts.review'), async (req, res, next) => {
+  try {
+    const a = await dbGet('SELECT id, complete_until FROM abstracts WHERE id = ?', [req.params.id]);
+    if (!a) return res.status(404).json({ success: false, error: 'Abstract not found.' });
+    if (!a.complete_until) return res.status(409).json({ success: false, error: 'Nothing was asked.' });
+    await dbRun('UPDATE abstracts SET complete_note = NULL, complete_until = NULL, complete_requested_at = NULL, complete_requested_by = NULL WHERE id = ?', [a.id]);
+    await recordAudit({ req, entityType: 'abstract', entityId: a.id, action: 'ABSTRACT_COMPLETION_WITHDRAWN', oldValue: `By ${a.complete_until}`, newValue: null });
+    res.json({ success: true });
   } catch (err) {
     next(err);
   }
@@ -14879,6 +14975,7 @@ async function guestRowsJoined(where = '', params = []) {
     // Linked: the account says who they are. Not yet: what was typed in.
     name: g.phone_number ? ([g.salutation, g.full_name].filter(Boolean).join(' ') || g.phone_number) : (g.guest_name || ''),
     designation: g.phone_number ? g.designation : g.guest_designation,
+    institution: g.phone_number ? g.institution : (g.guest_institution || null),
     phone: g.phone_number ? displayPhone({ phone: g.phone, phone_number: g.phone_number }) : (g.guest_phone || ''),
     email: g.phone_number ? g.email : g.guest_email,
     transport_coordinator_name: g.transport_coordinator ? ([g.tc_salutation, g.tc_name].filter(Boolean).join(' ') || g.transport_coordinator) : null,

@@ -2151,12 +2151,15 @@ async function loadAbstractStatus() {
       // Locked after submission -- except REVISION_REQUESTED, the one
       // status that reopens the form for editing (see POST /api/abstracts
       // and openModal's prefill below).
+      // Corrections or completion reopen it until their last date.
       const needsRevision = abs.status === 'REVISION_REQUESTED';
+      const canEdit = !!(abs.revision_open || abs.completion_open);
       if (btn) {
-        btn.innerText = needsRevision ? 'Revise & Resubmit' : 'Abstract Submitted';
-        btn.disabled = !needsRevision;
-        btn.classList.toggle('opacity-60', !needsRevision);
-        btn.classList.toggle('cursor-not-allowed', !needsRevision);
+        btn.innerText = abs.revision_open ? 'Revise & Resubmit' : abs.completion_open ? 'Update Abstract'
+          : needsRevision ? 'Corrections Closed' : 'Abstract Submitted';
+        btn.disabled = !canEdit;
+        btn.classList.toggle('opacity-60', !canEdit);
+        btn.classList.toggle('cursor-not-allowed', !canEdit);
       }
       if (desc) {
         if (abs.status === 'ACCEPTED' && abs.allocation) {
@@ -2175,7 +2178,9 @@ async function loadAbstractStatus() {
         } else if (abs.status === 'REJECTED') {
           desc.innerText = 'Your abstract was not accepted.';
         } else if (needsRevision) {
-          desc.innerHTML = `<b>The committee has requested corrections:</b> ${esc(abs.revision_note || '')}`;
+          desc.innerHTML = `<b>The committee has requested corrections:</b> ${esc(abs.revision_note || '')}`
+            + (abs.revision_until ? `<span class="block mt-1.5 font-semibold ${abs.revision_open ? 'text-orange-800' : 'text-rose-700'}">${abs.revision_open
+              ? `Send them by ${esc(formatFullDateWithDay(abs.revision_until))}.` : `The last date for corrections was ${esc(formatFullDateWithDay(abs.revision_until))}.`}</span>` : '');
         } else {
           desc.innerText = 'Your abstract has been submitted and is under review. It cannot be changed.';
         }
@@ -2183,6 +2188,14 @@ async function loadAbstractStatus() {
       // An abstract can only be presented by a registered delegate.
       if (desc && !registered && abs.status !== 'REJECTED') {
         desc.innerHTML += ' <span class="block mt-1.5 text-amber-800 font-semibold">Registration is mandatory for presentation &mdash; you have not registered yet.</span>';
+      }
+      // Asked to complete it: what, by when, and whether they have.
+      if (desc && abs.complete_until && abs.status !== 'REJECTED' && abs.status !== 'REVISION_REQUESTED') {
+        desc.insertAdjacentHTML('beforeend', `<span class="block mt-2 rounded-lg border ${abs.completion_open ? 'border-indigo-200 bg-indigo-50 text-indigo-900' : 'border-slate-200 bg-slate-50 text-slate-600'} p-2.5">
+          <b>${abs.completion_open ? `Please complete your abstract by ${esc(formatFullDateWithDay(abs.complete_until))}:` : `The date to complete your abstract was ${esc(formatFullDateWithDay(abs.complete_until))}.`}</b>
+          ${abs.complete_note ? `<span class="block mt-1">${esc(abs.complete_note)}</span>` : ''}
+          ${abs.completed_at ? `<span class="block mt-1 font-semibold text-emerald-700">You updated it on ${esc(formatFullDate(istDateString(abs.completed_at)))}.</span>` : ''}
+        </span>`);
       }
       if (desc && abs.status === 'ACCEPTED') desc.insertAdjacentHTML('beforeend', abstractZenodoHtml(abs));
       if (previewToggle) previewToggle.classList.remove('hidden');
@@ -3275,7 +3288,7 @@ async function handleAbstractSubmit(e) {
     });
     const data = await res.json();
     if (data.success) {
-      showToast('Abstract submitted for review!', 'success');
+      showToast(data.completed ? 'Your abstract is updated. Thank you.' : 'Abstract submitted for review!', 'success');
       closeModal('modal-abstract');
       loadDashboard();
     } else {
@@ -3290,8 +3303,8 @@ async function handleAbstractSubmit(e) {
 }
 
 function openModal(id) {
-  if (id === 'modal-abstract' && !cachedAbstractSubmission.open
-    && !(cachedOwnAbstract && cachedOwnAbstract.status === 'REVISION_REQUESTED')) {
+  const reopened = !!(cachedOwnAbstract && (cachedOwnAbstract.revision_open || cachedOwnAbstract.completion_open));
+  if (id === 'modal-abstract' && !cachedAbstractSubmission.open && !reopened) {
     showToast('Abstract submission has closed.');
     return;
   }
@@ -3302,7 +3315,7 @@ function openModal(id) {
     // button enabled here, see loadAbstractStatus) gets the form prefilled
     // with what they already submitted; anyone else gets a blank form.
     const maxAuthors = (cachedAbstractAuthorsWindow && cachedAbstractAuthorsWindow.max) || 10;
-    if (cachedOwnAbstract && cachedOwnAbstract.status === 'REVISION_REQUESTED') {
+    if (reopened) {
       prefillAbstractFormForRevision(cachedOwnAbstract);
       setAuthorEditor('abstract-form-authors', cachedOwnAbstract.authors, { max: maxAuthors });
     } else {
@@ -10474,6 +10487,15 @@ function abstractProvisional(a) {
   return a.status === 'ACCEPTED' && !Number(a.author_registered);
 }
 
+// Asked to complete (results awaited, say): by when, and whether the author
+// has updated it since. Shown on the card and in the review modal.
+function abstractCompletionBadge(a) {
+  if (!a.complete_until) return '';
+  const passed = istDateString() > a.complete_until;
+  const done = a.completed_at ? `Updated by the author ${esc(fmtAuditTime(a.completed_at))}` : passed ? 'Not updated; the date has passed' : 'Not updated yet';
+  return `<p class="text-[10px] font-semibold mt-1 ${a.completed_at ? 'text-emerald-700' : passed ? 'text-rose-700' : 'text-indigo-700'}">Asked to complete by ${esc(formatFullDate(a.complete_until))} · ${done}</p>`;
+}
+
 // Shared header markup (title, author, status badge, last-action note, file
 // link) for both the Approval and Assignment cards.
 function abstractCardHeader(a) {
@@ -10495,7 +10517,8 @@ function abstractCardHeader(a) {
         </div>
         <div class="text-right shrink-0">
           <span class="${badge} text-xs px-2.5 py-1 rounded-full font-bold border whitespace-nowrap">${esc(label)}</span>
-          ${status === 'REVISION_REQUESTED' ? '<p class="text-[10px] text-orange-600 mt-1">Awaiting delegate resubmission</p>' : ''}
+          ${status === 'REVISION_REQUESTED' ? `<p class="text-[10px] text-orange-600 mt-1">Awaiting delegate resubmission${a.revision_until ? ` · by ${esc(formatFullDate(a.revision_until))}` : ''}</p>` : ''}
+          ${abstractCompletionBadge(a)}
           ${registrationNote}
           ${a.last_action_by
             ? `<p class="text-[10px] text-slate-400 mt-1">by ${esc(a.last_action_by)} · ${esc(fmtAuditTime(a.last_action_at))}</p>`
@@ -10517,12 +10540,23 @@ function abstractSectionsHtml(a) {
   const section = (label, html) => html ? `<div class="mb-2"><p class="text-[10px] font-bold text-slate-500 uppercase tracking-wide">${esc(label)}</p><p class="text-sm text-slate-700 whitespace-pre-wrap">${html}</p></div>` : '';
   const revisionNote = a.status === 'REVISION_REQUESTED' && a.revision_note
     ? `<div class="mb-3 bg-orange-50 border border-orange-200 rounded-lg p-3">
-         <p class="text-[10px] font-bold text-orange-700 uppercase tracking-wide">Corrections requested — awaiting resubmission</p>
+         <p class="text-[10px] font-bold text-orange-700 uppercase tracking-wide">Corrections requested — awaiting resubmission${a.revision_until ? ` by ${esc(formatFullDate(a.revision_until))}` : ''}</p>
          <p class="text-sm text-orange-800 whitespace-pre-wrap mt-1">${esc(a.revision_note)}</p>
+       </div>`
+    : '';
+  const completeNote = a.complete_until
+    ? `<div class="mb-3 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+         <div class="flex items-start justify-between gap-3">
+           <p class="text-[10px] font-bold text-indigo-700 uppercase tracking-wide">Asked to complete by ${esc(formatFullDate(a.complete_until))}${a.complete_requested_by ? ` · by ${esc(a.complete_requested_by)}` : ''}</p>
+           <button type="button" onclick="withdrawAbstractCompleteRequest(${esc(a.id)})" class="shrink-0 text-[11px] font-semibold text-indigo-700 underline">Withdraw</button>
+         </div>
+         <p class="text-sm text-indigo-900 whitespace-pre-wrap mt-1">${esc(a.complete_note || '')}</p>
+         <p class="text-[11px] mt-1 ${a.completed_at ? 'text-emerald-700 font-semibold' : 'text-indigo-700'}">${a.completed_at ? `Updated by the author ${esc(fmtAuditTime(a.completed_at))}: what you see below is the updated abstract.` : 'Not updated yet.'}</p>
        </div>`
     : '';
   return `<div class="border-t border-slate-100 pt-3">
     ${revisionNote}
+    ${completeNote}
     ${section('Background', a.background)}
     ${section('Aim', a.aim)}
     ${section('Methods', a.methods)}
@@ -10560,6 +10594,22 @@ function openAbstractReview(id) {
   const revisionNote = document.getElementById('abstract-revision-note');
   if (revisionBox) revisionBox.classList.add('hidden');
   if (revisionNote) revisionNote.value = '';
+  // Both requests default to a week from today.
+  const inAWeek = (() => { const d = new Date(`${istDateString()}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 7); return d.toISOString().slice(0, 10); })();
+  for (const id of ['abstract-revision-until', 'abstract-complete-until']) {
+    const el = document.getElementById(id);
+    if (el) { el.value = inAWeek; el.min = istDateString(); }
+  }
+  const completeBox = document.getElementById('abstract-complete-box');
+  if (completeBox) completeBox.classList.add('hidden');
+  const completeNote = document.getElementById('abstract-complete-note');
+  if (completeNote) completeNote.value = a.complete_note || '';
+  // Not for one rejected, or already back with the author for corrections.
+  const completeBtn = document.getElementById('abstract-complete-btn');
+  if (completeBtn) {
+    completeBtn.classList.toggle('hidden', a.status === 'REJECTED' || a.status === 'REVISION_REQUESTED');
+    completeBtn.textContent = a.complete_until ? 'Ask Again to Complete' : 'Ask to Complete';
+  }
   openModal('modal-abstract-review');
 }
 
@@ -10580,12 +10630,44 @@ async function submitAbstractRevisionRequest() {
   const actions = document.getElementById('abstract-review-modal-actions');
   const id = actions && actions.dataset.id;
   const note = document.getElementById('abstract-revision-note').value.trim();
+  const until = document.getElementById('abstract-revision-until').value;
   if (!note) return showToast('Enter what needs to be corrected.');
+  if (!until) return showToast('Choose the last date for the corrections.');
   const data = await (await fetch(`/api/abstracts/${encodeURIComponent(id)}/status`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'REVISION_REQUESTED', note }),
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'REVISION_REQUESTED', note, until }),
   })).json();
   if (!data.success) return showToast(data.error || 'Could not send this back for corrections.');
   showToast('Sent back to the delegate for corrections.', 'success');
+  closeModal('modal-abstract-review');
+  renderBackendAbstracts();
+}
+
+function toggleAbstractCompleteBox() {
+  const box = document.getElementById('abstract-complete-box');
+  if (!box) return;
+  box.classList.toggle('hidden');
+  if (!box.classList.contains('hidden')) document.getElementById('abstract-complete-note').focus();
+}
+async function submitAbstractCompleteRequest() {
+  const actions = document.getElementById('abstract-review-modal-actions');
+  const id = actions && actions.dataset.id;
+  const note = document.getElementById('abstract-complete-note').value.trim();
+  const until = document.getElementById('abstract-complete-until').value;
+  if (!note) return showToast('Say what the author needs to complete.');
+  if (!until) return showToast('Choose the last date to complete it by.');
+  const data = await (await fetch(`/api/abstracts/${encodeURIComponent(id)}/completion`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note, until }),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not send the request.');
+  showToast('Asked the author to complete the abstract.', 'success');
+  closeModal('modal-abstract-review');
+  renderBackendAbstracts();
+}
+async function withdrawAbstractCompleteRequest(id) {
+  if (!(await showConfirm('Withdraw the request to complete this abstract? The author can no longer update it.', 'Withdraw'))) return;
+  const data = await (await fetch(`/api/abstracts/${encodeURIComponent(id)}/completion`, { method: 'DELETE' })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not withdraw it.');
+  showToast('Request withdrawn.', 'success');
   closeModal('modal-abstract-review');
   renderBackendAbstracts();
 }
@@ -11031,6 +11113,7 @@ function setRegisterDelegateFaculty(g) {
     put('rd-name', g.guest_name || g.name);
     put('rd-email', g.guest_email);
     put('rd-designation', g.guest_designation);
+    put('rd-institute', g.guest_institution);
     setText('rd-faculty-note', 'Not signed up yet: an account is made from the details below and linked to their faculty entry. Check the mobile and email.');
   }
   const compBtn = document.getElementById('rd-mode-comp-btn');
@@ -13129,6 +13212,7 @@ function openGuestEditor(id) {
   const identity = g.linked ? '' : group('Details', shared, '',
     field('guest_name', 'Name *', input('guest_name', 'text', shared, 'required maxlength="120"'))
     + field('guest_designation', 'Designation', input('guest_designation', 'text', shared, 'maxlength="300"'))
+    + field('guest_institution', 'Institution', input('guest_institution', 'text', shared, 'maxlength="300"'))
     + field('guest_phone', 'Phone', input('guest_phone', 'text', shared, 'inputmode="tel" maxlength="20"'))
     + field('guest_email', 'Email', input('guest_email', 'email', shared, 'maxlength="120"')))
     + (shared ? `<div class="mt-3 border border-sky-200 bg-sky-50 rounded-xl p-3">
@@ -14209,7 +14293,9 @@ function renderSessionPeople(role) {
   if (!box) return;
   const x = (i, name) => `<button type="button" onclick="removeSessionPerson('${role}', ${i})" aria-label="Remove ${esc(name)}" class="w-5 h-5 rounded-full leading-none hover:bg-black/10">×</button>`;
   const chip = (p, i) => (p.guestId != null
-    ? `<span class="inline-flex items-center gap-1 rounded-full bg-navy text-white text-xs font-semibold pl-2.5 pr-1 py-1">${esc(p.name)}${x(i, p.name)}</span>`
+    ? (p.cancelled
+      ? `<span class="inline-flex items-center gap-1 rounded-full bg-slate-200 text-slate-500 text-xs font-semibold pl-2.5 pr-1 py-1 line-through" title="Cancelled on the faculty list: not shown in the programme">${esc(p.name)} <span class="no-underline">(cancelled)</span>${x(i, p.name)}</span>`
+      : `<span class="inline-flex items-center gap-1 rounded-full bg-navy text-white text-xs font-semibold pl-2.5 pr-1 py-1">${esc(p.name)}${x(i, p.name)}</span>`)
     : `<span class="inline-flex items-center gap-1 rounded-full border border-dashed border-slate-400 bg-slate-50 text-slate-700 text-xs pl-2.5 pr-1 py-1" title="Not on the faculty list">${esc(p.text)}${/^and\b/i.test(p.text) ? ''
       : ` <button type="button" onclick="startNewFaculty('${role}', ${i})" class="text-[11px] font-semibold text-indigo-700 underline">Add to faculty</button>`}${x(i, p.text)}</span>`);
   box.innerHTML = `<p class="text-[11px] font-semibold text-slate-600 mb-1.5">${PS_ROLE_LABELS[role]}</p>

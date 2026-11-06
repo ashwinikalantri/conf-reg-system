@@ -235,6 +235,8 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'GET /api/meals/search': 'Finds someone at the counter by name, mobile, ID or email -- name, kind, ID and category, and whether they are served; no contact details. meals.scan.',
     'GET /api/admin/meals/summary': 'Expected and served counts for each meal, by kind and counter, for the Overview. meals.view.',
     'GET /api/admin/meals/passes.pdf': 'Prints meal passes (name, Faculty or Organiser, a QR) for faculty and organisers. meals.view.',
+    'PUT /api/abstracts/:id/completion': 'Asks an author to complete their abstract by a date, status unchanged, with an email held for the reviewer to send. abstracts.review -- the reviewers who already send abstracts back for corrections.',
+    'DELETE /api/abstracts/:id/completion': 'Withdraws that request. abstracts.review.',
     // --- Zenodo (3 Nov 2026) ---------------------------------------------------
     // Accepted abstracts published with a DOI. All under the new
     // abstracts.publish, which only Super Admin holds (grants all) until a

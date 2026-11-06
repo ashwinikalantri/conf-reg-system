@@ -101,7 +101,7 @@ const PERMISSIONS = [
 
   // --- Abstracts ---
   ['abstracts.view', 'abstracts', 'View abstracts', 'Open the Abstracts tab and read submissions.'],
-  ['abstracts.review', 'abstracts', 'Review abstracts', 'Accept or reject a submission, or ask its author for corrections.'],
+  ['abstracts.review', 'abstracts', 'Review abstracts', 'Accept or reject a submission, ask its author for corrections by a date, or ask them to complete it (results awaited, say) by a date.'],
   // Separate from review, and independent of it: deciding oral vs poster is a
   // programme decision rather than an academic one, and a role may hold
   // either without the other. Note this is also the step that emails the
@@ -309,6 +309,8 @@ const ROUTE_PERMISSIONS = {
   'PUT /api/abstracts/:id/allocation': 'abstracts.assign',
   'PUT /api/abstracts/extensions/:phone': 'abstracts.extend_deadline',
   'DELETE /api/abstracts/extensions/:phone': 'abstracts.extend_deadline',
+  'PUT /api/abstracts/:id/completion': 'abstracts.review',
+  'DELETE /api/abstracts/:id/completion': 'abstracts.review',
   'GET /api/admin/zenodo': 'abstracts.publish',
   'PUT /api/admin/zenodo/settings': 'abstracts.publish',
   'POST /api/admin/zenodo/check': 'abstracts.publish',

@@ -74,9 +74,10 @@ const chairLabel = (s) => (/award|presentation/i.test(`${s.label} ${s.title}`) ?
 function sessionNames(s) {
   const list = [];
   const add = (names, role) => names.forEach((n) => list.push({ name: n, role }));
+  // Cancelled faculty are not on the programme.
   if (s.people) {
-    add(s.people.speakers.map((x) => x.name), 'speaker');
-    add(s.people.chairs.map((x) => x.name), 'chair');
+    add(s.people.speakers.filter((x) => !x.cancelled).map((x) => x.name), 'speaker');
+    add(s.people.chairs.filter((x) => !x.cancelled).map((x) => x.name), 'chair');
   } else {
     add(peopleLib.splitLegacy(s.speakers), 'speaker');
     add(peopleLib.splitLegacy(s.chairs), 'chair');

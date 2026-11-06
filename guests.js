@@ -21,7 +21,7 @@ const TRAVEL_FIELDS = [
 const STAY_FIELDS = ['stay_not_needed', 'accommodation', 'room_no', 'checkin_date', 'checkout_date', 'room_type', 'accommodation_coordinator'];
 const GENERAL_FIELDS = ['special_needs', 'overall_status', 'remarks'];
 // Who a guest without an account is. Ignored once linked: the account says.
-const IDENTITY_FIELDS = ['guest_name', 'guest_designation', 'guest_phone', 'guest_email'];
+const IDENTITY_FIELDS = ['guest_name', 'guest_designation', 'guest_institution', 'guest_phone', 'guest_email'];
 const ALL_FIELDS = [...IDENTITY_FIELDS, ...TRAVEL_FIELDS, ...STAY_FIELDS, ...GENERAL_FIELDS];
 const FIELD_PERMISSION = Object.fromEntries([
   ...IDENTITY_FIELDS.map((f) => [f, 'guests.edit']),
@@ -56,7 +56,7 @@ const TRAVEL_NOTIFY_FIELDS = TRAVEL_FIELDS.filter((f) => f !== 'transport_coordi
 const STAY_NOTIFY_FIELDS = STAY_FIELDS.filter((f) => f !== 'accommodation_coordinator');
 
 const FIELD_LABELS = {
-  guest_name: 'Name', guest_designation: 'Designation', guest_phone: 'Phone', guest_email: 'Email',
+  guest_name: 'Name', guest_designation: 'Designation', guest_institution: 'Institution', guest_phone: 'Phone', guest_email: 'Email',
   stay_not_needed: 'Accommodation not needed',
   arrival_date: 'Arrival Date', arrival_time: 'Arrival Time', arrival_mode: 'Arrival Mode',
   arrival_number: 'Arrival Flight/Train No', arrival_point: 'Arrival Point',
@@ -127,7 +127,7 @@ const SLOT_NAMES = ['Night', 'Morning', 'Afternoon', 'Evening'];
 
 // Longest a field may be. A typed-in designation is often the whole
 // affiliation ("Professor & Head, Dept of ..., College, City").
-const MAX_LENGTH = { special_needs: 1000, remarks: 1000, guest_designation: 300 };
+const MAX_LENGTH = { special_needs: 1000, remarks: 1000, guest_designation: 300, guest_institution: 300 };
 // Yes/no: they arrange their own stay. (A "local transport not needed" option
 // existed briefly; its column remains in the table, unused.)
 const BOOL_FIELDS = new Set(['stay_not_needed']);
@@ -608,7 +608,7 @@ const GUEST_TABLE_SQL = (name) => `
   CREATE TABLE IF NOT EXISTS ${name} (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     phone_number TEXT UNIQUE,
-    guest_name TEXT, guest_designation TEXT, guest_phone TEXT, guest_email TEXT,
+    guest_name TEXT, guest_designation TEXT, guest_phone TEXT, guest_email TEXT, guest_institution TEXT,
     arrival_date TEXT, arrival_time TEXT, arrival_mode TEXT, arrival_number TEXT, arrival_point TEXT,
     pickup_vehicle TEXT, pickup_status TEXT,
     departure_date TEXT, departure_time TEXT, departure_mode TEXT, departure_number TEXT, departure_point TEXT,
@@ -624,6 +624,9 @@ const GUEST_TABLE_SQL = (name) => `
 const LATER_COLUMNS = [
   ['transport_not_needed', 'INTEGER NOT NULL DEFAULT 0'],
   ['stay_not_needed', 'INTEGER NOT NULL DEFAULT 0'],
+  // Where a typed-in faculty member works (3 Nov 2026); an account's own
+  // institution is used once linked.
+  ['guest_institution', 'TEXT'],
 ];
 
 // The first version of the table made phone_number NOT NULL -- every guest

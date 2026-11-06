@@ -173,7 +173,7 @@ const TEST = '/api/admin/reminders/audiences/abstract/test';
     const constant = (n) => { const i = js.indexOf(`const ${n} = {`); return js.slice(i, js.indexOf('\n};', i) + 3); };
     const sb = { Number, String, Date };
     vm.createContext(sb);
-    vm.runInContext([constant('ABSTRACT_STATUS_STYLES'), grab('esc'), grab('fmtAuditTime'), grab('abstractProvisional'), grab('abstractCardHeader')].join('\n')
+    vm.runInContext([constant('ABSTRACT_STATUS_STYLES'), grab('esc'), grab('fmtAuditTime'), grab('abstractProvisional'), grab('abstractCompletionBadge'), grab('abstractCardHeader')].join('\n')
       + '\nglobalThis.header = abstractCardHeader;', sb);
     const base = { id: 1, title: 'T', author_name: 'A', format: 'Paper' };
     const prov = sb.header({ ...base, status: 'ACCEPTED', author_registered: 0 });

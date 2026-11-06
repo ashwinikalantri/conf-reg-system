@@ -82,7 +82,7 @@ async function makeDelegate(admin, phone, name) {
     // The committee sends it back for corrections -- before the deadline passes.
     const mine = (await call('GET', '/api/abstracts/me', null, early.cookie)).body;
     const back = await call('PUT', `/api/abstracts/${mine.abstract.id}/status`,
-      { status: 'REVISION_REQUESTED', note: 'Please shorten the methods.' }, admin);
+      { status: 'REVISION_REQUESTED', note: 'Please shorten the methods.', until: istDay(7) }, admin);
     check('fixture: the committee requests corrections', back.body.success === true, back.body.error);
 
     console.log('\n== After the last date, a new abstract is refused ==');
@@ -225,7 +225,8 @@ async function makeDelegate(admin, phone, name) {
   t.openModal('modal-abstract');
   check('...and the form opens', !els['modal-abstract'].classList.contains('hidden'));
 
-  reply = { abstract: { id: 1, status: 'REVISION_REQUESTED', title: 'x', revision_note: 'Fix it' }, submission: { open: false, deadline: '2026-09-15' } };
+  // revision_open: the server says the corrections' own last date has not passed.
+  reply = { abstract: { id: 1, status: 'REVISION_REQUESTED', title: 'x', revision_note: 'Fix it', revision_open: true }, submission: { open: false, deadline: '2026-09-15' } };
   await t.loadAbstractStatus();
   check('closed, but corrections requested: the button still offers to resubmit',
     els['abstract-action-btn'].disabled === false && els['abstract-action-btn'].innerText === 'Revise & Resubmit');

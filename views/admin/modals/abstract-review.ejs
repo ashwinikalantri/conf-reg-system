@@ -15,6 +15,7 @@
         <button class="abstract-status-btn px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs" data-status="ACCEPTED">Approve</button>
         <button class="abstract-status-btn px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg text-xs" data-status="REJECTED">Reject</button>
         <button type="button" onclick="toggleAbstractRevisionBox()" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-lg text-xs">Send Back for Corrections</button>
+        <button type="button" id="abstract-complete-btn" onclick="toggleAbstractCompleteBox()" class="px-3 py-1.5 border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg text-xs">Ask to Complete</button>
         <button class="abstract-status-btn px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg text-xs" data-status="UNDER_REVIEW">Reset</button>
         <button type="button" onclick="downloadAbstractPdf()" class="ml-auto px-3 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-50 font-semibold rounded-lg text-xs">Download PDF</button>
       </div>
@@ -26,9 +27,25 @@
       <div id="abstract-revision-box" class="hidden mt-3 pt-3 border-t border-slate-100">
         <label class="block text-xs font-semibold text-slate-700 mb-1">What needs to be corrected? <span class="font-normal text-slate-400">(sent to the delegate by email)</span></label>
         <textarea id="abstract-revision-note" rows="3" placeholder="e.g. Please clarify the sample size in Methods, and shorten Background to fit the word limit." class="w-full p-2.5 border border-slate-200 rounded-lg outline-none text-sm resize-none"></textarea>
+        <label class="block text-xs font-semibold text-slate-700 mt-2">Last date to send the corrections
+          <input id="abstract-revision-until" type="date" class="mt-1 block h-9 px-2.5 border border-slate-300 rounded-lg text-sm outline-none"></label>
         <div class="flex justify-end gap-2 mt-2">
           <button type="button" onclick="toggleAbstractRevisionBox()" class="px-3 py-1.5 border border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold rounded-lg text-xs">Cancel</button>
           <button type="button" onclick="submitAbstractRevisionRequest()" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg text-xs">Send &amp; Notify Delegate</button>
+        </div>
+      </div>
+
+      <!-- Ask to complete: the author fills in what is missing (results
+           awaited, say) by a date; the status stays as it is -- an accepted
+           abstract stays accepted. PUT /api/abstracts/:id/completion. -->
+      <div id="abstract-complete-box" class="hidden mt-3 pt-3 border-t border-slate-100">
+        <label class="block text-xs font-semibold text-slate-700 mb-1">What should the author complete? <span class="font-normal text-slate-400">(sent to the delegate by email; the abstract keeps its status)</span></label>
+        <textarea id="abstract-complete-note" rows="3" placeholder="e.g. Your Results say the data are awaited. Please add your results and update the Conclusion." class="w-full p-2.5 border border-slate-200 rounded-lg outline-none text-sm resize-none"></textarea>
+        <label class="block text-xs font-semibold text-slate-700 mt-2">Last date to complete it
+          <input id="abstract-complete-until" type="date" class="mt-1 block h-9 px-2.5 border border-slate-300 rounded-lg text-sm outline-none"></label>
+        <div class="flex justify-end gap-2 mt-2">
+          <button type="button" onclick="toggleAbstractCompleteBox()" class="px-3 py-1.5 border border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold rounded-lg text-xs">Cancel</button>
+          <button type="button" onclick="submitAbstractCompleteRequest()" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs">Send &amp; Notify Delegate</button>
         </div>
       </div>
     </div>
