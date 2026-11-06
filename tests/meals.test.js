@@ -42,7 +42,8 @@ check('the Meals report needs the counts', perms.REPORT_PERMISSIONS.meals === 'm
 
 (async () => {
   const admin = await adminLogin();
-  const desk = await loginPassword('9000000006', ADMIN_PW); // FRONT_DESK: no meals
+  // The academic reviewer holds nothing about meals (the Front Desk serves them since 6 Nov 2026).
+  const desk = await loginPassword('9000000003', ADMIN_PW);
   const db = openDb();
   const made = { halls: [], sessions: [], regs: [], guests: [] };
   try {

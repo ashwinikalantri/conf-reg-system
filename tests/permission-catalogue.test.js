@@ -350,10 +350,11 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
         + 'report, which already lists every account with its contact details and roles.',
     },
     faculty: {
-      roles: ['SUPER_ADMIN'],
+      roles: ['OPERATIONS', 'SUPER_ADMIN'],
       why: 'The Faculty tab as a report (who, registration, sessions, travel, stay), behind guests.view -- '
         + 'exactly the people who already see that tab, so nobody gains a detail they could not see. Of the '
-        + 'baseline roles only Super Admin holds it; the coordinators and transport/accommodation volunteers do too.',
+        + 'baseline roles Super Admin, and Operations since 6 Nov 2026 (the owner gave it guests.view so '
+        + '"every report" includes this one); the coordinators and transport/accommodation volunteers do too.',
     },
     badges: {
       roles: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'FINANCE_ACADEMIC', 'OPERATIONS'],
@@ -362,10 +363,10 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
         + 'it rides on reports.delegates and reaches exactly the roles that report does.',
     },
     meals: {
-      roles: ['SUPER_ADMIN'],
+      roles: ['OPERATIONS', 'SUPER_ADMIN'],
       why: 'Each meal\'s expected and served counts, by counter, and who was served when -- names, '
-        + 'kinds and the volunteer, no contact details. Behind meals.view, which only Super Admin '
-        + 'holds until it is granted to another role.',
+        + 'kinds and the volunteer, no contact details. Behind meals.view: Super Admin, and Operations '
+        + 'since 6 Nov 2026 (the owner\'s call: Operations runs every report).',
     },
     summary: {
       roles: ['SUPER_ADMIN', 'FINANCE_ADMIN', 'ACADEMIC_REVIEWER', 'FINANCE_ACADEMIC', 'OPERATIONS'],
@@ -428,8 +429,9 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     FINANCE_ADMIN: ['overview', 'payments', 'statement', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
     ACADEMIC_REVIEWER: ['overview', 'abstracts', 'reports'],
     FINANCE_ACADEMIC: ['overview', 'payments', 'statement', 'abstracts', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
-    FRONT_DESK: ['desk', 'fees', 'attendance'],
-    OPERATIONS: ['reports', 'users'],
+    // 6 Nov 2026: the Front Desk serves meals; Operations reads meals and faculty.
+    FRONT_DESK: ['desk', 'fees', 'attendance', 'meals'],
+    OPERATIONS: ['reports', 'users', 'faculty', 'meals'],
   };
   const allSections = Object.keys(perms.SECTION_PERMISSIONS);
   check('a section rule exists for every admin screen',

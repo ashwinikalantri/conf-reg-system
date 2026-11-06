@@ -551,7 +551,7 @@ const SYSTEM_ROLES = [
   {
     key: 'FRONT_DESK',
     label: 'Front Desk',
-    description: 'One delegate at a time on the conference days: look them up, register walk-ins, take cash, fix details, check them in.',
+    description: 'One delegate at a time on the conference days: look them up, register walk-ins, take cash, fix details, check them in; and serve meals at a counter.',
     permissions: [
       'desk.view', 'desk.enroll', 'desk.checkin',
       // Existing keys at exactly the right grain, deliberately reused rather
@@ -578,16 +578,21 @@ const SYSTEM_ROLES = [
       'abstracts.extend_deadline',
       // Signing delegates in at the doors, and seeing the counts.
       'attendance.mark', 'attendance.view',
+      // Running a meal counter when needed (6 Nov 2026).
+      'meals.scan',
     ],
   },
   {
     key: 'OPERATIONS',
     label: 'Operations',
-    description: 'Users and every report. No payments, statement or abstracts.',
+    description: 'Users and every report, including meals and faculty (read only). No payments, statement or abstracts.',
     permissions: [
       'users.view', 'users.create', 'users.assign_role',
       'reports.delegates', 'reports.delegate_programs', 'reports.payments',
       'reports.programs', 'reports.abstracts', 'reports.users', 'reports.summary',
+      // Every report means the Meals and Faculty ones too (6 Nov 2026):
+      // the meal counts and passes, and the Faculty tab to read.
+      'meals.view', 'guests.view',
     ],
   },
   // Volunteers, one role per area; a volunteer in several areas holds several

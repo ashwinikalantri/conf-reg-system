@@ -71,7 +71,8 @@ const EXPECTED_VISIBLE = {
   // the Fee Master read-only because masters.fees_view is what tells it which
   // categories need a student ID.
   FRONT_DESK: ['nav-tab-desk', 'settings-group-conference', 'settings-group-fees', 'settings-item-attendance', 'settings-item-fees'],
-  OPERATIONS: ['nav-tab-reports', 'settings-group-system', 'settings-item-users',
+  // ...and, since 6 Nov 2026, meal counts under Conference (meals.view).
+  OPERATIONS: ['nav-tab-reports', 'settings-group-system', 'settings-item-users', 'settings-group-conference',
     'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts', 'report-users'],
 };
 
