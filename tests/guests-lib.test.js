@@ -259,11 +259,11 @@ check('at most 200 at a time', /At most 200/.test(G.parseRoomNumbers('1-201').er
 check('nothing is refused', !!G.parseRoomNumbers('  ').error);
 
 console.log('\n== 12-hour times ==');
-check('shown 12-hour', G.to12h('00:05') === '12:05 AM' && G.to12h('12:00') === '12:00 PM' && G.to12h('21:30') === '9:30 PM');
+check('shown 12-hour', G.to12h('00:05') === '12:05 am' && G.to12h('12:00') === '12:00 pm' && G.to12h('21:30') === '09:30 pm');
 check('time slots named in 12-hour time', G.slotLabels([6, 12, 18]).join('|') === 'Night 12 AM–6 AM|Morning 6 AM–12 PM|Afternoon 12 PM–6 PM|Evening 6 PM–12 AM');
 const csv12 = G.guestsCsv(G.buildBoard({ guests: [guest('T', { arrival_date: '2026-11-20', arrival_time: '21:30' })], lists, settings, today }).guests);
-check('the CSV writes times 12-hour', csv12.includes(',9:30 PM,') && csv12.includes(',2026-11-20 9:30 PM,'));
-check('clash warnings name the time 12-hour', /\(9:30 AM\)|\(10:15 AM\)/.test(b.guests.find((g) => g.name === 'Homeless').flags.vehicleClash.join(' ')));
+check('the CSV writes times 12-hour', csv12.includes(',09:30 pm,') && csv12.includes(',2026-11-20 09:30 pm,'));
+check('clash warnings name the time 12-hour', /\(09:30 am\)|\(10:15 am\)/.test(b.guests.find((g) => g.name === 'Homeless').flags.vehicleClash.join(' ')));
 
 console.log('\n== Guests without an account ==');
 check('a typed phone keeps its + and leading zero, and loses its spaces', v({ guest_phone: '+91 0712 230 0000' }).values.guest_phone === '+9107122300000');

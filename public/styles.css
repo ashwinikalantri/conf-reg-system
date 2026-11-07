@@ -272,3 +272,31 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
 
 /* A signature's preview: checks wherever the image is transparent. */
 .sig-preview { background: repeating-conic-gradient(#e3e7eb 0% 25%, #fff 0% 50%) 0 0 / 12px 12px; }
+
+/* A wide table where it does not fit (fitTable in app.js, on tables marked
+   data-fit): one card per row, each cell beside its column's name, rather
+   than a table that scrolls sideways. */
+table.is-stacked { min-width: 0 !important; }
+table.is-stacked thead { display: none; }
+table.is-stacked tbody, table.is-stacked tr { display: block; width: 100%; }
+table.is-stacked tr { padding: 10px 16px; }
+table.is-stacked td {
+  display: block; position: relative; width: 100%; min-width: 0 !important; min-height: 1.75rem;
+  padding: 4px 0 4px 8.75rem !important; text-align: left !important; white-space: normal !important; border: 0; overflow-wrap: anywhere;
+}
+table.is-stacked td::before {
+  content: attr(data-label); position: absolute; left: 0; top: 7px; width: 8rem;
+  font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #64748b;
+}
+table.is-stacked td[data-label=""] { padding-left: 0 !important; }
+table.is-stacked td[data-label=""]::before { content: none; }
+table.is-stacked td:empty { display: none; }
+@media (max-width: 379px) {
+  table.is-stacked td { padding-left: 0 !important; }
+  table.is-stacked td::before { position: static; display: block; width: auto; }
+}
+
+/* A report's line list too wide for its box: the row's card, as on a phone. */
+table.is-carded thead { display: none; }
+table.is-carded td.report-card { display: block !important; }
+table.is-carded td.report-cell { display: none !important; }

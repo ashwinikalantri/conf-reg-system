@@ -59,7 +59,7 @@ const activityLogs = [
           <input type="text" id="activity-search-<%= log.key %>" oninput="filterActivityRows('<%= log.key %>')" placeholder="Filter this log…" class="w-full sm:w-52 h-8 px-3 border border-slate-300 rounded-lg text-xs bg-white outline-none shrink-0">
         </div>
         <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse min-w-[<%= log.minWidth %>px] text-sm">
+          <table data-fit="<%= log.minWidth %>" class="w-full text-left border-collapse min-w-[<%= log.minWidth %>px] text-sm">
             <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
 <% log.columns.forEach((col) => { %><th class="py-3 px-4"><%= col %></th><% }) %>
             </tr></thead>

@@ -122,9 +122,9 @@
                   <span id="review-category-locked-badge" class="hidden text-xs font-bold text-navy bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Locked</span>
                 </div>
                 <div class="flex items-center gap-2">
-                  <select id="review-category-select" class="flex-1 p-2 border rounded-lg text-sm bg-white outline-none"></select>
-                  <button type="button" id="review-category-lock-btn" onclick="reviewLockCategory()" class="px-3 py-2 bg-navy hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold shrink-0">Lock</button>
-                  <button type="button" id="review-category-unlock-btn" onclick="reviewUnlockCategory()" class="hidden px-3 py-2 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-semibold shrink-0">Unlock</button>
+                  <select id="review-category-select" class="flex-1 min-w-0 h-10 px-2 border rounded-lg text-sm bg-white outline-none"></select>
+                  <button type="button" id="review-category-lock-btn" onclick="reviewLockCategory()" class="h-10 px-3 bg-navy hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold shrink-0">Lock</button>
+                  <button type="button" id="review-category-unlock-btn" onclick="reviewUnlockCategory()" class="hidden h-10 px-3 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-semibold shrink-0">Unlock</button>
                 </div>
                 <p class="text-xs text-slate-500 mt-1">Locking recalculates the fee and stops the delegate changing category.</p>
               </div>

@@ -162,12 +162,12 @@ function addDays(iso, n) {
 // "2026-11-20 14:30", or just the date when no time is set. Kept 24-hour so
 // it sorts; shown 12-hour (to12h).
 const joinDateTime = (date, time) => (date ? (time ? `${date} ${time}` : date) : '');
-// "14:30" -> "2:30 PM"; "00:05" -> "12:05 AM".
+// hh:mm am/pm: "14:30" -> "02:30 pm"; "00:05" -> "12:05 am".
 function to12h(hhmm) {
   const m = /^(\d{2}):(\d{2})$/.exec(String(hhmm || ''));
   if (!m) return hhmm || '';
   const h = Number(m[1]);
-  return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
+  return `${String(h % 12 || 12).padStart(2, '0')}:${m[2]} ${h < 12 ? 'am' : 'pm'}`;
 }
 const dateTime12 = (date, time) => (date ? (time ? `${date} ${to12h(time)}` : date) : '');
 // Minutes on a common scale, for comparing two trips; null without a time.

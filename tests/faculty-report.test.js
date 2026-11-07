@@ -35,7 +35,7 @@ const { call, adminLogin, loginPassword, ADMIN_PW, check, report, openDb, appFil
     check('every faculty member, cancelled ones too', sec.rows.length === all, [sec.rows.length, all]);
     const row = sec.rows.find((r) => r[0] === `Aaa Faculty ${N}`);
     check('who they are, typed in', row && row[col('Designation')] === 'Professor' && row[col('Email')] === `fac${N}@example.test` && row[col('Registration')] === 'Not signed up');
-    check('how they come: when, by what, where, and the pickup', row[col('Arrival')] === '20 Nov 2026 9:30 PM' && row[col('Arrival By')] === 'Flight · 6E 123'
+    check('how they come: when, by what, where, and the pickup', row[col('Arrival')] === '20 Nov 2026 09:30 pm' && row[col('Arrival By')] === 'Flight · 6E 123'
       && row[col('Arrival Point')] === 'Nagpur airport' && row[col('Pickup')] === 'Car 1 · Confirmed', [row[col('Arrival')], row[col('Arrival By')], row[col('Pickup')]]);
     check('...a drop not required says so, with no vehicle', row[col('Drop')] === 'Not required');
     check('where they stay, the dates and nights, and who with', row[col('Stay')] === 'Guest House · Room 12 · Double' && /^20 - 22 Nov 2026 · 2 nights$/.test(row[col('Stay Dates')])

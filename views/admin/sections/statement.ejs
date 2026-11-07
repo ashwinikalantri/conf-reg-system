@@ -39,8 +39,8 @@
       <div>
         <h3 class="text-sm font-bold text-rose-700 uppercase tracking-wide mb-2">Registrations Not Found in Statement</h3>
         <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-          <table class="w-full text-left border-collapse sm:min-w-[700px] text-sm">
-            <thead class="hidden sm:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+          <table class="w-full text-left border-collapse lg:min-w-[700px] text-sm">
+            <thead class="hidden lg:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
               <th class="py-3 px-4">Reg No</th><th class="py-3 px-4">Delegate</th><th class="py-3 px-4">Mode</th><th class="py-3 px-4">UTR / Txn No.</th><th class="py-3 px-4">Amount</th>
             </tr></thead>
             <tbody id="rec-unmatched-body" class="divide-y divide-slate-100"></tbody>
@@ -69,8 +69,8 @@
             </div>
           </div>
           <div class="overflow-x-auto">
-            <table class="w-full text-left border-collapse sm:min-w-[720px] text-sm">
-              <thead class="hidden sm:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+            <table class="w-full text-left border-collapse lg:min-w-[720px] text-sm">
+              <thead class="hidden lg:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
                 <th class="py-3 px-4 w-10"></th><th class="py-3 px-4">Collected</th><th class="py-3 px-4">Delegate</th><th class="py-3 px-4">Reg No</th><th class="py-3 px-4 text-right">Amount ₹</th>
               </tr></thead>
               <tbody id="cash-in-hand-body" class="divide-y divide-slate-100"></tbody>
@@ -84,8 +84,8 @@
         <h3 class="text-sm font-bold text-amber-700 uppercase tracking-wide mb-2">Bank Credits Not Matched to a Registration</h3>
         <p class="text-xs text-slate-500 mb-2">Includes non-UPI credits (NEFT/RTGS/IMPS) which don't carry a machine-readable reference — match these manually by amount, date, and description. If a credit will never belong to a registration (bank charges, interest, an unrelated transfer), mark it as non-registration instead of leaving it here.</p>
         <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-          <table class="w-full text-left border-collapse sm:min-w-[820px] text-sm">
-            <thead class="hidden sm:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+          <table class="w-full text-left border-collapse lg:min-w-[820px] text-sm">
+            <thead class="hidden lg:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
               <th class="py-3 px-4">Date</th><th class="py-3 px-4">Description</th><th class="py-3 px-4">Credit ₹</th><th class="py-3 px-4 text-right">Actions</th>
             </tr></thead>
             <tbody id="rec-credits-body" class="divide-y divide-slate-100"></tbody>
@@ -97,8 +97,8 @@
         <h3 class="text-sm font-bold text-slate-600 uppercase tracking-wide mb-2">Non-Registration Transactions</h3>
         <p class="text-xs text-slate-500 mb-2">Credits marked as not belonging to any registration. They're excluded from matching and can't be linked to a payment — unmark to bring one back into the pool.</p>
         <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-          <table class="w-full text-left border-collapse sm:min-w-[820px] text-sm">
-            <thead class="hidden sm:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+          <table class="w-full text-left border-collapse lg:min-w-[820px] text-sm">
+            <thead class="hidden lg:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
               <th class="py-3 px-4">Date</th><th class="py-3 px-4">Description</th><th class="py-3 px-4">Credit ₹</th><th class="py-3 px-4 text-right">Actions</th>
             </tr></thead>
             <tbody id="rec-nonreg-body" class="divide-y divide-slate-100"></tbody>
@@ -123,8 +123,8 @@
         </div>
         <p class="text-xs text-slate-500 mb-2">Every debit in the imported statement. A row linked to a refund is money paid back to a delegate; anything else is a bank charge or a transfer out that this app knows nothing about — worth a look before the books are closed.</p>
         <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-          <table class="w-full text-left border-collapse sm:min-w-[820px] text-sm">
-            <thead class="hidden sm:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+          <table class="w-full text-left border-collapse lg:min-w-[820px] text-sm">
+            <thead class="hidden lg:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
               <th class="py-3 px-4">Date</th><th class="py-3 px-4">Description</th><th class="py-3 px-4">Debit ₹</th><th class="py-3 px-4">Applied To</th>
             </tr></thead>
             <tbody id="rec-debits-body" class="divide-y divide-slate-100"></tbody>
@@ -138,8 +138,8 @@
           <input type="text" id="rec-matched-search" oninput="filterMatchedRows()" placeholder="Search reg no, name, UTR, description…" class="w-full sm:w-72 p-2 border border-slate-300 rounded-lg text-sm outline-none">
         </div>
         <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-          <table class="w-full text-left border-collapse sm:min-w-[1000px] text-sm">
-            <thead class="hidden sm:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+          <table class="w-full text-left border-collapse lg:min-w-[940px] text-sm">
+            <thead class="hidden lg:table-header-group"><tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
               <th class="py-3 px-4">#</th><th class="py-3 px-4">Reg No</th><th class="py-3 px-4">Delegate</th><th class="py-3 px-4">UTR / Txn No.</th><th class="py-3 px-4">Statement Date</th><th class="py-3 px-4">Description</th><th class="py-3 px-4">Amount</th>
             </tr></thead>
             <tbody id="rec-matched-body" class="divide-y divide-slate-100"></tbody>

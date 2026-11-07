@@ -3838,6 +3838,58 @@ document.addEventListener('DOMContentLoaded', () => loadDirectorySuggestions());
 // page text everywhere reflect the current Settings → General value.
 document.addEventListener('DOMContentLoaded', loadConferenceInfo);
 
+// --- Tables that fit -------------------------------------------------------
+// The admin panel never scrolls sideways. A wide table marked
+// data-fit="<the width it needs>" is a table where its box is that wide, and
+// elsewhere one card per row, each cell under its column's name (styles.css,
+// table.is-stacked); the cells take their names from the header each time
+// the rows change. A report's line list, data-fit="cards", is a table while
+// its columns fit and otherwise shows the card each row carries for a phone
+// (table.is-carded) -- the download still has every column.
+function fitTable(t) {
+  const box = t.parentElement;
+  if (!box || !box.clientWidth) return;
+  if (t.dataset.fit === 'cards') {
+    t.classList.remove('is-carded');
+    t.classList.toggle('is-carded', t.offsetWidth > box.clientWidth + 1);
+    return;
+  }
+  t.classList.toggle('is-stacked', box.clientWidth < Number(t.dataset.fit));
+  const heads = [];
+  t.querySelectorAll('thead tr:first-child th').forEach((th) => {
+    for (let i = 0; i < (th.colSpan || 1); i += 1) heads.push(th.textContent.replace(/\s+/g, ' ').trim());
+  });
+  t.querySelectorAll('tbody tr').forEach((tr) => {
+    let col = 0;
+    [...tr.cells].forEach((td) => {
+      const label = td.colSpan > 1 ? '' : (heads[col] || '');
+      if (td.dataset.label !== label) td.dataset.label = label;
+      col += td.colSpan || 1;
+    });
+  });
+}
+// Watch the tables not yet watched: on load, and again by whatever draws a
+// new one (viewReport).
+let fitTableSizes = null;
+function watchFitTables() {
+  const tables = [...document.querySelectorAll('table[data-fit]:not([data-fit-watched])')];
+  if (!tables.length) return;
+  if (!fitTableSizes && window.ResizeObserver) {
+    fitTableSizes = new ResizeObserver((seen) => seen.forEach((e) => {
+      const t = e.target.querySelector(':scope > table[data-fit]');
+      if (t) fitTable(t);
+    }));
+  }
+  tables.forEach((t) => {
+    t.dataset.fitWatched = '1';
+    fitTable(t);
+    if (fitTableSizes) fitTableSizes.observe(t.parentElement);
+    else window.addEventListener('resize', () => fitTable(t));
+    new MutationObserver(() => fitTable(t)).observe(t, { childList: true, subtree: true });
+  });
+}
+document.addEventListener('DOMContentLoaded', watchFitTables);
+
 // --- ADMIN & BACKEND LOGIC ---
 
 // Same stroke-icon language as the rest of the admin panel (2px stroke,
@@ -7068,11 +7120,11 @@ function renderUserDetail() {
   const roleSelect = !canAssign
     ? `<p class="text-sm text-slate-700 font-medium">${esc(roleLabel(u.role))}</p>`
     : `<div class="flex items-center gap-2">
-    <select id="user-detail-role-select" ${roleLocked ? 'disabled' : ''} class="flex-1 p-2 border rounded-lg text-sm bg-white outline-none disabled:bg-slate-100 disabled:text-slate-400">
+    <select id="user-detail-role-select" ${roleLocked ? 'disabled' : ''} class="flex-1 min-w-0 h-10 px-2 border rounded-lg text-sm bg-white outline-none disabled:bg-slate-100 disabled:text-slate-400">
       ${roleLocked ? `<option value="SUPER_ADMIN" selected>${esc(roleLabel('SUPER_ADMIN'))}</option>`
         : roleSelectOptionsHtml({ includeDelegate: 'first', selected: u.role })}
     </select>
-    <button type="button" onclick="saveUserDetailRole()" ${roleLocked ? 'disabled' : ''} class="px-3 py-2 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:bg-slate-300 disabled:cursor-not-allowed">Save</button>
+    <button type="button" onclick="saveUserDetailRole()" ${roleLocked ? 'disabled' : ''} class="h-10 px-3 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:bg-slate-300 disabled:cursor-not-allowed">Save</button>
   </div>${roleLocked ? `<p class="text-[11px] text-slate-400 mt-1.5">Only a Super Admin can change another Super Admin's role.</p>` : ''}`;
 
   const editBtn = can('users.edit')
@@ -7417,15 +7469,15 @@ async function renderBackendPrograms() {
     return `
     <div class="flex flex-wrap items-center gap-3 py-3 border-b border-slate-100 ${o.active ? '' : 'opacity-60'}">
       <div class="flex-1 min-w-[220px]">
-        <input type="text" value="${esc(o.name)}" maxlength="200" aria-label="Name" title="Name — the programme shows this name too" class="prog-name w-full p-1.5 border border-slate-300 rounded text-sm font-semibold text-slate-800" data-id="${esc(o.id)}">
+        <input type="text" value="${esc(o.name)}" maxlength="200" aria-label="Name" title="Name — the programme shows this name too" class="prog-name w-full h-8 px-2 border border-slate-300 rounded text-sm font-semibold text-slate-800" data-id="${esc(o.id)}">
         <p class="text-[11px] text-slate-500 mt-1">${Number(o.fee) > 0 ? `<span class="text-indigo-600">+₹${inr(o.fee)}</span> · ` : ''}Enrolled ${Number(o.enrolled)} / ${Number(o.capacity)} · ${remaining} left${facultyCount ? ` · ${facultyCount} faculty` : ''}${o.active ? '' : ' · inactive'}</p>
       </div>
-      <input type="number" min="0" value="${esc(o.capacity)}" title="Capacity" class="prog-capacity w-20 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
-      <input type="number" min="0" step="0.01" value="${esc(o.fee)}" title="Fee (₹)" class="prog-fee w-24 p-1.5 border rounded text-sm" data-id="${esc(o.id)}">
-      <button class="prog-save px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Save</button>
-      <button class="prog-roster px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}" data-name="${esc(o.name)}">Roster</button>
-      <button class="prog-toggle px-3 py-1.5 ${o.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}" data-active="${o.active ? 1 : 0}">${o.active ? 'Deactivate' : 'Activate'}</button>
-      <button class="prog-delete px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Delete</button>
+      <input type="number" min="0" value="${esc(o.capacity)}" title="Capacity" class="prog-capacity w-20 h-8 px-2 border rounded text-sm" data-id="${esc(o.id)}">
+      <input type="number" min="0" step="0.01" value="${esc(o.fee)}" title="Fee (₹)" class="prog-fee w-24 h-8 px-2 border rounded text-sm" data-id="${esc(o.id)}">
+      <button class="prog-save h-8 px-3 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Save</button>
+      <button class="prog-roster h-8 px-3 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}" data-name="${esc(o.name)}">Roster</button>
+      <button class="prog-toggle h-8 px-3 ${o.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}" data-active="${o.active ? 1 : 0}">${o.active ? 'Deactivate' : 'Activate'}</button>
+      <button class="prog-delete h-8 px-3 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(o.id)}">Delete</button>
     </div>`;
   };
 
@@ -7443,24 +7495,24 @@ async function renderBackendPrograms() {
           <label class="flex items-center gap-1.5 text-xs font-semibold text-slate-600 mr-1 select-none" title="Not offered to delegates; the organisers enrol invitees">
             <input type="checkbox" class="group-invite" data-id="${esc(g.id)}" ${Number(g.invite_only) ? 'checked' : ''}> Invite only
           </label>
-          <button class="group-toggle px-2.5 py-1.5 ${g.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(g.id)}" data-active="${g.active ? 1 : 0}">${g.active ? 'Deactivate' : 'Activate'}</button>
-          <button class="group-delete px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(g.id)}">Delete Group</button>
+          <button class="group-toggle h-8 px-3 ${g.active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'} text-white text-xs font-semibold rounded-lg" data-id="${esc(g.id)}" data-active="${g.active ? 1 : 0}">${g.active ? 'Deactivate' : 'Activate'}</button>
+          <button class="group-delete h-8 px-3 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg" data-id="${esc(g.id)}">Delete Group</button>
         </div>
       </div>
       <form class="add-option-form flex flex-wrap items-end gap-2 mb-3 bg-slate-50 p-3 rounded-xl" data-group-id="${esc(g.id)}">
         <div class="flex-1 min-w-[160px]">
           <label class="block text-[11px] font-semibold text-slate-600 mb-1">Option name</label>
-          <input required class="new-option-name w-full p-2 border rounded-lg text-sm" placeholder="e.g. Workshop 1: ...">
+          <input required class="new-option-name w-full h-10 px-3 border rounded-lg text-sm" placeholder="e.g. Workshop 1: ...">
         </div>
         <div>
           <label class="block text-[11px] font-semibold text-slate-600 mb-1">Capacity</label>
-          <input type="number" min="0" value="50" class="new-option-capacity w-24 p-2 border rounded-lg text-sm">
+          <input type="number" min="0" value="50" class="new-option-capacity w-24 h-10 px-2 border rounded-lg text-sm">
         </div>
         <div>
           <label class="block text-[11px] font-semibold text-slate-600 mb-1">Fee (₹)</label>
-          <input type="number" min="0" step="0.01" value="0" class="new-option-fee w-24 p-2 border rounded-lg text-sm">
+          <input type="number" min="0" step="0.01" value="0" class="new-option-fee w-24 h-10 px-2 border rounded-lg text-sm">
         </div>
-        <button type="submit" class="px-3 py-2 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">+ Add</button>
+        <button type="submit" class="h-10 px-4 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">+ Add</button>
       </form>
       ${g.options.map(optionRow).join('') || '<p class="text-sm text-slate-400 py-2">No options yet.</p>'}
     </div>
@@ -10349,7 +10401,7 @@ function reportSummaryHtml(rep) {
   };
   const tableCard = (s) => `<div class="rounded-xl border border-slate-200 p-4">
       <h4 class="font-bold text-slate-900 mb-2">${esc(s.name)}</h4>
-      <div class="overflow-x-auto"><table class="w-full text-sm border-collapse">
+      <div class="overflow-x-auto"><table data-fit="${s.columns.length * 110}" class="w-full text-sm border-collapse">
         <thead><tr>${s.columns.map((c, i) => `<th class="text-left ${i > 1 ? 'text-right' : ''} font-semibold text-slate-600 py-1.5 px-2 border-b border-slate-200 whitespace-nowrap">${esc(c)}</th>`).join('')}</tr></thead>
         <tbody>${s.rows.length ? s.rows.map((r) => `<tr>${r.map((c, i) => `<td class="py-1.5 px-2 border-b border-slate-100 ${i > 1 ? 'text-right tabular-nums' : ''}">${esc(c)}</td>`).join('')}</tr>`).join('')
           : `<tr><td colspan="${s.columns.length}" class="py-3 px-2 text-slate-500">Nothing to show</td></tr>`}</tbody>
@@ -10389,14 +10441,14 @@ async function viewReport(type, extraQuery) {
     <div class="report-section" data-section-idx="${idx}">
       ${sec.name ? `<h3 class="text-sm font-bold text-slate-900 px-4 sm:px-5 pt-4 pb-2">${esc(sec.name)} <span class="report-section-count text-slate-500 font-normal">(${sec.rows.length})</span></h3>` : ''}
       <div class="overflow-auto max-h-[70vh] border-y border-slate-200">
-        <table class="w-full text-left border-collapse text-sm sm:min-w-[600px]">
+        <table data-fit="cards" class="w-full text-left border-collapse text-sm">
           <thead class="hidden sm:table-header-group"><tr>
             ${sec.columns.map((c) => `<th class="sticky top-0 z-[1] bg-slate-50 py-2.5 px-3 font-semibold text-slate-600 border-b border-slate-200 whitespace-nowrap">${esc(c)}</th>`).join('')}
           </tr></thead>
           <tbody class="divide-y divide-slate-100 report-tbody">
             ${sec.rows.length ? sec.rows.map((r) => `<tr class="report-row">
-                <td class="py-3 px-3 block sm:hidden">${reportRowCardHtml(r, sec.columns, sec.qr ? sec.qr.column : -1)}</td>
-                ${r.map((c, i) => `<td class="py-2 px-3 hidden sm:table-cell whitespace-nowrap">${sec.qr && i === sec.qr.column ? (c ? reportQrImg(c, 72) : '') : esc(c)}</td>`).join('')}
+                <td class="report-card py-3 px-3 block sm:hidden">${reportRowCardHtml(r, sec.columns, sec.qr ? sec.qr.column : -1)}</td>
+                ${r.map((c, i) => `<td class="report-cell py-2 px-3 hidden sm:table-cell whitespace-nowrap">${sec.qr && i === sec.qr.column ? (c ? reportQrImg(c, 72) : '') : esc(c)}</td>`).join('')}
               </tr>`).join('')
     : `<tr class="report-empty-row"><td colspan="${sec.columns.length}" class="py-4 px-3 text-center text-slate-500">No records</td></tr>`}
           </tbody>
@@ -10420,6 +10472,7 @@ async function viewReport(type, extraQuery) {
         <input id="report-search-input" type="search" placeholder="Search in this report" oninput="filterReportRows()" class="w-full sm:max-w-sm h-10 px-3 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200"></div>`}
     </div>
     ${summary ? reportSummaryHtml(rep) : `<div class="pb-1">${rep.sections.map(table).join('')}</div>`}`;
+  watchFitTables();
 }
 
 // Filters every row across the currently-viewed report's sections by a
@@ -12965,6 +13018,19 @@ function guestWhen(date, time) {
   if (!date) return '';
   return `${formatFullDate(date) || date}${time ? `, ${guestTime12(time)}` : ''}`;
 }
+// A faculty member's travel times read hh:mm am/pm: "09:30 pm" (as
+// guests.js to12h writes them in the CSV and the Faculty report).
+function travelTime12(hhmm) {
+  const m = /^(\d{2}):(\d{2})$/.exec(String(hhmm || ''));
+  if (!m) return hhmm || '';
+  const h = Number(m[1]);
+  return `${String(h % 12 || 12).padStart(2, '0')}:${m[2]} ${h < 12 ? 'am' : 'pm'}`;
+}
+// "20 November 2026, 09:30 pm", or just the date.
+function travelWhen(date, time) {
+  if (!date) return '';
+  return `${formatFullDate(date) || date}${time ? `, ${travelTime12(time)}` : ''}`;
+}
 // Whatever has been entered for one leg of the journey, and nothing made up:
 // the date and time, then mode / number / point, then vehicle and status.
 // '' when nothing at all is set (the caller says "Not set").
@@ -12976,13 +13042,13 @@ function transferNotRequired(status) {
 }
 function guestLegHtml(date, time, mode, number, point, vehicle, status) {
   if (transferNotRequired(status)) {
-    return (date ? `<p class="font-semibold text-slate-800">${esc(guestWhen(date, time))}</p>` : '')
+    return (date ? `<p class="font-semibold text-slate-800">${esc(travelWhen(date, time))}</p>` : '')
       + `<p class="text-xs mt-0.5 text-slate-500">${esc(status)}</p>`;
   }
   const route = [mode, number, point].filter(Boolean).map(esc).join(' · ');
   const transfer = [vehicle ? esc(vehicle) : (date ? '<span class="text-slate-400">No vehicle</span>' : ''), status ? esc(status) : ''].filter(Boolean).join(' · ');
   return [
-    date ? `<p class="font-semibold text-slate-800">${esc(guestWhen(date, time))}</p>` : '',
+    date ? `<p class="font-semibold text-slate-800">${esc(travelWhen(date, time))}</p>` : '',
     route ? `<p class="text-xs text-slate-500">${route}</p>` : '',
     transfer ? `<p class="text-xs mt-0.5">${transfer}</p>` : '',
   ].join('');
@@ -13047,7 +13113,7 @@ function parseTime12(raw) {
   return { hhmm: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` };
 }
 // The visible box: as they type, keep the hidden 24-hour value in step;
-// on leaving it, tidy the box into "9:30 PM" or say what is wrong.
+// on leaving it, tidy the box into "09:30 pm" or say what is wrong.
 function onTime12Input(el) {
   const hidden = el.form && el.form.querySelector(`input[type="hidden"][name="${el.dataset.time12}"]`);
   const p = parseTime12(el.value);
@@ -13058,8 +13124,8 @@ function onTime12Input(el) {
 function onTime12Blur(el) {
   onTime12Input(el);
   const p = parseTime12(el.value);
-  if (p.hhmm) el.value = guestTime12(p.hhmm);
-  setTime12Error(el, p.ambiguous ? 'Add AM or PM, e.g. 9:30 PM.' : p.invalid ? 'Not a time. Try 9:30 AM.' : '');
+  if (p.hhmm) el.value = travelTime12(p.hhmm);
+  setTime12Error(el, p.ambiguous ? 'Add am or pm, e.g. 09:30 pm.' : p.invalid ? 'Not a time. Try 09:30 am.' : '');
 }
 function setTime12Error(el, msg) {
   const box = el.parentElement && el.parentElement.querySelector('[data-time12-error]');
@@ -13187,7 +13253,7 @@ function openGuestEditor(id) {
   // 12-hour box; the hidden input under the field's name holds the 24-hour
   // value that is saved.
   const time = (name, enabled) => `<input type="hidden" name="${name}" value="${esc(g[name] || '')}" ${enabled ? '' : 'disabled'}>
-      <input type="text" data-time12="${name}" value="${esc(guestTime12(g[name]))}" ${enabled ? '' : 'disabled'} autocomplete="off" placeholder="e.g. 9:30 AM"
+      <input type="text" data-time12="${name}" value="${esc(travelTime12(g[name]))}" ${enabled ? '' : 'disabled'} autocomplete="off" placeholder="e.g. 09:30 am"
         class="${cls}" oninput="onTime12Input(this)" onblur="onTime12Blur(this)">
       <p data-time12-error class="hidden text-[11px] text-rose-700 mt-1"></p>`;
   // The flight or train number, named after the mode (see syncGuestModeFields).
@@ -13502,10 +13568,10 @@ function renderGuestSchedule(kind) {
     : `<span class="${r.alert ? 'text-orange-700 font-semibold' : 'text-slate-400'}">${word}</span>`);
   const driverLine = (r) => (r.vehicle ? `${esc(r.vehicle)}${r.driverPhone ? ` · ${telLink(r.driverPhone)}` : ''}` : noVehicle(r, 'No vehicle'));
   box.innerHTML = `${clashes ? `<p class="mb-3 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">${clashes} ${isPickup ? 'pickup' : 'drop'}(s) use a vehicle within ${esc(guestData.settings.clashMinutes)} minutes of another trip. Check each is intended — guests on the same flight can share.</p>` : ''}
-    <div class="md:hidden space-y-2">${rows.length ? rows.map((r) => `
+    <div class="lg:hidden space-y-2">${rows.length ? rows.map((r) => `
       <article class="bg-white rounded-2xl border border-slate-200 ${r.alert ? 'border-l-4 border-l-orange-400' : ''} shadow-sm p-3.5">
         <div class="flex items-baseline justify-between gap-2">
-          <p class="font-bold ${r.at ? 'text-slate-800' : 'text-slate-400'}">${esc(r.at ? guestWhen(r.at.slice(0, 10), r.at.slice(11)) : 'Not set')}</p>
+          <p class="font-bold ${r.at ? 'text-slate-800' : 'text-slate-400'}">${esc(r.at ? travelWhen(r.at.slice(0, 10), r.at.slice(11)) : 'Not set')}</p>
           ${r.status ? guestPill('bg-white text-slate-600 border-slate-300', r.status) : ''}
         </div>
         <button type="button" onclick="openGuestEditor(${esc(r.id)})" class="mt-1 font-semibold text-indigo-700 text-left">${esc(r.name)}</button>
@@ -13514,7 +13580,7 @@ function renderGuestSchedule(kind) {
         <p class="text-xs mt-1">${driverLine(r)}</p>
         ${r.clash.map((c) => `<p class="text-[11px] text-amber-800 mt-1">${esc(c)}</p>`).join('')}
       </article>`).join('') : '<p class="p-8 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">No one to schedule yet.</p>'}</div>
-    <div class="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+    <div class="hidden lg:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
       <table class="w-full text-sm min-w-[56rem]">
         <thead class="bg-slate-50 text-[11px] text-slate-500 uppercase tracking-wide"><tr>
           <th class="p-3 text-left">${isPickup ? 'Arrival' : 'Departure'}</th><th class="p-3 text-left">Name</th><th class="p-3 text-left">Phone</th>
@@ -13523,7 +13589,7 @@ function renderGuestSchedule(kind) {
         </tr></thead>
         <tbody class="divide-y divide-slate-100">${rows.length ? rows.map((r) => `
           <tr class="${r.alert ? 'bg-orange-50' : ''} align-top">
-            <td class="p-3 whitespace-nowrap font-semibold ${r.at ? 'text-slate-800' : 'text-slate-400'}">${esc(r.at ? guestWhen(r.at.slice(0, 10), r.at.slice(11)) : 'Not set')}</td>
+            <td class="p-3 whitespace-nowrap font-semibold ${r.at ? 'text-slate-800' : 'text-slate-400'}">${esc(r.at ? travelWhen(r.at.slice(0, 10), r.at.slice(11)) : 'Not set')}</td>
             <td class="p-3"><button type="button" onclick="openGuestEditor(${esc(r.id)})" class="font-semibold text-indigo-700 hover:underline text-left">${esc(r.name)}</button></td>
             <td class="p-3 font-mono text-xs">${telLink(r.phone)}</td>
             <td class="p-3">${esc(r.mode || '—')}</td><td class="p-3">${esc(r.number || '—')}</td><td class="p-3">${esc(r.point || '—')}</td>
@@ -13616,7 +13682,7 @@ function renderGuestRooms() {
       <button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Save room</button>
       <button type="button" onclick="this.form.reset()" class="h-9 px-3 border border-slate-300 text-slate-600 text-sm rounded-lg">Clear</button>
     </form>` : ''}
-    <div class="md:hidden space-y-2">${guestData.rooms.length ? guestData.rooms.map((r) => `
+    <div class="lg:hidden space-y-2">${guestData.rooms.length ? guestData.rooms.map((r) => `
       <article class="bg-white rounded-2xl border border-slate-200 shadow-sm p-3.5">
         <div class="flex items-baseline justify-between gap-2">
           <p class="font-semibold text-slate-800">${esc(r.accommodation)} · ${esc(r.room_no)}</p>
@@ -13626,7 +13692,7 @@ function renderGuestRooms() {
         ${r.guests.length ? `<p class="text-xs text-slate-600 mt-1">${esc(r.guests.join(', '))}</p>` : ''}
         ${edit || can('guests.manage') ? `<div class="flex gap-2 mt-2">${edit ? `<button type="button" onclick="editGuestRoom(${esc(r.id)})" class="flex-1 h-9 border border-indigo-300 text-indigo-700 text-xs font-semibold rounded-lg">Edit</button>` : ''}${can('guests.manage') ? `<button type="button" onclick="deleteGuestRoom(${esc(r.id)})" class="flex-1 h-9 border border-rose-300 text-rose-700 text-xs font-semibold rounded-lg">Delete</button>` : ''}</div>` : ''}
       </article>`).join('') : '<p class="p-6 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">No rooms yet.</p>'}</div>
-    <div class="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+    <div class="hidden lg:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
       <table class="w-full text-sm min-w-[44rem]"><thead class="bg-slate-50 text-[11px] text-slate-500 uppercase tracking-wide"><tr>
         <th class="p-3 text-left">Accommodation</th><th class="p-3 text-left">Room No</th><th class="p-3 text-left">Type</th>
         <th class="p-3 text-right">Beds</th><th class="p-3 text-right">Occupied</th><th class="p-3 text-left">Status</th><th class="p-3 text-left">Faculty</th><th class="p-3"></th></tr></thead>
@@ -14120,19 +14186,21 @@ function renderHalls(halls) {
   const box = document.getElementById('prog-halls');
   if (!box) return;
   box.innerHTML = halls.map((h) => `
-    <div class="py-2 flex flex-col sm:flex-row sm:items-center gap-2 ${h.active ? '' : 'opacity-60'}">
-      <input value="${esc(h.name)}" data-hall="${esc(h.id)}" aria-label="Hall name" class="prog-hall-name flex-1 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-      <input value="${h.lat != null && h.lng != null ? esc(`${h.lat}, ${h.lng}`) : ''}" data-hall="${esc(h.id)}" aria-label="Map location" placeholder="Map location: 20.741279, 78.662397"
-        title="For the delegates' campus map. In Google Maps, press and hold the spot, then copy the numbers shown." class="prog-hall-loc sm:w-56 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none tabular-nums">
-      <input value="${esc(h.floor || '')}" data-hall="${esc(h.id)}" aria-label="Floor" maxlength="60" placeholder="Floor (if it helps)"
-        title="Shown with the hall on the delegates' campus map, e.g. 2nd floor. Leave blank where it is obvious." class="prog-hall-floor sm:w-36 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-      <input value="${esc(h.building || '')}" data-hall="${esc(h.id)}" aria-label="Building" maxlength="80" placeholder="Building (if shared)"
-        title="Where several halls share a building and a map location: its name heads them on the delegates' campus map." class="prog-hall-building sm:w-44 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+    <div class="py-3 space-y-2 ${h.active ? '' : 'opacity-60'}">
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2">
+        <input value="${esc(h.name)}" data-hall="${esc(h.id)}" aria-label="Hall name" class="prog-hall-name w-full min-w-0 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+        <input value="${h.lat != null && h.lng != null ? esc(`${h.lat}, ${h.lng}`) : ''}" data-hall="${esc(h.id)}" aria-label="Map location" placeholder="Map location: 20.741279, 78.662397"
+          title="For the delegates' campus map. In Google Maps, press and hold the spot, then copy the numbers shown." class="prog-hall-loc w-full min-w-0 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none tabular-nums">
+        <input value="${esc(h.floor || '')}" data-hall="${esc(h.id)}" aria-label="Floor" maxlength="60" placeholder="Floor (if it helps)"
+          title="Shown with the hall on the delegates' campus map, e.g. 2nd floor. Leave blank where it is obvious." class="prog-hall-floor w-full min-w-0 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+        <input value="${esc(h.building || '')}" data-hall="${esc(h.id)}" aria-label="Building" maxlength="80" placeholder="Building (if shared)"
+          title="Where several halls share a building and a map location: its name heads them on the delegates' campus map." class="prog-hall-building w-full min-w-0 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+      </div>
       <div class="flex flex-wrap gap-1.5">
-        <button type="button" onclick="saveHall(${Number(h.id)})" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save</button>
-        <a href="/api/admin/programme/posters.pdf?hall=${encodeURIComponent(h.id)}" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50">QR poster</a>
-        <button type="button" onclick="newHallCode(${Number(h.id)})" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">New QR</button>
-        <button type="button" onclick="putHall(${Number(h.id)}, { active: ${h.active ? 'false' : 'true'} })" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">${h.active ? 'Turn off' : 'Turn on'}</button>
+        <button type="button" onclick="saveHall(${Number(h.id)})" class="inline-flex items-center h-8 px-3 rounded-lg text-xs font-semibold bg-navy hover:bg-indigo-700 text-white">Save</button>
+        <a href="/api/admin/programme/posters.pdf?hall=${encodeURIComponent(h.id)}" target="_blank" rel="noopener" class="inline-flex items-center h-8 px-3 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-slate-50">QR poster</a>
+        <button type="button" onclick="newHallCode(${Number(h.id)})" class="inline-flex items-center h-8 px-3 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-slate-50">New QR</button>
+        <button type="button" onclick="putHall(${Number(h.id)}, { active: ${h.active ? 'false' : 'true'} })" class="inline-flex items-center h-8 px-3 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-slate-50">${h.active ? 'Turn off' : 'Turn on'}</button>
       </div>
     </div>`).join('') || '<p class="py-4 text-sm text-slate-400">No halls yet.</p>';
 }
@@ -14918,21 +14986,23 @@ async function renderCertificateSettings() {
   document.getElementById('cs-background-remove').classList.toggle('hidden', !d.settings.hasBackground);
 
   document.getElementById('cs-signatories').innerHTML = d.signatories.map((s) => `
-    <div class="flex flex-col sm:flex-row sm:items-center gap-2 p-3 border border-slate-200 rounded-xl ${s.active ? '' : 'opacity-60'}">
-      <div class="sig-preview w-full sm:w-40 h-14 border border-dashed border-slate-300 rounded-lg flex items-center justify-center shrink-0">
-        ${Number(s.has_signature) ? `<img src="/api/admin/certificates/signatories/${encodeURIComponent(s.id)}/signature?t=${Date.now()}" alt="Signature" class="max-h-12 max-w-full">` : '<span class="text-[11px] text-slate-400">No signature yet</span>'}
+    <div class="p-3 border border-slate-200 rounded-xl space-y-2 ${s.active ? '' : 'opacity-60'}">
+      <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+        <div class="sig-preview w-full sm:w-40 h-14 border border-dashed border-slate-300 rounded-lg flex items-center justify-center shrink-0">
+          ${Number(s.has_signature) ? `<img src="/api/admin/certificates/signatories/${encodeURIComponent(s.id)}/signature?t=${Date.now()}" alt="Signature" class="max-h-12 max-w-full">` : '<span class="text-[11px] text-slate-400">No signature yet</span>'}
+        </div>
+        <div class="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <input value="${esc(s.name)}" data-sig="${esc(s.id)}" data-field="name" aria-label="Name" class="cs-sig-field w-full min-w-0 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+          <input value="${esc(s.designation)}" data-sig="${esc(s.id)}" data-field="designation" aria-label="Designation" class="cs-sig-field w-full min-w-0 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+        </div>
       </div>
-      <div class="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <input value="${esc(s.name)}" data-sig="${esc(s.id)}" data-field="name" aria-label="Name" class="cs-sig-field h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-        <input value="${esc(s.designation)}" data-sig="${esc(s.id)}" data-field="designation" aria-label="Designation" class="cs-sig-field h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-      </div>
-      <div class="flex flex-wrap gap-1.5">
-        <label class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer">Signature
+      <div class="flex flex-wrap items-center gap-1.5">
+        <label class="inline-flex items-center h-8 px-3 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-slate-50 cursor-pointer">Signature
           <input type="file" accept="image/png,image/jpeg" class="hidden" onchange="uploadSignature(${Number(s.id)}, this)"></label>
-        <button type="button" onclick="saveSignatory(${Number(s.id)})" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save</button>
-        <button type="button" onclick="toggleSignatory(${Number(s.id)}, ${s.active ? 0 : 1})" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">${s.active ? 'Turn off' : 'Turn on'}</button>
+        <button type="button" onclick="saveSignatory(${Number(s.id)})" class="inline-flex items-center h-8 px-3 rounded-lg text-xs font-semibold bg-navy hover:bg-indigo-700 text-white">Save</button>
+        <button type="button" onclick="toggleSignatory(${Number(s.id)}, ${s.active ? 0 : 1})" class="inline-flex items-center h-8 px-3 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-slate-50">${s.active ? 'Turn off' : 'Turn on'}</button>
+        <label class="flex items-center gap-1.5 text-xs text-slate-600 sm:ml-auto"><input type="checkbox" ${Number(s.mmc_only) ? 'checked' : ''} onchange="putSignatory(${Number(s.id)}, { mmcOnly: this.checked })"> Only on certificates with MMC points</label>
       </div>
-      <label class="flex items-center gap-1.5 text-xs text-slate-600 sm:w-44 shrink-0"><input type="checkbox" ${Number(s.mmc_only) ? 'checked' : ''} onchange="putSignatory(${Number(s.id)}, { mmcOnly: this.checked })"> Only on certificates with MMC points</label>
     </div>`).join('');
 
   const chips = Object.keys(d.placeholders).map((k) => `<code class="text-[11px] bg-slate-100 px-1 py-0.5 rounded" title="${esc(d.placeholders[k])}">{{${esc(k)}}}</code>`).join(' ');
@@ -15249,7 +15319,7 @@ async function loadReconciliation() {
   if (unmatchedBody) {
     unmatchedBody.innerHTML = data.unmatched.length ? data.unmatched.map(r => `
       <tr>
-        <td class="p-3 block sm:hidden">
+        <td class="p-3 block lg:hidden">
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
               <p class="font-bold text-sm truncate">${esc(r.delegate_name)}</p>
@@ -15262,11 +15332,11 @@ async function loadReconciliation() {
             <span class="text-[11px] font-mono text-slate-500 truncate">${esc(r.utr_number)}</span>
           </div>
         </td>
-        <td class="p-3 font-mono text-xs hidden sm:table-cell">${esc(r.registration_number || '—')}</td>
-        <td class="p-3 hidden sm:table-cell">${esc(r.delegate_name)}</td>
-        <td class="p-3 hidden sm:table-cell">${esc(PAYMENT_MODE_LABELS[r.payment_mode] || r.payment_mode || 'UPI')}</td>
-        <td class="p-3 font-mono text-xs hidden sm:table-cell">${esc(r.utr_number)}</td>
-        <td class="p-3 hidden sm:table-cell">₹${inr(esc(r.paid_amount != null ? r.paid_amount : r.expected_amount))}</td>
+        <td class="p-3 font-mono text-xs hidden lg:table-cell">${esc(r.registration_number || '—')}</td>
+        <td class="p-3 hidden lg:table-cell">${esc(r.delegate_name)}</td>
+        <td class="p-3 hidden lg:table-cell">${esc(PAYMENT_MODE_LABELS[r.payment_mode] || r.payment_mode || 'UPI')}</td>
+        <td class="p-3 font-mono text-xs hidden lg:table-cell">${esc(r.utr_number)}</td>
+        <td class="p-3 hidden lg:table-cell">₹${inr(esc(r.paid_amount != null ? r.paid_amount : r.expected_amount))}</td>
       </tr>`).join('') : `<tr><td colspan="5" class="p-4 text-center text-slate-400 text-xs">Every registration's reference was found in the statement.</td></tr>`;
   }
 
@@ -15274,7 +15344,7 @@ async function loadReconciliation() {
   if (creditsBody) {
     creditsBody.innerHTML = data.unmatchedCredits.length ? data.unmatchedCredits.map(t => `
       <tr>
-        <td class="p-3 block sm:hidden">
+        <td class="p-3 block lg:hidden">
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
               <p class="text-sm text-slate-700 truncate">${esc(t.description)}</p>
@@ -15284,10 +15354,10 @@ async function loadReconciliation() {
           </div>
           <div class="mt-1.5"><button type="button" onclick="markNonRegistration(${esc(t.id)}, true)" class="text-[11px] text-slate-500 hover:text-slate-700 underline font-semibold">Mark as non-registration</button></div>
         </td>
-        <td class="p-3 hidden sm:table-cell">${esc(t.post_date)}</td>
-        <td class="p-3 hidden sm:table-cell">${esc(t.description)}</td>
-        <td class="p-3 font-semibold hidden sm:table-cell">₹${inr(esc(t.credit))}</td>
-        <td class="p-3 text-right hidden sm:table-cell">
+        <td class="p-3 hidden lg:table-cell">${esc(t.post_date)}</td>
+        <td class="p-3 hidden lg:table-cell">${esc(t.description)}</td>
+        <td class="p-3 font-semibold hidden lg:table-cell">₹${inr(esc(t.credit))}</td>
+        <td class="p-3 text-right hidden lg:table-cell">
           <button type="button" onclick="markNonRegistration(${esc(t.id)}, true)" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg">Mark as Non-Registration</button>
         </td>
       </tr>`).join('') : `<tr><td colspan="4" class="p-4 text-center text-slate-400 text-xs">No unmatched credits.</td></tr>`;
@@ -15297,7 +15367,7 @@ async function loadReconciliation() {
   if (nonregBody) {
     nonregBody.innerHTML = (data.nonRegistrationCredits || []).length ? data.nonRegistrationCredits.map(t => `
       <tr>
-        <td class="p-3 block sm:hidden">
+        <td class="p-3 block lg:hidden">
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
               <p class="text-sm text-slate-700 truncate">${esc(t.description)}</p>
@@ -15307,10 +15377,10 @@ async function loadReconciliation() {
           </div>
           <div class="mt-1.5"><button type="button" onclick="markNonRegistration(${esc(t.id)}, false)" class="text-[11px] text-indigo-600 hover:text-indigo-800 underline font-semibold">Unmark</button></div>
         </td>
-        <td class="p-3 hidden sm:table-cell">${esc(t.post_date)}</td>
-        <td class="p-3 hidden sm:table-cell">${esc(t.description)}</td>
-        <td class="p-3 font-semibold hidden sm:table-cell">₹${inr(esc(t.credit))}</td>
-        <td class="p-3 text-right hidden sm:table-cell">
+        <td class="p-3 hidden lg:table-cell">${esc(t.post_date)}</td>
+        <td class="p-3 hidden lg:table-cell">${esc(t.description)}</td>
+        <td class="p-3 font-semibold hidden lg:table-cell">₹${inr(esc(t.credit))}</td>
+        <td class="p-3 text-right hidden lg:table-cell">
           <button type="button" onclick="markNonRegistration(${esc(t.id)}, false)" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Unmark</button>
         </td>
       </tr>`).join('') : `<tr><td colspan="4" class="p-4 text-center text-slate-400 text-xs">No transactions marked non-registration.</td></tr>`;
@@ -15358,7 +15428,7 @@ function renderDebits(debits, summary) {
 
   body.innerHTML = debits.map((d) => `
     <tr class="${d.refund ? '' : 'bg-amber-50/30'}">
-      <td class="p-3 block sm:hidden">
+      <td class="p-3 block lg:hidden">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <p class="text-sm text-slate-700 truncate">${esc(d.description)}</p>
@@ -15368,10 +15438,10 @@ function renderDebits(debits, summary) {
         </div>
         <p class="mt-1.5 text-xs">${appliedTo(d)}</p>
       </td>
-      <td class="p-3 hidden sm:table-cell">${esc(d.post_date)}</td>
-      <td class="p-3 hidden sm:table-cell">${esc(d.description)}</td>
-      <td class="p-3 font-semibold text-rose-600 hidden sm:table-cell">₹${inr(esc(d.debit))}</td>
-      <td class="p-3 text-xs hidden sm:table-cell">${appliedTo(d)}</td>
+      <td class="p-3 hidden lg:table-cell">${esc(d.post_date)}</td>
+      <td class="p-3 hidden lg:table-cell">${esc(d.description)}</td>
+      <td class="p-3 font-semibold text-rose-600 hidden lg:table-cell">₹${inr(esc(d.debit))}</td>
+      <td class="p-3 text-xs hidden lg:table-cell">${appliedTo(d)}</td>
     </tr>`).join('');
 }
 
@@ -15408,7 +15478,7 @@ function matchedRowHtml(m, serial) {
   const amountLine = isSplit ? `₹${inr(esc(m.linkedAmount))} of ₹${inr(esc(m.transaction.credit))}` : `₹${inr(esc(m.transaction.credit))}`;
   return `
       <tr class="${m.bank_status === 'REJECTED' ? 'bg-rose-50/40' : (m.amountOk ? '' : 'bg-rose-50/50')}">
-        <td class="p-3 block sm:hidden">
+        <td class="p-3 block lg:hidden">
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
               <p class="font-bold text-sm truncate"><span class="text-slate-400 font-normal">${serial}.</span> ${esc(m.delegate_name)}${rejectedTag}</p>
@@ -15422,13 +15492,13 @@ function matchedRowHtml(m, serial) {
           ${m.transaction.description ? `<p class="text-[11px] text-slate-500 mt-1 truncate">${esc(m.transaction.description)}</p>` : ''}
           ${m.amountOk ? '' : `<p class="text-[11px] text-rose-600 font-bold mt-1">${ICON('warning')}credit not fully/exactly allocated</p>`}
         </td>
-        <td class="p-3 text-slate-400 hidden sm:table-cell">${serial}</td>
-        <td class="p-3 font-mono text-xs hidden sm:table-cell">${esc(m.registration_number || '—')}</td>
-        <td class="p-3 hidden sm:table-cell">${esc(m.delegate_name)}${rejectedTag}</td>
-        <td class="p-3 font-mono text-xs hidden sm:table-cell">${esc(m.utr_number)}</td>
-        <td class="p-3 hidden sm:table-cell">${esc(m.transaction.post_date)}</td>
-        <td class="p-3 text-xs text-slate-500 hidden sm:table-cell max-w-[240px] truncate" title="${esc(m.transaction.description || '')}">${esc(m.transaction.description || '—')}</td>
-        <td class="p-3 hidden sm:table-cell">${amountLine}${m.amountOk ? '' : ` <span class="text-rose-600 font-bold">${ICON('warning')}not fully/exactly allocated</span>`}</td>
+        <td class="p-3 text-slate-400 hidden lg:table-cell">${serial}</td>
+        <td class="p-3 font-mono text-xs hidden lg:table-cell">${esc(m.registration_number || '—')}</td>
+        <td class="p-3 hidden lg:table-cell">${esc(m.delegate_name)}${rejectedTag}</td>
+        <td class="p-3 font-mono text-xs hidden lg:table-cell">${esc(m.utr_number)}</td>
+        <td class="p-3 hidden lg:table-cell">${esc(m.transaction.post_date)}</td>
+        <td class="p-3 text-xs text-slate-500 hidden lg:table-cell max-w-[240px] truncate" title="${esc(m.transaction.description || '')}">${esc(m.transaction.description || '—')}</td>
+        <td class="p-3 hidden lg:table-cell">${amountLine}${m.amountOk ? '' : ` <span class="text-rose-600 font-bold">${ICON('warning')}not fully/exactly allocated</span>`}</td>
       </tr>`;
 }
 
