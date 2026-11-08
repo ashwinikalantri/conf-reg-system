@@ -86,6 +86,10 @@ for (const [f, w] of [['fees.ejs', 1140], ['users.ejs', 720], ['discount.ejs', 8
   check(`${f.replace('.ejs', '')}: stacks below ${w}px`, sections[f].includes(`<table data-fit="${w}"`));
 }
 
+check('a date box never pushes past its column (iPhone Safari draws it wider)', /fieldset \{ min-width: 0; \}/.test(css)
+  && /input\[type="date"\], input\[type="time"\], input\[type="datetime-local"\] \{ min-width: 0; max-width: 100%; \}/.test(css)
+  && /@supports \(-webkit-touch-callout: none\) \{\s*input\[type="date"\][^{]*\{ -webkit-appearance: none; appearance: none; \}/.test(css));
+
 console.log('\n== Side by side, one height ==');
 check('Halls: the four boxes in a grid that fits, the buttons one height', /prog-hall-name w-full min-w-0 h-9/.test(js)
   && /QR poster/.test(js) && ['>Save', '>QR poster', '>New QR', ">${h.active ? 'Turn off'"].every((b) => js.includes(`inline-flex items-center h-8 px-3 rounded-lg text-xs font-semibold`) && new RegExp(`h-8 px-3 rounded-lg text-xs font-semibold[^"]*"${b.replace(/[$?{}()]/g, '\\$&')}`).test(js)));

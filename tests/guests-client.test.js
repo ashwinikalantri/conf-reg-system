@@ -119,8 +119,15 @@ const disabled = (name) => new RegExp(`name="${name}"[^>]*\\sdisabled(?=[\\s>])`
 check('a transport coordinator edits arrival and departure', !disabled('arrival_date') && !disabled('drop_vehicle'));
 check('...not the stay', disabled('accommodation') && disabled('room_no') && disabled('accommodation_coordinator'));
 check('...and the shared fields', !disabled('overall_status') && !disabled('remarks'));
-check('time is a 12-hour box over a hidden 24-hour value', /<input type="hidden" name="arrival_time" value="09:00"/.test(form)
-  && /data-time12="arrival_time" value="09:00 am"[^>]*oninput="onTime12Input\(this\)" onblur="onTime12Blur\(this\)"/.test(form));
+const timeBox = (form.match(/data-time12="arrival_time"[\s\S]*?<\/div>/) || [''])[0];
+check('time is picked, hour / minutes / am-pm, over a hidden 24-hour value', /<input type="hidden" name="arrival_time" value="09:00"/.test(form)
+  && /<option value="09" selected>/.test(timeBox) && /<option value="00" selected>/.test(timeBox) && /<option value="am" selected>/.test(timeBox)
+  && (timeBox.match(/<select data-part="(h|m|ap)"[^>]*onchange="onTime12Change\(this\)"/g) || []).length === 3
+  && !/type="text" data-time12/.test(form));
+check('...12 hours, every minute, am and pm', (timeBox.match(/data-part="h"[\s\S]*?<\/select>/)[0].match(/<option value="\d\d"/g) || []).length === 12
+  && (timeBox.match(/data-part="m"[\s\S]*?<\/select>/)[0].match(/<option value="\d\d"/g) || []).length === 60);
+check('the travel boxes keep to their column on a phone', /<fieldset class="min-w-0 /.test(form));
+check('...and from a tablet up the three pickers share two columns, so the time is never cut off', /<label class="block min-w-0 md:col-span-2"><span[^>]*>Time<\/span><input type="hidden" name="arrival_time"/.test(form));
 check('the vehicle field suggests vehicles but takes free text', /name="pickup_vehicle" type="text"[^>]*list="guest-vehicle-options"/.test(form) && /<option value="Car A">/.test(form));
 check('no Remove for a coordinator', el('guest-remove-btn').classList.contains('hidden'));
 check('there is no "local transport not needed" tick-box', !/transport_not_needed/.test(form));
@@ -179,21 +186,23 @@ const settingsHtml = adminView.el('guests-view-settings').innerHTML;
 check('lists: "Cancelled" cannot be switched off or removed', /Cancelled <span class="text-\[10px\] text-slate-400">\(required\)<\/span>/.test(settingsHtml));
 check('the settings show the slot boundaries', /value="6"/.test(settingsHtml) && /value="18"/.test(settingsHtml));
 
-console.log('\n== Reading a typed time ==');
+console.log('\n== A picked time ==');
 const tsb = { String, Number };
 vm.createContext(tsb);
 const grabT = (n) => { const i = js.indexOf(`function ${n}(`); return js.slice(i, js.indexOf('\n}', i) + 2); };
-vm.runInContext([grabT('parseTime12'), grabT('travelTime12'), grabT('guestTime12')].join('\n') + '\nglobalThis.p = parseTime12; globalThis.t12 = travelTime12; globalThis.prog12 = guestTime12;', tsb);
-const as24 = (t) => tsb.p(t).hhmm;
-check('9:30 pm, 930p, 9.30 P.M. and 21:30 are all 09:30 pm', ['9:30 pm', '930p', '9.30 P.M.', '21:30', '2130'].every((t) => as24(t) === '21:30'));
-check('9am, 12am, 12:15 pm', as24('9am') === '09:00' && as24('12am') === '00:00' && as24('12:15 pm') === '12:15');
-check('a leading zero means 24-hour already', as24('0930') === '09:30' && as24('09:30') === '09:30');
-check('9:30 with no AM or PM is asked about, not guessed', tsb.p('9:30').ambiguous === true && tsb.p('12').ambiguous === true);
-check('nonsense is refused', ['25:00', '9:75 am', '13pm', 'soon'].every((t) => tsb.p(t).invalid === true));
+vm.runInContext([grabT('time12Parts'), grabT('time12Value'), grabT('travelTime12'), grabT('guestTime12')].join('\n')
+  + '\nglobalThis.parts = time12Parts; globalThis.val = time12Value; globalThis.t12 = travelTime12; globalThis.prog12 = guestTime12;', tsb);
+const as24 = (h, m, ap) => tsb.val(h, m, ap).hhmm;
+check('09 : 30 pm is 21:30; 12 : 00 am midnight; 12 : 15 pm noon', as24('09', '30', 'pm') === '21:30' && as24('12', '00', 'am') === '00:00' && as24('12', '15', 'pm') === '12:15');
+check('a saved time opens picked', JSON.stringify(tsb.parts('21:30')) === '{"h":"09","m":"30","ap":"pm"}' && JSON.stringify(tsb.parts('00:05')) === '{"h":"12","m":"05","ap":"am"}');
+check('...and every one reads back as it was', Array.from({ length: 24 * 60 }, (_, i) => `${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}`)
+  .every((t) => { const x = tsb.parts(t); return as24(x.h, x.m, x.ap) === t; }));
+check('nothing picked is no time; part picked is not saved', tsb.val('', '', '').empty === true && tsb.val('09', '30', '').incomplete === true && tsb.val('', '30', 'pm').incomplete === true);
 check('shown as 09:30 pm', tsb.t12('21:30') === '09:30 pm' && tsb.t12('00:05') === '12:05 am');
 check('...while the programme keeps its own times (9:30 PM)', tsb.prog12('21:30') === '9:30 PM');
-check('...and the shown form reads back as typed', as24('09:30 pm') === '21:30' && as24('12:05 am') === '00:05' && as24('09:00 am') === '09:00');
-check('a time that could not be read stops the save', /const bad = \[\.\.\.form\.querySelectorAll\('\[data-time12\]'\)\]\.find/.test(js));
+check('a time half picked stops the save', /const bad = \[\.\.\.form\.querySelectorAll\('\[data-time12\]'\)\]\.find\(\(el\) => el\.dataset\.invalid === '1'\)/.test(js));
+check('picking the hour fills in :00; clearing it clears the time', /sel\.dataset\.part === 'h' && !sel\.value\) \{ part\('m'\)\.value = ''; part\('ap'\)\.value = ''; \}/.test(js)
+  && /sel\.value && !part\('m'\)\.value\) part\('m'\)\.value = '00'/.test(js));
 
 console.log('\n== Nights ==');
 const nsb = { String, Math, Date };

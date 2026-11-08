@@ -13083,54 +13083,39 @@ function guestStayHtml(g) {
     mates.length ? `<p class="text-xs font-semibold text-violet-700 mt-0.5">Sharing with ${esc(mates.join(', '))}</p>` : ''].join('');
 }
 
-// Read what a coordinator types: "9:30 pm", "930p", "9.30 PM", "21:30",
-// "2130", "9pm". Returns { hhmm } (24-hour), { empty }, { ambiguous } for an
-// hour of 1-12 with no AM/PM, or { invalid }.
-function parseTime12(raw) {
-  let t = String(raw || '').trim().toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ');
-  if (!t) return { empty: true };
-  let suffix = null;
-  const sm = /\s*(am|a|pm|p)$/.exec(t);
-  if (sm) { suffix = sm[1][0]; t = t.slice(0, sm.index).trim(); }
-  let hs; let m;
-  const parts = /^(\d{1,2})[: ](\d{2})$/.exec(t);
-  if (parts) { hs = parts[1]; m = Number(parts[2]); }
-  else if (/^\d{1,4}$/.test(t)) {
-    if (t.length <= 2) { hs = t; m = 0; }
-    else { hs = t.slice(0, t.length - 2); m = Number(t.slice(-2)); }
-  } else return { invalid: true };
-  let h = Number(hs);
-  if (m > 59) return { invalid: true };
-  if (suffix) {
-    if (h < 1 || h > 12) return { invalid: true };
-    h = (h % 12) + (suffix === 'p' ? 12 : 0);
-  } else if (h > 23) {
-    return { invalid: true };
-  } else if (h >= 1 && h <= 12 && !(hs.length === 2 && hs[0] === '0')) {
-    // "9:30" could be either; "09:30" or "0930" is 24-hour already.
-    return { ambiguous: true };
-  }
-  return { hhmm: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` };
+// A travel time is picked, not typed: hour (01-12), minutes (00-59) and
+// am/pm. "21:30" -> { h: '09', m: '30', ap: 'pm' }; nothing set -> all ''.
+function time12Parts(hhmm) {
+  const m = /^(\d{2}):(\d{2})$/.exec(String(hhmm || ''));
+  if (!m) return { h: '', m: '', ap: '' };
+  const h = Number(m[1]);
+  return { h: String(h % 12 || 12).padStart(2, '0'), m: m[2], ap: h < 12 ? 'am' : 'pm' };
 }
-// The visible box: as they type, keep the hidden 24-hour value in step;
-// on leaving it, tidy the box into "09:30 pm" or say what is wrong.
-function onTime12Input(el) {
-  const hidden = el.form && el.form.querySelector(`input[type="hidden"][name="${el.dataset.time12}"]`);
-  const p = parseTime12(el.value);
-  if (hidden) hidden.value = p.hhmm || '';
-  el.dataset.invalid = p.hhmm || p.empty ? '' : '1';
-  if (p.hhmm || p.empty) setTime12Error(el, '');
+// Back again: { hhmm } (24-hour), { empty } when nothing is picked, or
+// { incomplete } when only some of the three are.
+function time12Value(h, m, ap) {
+  if (!h && !m && !ap) return { empty: true };
+  if (!h || !m || !ap) return { incomplete: true };
+  return { hhmm: `${String((Number(h) % 12) + (ap === 'pm' ? 12 : 0)).padStart(2, '0')}:${m}` };
 }
-function onTime12Blur(el) {
-  onTime12Input(el);
-  const p = parseTime12(el.value);
-  if (p.hhmm) el.value = travelTime12(p.hhmm);
-  setTime12Error(el, p.ambiguous ? 'Add am or pm, e.g. 09:30 pm.' : p.invalid ? 'Not a time. Try 09:30 am.' : '');
+// One of the three changed: picking the hour fills in :00, clearing it
+// clears the time; the hidden input under the field's name keeps the
+// 24-hour value that is saved.
+function onTime12Change(sel) {
+  const box = sel.closest('[data-time12]');
+  const part = (k) => box.querySelector(`[data-part="${k}"]`);
+  if (sel.dataset.part === 'h' && !sel.value) { part('m').value = ''; part('ap').value = ''; }
+  if (sel.dataset.part === 'h' && sel.value && !part('m').value) part('m').value = '00';
+  const v = time12Value(part('h').value, part('m').value, part('ap').value);
+  const hidden = sel.form && sel.form.querySelector(`input[type="hidden"][name="${box.dataset.time12}"]`);
+  if (hidden) hidden.value = v.hhmm || '';
+  box.dataset.invalid = v.incomplete ? '1' : '';
+  if (!v.incomplete) setTime12Error(box, '');
 }
-function setTime12Error(el, msg) {
-  const box = el.parentElement && el.parentElement.querySelector('[data-time12-error]');
-  if (box) { box.textContent = msg; box.classList.toggle('hidden', !msg); }
-  el.classList.toggle('border-rose-400', !!msg);
+function setTime12Error(box, msg) {
+  const out = box.parentElement && box.parentElement.querySelector('[data-time12-error]');
+  if (out) { out.textContent = msg; out.classList.toggle('hidden', !msg); }
+  box.querySelectorAll('select').forEach((s) => s.classList.toggle('border-rose-400', !!msg));
 }
 // The form follows what is chosen: the Flight/Train No field takes its
 // name from the mode (and goes for Road), and ticking "accommodation not
@@ -13235,7 +13220,7 @@ function openGuestEditor(id) {
   const pickupOk = travel || mineT;
   const stayOk = stay || mineS;
   const lists = guestData.lists;
-  const field = (name, label, html) => `<label class="block min-w-0"><span class="block text-[11px] font-semibold text-slate-600 mb-1">${esc(label)}</span>${html}</label>`;
+  const field = (name, label, html, span = '') => `<label class="block min-w-0${span}"><span class="block text-[11px] font-semibold text-slate-600 mb-1">${esc(label)}</span>${html}</label>`;
   const cls = 'w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm bg-white outline-none disabled:bg-slate-50 disabled:text-slate-500';
   const input = (name, type, enabled, extra = '') =>
     `<input name="${name}" type="${type}" value="${esc(g[name] || '')}" ${enabled ? '' : 'disabled'} class="${cls}" ${extra}>`;
@@ -13250,12 +13235,20 @@ function openGuestEditor(id) {
     return `<select name="${name}" ${enabled ? '' : 'disabled'} class="${cls}"><option value="">—</option>${opts.map((p) => `<option value="${esc(p.phone)}" ${p.phone === g[name] ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>`;
   };
   const vehicles = `<datalist id="guest-vehicle-options">${guestData.vehicles.map((v) => `<option value="${esc(v.label)}">${esc([v.driver_phone, v.seats ? `${v.seats} seats` : ''].filter(Boolean).join(' · '))}</option>`).join('')}</datalist>`;
-  // 12-hour box; the hidden input under the field's name holds the 24-hour
-  // value that is saved.
-  const time = (name, enabled) => `<input type="hidden" name="${name}" value="${esc(g[name] || '')}" ${enabled ? '' : 'disabled'}>
-      <input type="text" data-time12="${name}" value="${esc(travelTime12(g[name]))}" ${enabled ? '' : 'disabled'} autocomplete="off" placeholder="e.g. 09:30 am"
-        class="${cls}" oninput="onTime12Input(this)" onblur="onTime12Blur(this)">
+  // Hour, minutes, am/pm (onTime12Change); the hidden input under the
+  // field's name holds the 24-hour value that is saved.
+  const time = (name, enabled) => {
+    const now = time12Parts(g[name]);
+    const pick = (part, label, values) => `<select data-part="${part}" aria-label="${label}" ${enabled ? '' : 'disabled'} onchange="onTime12Change(this)"
+        class="w-full min-w-0 h-9 pl-2 pr-6 border border-slate-300 rounded-lg text-sm bg-white outline-none disabled:bg-slate-50 disabled:text-slate-500 tabular-nums">
+        <option value="">—</option>${values.map((v) => `<option value="${v}" ${v === now[part] ? 'selected' : ''}>${v}</option>`).join('')}</select>`;
+    const two = (n) => String(n).padStart(2, '0');
+    return `<input type="hidden" name="${name}" value="${esc(g[name] || '')}" ${enabled ? '' : 'disabled'}>
+      <div data-time12="${name}" role="group" class="grid grid-cols-3 gap-1.5">
+        ${pick('h', 'Hour', Array.from({ length: 12 }, (_, i) => two(i + 1)))}${pick('m', 'Minutes', Array.from({ length: 60 }, (_, i) => two(i)))}${pick('ap', 'am or pm', ['am', 'pm'])}
+      </div>
       <p data-time12-error class="hidden text-[11px] text-rose-700 mt-1"></p>`;
+  };
   // The flight or train number, named after the mode (see syncGuestModeFields).
   const numberField = (leg) => `<label class="block min-w-0" data-number-for="${leg}"><span data-number-label class="block text-[11px] font-semibold text-slate-600 mb-1">Flight/Train No</span>${input(`${leg}_number`, 'text', travel)}</label>`;
   const modeSelect = (leg) => select(`${leg}_mode`, 'mode', travel, `onchange="syncGuestModeFields('${leg}')"`);
@@ -13265,7 +13258,7 @@ function openGuestEditor(id) {
   const legOff = (leg) => transferNotRequired(g[leg === 'arrival' ? 'pickup_status' : 'drop_status']);
   const legNote = (leg, what, hadDetails) => `<p id="guest-${leg}-note" class="${legOff(leg) ? '' : 'hidden '}col-span-full text-[11px] text-slate-500 -mt-1">${what} not required: only the date and time are needed.${hadDetails ? ' Details entered earlier are kept, unused, and return if you change the status.' : ''}</p>`;
   const legDetails = (leg, body) => `<div id="guest-${leg}-details" class="${legOff(leg) ? 'hidden ' : ''}col-span-full grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">${body}</div>`;
-  const group = (title, enabled, note, body) => `<fieldset class="border border-slate-200 rounded-xl p-4">
+  const group = (title, enabled, note, body) => `<fieldset class="min-w-0 border border-slate-200 rounded-xl p-4">
       <legend class="px-1.5 text-xs font-bold text-slate-700 uppercase tracking-wide">${esc(title)}</legend>
       ${enabled ? '' : `<p class="text-[11px] text-slate-400 -mt-1 mb-2">${esc(note)}</p>`}
       <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">${body}</div></fieldset>`;
@@ -13312,7 +13305,7 @@ function openGuestEditor(id) {
   document.getElementById('guest-edit-body').innerHTML = vehicles + registerFree + identity + linkedTo + (identity ? '<div class="h-4"></div>' : '') + theirSessions + [
     group('Arrival', travel, mineT ? 'As their transport volunteer you can update the pickup; the itinerary is the coordinator\'s.' : 'Only a transport coordinator can change travel.',
       field('arrival_date', 'Date', input('arrival_date', 'date', travel))
-      + field('arrival_time', 'Time', time('arrival_time', travel))
+      + field('arrival_time', 'Time', time('arrival_time', travel), ' md:col-span-2')
       + field('pickup_status', 'Pickup Status', select('pickup_status', 'transfer_status', pickupOk, `onchange="syncGuestTransferFields('arrival')"`))
       + legNote('arrival', 'Pickup', g.arrival_mode || g.arrival_number || g.arrival_point || g.pickup_vehicle)
       + legDetails('arrival',
@@ -13322,7 +13315,7 @@ function openGuestEditor(id) {
         + field('pickup_vehicle', 'Pickup Vehicle/Driver', input('pickup_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off"')))),
     group('Departure', travel, mineT ? 'As their transport volunteer you can update the drop; the itinerary is the coordinator\'s.' : 'Only a transport coordinator can change travel.',
       field('departure_date', 'Date', input('departure_date', 'date', travel))
-      + field('departure_time', 'Time', time('departure_time', travel))
+      + field('departure_time', 'Time', time('departure_time', travel), ' md:col-span-2')
       + field('drop_status', 'Drop Status', select('drop_status', 'transfer_status', pickupOk, `onchange="syncGuestTransferFields('departure')"`))
       + legNote('departure', 'Drop', g.departure_mode || g.departure_number || g.departure_point || g.drop_vehicle)
       + legDetails('departure',
@@ -13374,8 +13367,12 @@ async function saveGuest(ev) {
   ev.preventDefault();
   const form = document.getElementById('guest-edit-form');
   const id = form.dataset.id;
-  const bad = [...form.querySelectorAll('[data-time12]')].find((el) => !el.disabled && el.dataset.invalid === '1');
-  if (bad) { onTime12Blur(bad); bad.focus(); return showToast('Fix the time first: add AM or PM, e.g. 9:30 PM.'); }
+  const bad = [...form.querySelectorAll('[data-time12]')].find((el) => el.dataset.invalid === '1');
+  if (bad) {
+    setTime12Error(bad, 'Pick the hour, minutes and am or pm, or set the hour to — for no time.');
+    bad.querySelector('select').focus();
+    return showToast('Finish the time first: hour, minutes and am or pm.');
+  }
   const fields = {};
   // Only what this role may edit: disabled controls are not sent.
   form.querySelectorAll('input[name], select[name], textarea[name]').forEach((el) => {

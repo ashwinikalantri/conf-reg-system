@@ -273,6 +273,16 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
 /* A signature's preview: checks wherever the image is transparent. */
 .sig-preview { background: repeating-conic-gradient(#e3e7eb 0% 25%, #fff 0% 50%) 0 0 / 12px 12px; }
 
+/* Date boxes keep to their column on a phone: iPhone Safari draws a date
+   box at its own width, wider than a narrow column, unless its native look
+   is turned off; and a fieldset never shrinks below what it holds. */
+fieldset { min-width: 0; }
+input[type="date"], input[type="time"], input[type="datetime-local"] { min-width: 0; max-width: 100%; }
+@supports (-webkit-touch-callout: none) {
+  input[type="date"], input[type="time"], input[type="datetime-local"] { -webkit-appearance: none; appearance: none; }
+  input::-webkit-date-and-time-value { text-align: left; }
+}
+
 /* A wide table where it does not fit (fitTable in app.js, on tables marked
    data-fit): one card per row, each cell beside its column's name, rather
    than a table that scrolls sideways. */
