@@ -24,7 +24,7 @@ const fs = require('fs');
     if (id) await db.run('DELETE FROM abstracts WHERE id = ?', [id]);
   }
   const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
-  check('the assignment cards offer Award', /data-alloc="AWARD"/.test(js));
+  check('the assignment cards offer Award', /data-alloc="\$\{key\}"/.test(js) && js.includes("${allocBtn(a, 'AWARD', 'Award')}"));
   check('the desk offers Award', js.includes("deskAllotAbstract(${esc(a.id)}, 'AWARD')"));
   check('assigning asks before it emails, on the cards and on the desk',
     /async function updateAbstractAllocation\(id, allocation\) \{\s*if \(!\(await confirmAllocationEmail\(/.test(js)

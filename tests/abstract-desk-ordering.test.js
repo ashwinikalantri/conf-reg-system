@@ -103,6 +103,38 @@ const titlesInOrder = (html) => [...html.matchAll(/<h4 class="font-bold text-sla
       order[2] === 'Already Assigned Oral' && order[3] === 'Already Assigned Poster', order);
   }
 
+  console.log('\n== Step 1 narrows to one status; made for a phone ==');
+  {
+    const abstracts = [
+      { id: 1, title: 'Already Accepted', author_name: 'A', format: 'Oral', status: 'ACCEPTED' },
+      { id: 2, title: 'Still Pending One', author_name: 'B', format: 'Poster', status: 'UNDER_REVIEW' },
+      { id: 3, title: 'Already Rejected', author_name: 'C', format: 'Oral', status: 'REJECTED' },
+      { id: 4, title: 'Still Pending Two', author_name: 'D', format: 'Poster', status: 'UNDER_REVIEW' },
+    ];
+    const fetchImpl = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ abstracts }) });
+    const { sandbox, doc } = loadApp(js, fetchImpl);
+    await sandbox.renderBackendAbstracts();
+    const html = () => doc.getElementById('abstracts-approval-container').innerHTML;
+    const chips = [...html().matchAll(/onclick="setAbstractsStatusFilter\('(\w*)'\)"/g)].map((m) => m[1]);
+    check('a chip for All and each status there is, in the order an abstract moves', chips.join(',') === ',UNDER_REVIEW,ACCEPTED,REJECTED', chips);
+    check('...each with its count', /Under review <span[^>]*>2<\/span>/.test(html()) && /All <span[^>]*>4<\/span>/.test(html()));
+    sandbox.setAbstractsStatusFilter('UNDER_REVIEW');
+    await new Promise((r) => setTimeout(r, 0));
+    check('Under review shows only those', titlesInOrder(html()).join(',') === 'Still Pending One,Still Pending Two');
+    check('...marked as the chip pressed', /setAbstractsStatusFilter\('UNDER_REVIEW'\)" aria-pressed="true"/.test(html()));
+    check('Step 2 is not narrowed by it', titlesInOrder(doc.getElementById('abstracts-assignment-container').innerHTML).join(',') === 'Already Accepted');
+    abstracts.splice(1, 1); abstracts.splice(2, 1);
+    await sandbox.renderBackendAbstracts();
+    check('a status left with nothing falls back to All', titlesInOrder(html()).length === 2 && /setAbstractsStatusFilter\(''\)" aria-pressed="true"/.test(html()));
+    const card = html();
+    check('the card is stacked: status, number and format above the title', /PENDING|ACCEPTED/.test(card) && /#1 · Oral<\/span>/.test(card)
+      && card.indexOf('#1 · Oral') < card.indexOf('>Already Accepted<'));
+    check('...Review at the foot on a phone, beside the card from a tablet up', /flex flex-col sm:flex-row sm:items-start gap-3/.test(card) && /class="self-end sm:self-start shrink-0 h-8 /.test(card));
+    const assign = doc.getElementById('abstracts-assignment-container').innerHTML;
+    check('the formats are one control the width of the card on a phone', /class="grid grid-cols-3 sm:inline-grid [^"]*" role="group" aria-label="Assign format"/.test(assign)
+      && (assign.match(/class="abstract-alloc-btn h-9 /g) || []).length === 3);
+  }
+
   console.log('\n== No abstracts needing action: no crash, empty-state messages intact ==');
   {
     const fetchImpl = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ abstracts: [] }) });

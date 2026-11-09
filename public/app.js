@@ -10561,27 +10561,26 @@ function abstractCardHeader(a) {
     ? '<p class="text-[10px] text-sky-700 font-semibold mt-1">Pending registration — the author has not registered</p>'
     : (!Number(a.author_registered) && status !== 'REJECTED')
       ? '<p class="text-[10px] text-slate-500 mt-1">Author not registered — approval will be provisional</p>' : '';
+  // Stacked, so the title has the card's whole width on a phone: status and
+  // number on top, then title, authors, what is pending, and Review at the
+  // foot; from a tablet up, Review sits beside them.
   return `
-      <div class="flex justify-between items-start gap-4">
-        <div>
-          <h4 class="font-bold text-slate-800">${esc(a.title)}</h4>
-          <p class="text-xs text-slate-500 mt-0.5">${a.authors ? abstractAuthorsLineHtml(a.authors) : esc(a.author_name)} · ${esc(a.format)}</p>
-          ${a.authors && !a.authors_given && status !== 'REJECTED' ? '<span class="inline-block mt-1 text-[10px] font-bold text-gold-700 bg-gold-50 border border-gold-300 rounded-full px-2 py-0.5">Co-authors not added</span>' : ''}
-        </div>
-        <div class="text-right shrink-0">
-          <span class="${badge} text-xs px-2.5 py-1 rounded-full font-bold border whitespace-nowrap">${esc(label)}</span>
-          ${status === 'REVISION_REQUESTED' ? `<p class="text-[10px] text-orange-600 mt-1">Awaiting delegate resubmission${a.revision_until ? ` · by ${esc(formatFullDate(a.revision_until))}` : ''}</p>` : ''}
-          ${abstractCompletionBadge(a)}
-          ${registrationNote}
-          ${a.last_action_by
-            ? `<p class="text-[10px] text-slate-400 mt-1">by ${esc(a.last_action_by)} · ${esc(fmtAuditTime(a.last_action_at))}</p>`
-            : ''
-          }
-        </div>
+    <div class="flex flex-col sm:flex-row sm:items-start gap-3">
+     <div class="min-w-0 flex-1">
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        <span class="${badge} text-xs px-2.5 py-1 rounded-full font-bold border whitespace-nowrap">${esc(label)}</span>
+        <span class="text-[11px] font-semibold text-slate-500 tabular-nums">#${esc(a.id)} · ${esc(a.format)}</span>
+        ${a.authors && !a.authors_given && status !== 'REJECTED' ? '<span class="text-[10px] font-bold text-gold-700 bg-gold-50 border border-gold-300 rounded-full px-2 py-0.5 whitespace-nowrap">Co-authors not added</span>' : ''}
       </div>
-      <div class="mt-3">
-        <button type="button" onclick="openAbstractReview(${esc(a.id)})" class="px-3 py-1.5 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg text-xs">Review Abstract</button>
-      </div>`;
+      <div class="mt-2 leading-snug break-words"><h4 class="font-bold text-slate-800">${esc(a.title)}</h4></div>
+      <p class="text-xs text-slate-500 mt-1 break-words">${a.authors ? abstractAuthorsLineHtml(a.authors) : esc(a.author_name)}</p>
+      ${status === 'REVISION_REQUESTED' ? `<p class="text-[10px] font-semibold text-orange-600 mt-1">Awaiting delegate resubmission${a.revision_until ? ` · by ${esc(formatFullDate(a.revision_until))}` : ''}</p>` : ''}
+      ${abstractCompletionBadge(a)}
+      ${registrationNote}
+      ${a.last_action_by ? `<p class="text-[10px] text-slate-400 mt-1">by ${esc(a.last_action_by)} · ${esc(fmtAuditTime(a.last_action_at))}</p>` : ''}
+     </div>
+     <button type="button" onclick="openAbstractReview(${esc(a.id)})" class="self-end sm:self-start shrink-0 h-8 px-3 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg text-xs">Review Abstract</button>
+    </div>`;
 }
 
 // Full structured read, shown inside the review modal (see
@@ -10745,7 +10744,7 @@ function renderAbstractsAuthorsSummary(abstracts) {
       <p class="text-sm text-slate-800"><b class="font-bold">${live.length - missing} of ${live.length}</b> abstracts have their full author list${missing ? `; <b class="font-bold">${missing}</b> still list only the submitter` : ''}.</p>
       <p class="text-xs text-slate-600 mt-0.5">${when}</p>
     </div>
-    ${missing ? `<button type="button" onclick="toggleAbstractsMissingAuthors()" aria-pressed="${abstractsMissingAuthorsOnly}" class="h-9 px-3 rounded-lg text-xs font-semibold ${abstractsMissingAuthorsOnly ? 'bg-navy hover:bg-indigo-700 text-white' : 'bg-white border border-slate-300 text-navy hover:bg-slate-50'}">${abstractsMissingAuthorsOnly ? 'Show all abstracts' : `Show the ${missing} without`}</button>` : ''}`;
+    ${missing ? `<button type="button" onclick="toggleAbstractsMissingAuthors()" aria-pressed="${abstractsMissingAuthorsOnly}" class="w-full sm:w-auto h-9 px-3 rounded-lg text-xs font-semibold ${abstractsMissingAuthorsOnly ? 'bg-navy hover:bg-indigo-700 text-white' : 'bg-white border border-slate-300 text-navy hover:bg-slate-50'}">${abstractsMissingAuthorsOnly ? 'Show all abstracts' : `Show the ${missing} without`}</button>` : ''}`;
   el.classList.remove('hidden');
 }
 function toggleAbstractsMissingAuthors() {
@@ -10968,29 +10967,50 @@ async function renderBackendAbstracts() {
   // own relative order (server's own, typically submission order).
   const approvalOrder = [...abstracts].sort((a, b) =>
     (a.status === 'UNDER_REVIEW' ? 0 : 1) - (b.status === 'UNDER_REVIEW' ? 0 : 1));
-  approvalBox.innerHTML = approvalOrder.map(a => `
-    <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+  // Chips to narrow Step 1 to one status, each with its count; only the
+  // statuses there are. A filter whose abstracts are all gone falls back to All.
+  const statusOf = (a) => a.status || 'UNDER_REVIEW';
+  const counts = {};
+  approvalOrder.forEach((a) => { counts[statusOf(a)] = (counts[statusOf(a)] || 0) + 1; });
+  if (abstractsStatusFilter && !counts[abstractsStatusFilter]) abstractsStatusFilter = '';
+  const chip = (key, label, n) => `<button type="button" onclick="setAbstractsStatusFilter('${key}')" aria-pressed="${abstractsStatusFilter === key}"
+      class="h-8 px-3 rounded-full text-xs font-semibold border whitespace-nowrap ${abstractsStatusFilter === key ? 'bg-navy border-navy text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}">${label} <span class="tabular-nums ${abstractsStatusFilter === key ? 'text-white/80' : 'text-slate-400'}">${n}</span></button>`;
+  const chips = [chip('', 'All', approvalOrder.length)].concat(ABSTRACT_FILTERS.filter(([key]) => counts[key]).map(([key, label]) => chip(key, label, counts[key])));
+  const shown = abstractsStatusFilter ? approvalOrder.filter((a) => statusOf(a) === abstractsStatusFilter) : approvalOrder;
+  approvalBox.innerHTML = `<div class="flex flex-wrap gap-1.5" role="group" aria-label="Show abstracts by status">${chips.join('')}</div>`
+    + shown.map(a => `
+    <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
       ${abstractCardHeader(a)}
     </div>
   `).join('');
 
   // Step 2: Assignment -- approved abstracts only, not-yet-assigned first
-  // for the same reason.
+  // for the same reason. The three formats are one control the width of
+  // the card on a phone.
   const approved = abstracts.filter(a => a.status === 'ACCEPTED')
     .sort((a, b) => (a.allocation ? 1 : 0) - (b.allocation ? 1 : 0));
+  const allocBtn = (a, key, label) => `<button type="button" class="abstract-alloc-btn h-9 px-4 text-xs font-semibold ${a.allocation === key ? 'bg-indigo-600 text-white' : 'bg-white text-indigo-700 hover:bg-indigo-50'}" aria-pressed="${a.allocation === key}" data-id="${esc(a.id)}" data-alloc="${key}">${label}</button>`;
   assignBox.innerHTML = approved.length ? approved.map(a => `
-    <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+    <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
       ${abstractCardHeader(a)}
-      <div class="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-slate-100">
-        <span class="text-[11px] font-semibold text-slate-500">Assign format:</span>
-        <button class="abstract-alloc-btn px-3 py-1.5 ${a.allocation === 'ORAL' ? 'bg-indigo-600' : 'bg-white border border-indigo-300 text-indigo-700'} ${a.allocation === 'ORAL' ? 'text-white' : ''} font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-alloc="ORAL">Oral</button>
-        <button class="abstract-alloc-btn px-3 py-1.5 ${a.allocation === 'POSTER' ? 'bg-indigo-600' : 'bg-white border border-indigo-300 text-indigo-700'} ${a.allocation === 'POSTER' ? 'text-white' : ''} font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-alloc="POSTER">Poster</button>
-        <button class="abstract-alloc-btn px-3 py-1.5 ${a.allocation === 'AWARD' ? 'bg-indigo-600' : 'bg-white border border-indigo-300 text-indigo-700'} ${a.allocation === 'AWARD' ? 'text-white' : ''} font-semibold rounded-lg text-xs" data-id="${esc(a.id)}" data-alloc="AWARD">Award</button>
+      <div class="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+        <span class="text-[11px] font-semibold text-slate-500">Assign format</span>
+        <div class="grid grid-cols-3 sm:inline-grid divide-x divide-indigo-300 border border-indigo-300 rounded-lg overflow-hidden" role="group" aria-label="Assign format">
+          ${allocBtn(a, 'ORAL', 'Oral')}${allocBtn(a, 'POSTER', 'Poster')}${allocBtn(a, 'AWARD', 'Award')}
+        </div>
         ${a.allocation ? `<span class="text-[11px] text-emerald-600 font-semibold">Assigned &amp; delegate notified: ${esc(abstractFormatLabel(a.allocation))}</span>` : `<span class="text-[11px] text-amber-600 font-semibold">Not yet assigned — delegate has not been notified</span>`}
       </div>
       ${abstractProvisional(a) ? `<p class="text-[11px] text-sky-700 mt-2">${a.allocation ? 'The delegate was told the acceptance is provisional, and that registration is mandatory to present.' : 'The email will say the acceptance is provisional, and that registration is mandatory to present.'}</p>` : ''}
     </div>
   `).join('') : `<p class="text-sm text-slate-500 p-4">No approved abstracts yet.</p>`;
+}
+
+// Step 1's status chips, in the order an abstract moves through them.
+const ABSTRACT_FILTERS = [['UNDER_REVIEW', 'Under review'], ['REVISION_REQUESTED', 'Corrections'], ['ACCEPTED', 'Accepted'], ['REJECTED', 'Rejected']];
+let abstractsStatusFilter = '';
+function setAbstractsStatusFilter(key) {
+  abstractsStatusFilter = key;
+  renderBackendAbstracts();
 }
 
 async function updateAbstractStatus(id, status) {
