@@ -27,6 +27,20 @@ const mine=cash.body.transactions.filter(t=>ids.includes(t.registration_id));
 check('rows carry delegate + reg no', mine.every(t=>t.delegate_name && t.registration_number), mine[0]);
 const txnIds=mine.map(t=>t.id);
 
+console.log('\n== A free registration, kept as cash of nothing, is not cash in hand ==');
+// How a volunteer or a full discount is recorded: a verified cash payment of
+// zero. No money is in the drawer for it and no deposit could cover it.
+const before=cash.body.count;
+const free=await run(`INSERT INTO payment_transactions (registration_id, phone_number, amount, verified_amount, payment_mode, txn_status, submitted_at, reviewed_by, collected_by)
+  VALUES (?,?,0,0,'CASH','VERIFIED',?,?,?)`,[ids[0],P(1),Date.now(),mine[0].reviewed_by,mine[0].collected_by]);
+cash=await call('GET','/api/admin/cash-in-hand',null,ac);
+check('not listed with the unbanked cash', !cash.body.transactions.some(t=>t.id===free.lastID), cash.body.count);
+check('...nor counted', cash.body.count===before && cash.body.count===cash.body.transactions.length, [before,cash.body.count]);
+check('...every row there is money', cash.body.transactions.every(t=>Number(t.amount)>0));
+const float=await call('GET','/api/desk/cash-in-hand',null,ac);
+check('...nor in the collector\'s own float', float.status===200 && !float.body.transactions.some(t=>t.id===free.lastID) && float.body.transactions.every(t=>Number(t.amount)>0), float.body.count);
+await run('DELETE FROM payment_transactions WHERE id=?',[free.lastID]);
+
 console.log('\n== Cash is VERIFIED but unbanked -- it counts toward the fee already ==');
 const reg=await one('SELECT bank_status FROM registrations WHERE id=?',[ids[0]]);
 check('registration already BANK_VERIFIED', reg.bank_status==='BANK_VERIFIED', reg.bank_status);

@@ -7958,6 +7958,12 @@ app.delete('/api/registrations/:id/refund/:refundId', requirePermission('payment
 // that discrepancy belongs to the cash handling, not to the delegate, and
 // must not quietly reduce what a fully-paid delegate is recorded as having
 // paid. Linking cash records WHERE it was banked and changes nothing else.
+//
+// A free registration (a volunteer, a full discount) is recorded as a cash
+// payment of nothing. There is no money in the drawer for it and no deposit
+// it could go into, so it is not cash in hand: left out here, of the desk's
+// own float and of the Summary report's count.
+const CASH_IN_HAND_SQL = (t) => `COALESCE(${t}.verified_amount, ${t}.amount, 0) > 0`;
 app.get('/api/admin/cash-in-hand', requirePermission('statement.cash_deposit'), async (req, res, next) => {
   try {
     const rows = await dbAll(`
@@ -7970,6 +7976,7 @@ app.get('/api/admin/cash-in-hand', requirePermission('statement.cash_deposit'), 
        WHERE pt.payment_mode = 'CASH'
          AND pt.txn_status = 'VERIFIED'
          AND pt.bank_txn_id IS NULL
+         AND ${CASH_IN_HAND_SQL('pt')}
        ORDER BY pt.submitted_at ASC, pt.id ASC`);
     const total = rows.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
     res.json({ transactions: rows, total, count: rows.length });
@@ -11665,6 +11672,7 @@ app.get('/api/desk/cash-in-hand', requirePermission('desk.view'), async (req, re
         LEFT JOIN registrations r ON r.id = pt.registration_id
        WHERE pt.payment_mode = 'CASH' AND pt.txn_status = 'VERIFIED'
          AND pt.bank_txn_id IS NULL AND pt.collected_by = ?
+         AND ${CASH_IN_HAND_SQL('pt')}
        ORDER BY pt.submitted_at ASC, pt.id ASC`, [me]);
     res.json({
       success: true, collector: me, transactions: rows, count: rows.length,
@@ -13673,7 +13681,8 @@ async function buildReport(type, opts = {}) {
       const cash = await dbGet(
         `SELECT COUNT(*) AS n, COALESCE(SUM(COALESCE(verified_amount, amount, 0)), 0) AS t
            FROM payment_transactions
-          WHERE payment_mode = 'CASH' AND txn_status = 'VERIFIED' AND bank_txn_id IS NULL`);
+          WHERE payment_mode = 'CASH' AND txn_status = 'VERIFIED' AND bank_txn_id IS NULL
+            AND ${CASH_IN_HAND_SQL('payment_transactions')}`);
       sections.push({
         name: 'Money',
         columns: ['Measure', 'Count', 'Amount'],

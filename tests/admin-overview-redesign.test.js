@@ -140,6 +140,26 @@ const GUESTS = { dashboard: { noAccommodation: 2, notSignedUp: 1 }, guests: [
   check('the faculty rows, with how many have accounts', !full.hidden('ov-q-rooms') && !full.hidden('ov-q-pickups') && e['ov-signup-sub'].textContent === '2 of 3 have a portal account', e['ov-signup-sub'].textContent);
   check('a clear section says so under the rows', !full.hidden('overview-clear-line') && e['overview-clear-line'].textContent === 'Nothing waiting in the bank statement.', e['overview-clear-line'].textContent);
 
+  console.log('\n== On a phone: nothing drawn wider than its card ==');
+  {
+    check('a workshop\'s row cannot be pushed wider than the card by its name', /class="grid grid-cols-1 sm:grid-cols-2 gap-x-7"/.test(ws) && /class="py-1\.5 min-w-0 /.test(ws));
+    check('...the name wraps in full on a phone, two lines from a tablet up; never cut to one', /class="min-w-0 [^"]*break-words sm:line-clamp-2"/.test(ws) && !/truncate/.test(ws));
+    check('...the count stays whole beside it', /class="shrink-0 [^"]*whitespace-nowrap">50 \/ 40/.test(ws));
+    const fit = full.sandbox.overviewWeeksFit;
+    check('all sixteen weeks where they fit, and where the width is not known', fit(600, 2) === 16 && fit(0, 2) === 16 && fit(undefined, 3) === 16);
+    check('fewer on a narrow card, fewer still for three-figure weeks, never under six', fit(246, 2) === 11 && fit(246, 3) === 9 && fit(60, 3) === 6, [fit(246, 2), fit(246, 3), fit(60, 3)]);
+    const WEEK = 7 * DAY;
+    const rows = Array.from({ length: 14 }, (_, i) => ({ submitted_at: now - i * WEEK }));
+    e['ov-weeks'].clientWidth = 150;
+    full.sandbox.renderOverviewWeeks(rows);
+    const narrow = e['ov-weeks'].innerHTML;
+    check('a narrow card draws the latest weeks that fit', (narrow.match(/title="Week of/g) || []).length === 10 && (narrow.match(/bg-gold-500/g) || []).length === 1, (narrow.match(/title="Week of/g) || []).length);
+    check('...and says so beside the heading', e['ov-weeks-span'].textContent === '· last 10 weeks' && /id="ov-weeks-span"/.test(view), e['ov-weeks-span'].textContent);
+    e['ov-weeks'].clientWidth = 600;
+    full.sandbox.renderOverviewWeeks(rows);
+    check('...a wide one draws them all and says nothing', (e['ov-weeks'].innerHTML.match(/title="Week of/g) || []).length === 14 && e['ov-weeks-span'].textContent === '');
+  }
+
   console.log('\n== Each part only for a role that can open it ==');
   {
     const ops = run({ permissions: ['payments.view'], sections: { payments: true }, routes: { '/api/registrations': REGS, '/api/program-options': PUBLIC_GROUPS } });

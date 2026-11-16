@@ -4777,7 +4777,17 @@ function overviewLegendHtml(parts) {
 
 // Registrations each week (IST, Monday to Sunday), up to the last sixteen
 // weeks; the week still running in gold. A month's name under its first week.
+// A bar carries its count above it, so a week needs room for that number: on
+// a narrow card only the latest weeks that fit are drawn (overviewWeeksFit),
+// and the heading says how many.
+function overviewWeeksFit(width, digits = 2, most = 16) {
+  if (!(width > 0)) return most;
+  const need = 4 + 6.5 * digits;
+  return Math.max(6, Math.min(most, Math.floor((width + 4) / (need + 4))));
+}
+let overviewWeekRows = null;
 function renderOverviewWeeks(rows) {
+  overviewWeekRows = rows;
   const box = document.getElementById('ov-weeks-box');
   const bars = document.getElementById('ov-weeks');
   const labels = document.getElementById('ov-weeks-labels');
@@ -4792,13 +4802,17 @@ function renderOverviewWeeks(rows) {
     return d.getTime();
   };
   const last = weekOf(Date.now());
-  const first = Math.max(weekOf(Math.min(...times)), last - 15 * WEEK);
-  const weeks = [];
-  for (let w = first; w <= last; w += WEEK) weeks.push({ w, n: 0 });
+  const since = Math.max(weekOf(Math.min(...times)), last - 15 * WEEK);
+  let weeks = [];
+  for (let w = since; w <= last; w += WEEK) weeks.push({ w, n: 0 });
   for (const t of times) {
-    const i = Math.round((weekOf(t) - first) / WEEK);
+    const i = Math.round((weekOf(t) - since) / WEEK);
     if (i >= 0 && i < weeks.length) weeks[i].n++;
   }
+  const fit = overviewWeeksFit(bars.clientWidth, String(Math.max(...weeks.map((x) => x.n))).length);
+  bars.dataset.width = String(bars.clientWidth);
+  setText('ov-weeks-span', weeks.length > fit ? `· last ${fit} weeks` : '');
+  weeks = weeks.slice(-fit);
   const max = Math.max(1, ...weeks.map((x) => x.n));
   const day = (ms) => new Date(ms).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
   bars.innerHTML = weeks.map((x, i) => `<div class="flex-1 min-w-0 h-full flex flex-col items-center justify-end gap-0.5" title="Week of ${esc(day(x.w))}: ${x.n}">
@@ -4811,6 +4825,13 @@ function renderOverviewWeeks(rows) {
     return `<span class="flex-1 min-w-0 whitespace-nowrap overflow-visible">${mon !== prev ? esc(mon) : ''}</span>`;
   }).join('');
 }
+// The card changes width (a phone turned, a window dragged): draw the weeks
+// that fit it now.
+window.addEventListener('resize', () => {
+  const bars = document.getElementById('ov-weeks');
+  if (!overviewWeekRows || !bars || !bars.clientWidth) return;
+  if (String(bars.clientWidth) !== bars.dataset.width) renderOverviewWeeks(overviewWeekRows);
+});
 
 // Workshops and QI practices: each option's seats taken. From the Workshops
 // screen's own endpoint when the role may open it (it counts past capacity),
@@ -4836,13 +4857,13 @@ function renderOverviewWorkshops(data, exact) {
   if (openBtn) openBtn.classList.toggle('hidden', !canSee('programs'));
   list.innerHTML = groups.map((g) => `<div>
       ${groups.length > 1 ? `<p class="text-sm font-semibold text-slate-600 mb-1">${esc(g.name)}</p>` : ''}
-      <div class="grid sm:grid-cols-2 gap-x-7">${g.options.map((o) => {
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-7">${g.options.map((o) => {
         const isOver = o.taken > o.cap;
         const isFull = o.taken === o.cap;
         const chip = isOver ? `<span class="ml-1.5 rounded-full bg-rose-100 text-rose-800 text-[11px] font-bold px-1.5 py-0.5">+${o.taken - o.cap}</span>`
           : isFull ? '<span class="ml-1.5 rounded-full bg-gold-50 text-gold-700 text-[11px] font-bold px-1.5 py-0.5">Full</span>' : '';
-        return `<div class="py-1.5">
-          <div class="flex items-baseline justify-between gap-3"><span class="text-sm text-slate-900 truncate" title="${esc(o.name)}">${esc(o.name)}</span><span class="shrink-0 text-sm text-slate-600 tabular-nums">${o.taken} / ${o.cap}${chip}</span></div>
+        return `<div class="py-1.5 min-w-0 flex flex-col justify-end">
+          <div class="flex items-end justify-between gap-3"><span class="min-w-0 text-sm text-slate-900 leading-snug break-words sm:line-clamp-2" title="${esc(o.name)}">${esc(o.name)}</span><span class="shrink-0 text-sm text-slate-600 tabular-nums whitespace-nowrap">${o.taken} / ${o.cap}${chip}</span></div>
           <div class="mt-1 h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full ${isOver ? 'bg-rose-600' : isFull ? 'bg-gold-500' : 'bg-navy'}" style="width:${Math.min(100, o.taken / o.cap * 100).toFixed(1)}%"></div></div>
         </div>`;
       }).join('')}</div>
