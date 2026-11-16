@@ -488,6 +488,17 @@ async function seedRows() {
   // Keep registration numbers from colliding with anything issued later.
   await db.run('INSERT OR REPLACE INTO reg_seq (id) VALUES (?)', [regCounter + 100]);
 
+  // Every account has a Reg No in production (signup issues one). Staff and
+  // the admin pool were made without, so the app's boot-time backfill
+  // (server.js, "give every existing user a registration number") used to
+  // write ~220 of them in the seconds after it was ready -- while the first
+  // test file was already reading and writing, which failed with
+  // SQLITE_BUSY. Issued here instead, exactly as that backfill does.
+  for (const u of await db.all("SELECT phone_number FROM users WHERE registration_number IS NULL OR registration_number = ''")) {
+    const seq = await db.run('INSERT INTO reg_seq DEFAULT VALUES');
+    await db.run('UPDATE users SET registration_number = ? WHERE phone_number = ?', [`NQOCN2026${String(seq.lastID).padStart(4, '0')}`, u.phone_number]);
+  }
+
   await db.close();
 }
 

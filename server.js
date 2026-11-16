@@ -1713,6 +1713,10 @@ const db = new sqlite3.Database(DB_FILE, (err) => {
   if (err) console.error('Error connecting to SQLite:', err);
   else console.log('Connected to SQLite database.');
 });
+// Another connection to the file (a backup, the sqlite3 shell, the test
+// suite) may hold a lock for a moment: wait for it, up to 5 seconds,
+// rather than fail the request with SQLITE_BUSY.
+db.configure('busyTimeout', 5000);
 
 // Promise wrappers so the auth flow reads sequentially.
 const dbGet = (sql, p = []) => new Promise((res, rej) => db.get(sql, p, (e, r) => (e ? rej(e) : res(r))));

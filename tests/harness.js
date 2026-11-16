@@ -178,6 +178,10 @@ function openDb({ readOnly = false } = {}) {
   const db = readOnly
     ? new sqlite3.Database(file, sqlite3.OPEN_READONLY)
     : new sqlite3.Database(file);
+  // The app holds its own connection to the same file and may be writing
+  // (an audit row after a response, say): wait for its lock rather than
+  // fail at once with SQLITE_BUSY.
+  db.configure('busyTimeout', 5000);
   return {
     db,
     all: (sql, params = []) => new Promise((res, rej) => db.all(sql, params, (e, rows) => (e ? rej(e) : res(rows)))),
