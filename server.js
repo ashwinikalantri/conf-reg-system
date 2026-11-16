@@ -13586,6 +13586,18 @@ async function reportPaymentDates() {
   const fmtIso = (iso) => attendanceLib.dateRange(iso, iso); // "12 Sep 2026", the same on every server
   return (regId) => [...(creditDates[regId] || [])].sort().map(fmtIso).join('; ');
 }
+// No bank credit to date: a complimentary registration takes the day it
+// was added, and one a discount code made free the day the code was
+// applied (rows from before that was recorded: the day they registered).
+// Needs payment_mode, discount_code, expected_amount, discount_applied_at
+// and submitted_at; '' for one that has something to pay.
+function reportNoPaymentDate(r) {
+  if (r.payment_mode !== 'COMPLIMENTARY' && (!r.discount_code || Number(r.expected_amount) > 0)) return '';
+  const at = r.discount_applied_at || r.submitted_at;
+  if (!at) return '';
+  const iso = istDateString(at);
+  return attendanceLib.dateRange(iso, iso);
+}
 
 async function buildReport(type, opts = {}) {
   // The one report with no line list. Every other report is a table of
@@ -13889,16 +13901,19 @@ async function buildReport(type, opts = {}) {
   if (type === 'badges') {
     const rows = (await dbAll(
       `SELECT registrations.id, registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number AS phone_number,
-         registrations.discount_applied_at, registrations.submitted_at, registrations.category_key, u.designation, u.institution
+         registrations.discount_applied_at, registrations.submitted_at, registrations.category_key, u.designation, u.institution,
+         registrations.payment_mode, registrations.discount_code, registrations.expected_amount
          FROM registrations
          LEFT JOIN users u ON u.phone_number = registrations.phone_number
          WHERE registrations.bank_status = 'BANK_VERIFIED'
          ORDER BY registrations.registration_number`)).map(withDelegateSalutation);
-    // In the order they were confirmed: the day of the last verified payment
-    // (its bank credit's date once matched, else the day it was sent in);
-    // one with nothing to pay, the day it was made free (or registered).
-    const lastPaid = {};
-    const paidOn = (regId, iso) => { if (iso && (!lastPaid[regId] || iso > lastPaid[regId])) lastPaid[regId] = iso; };
+    // Every day a verified payment was made: its bank credit's date once
+    // matched, else the day it was sent in (cash at the desk has no bank
+    // credit). Payment Date lists them; one with nothing to pay shows the
+    // day it was made free, as Registered Delegates does. In the order they
+    // were confirmed: the last of those days.
+    const paidDays = {};
+    const paidOn = (regId, iso) => { if (iso) (paidDays[regId] ||= new Set()).add(iso); };
     for (const t of await dbAll(
       `SELECT pt.registration_id, pt.submitted_at, b.post_date FROM payment_transactions pt
          LEFT JOIN bank_statement_transactions b ON b.id = pt.bank_txn_id
@@ -13907,8 +13922,10 @@ async function buildReport(type, opts = {}) {
     }
     for (const c of await dbAll(
       `SELECT r.id, b.post_date FROM registrations r JOIN bank_statement_transactions b ON b.id = r.bank_txn_id`)) paidOn(c.id, String(c.post_date || '').slice(0, 10));
-    const confirmedOn = (r) => lastPaid[r.id]
+    const days = (r) => [...(paidDays[r.id] || [])].sort();
+    const confirmedOn = (r) => days(r).pop()
       || ((r.discount_applied_at || r.submitted_at) ? istDateString(r.discount_applied_at || r.submitted_at) : '9999-12-31');
+    const paymentDate = (r) => days(r).map((iso) => attendanceLib.dateRange(iso, iso)).join('; ') || reportNoPaymentDate(r);
     rows.sort((a, b) => confirmedOn(a).localeCompare(confirmedOn(b)) || String(a.registration_number).localeCompare(String(b.registration_number)));
     const facultyPhones = new Set((await dbAll('SELECT phone_number, overall_status FROM guests WHERE phone_number IS NOT NULL'))
       .filter((g) => !isCancelledGuest(g)).map((g) => g.phone_number));
@@ -13919,10 +13936,11 @@ async function buildReport(type, opts = {}) {
       sections: [{
         // Role: what the badge says -- Faculty (on the list, not cancelled),
         // Volunteer (the Volunteer category), else Delegate.
-        columns: ['Reg No', 'Name', 'Designation', 'Institution', 'Role', 'QR Code'],
+        columns: ['Reg No', 'Name', 'Designation', 'Institution', 'Role', 'Payment Date', 'QR Code'],
         rows: rows.map((r) => [r.registration_number, r.delegate_name, r.designation, r.institution,
-          facultyPhones.has(r.phone_number) ? 'Faculty' : r.category_key === VOLUNTEER_CATEGORY ? 'Volunteer' : 'Delegate', qrUrl(r.registration_number)]),
-        qr: { column: 5, of: 0 },
+          facultyPhones.has(r.phone_number) ? 'Faculty' : r.category_key === VOLUNTEER_CATEGORY ? 'Volunteer' : 'Delegate',
+          paymentDate(r), qrUrl(r.registration_number)]),
+        qr: { column: 6, of: 0 },
       }],
     };
   }
@@ -13938,22 +13956,12 @@ async function buildReport(type, opts = {}) {
          ORDER BY registrations.registration_number`, [VOLUNTEER_CATEGORY])).map(withDelegateSalutation);
     // Volunteers are in their own report, not here.
     const paymentDates = await reportPaymentDates();
-    // No bank credit to date: a complimentary registration takes the day it
-    // was added, and one a discount code made free the day the code was
-    // applied (rows from before that was recorded: the day they registered).
-    const noPaymentDate = (r) => {
-      if (r.payment_mode !== 'COMPLIMENTARY' && (!r.discount_code || Number(r.expected_amount) > 0)) return '';
-      const at = r.discount_applied_at || r.submitted_at;
-      if (!at) return '';
-      const iso = istDateString(at);
-      return attendanceLib.dateRange(iso, iso);
-    };
     return {
       title: 'Registered Delegates',
       sections: [{
         columns: ['Reg No', 'Name', 'Category', 'Age', 'Gender', 'Mobile', 'Email', 'Designation', 'Institution', 'District', 'State', 'Pincode', 'Country', 'Payment Date'],
         rows: rows.map((r) => [r.registration_number, r.delegate_name, r.category_label, r.age, r.gender, displayPhone(r), r.email, r.designation, r.institution, r.district, r.state, r.pincode, r.country || 'India',
-          paymentDates(r.id) || noPaymentDate(r)]),
+          paymentDates(r.id) || reportNoPaymentDate(r)]),
       }],
     };
   }

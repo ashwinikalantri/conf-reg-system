@@ -12,14 +12,15 @@ const fs = require('fs');
   const sec = rep.sections[0];
   check('named Conference Badge', rep.title === 'Conference Badge', rep.title);
   // Role (3 Nov 2026): what the badge says -- Delegate, Faculty or Volunteer.
-  check('Reg No, Name, Designation, Institution, Role, QR Code', JSON.stringify(sec.columns) === JSON.stringify(['Reg No', 'Name', 'Designation', 'Institution', 'Role', 'QR Code']), sec.columns);
+  // Payment Date (16 Nov 2026), before the QR so the QR stays last.
+  check('Reg No, Name, Designation, Institution, Role, Payment Date, QR Code', JSON.stringify(sec.columns) === JSON.stringify(['Reg No', 'Name', 'Designation', 'Institution', 'Role', 'Payment Date', 'QR Code']), sec.columns);
   check('...every role one of the three', sec.rows.every((r) => ['Delegate', 'Faculty', 'Volunteer'].includes(r[4])));
   const confirmed = (await db.all("SELECT registration_number FROM registrations WHERE bank_status = 'BANK_VERIFIED' ORDER BY registration_number")).map((r) => r.registration_number);
   check('confirmed registrations only, as Registered Delegates', JSON.stringify(sec.rows.map((r) => r[0]).sort()) === JSON.stringify(confirmed.sort()), { got: sec.rows.length, want: confirmed.length });
   const row = sec.rows.find((r) => r[0]);
-  check('the QR cell is the address of that Reg No\'s QR image', row && new RegExp(`^https?://[^ ]+/api/qr/${row[0]}\\.png$`).test(row[5]), row && row[5]);
-  check('...and the page and PDF are told to draw it', sec.qr && sec.qr.column === 5 && sec.qr.of === 0);
-  check('...at the conference\'s own address (3 Nov 2026)', sec.rows.every((r) => !r[5] || r[5].startsWith('https://nqocn2026.mgims.ac.in/api/qr/')), row && row[5]);
+  check('the QR cell is the address of that Reg No\'s QR image', row && new RegExp(`^https?://[^ ]+/api/qr/${row[0]}\\.png$`).test(row[6]), row && row[6]);
+  check('...and the page and PDF are told to draw it', sec.qr && sec.qr.column === 6 && sec.qr.of === 0);
+  check('...at the conference\'s own address (3 Nov 2026)', sec.rows.every((r) => !r[6] || r[6].startsWith('https://nqocn2026.mgims.ac.in/api/qr/')), row && row[6]);
 
   // In the order they were confirmed: the last verified payment's day, or
   // the day a free one was made free; the same day, by Reg No.
@@ -41,19 +42,24 @@ const fs = require('fs');
     txns.push((await db.run("INSERT INTO payment_transactions (registration_id, amount, verified_amount, txn_status, submitted_at) VALUES (?, 2000, 2000, 'VERIFIED', ?)", [early, at(6)])).lastID);
     txns.push((await db.run("INSERT INTO payment_transactions (registration_id, amount, verified_amount, txn_status, submitted_at) VALUES (?, 500, 0, 'REJECTED', ?)", [early, at(25)])).lastID);
     await add('C', { fee: 0, mode: 'COMPLIMENTARY', submitted: at(1), applied: at(12) }); // made free on 12 Oct
-    const order = (await call('GET', '/api/admin/reports/badges?format=json', null, admin)).body.report.sections[0].rows
-      .map((r) => r[0]).filter((no) => /^BD[ABC]/.test(no));
+    const ours = (await call('GET', '/api/admin/reports/badges?format=json', null, admin)).body.report.sections[0].rows
+      .filter((r) => /^BD[ABC]/.test(r[0]));
+    const order = ours.map((r) => r[0]);
     check('sorted by the day each was confirmed, a rejected payment not counted', JSON.stringify(order) === JSON.stringify([`BDB${N}`, `BDC${N}`, `BDA${N}`]), order);
+    const paid = Object.fromEntries(ours.map((r) => [r[0].slice(0, 3), r[5]]));
+    check('Payment Date: each day a payment was made, in order', paid.BDA === '2 Oct 2026; 20 Oct 2026', paid.BDA);
+    check('...a rejected payment is not a payment', paid.BDB === '6 Oct 2026', paid.BDB);
+    check('...nothing to pay: the day it was made free', paid.BDC === '12 Oct 2026', paid.BDC);
   } finally {
     for (const id of txns) await db.run('DELETE FROM payment_transactions WHERE id = ?', [id]);
     for (const id of made) await db.run('DELETE FROM registrations WHERE id = ?', [id]);
   }
-  const img = await call('GET', new URL(row[5]).pathname, null, null);
+  const img = await call('GET', new URL(row[6]).pathname, null, null);
   check('...an address that answers with the image, no sign-in needed', img.status === 200 && /image\/png/.test(img.headers['content-type'] || ''), img.status);
 
   const csv = await call('GET', '/api/admin/reports/badges?format=csv', null, admin);
   const lines = csv.raw.split('\r\n');
-  check('the CSV: one column per field, the QR address in its own', lines[0] === 'Reg No,Name,Designation,Institution,Role,QR Code' && lines[1].endsWith(`/api/qr/${sec.rows[0][0]}.png`), lines.slice(0, 2));
+  check('the CSV: one column per field, the QR address in its own', lines[0] === 'Reg No,Name,Designation,Institution,Role,Payment Date,QR Code' && lines[1].endsWith(`/api/qr/${sec.rows[0][0]}.png`), lines.slice(0, 2));
 
   const pdf = await call('GET', '/api/admin/reports/badges?format=pdf', null, admin);
   check('the PDF downloads, with the QR images in it', pdf.status === 200 && /application\/pdf/.test(pdf.headers['content-type'] || '')
