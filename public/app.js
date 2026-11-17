@@ -11490,9 +11490,12 @@ async function renderBackendAbstracts() {
   `).join('');
 
   // Step 2: Assignment -- approved abstracts only, not-yet-assigned first
-  // for the same reason. The three formats are one control the width of
-  // the card on a phone.
-  const approved = abstracts.filter(a => a.status === 'ACCEPTED')
+  // for the same reason. Once the author has been emailed the decision the
+  // format is fixed (the server refuses a change) and the abstract has moved
+  // on to Step 3, so it is not listed here. The three formats are one control
+  // the width of the card on a phone.
+  const accepted = abstracts.filter((a) => a.status === 'ACCEPTED');
+  const approved = accepted.filter((a) => !a.decision_sent_at)
     .sort((a, b) => (a.allocation ? 1 : 0) - (b.allocation ? 1 : 0));
   const allocBtn = (a, key, label) => `<button type="button" class="abstract-alloc-btn h-9 px-4 text-xs font-semibold ${a.allocation === key ? 'bg-indigo-600 text-white' : 'bg-white text-indigo-700 hover:bg-indigo-50'}" aria-pressed="${a.allocation === key}" data-id="${esc(a.id)}" data-alloc="${key}">${label}</button>`;
   assignBox.innerHTML = approved.length ? approved.map(a => `
@@ -11503,11 +11506,13 @@ async function renderBackendAbstracts() {
         <div class="grid grid-cols-3 sm:inline-grid divide-x divide-indigo-300 border border-indigo-300 rounded-lg overflow-hidden" role="group" aria-label="Assign format">
           ${allocBtn(a, 'ORAL', 'Oral')}${allocBtn(a, 'POSTER', 'Poster')}${allocBtn(a, 'AWARD', 'Award')}
         </div>
-        ${a.allocation ? `<span class="text-[11px] text-emerald-600 font-semibold">Assigned &amp; delegate notified: ${esc(abstractFormatLabel(a.allocation))}</span>` : `<span class="text-[11px] text-amber-600 font-semibold">Not yet assigned — delegate has not been notified</span>`}
+        ${a.allocation ? `<span class="text-[11px] text-amber-700 font-semibold">${esc(abstractFormatLabel(a.allocation))} chosen — the email has not gone. Choose it again to send it.</span>` : `<span class="text-[11px] text-amber-600 font-semibold">Not yet assigned — delegate has not been notified</span>`}
       </div>
       ${abstractProvisional(a) ? `<p class="text-[11px] text-sky-700 mt-2">${a.allocation ? 'The delegate was told the acceptance is provisional, and that registration is mandatory to present.' : 'The email will say the acceptance is provisional, and that registration is mandatory to present.'}</p>` : ''}
     </div>
-  `).join('') : `<p class="text-sm text-slate-500 p-4">No approved abstracts yet.</p>`;
+  `).join('') : `<p class="text-sm text-slate-500 p-4">${accepted.length
+    ? 'Every approved abstract has its format, and its author has been emailed. They are in Step 3.'
+    : 'No approved abstracts yet.'}</p>`;
 }
 
 // Step 1's status chips, in the order an abstract moves through them.
@@ -11532,14 +11537,14 @@ async function updateAbstractStatus(id, status) {
 }
 
 // Assigning a format is what emails the author their decision, so it asks
-// first. Re-saving the format already assigned sends nothing, so it does not.
+// first -- the same format again too: here, its email has not gone yet.
+// Once it has, the abstract is no longer in Step 2 and the format is fixed.
 async function confirmAllocationEmail(id, allocation) {
   const a = abstractsCache.find((x) => String(x.id) === String(id));
-  if (a && a.allocation === allocation) return true;
   const who = a && a.author_name ? a.author_name : 'the author';
   const kind = abstractFormatLabel(allocation).toLowerCase();
   const note = a && abstractProvisional(a) ? ' The email will say the acceptance is provisional until they register.' : '';
-  return showConfirm(`Assign ${kind} presentation and email ${who} that their abstract is accepted for it?${note}`, 'Assign & send email');
+  return showConfirm(`Assign ${kind} presentation and email ${who} that their abstract is accepted for it? Once the email has gone, the format cannot be changed.${note}`, 'Assign & send email');
 }
 
 async function updateAbstractAllocation(id, allocation) {

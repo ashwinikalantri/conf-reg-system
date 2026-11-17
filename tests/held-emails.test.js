@@ -21,7 +21,7 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     if (/requirePermission/.test(route)) left.push(route.slice(0, 70));
   }
   check('no route behind a staff permission still emails directly', left.length === 0, left);
-  check('every holding route has the signed-in person in hand', (src.match(/async function holdEmail\(req, phone, subject, html\)/g) || []).length === 1 && /req\.res\.append\('X-Held-Emails'/.test(src));
+  check('every holding route has the signed-in person in hand', (src.match(/async function holdEmail\(req, phone, subject, html, ref = null\)/g) || []).length === 1 && /req\.res\.append\('X-Held-Emails'/.test(src));
   check('a sign-in code is not held', !/holdEmail\([^)]*verification code/.test(src) && /sendEmail\(dest, `Your/.test(src));
 
   const db = await openDb();

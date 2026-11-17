@@ -643,12 +643,12 @@ async function notifyDelegate(phone, subject, html) {
 // reply carries X-Held-Emails, the admin page asks Send or Cancel, and only
 // Send sends it (POST /api/admin/held-emails/decide). No answer, no email.
 // What a delegate's own action sends, and sign-in codes, go at once.
-async function holdEmail(req, phone, subject, html) {
+async function holdEmail(req, phone, subject, html, ref = null) {
   if (!emailEnabled() || !notifyToggle.email) return false;
   const u = await dbGet('SELECT email, full_name FROM users WHERE phone_number = ?', [phone]).catch(() => null);
   if (!u || !u.email) return false;
-  const r = await dbRun(`INSERT INTO held_emails (to_address, to_name, subject, html, by_phone, status, created_at)
-    VALUES (?, ?, ?, ?, ?, 'PENDING', ?)`, [u.email, u.full_name || null, subject, html, req.session.phone, Date.now()]);
+  const r = await dbRun(`INSERT INTO held_emails (to_address, to_name, subject, html, by_phone, status, created_at, ref)
+    VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)`, [u.email, u.full_name || null, subject, html, req.session.phone, Date.now(), ref]);
   req.res.append('X-Held-Emails', String(r.lastID));
   return true;
 }
@@ -1635,6 +1635,18 @@ async function retireHolderCodesOnRegistration(phone, usedCode) {
   return codes.length;
 }
 
+// Decisions emailed before held emails named their abstract (2026-11-17):
+// an accepted abstract with a format whose author was sent "Your abstract
+// has been ... accepted" counts as told, from when it went. Once.
+async function backfillDecisionSentOnBoot() {
+  if (await dbGet("SELECT 1 FROM schema_meta WHERE key = 'decision_sent_backfill_done'")) return;
+  await dbRun(`UPDATE abstracts SET decision_sent_at = (
+      SELECT MAX(COALESCE(h.decided_at, h.created_at)) FROM held_emails h JOIN users u ON LOWER(u.email) = LOWER(h.to_address)
+       WHERE u.phone_number = abstracts.phone_number AND h.status = 'SENT' AND h.subject LIKE 'Your abstract has been%')
+    WHERE status = 'ACCEPTED' AND allocation IS NOT NULL AND decision_sent_at IS NULL`);
+  await dbRun("INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('decision_sent_backfill_done', ?)", [String(Date.now())]);
+}
+
 // The same rule over everyone already registered, at every start: it clears
 // what was registered before the rule existed, and any path that creates a
 // registration without calling the helper above. Idempotent -- only active
@@ -2020,6 +2032,11 @@ db.serialize(() => {
       decided_at INTEGER
     )
   `);
+  // What a held email is about, when sending it changes something: an
+  // abstract's decision ("abstract:<id>:<format>") marks the decision sent.
+  db.all('PRAGMA table_info(held_emails)', (err, cols) => {
+    if (!err && !cols.some((c) => c.name === 'ref')) db.run('ALTER TABLE held_emails ADD COLUMN ref TEXT');
+  });
   // The file each presenter uploaded: one per abstract, replaced in place.
   // allocation is the format it was uploaded for, so a format changed since
   // can be seen.
@@ -2239,6 +2256,10 @@ db.serialize(() => {
       ['complete_requested_by', 'TEXT'], ['completed_at', 'INTEGER']]) {
       if (!names.includes(col)) db.run(`ALTER TABLE abstracts ADD COLUMN ${col} ${type}`);
     }
+    // When the author was emailed the decision -- accepted, for this format --
+    // from Step 2. From then the format is fixed and the abstract has left
+    // Step 2 for Step 3. Cleared if it is un-accepted.
+    if (!names.includes('decision_sent_at')) db.run('ALTER TABLE abstracts ADD COLUMN decision_sent_at INTEGER');
     // Zenodo (zenodo.js): the presenting author's consent, then the record --
     // DRAFT (DOI reserved) or PUBLISHED -- and the last error, if any.
     for (const [col, type] of [['zenodo_consent', 'INTEGER'], ['zenodo_consent_at', 'INTEGER'], ['zenodo_id', 'TEXT'], ['zenodo_doi', 'TEXT'],
@@ -8962,7 +8983,7 @@ async function audienceMembers(key, filters = {}) {
          FROM abstracts a
          LEFT JOIN users u ON u.phone_number = a.phone_number
          LEFT JOIN presentations p ON p.abstract_id = a.id
-        WHERE a.status = 'ACCEPTED' AND a.allocation IN ('ORAL', 'POSTER', 'AWARD')
+        WHERE a.status = 'ACCEPTED' AND a.allocation IN ('ORAL', 'POSTER', 'AWARD') AND a.decision_sent_at IS NOT NULL
           ${format ? 'AND a.allocation = ?' : ''} ${key === 'presenters_awaiting' ? 'AND p.abstract_id IS NULL' : ''}
         ORDER BY COALESCE(u.full_name, a.author_name), a.id`, format ? [format] : []);
     const due = presentationsLib.dueText(CONFERENCE.presentationsDue);
@@ -14826,7 +14847,7 @@ app.put('/api/abstracts/:id/status', requirePermission('abstracts.review'), asyn
     if (status === 'ACCEPTED') {
       await dbRun('UPDATE abstracts SET status = ?, revision_note = NULL, revision_until = NULL WHERE id = ?', [status, req.params.id]);
     } else {
-      await dbRun('UPDATE abstracts SET status = ?, allocation = NULL, revision_note = ?, revision_until = ? WHERE id = ?', [status, note, until, req.params.id]);
+      await dbRun('UPDATE abstracts SET status = ?, allocation = NULL, decision_sent_at = NULL, revision_note = ?, revision_until = ? WHERE id = ?', [status, note, until, req.params.id]);
     }
     await recordAudit({
       req,
@@ -14916,37 +14937,41 @@ app.put('/api/abstracts/:id/allocation', requirePermission('abstracts.assign'), 
     if (!['ORAL', 'POSTER', 'AWARD'].includes(allocation)) {
       return res.status(400).json({ success: false, error: 'Allocation must be ORAL, POSTER or AWARD.' });
     }
-    const a = await dbGet('SELECT status, allocation, phone_number, author_name, title FROM abstracts WHERE id = ?', [req.params.id]);
+    const a = await dbGet('SELECT status, allocation, decision_sent_at, phone_number, author_name, title FROM abstracts WHERE id = ?', [req.params.id]);
     if (!a) return res.status(404).json({ success: false, error: 'Abstract not found.' });
     if (a.status !== 'ACCEPTED') {
       return res.status(400).json({ success: false, error: 'Only approved abstracts can be assigned a presentation format.' });
     }
-    const isFirstAssignment = !a.allocation;
+    // Told: the author has the decision for this format, so it stands.
+    if (a.decision_sent_at) {
+      return res.status(409).json({ success: false, error: 'The author has been emailed this decision, so the format can no longer be changed.' });
+    }
     await dbRun('UPDATE abstracts SET allocation = ? WHERE id = ?', [allocation, req.params.id]);
     await recordAudit({
       req, entityType: 'abstract', entityId: req.params.id,
       action: 'ABSTRACT_ALLOCATION', oldValue: a.allocation, newValue: allocation,
     });
-    // Only email on the first assignment (or a change of format); re-saving
-    // the same value shouldn't re-notify the delegate.
+    // Until its email has gone, every assignment -- the same format again
+    // too, after an email was cancelled -- holds one. An earlier email still
+    // waiting is dropped: it may name another format.
     const provisional = !(await authorHasRegistered(a.phone_number));
-    if (isFirstAssignment || a.allocation !== allocation) {
-      const kind = { ORAL: 'oral', POSTER: 'poster', AWARD: 'award' }[allocation];
-      if (provisional) {
-        await holdEmail(req, a.phone_number, 'Your abstract has been provisionally accepted — please register',
-          emailWrap('Abstract provisionally accepted', `<p>Dear ${escapeHtml(a.author_name)},</p>
-             <p>We are pleased to inform you that your abstract <b>"${escapeHtml(a.title)}"</b> has been <b>provisionally accepted</b> for the ${escapeHtml(CONFERENCE.name)}, for <b>${kind} presentation</b>.</p>
-             <div style="background:#eef3f6;border:1px solid #b9cedb;border-radius:10px;padding:.9rem 1.1rem;margin:1rem 0">
-               <p style="margin:0;font-weight:700;color:#1c3549">Registration is mandatory for presentation</p>
-               <p style="margin:.35rem 0 0;color:#244560">Our records show you have not yet registered for the conference. The acceptance is provisional until you do: an abstract can only be presented by a registered delegate.</p>
-             </div>
-             <p>Please log in at <b>${escapeHtml(portalHome())}</b> and complete your registration. Further details (time and venue) will be communicated separately.</p>`));
-      } else {
-        await holdEmail(req, a.phone_number, 'Your abstract has been accepted',
-          emailWrap('Abstract accepted', `<p>Dear ${escapeHtml(a.author_name)},</p>
-             <p>We are pleased to inform you that your abstract <b>"${escapeHtml(a.title)}"</b> has been <b>accepted</b> for the ${escapeHtml(CONFERENCE.name)}, for <b>${kind} presentation</b>.</p>
-             <p>Further details (time and venue) will be communicated separately.</p>`));
-      }
+    const ref = `abstract:${req.params.id}:${allocation}`;
+    await dbRun("UPDATE held_emails SET status = 'CANCELLED', decided_at = ? WHERE status = 'PENDING' AND ref LIKE ?", [Date.now(), `abstract:${req.params.id}:%`]);
+    const kind = { ORAL: 'oral', POSTER: 'poster', AWARD: 'award' }[allocation];
+    if (provisional) {
+      await holdEmail(req, a.phone_number, 'Your abstract has been provisionally accepted — please register',
+        emailWrap('Abstract provisionally accepted', `<p>Dear ${escapeHtml(a.author_name)},</p>
+           <p>We are pleased to inform you that your abstract <b>"${escapeHtml(a.title)}"</b> has been <b>provisionally accepted</b> for the ${escapeHtml(CONFERENCE.name)}, for <b>${kind} presentation</b>.</p>
+           <div style="background:#eef3f6;border:1px solid #b9cedb;border-radius:10px;padding:.9rem 1.1rem;margin:1rem 0">
+             <p style="margin:0;font-weight:700;color:#1c3549">Registration is mandatory for presentation</p>
+             <p style="margin:.35rem 0 0;color:#244560">Our records show you have not yet registered for the conference. The acceptance is provisional until you do: an abstract can only be presented by a registered delegate.</p>
+           </div>
+           <p>Please log in at <b>${escapeHtml(portalHome())}</b> and complete your registration. Further details (time and venue) will be communicated separately.</p>`), ref);
+    } else {
+      await holdEmail(req, a.phone_number, 'Your abstract has been accepted',
+        emailWrap('Abstract accepted', `<p>Dear ${escapeHtml(a.author_name)},</p>
+           <p>We are pleased to inform you that your abstract <b>"${escapeHtml(a.title)}"</b> has been <b>accepted</b> for the ${escapeHtml(CONFERENCE.name)}, for <b>${kind} presentation</b>.</p>
+           <p>Further details (time and venue) will be communicated separately.</p>`), ref);
     }
     res.json({ success: true, provisional });
   } catch (err) {
@@ -15074,7 +15099,7 @@ app.get('/api/admin/presentations', requirePermission('abstracts.view'), async (
          FROM abstracts a
          LEFT JOIN users u ON u.phone_number = a.phone_number
          LEFT JOIN presentations p ON p.abstract_id = a.id
-        WHERE a.status = 'ACCEPTED' AND a.allocation IN ('ORAL', 'POSTER', 'AWARD')
+        WHERE a.status = 'ACCEPTED' AND a.allocation IN ('ORAL', 'POSTER', 'AWARD') AND a.decision_sent_at IS NOT NULL
         ORDER BY a.id`);
     const emailed = new Map((await dbAll(
       `SELECT entity_id, MAX(created_at) AS t FROM audit_log
@@ -15155,6 +15180,15 @@ app.put('/api/admin/presentations/due', requirePermission('abstracts.assign'), a
 });
 
 // --- HELD EMAILS ----------------------------------------------------------
+// What sending a held email changes. An abstract's decision marks it told --
+// only if it is still accepted for the format the email names.
+async function noteHeldEmailSent(row) {
+  const m = /^abstract:(\d+):(ORAL|POSTER|AWARD)$/.exec(row.ref || '');
+  if (m) {
+    await dbRun("UPDATE abstracts SET decision_sent_at = ? WHERE id = ? AND status = 'ACCEPTED' AND allocation = ? AND decision_sent_at IS NULL", [Date.now(), Number(m[1]), m[2]]);
+  }
+}
+
 // Each person sees and decides only the emails their own actions held.
 app.get('/api/admin/held-emails', requireAuth, async (req, res, next) => {
   try {
@@ -15185,6 +15219,7 @@ app.post('/api/admin/held-emails/decide', requireAuth, async (req, res, next) =>
         await recordAudit({ req, entityType: 'email', entityId: row.to_address, action: 'EMAIL_CANCELLED', oldValue: null, newValue: row.subject });
       } else if (await sendEmail(row.to_address, row.subject, row.html)) {
         sent++;
+        await noteHeldEmailSent(row);
       } else {
         failed++;
         await dbRun("UPDATE held_emails SET status = 'FAILED' WHERE id = ?", [id]);
@@ -15918,6 +15953,7 @@ registrationsMigrationReady.then(retitleNamesOnBoot)
   .then(() => migrateProgramGroupsOnBoot().catch((err) => console.error('Program-groups migration failed (continuing to start):', err.message)))
   .then(() => backfillPaymentTransactionsOnBoot().catch((err) => console.error('Payment-transaction backfill failed (continuing to start):', err.message)))
   .then(() => retireCodesOfRegisteredHoldersOnBoot().catch((err) => console.error('Code retirement sweep failed (continuing to start):', err.message)))
+  .then(() => backfillDecisionSentOnBoot().catch((err) => console.error('Decision-sent backfill failed (continuing to start):', err.message)))
   .then(() => guestLib.migrateGuestsTable(dbRun, dbAll)
     .then((r) => {
       if (r === 'rebuilt') console.log('Guests table rebuilt: faculty no longer need an account.');

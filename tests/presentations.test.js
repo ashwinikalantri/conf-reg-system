@@ -101,6 +101,9 @@ const istAt = (hours) => new Date(Date.now() + IST + hours * 3600e3).toISOString
   const abs = await db.get("SELECT * FROM abstracts WHERE title = 'Accepted and assigned'");
   const presenter = await db.get('SELECT full_name, registration_number FROM users WHERE phone_number = ?', [abs.phone_number]);
   const dueBefore = (await call('GET', '/api/conference', null, null)).body.presentationsDue;
+  // Step 3 holds the abstracts whose decision email has gone (the fixture's
+  // was never sent: there is no mail here).
+  await db.run('UPDATE abstracts SET decision_sent_at = ? WHERE id = ?', [Date.now(), abs.id]);
   const dir = appFile('uploads', 'presentations');
   const setDue = (due, as = admin) => call('PUT', '/api/admin/presentations/due', { due }, as);
   try {
@@ -209,7 +212,7 @@ const istAt = (hours) => new Date(Date.now() + IST + hours * 3600e3).toISOString
     const portalHtml = (await call('GET', '/portal', null, null)).raw;
     check('the Abstract card has a place for the presentation', /id="abstract-presentation"/.test(portalHtml));
   } finally {
-    await db.run('UPDATE abstracts SET allocation = ? WHERE id = ?', [abs.allocation, abs.id]);
+    await db.run('UPDATE abstracts SET allocation = ?, decision_sent_at = ? WHERE id = ?', [abs.allocation, abs.decision_sent_at, abs.id]);
     const rows = await db.all('SELECT file_name FROM presentations WHERE abstract_id = ?', [abs.id]);
     for (const r of rows) { try { fs.unlinkSync(path.join(dir, r.file_name)); } catch (e) { /* already gone */ } }
     await db.run('DELETE FROM presentations WHERE abstract_id = ?', [abs.id]);

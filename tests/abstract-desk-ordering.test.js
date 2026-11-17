@@ -184,6 +184,28 @@ const titlesInOrder = (html) => [...html.matchAll(/<h4 class="font-bold text-sla
     check('approving says where it went', /status === 'ACCEPTED' && can\('abstracts\.assign'\)\) showToast\('Approved\. It has moved to Step 2 to assign its format\.'/.test(js));
   }
 
+  console.log('\n== Once the author is emailed the decision, the abstract leaves Step 2 ==');
+  {
+    const abstracts = [
+      { id: 1, title: 'Assigned And Told', author_name: 'A', format: 'Oral', status: 'ACCEPTED', allocation: 'ORAL', decision_sent_at: 1 },
+      { id: 2, title: 'Assigned Not Told', author_name: 'B', format: 'Poster', status: 'ACCEPTED', allocation: 'POSTER' },
+      { id: 3, title: 'Not Assigned', author_name: 'C', format: 'Oral', status: 'ACCEPTED' },
+    ];
+    const fetchImpl = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ abstracts }) });
+    const { sandbox, doc } = loadApp(js, fetchImpl);
+    vm.runInContext("myPermissions = new Set(['abstracts.assign'])", sandbox);
+    await sandbox.renderBackendAbstracts();
+    const step2 = () => doc.getElementById('abstracts-assignment-container').innerHTML;
+    check('Step 2 keeps those whose email has not gone, and drops the one told', titlesInOrder(step2()).join(',') === 'Not Assigned,Assigned Not Told', titlesInOrder(step2()));
+    check('...the one not told says so, and how to send it', /Poster chosen — the email has not gone\. Choose it again to send it\./.test(step2()));
+    check('...and none of them is back in Step 1', titlesInOrder(doc.getElementById('abstracts-approval-container').innerHTML).length === 0);
+    abstracts.forEach((a) => { a.allocation = a.allocation || 'ORAL'; a.decision_sent_at = 1; });
+    await sandbox.renderBackendAbstracts();
+    check('all told: Step 2 says they are in Step 3', titlesInOrder(step2()).length === 0 && /its author has been emailed\. They are in Step 3\./.test(step2()));
+    check('choosing a format always asks first, and says it is final', /return showConfirm\(`Assign \$\{kind\} presentation and email \$\{who\} that their abstract is accepted for it\? Once the email has gone, the format cannot be changed\./.test(js)
+      && !/if \(a && a\.allocation === allocation\) return true;/.test(js));
+  }
+
   console.log('\n== No abstracts needing action: no crash, empty-state messages intact ==');
   {
     const fetchImpl = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ abstracts: [] }) });
