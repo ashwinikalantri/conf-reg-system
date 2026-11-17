@@ -5,7 +5,9 @@
 // submissions grow, the ones actually needing that decision get buried among
 // ones that don't. renderBackendAbstracts() now sorts pending-first (Step 1)
 // and unassigned-first (Step 2) while preserving each group's relative
-// order. Drives the real function in a vm sandbox with a stub fetch.
+// order. An abstract is in one step at a time: accepted ones are in Step 2
+// only (for a role that has Step 2). Drives the real function in a vm sandbox
+// with a stub fetch.
 const { check, report, appFile } = require('./harness');
 const fs = require('fs');
 const vm = require('vm');
@@ -133,6 +135,53 @@ const titlesInOrder = (html) => [...html.matchAll(/<h4 class="font-bold text-sla
     const assign = doc.getElementById('abstracts-assignment-container').innerHTML;
     check('the formats are one control the width of the card on a phone', /class="grid grid-cols-3 sm:inline-grid [^"]*" role="group" aria-label="Assign format"/.test(assign)
       && (assign.match(/class="abstract-alloc-btn h-9 /g) || []).length === 3);
+  }
+
+  console.log('\n== An abstract is in one step at a time: accepted ones leave Step 1 for Step 2 ==');
+  {
+    const abstracts = [
+      { id: 1, title: 'Already Accepted', author_name: 'A', format: 'Oral', status: 'ACCEPTED' },
+      { id: 2, title: 'Still Pending One', author_name: 'B', format: 'Poster', status: 'UNDER_REVIEW' },
+      { id: 3, title: 'Already Rejected', author_name: 'C', format: 'Oral', status: 'REJECTED' },
+      { id: 4, title: 'Sent For Corrections', author_name: 'D', format: 'Poster', status: 'REVISION_REQUESTED' },
+      { id: 5, title: 'Accepted And Assigned', author_name: 'E', format: 'Poster', status: 'ACCEPTED', allocation: 'POSTER' },
+    ];
+    const fetchImpl = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ abstracts }) });
+    const { sandbox, doc } = loadApp(js, fetchImpl);
+    vm.runInContext("myPermissions = new Set(['abstracts.assign'])", sandbox);
+    await sandbox.renderBackendAbstracts();
+    const step1 = () => doc.getElementById('abstracts-approval-container').innerHTML;
+    const step2 = () => doc.getElementById('abstracts-assignment-container').innerHTML;
+    check('Step 1 holds only the ones not accepted', titlesInOrder(step1()).join(',') === 'Still Pending One,Already Rejected,Sent For Corrections', titlesInOrder(step1()));
+    check('Step 2 holds the accepted ones', titlesInOrder(step2()).join(',') === 'Already Accepted,Accepted And Assigned', titlesInOrder(step2()));
+    check('no abstract is in both', !titlesInOrder(step1()).some((t) => titlesInOrder(step2()).includes(t)));
+    const chips = [...step1().matchAll(/onclick="setAbstractsStatusFilter\('(\w*)'\)"/g)].map((m) => m[1]);
+    check('...so Step 1 has no Accepted chip, and All counts only what is there', chips.join(',') === ',UNDER_REVIEW,REVISION_REQUESTED,REJECTED' && /All <span[^>]*>3<\/span>/.test(step1()), chips);
+    // Every abstract accepted: Step 1 says where they went, not "none".
+    abstracts.forEach((a) => { a.status = 'ACCEPTED'; });
+    await sandbox.renderBackendAbstracts();
+    check('with every abstract accepted, Step 1 says they are in Step 2', titlesInOrder(step1()).length === 0
+      && /Nothing waiting for a decision\. The accepted abstracts are in Step 2 below\./.test(step1()) && titlesInOrder(step2()).length === 5);
+    // Reset brings one back.
+    abstracts[0].status = 'UNDER_REVIEW';
+    await sandbox.renderBackendAbstracts();
+    check('reset to Under review, it is back in Step 1 and gone from Step 2', titlesInOrder(step1()).join(',') === 'Already Accepted' && !titlesInOrder(step2()).includes('Already Accepted'));
+  }
+  {
+    // A reviewer who may not assign has no Step 2: accepted ones stay in Step 1.
+    const abstracts = [
+      { id: 1, title: 'Already Accepted', author_name: 'A', format: 'Oral', status: 'ACCEPTED' },
+      { id: 2, title: 'Still Pending One', author_name: 'B', format: 'Poster', status: 'UNDER_REVIEW' },
+    ];
+    const fetchImpl = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ abstracts }) });
+    const { sandbox, doc } = loadApp(js, fetchImpl);
+    await sandbox.renderBackendAbstracts();
+    check('without abstracts.assign (no Step 2), accepted ones stay in Step 1', titlesInOrder(doc.getElementById('abstracts-approval-container').innerHTML).join(',') === 'Still Pending One,Already Accepted');
+  }
+  {
+    const views = fs.readFileSync(appFile('views', 'admin', 'sections', 'abstracts.ejs'), 'utf8');
+    check('Step 1 says an accepted abstract moves to Step 2', /Once accepted, it moves to Step 2 below; Reset in its review brings it back here\./.test(views));
+    check('approving says where it went', /status === 'ACCEPTED' && can\('abstracts\.assign'\)\) showToast\('Approved\. It has moved to Step 2 to assign its format\.'/.test(js));
   }
 
   console.log('\n== No abstracts needing action: no crash, empty-state messages intact ==');

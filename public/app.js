@@ -11188,13 +11188,19 @@ async function renderBackendAbstracts() {
     return;
   }
 
+  // An abstract is in one step at a time: once accepted it leaves Step 1 for
+  // Step 2, and Reset in its review brings it back. A reviewer who may not
+  // assign has no Step 2 (applyRoleVisibility), so for them it stays here.
+  const assigning = can('abstracts.assign');
+  const inApproval = abstracts.filter((a) => !assigning || a.status !== 'ACCEPTED');
+
   // Step 1: Approval -- accept/reject/reset happens inside the review modal
   // (see openAbstractReview), not on the card itself. Still-pending ones
   // first: this list only grows over a conference, and burying "needs a
   // decision" among already-decided abstracts is exactly the wrong order
   // for the one task this step describes. Stable sort keeps each group's
   // own relative order (server's own, typically submission order).
-  const approvalOrder = [...abstracts].sort((a, b) =>
+  const approvalOrder = [...inApproval].sort((a, b) =>
     (a.status === 'UNDER_REVIEW' ? 0 : 1) - (b.status === 'UNDER_REVIEW' ? 0 : 1));
   // Chips to narrow Step 1 to one status, each with its count; only the
   // statuses there are. A filter whose abstracts are all gone falls back to All.
@@ -11206,7 +11212,9 @@ async function renderBackendAbstracts() {
       class="h-8 px-3 rounded-full text-xs font-semibold border whitespace-nowrap ${abstractsStatusFilter === key ? 'bg-navy border-navy text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}">${label} <span class="tabular-nums ${abstractsStatusFilter === key ? 'text-white/80' : 'text-slate-400'}">${n}</span></button>`;
   const chips = [chip('', 'All', approvalOrder.length)].concat(ABSTRACT_FILTERS.filter(([key]) => counts[key]).map(([key, label]) => chip(key, label, counts[key])));
   const shown = abstractsStatusFilter ? approvalOrder.filter((a) => statusOf(a) === abstractsStatusFilter) : approvalOrder;
-  approvalBox.innerHTML = `<div class="flex flex-wrap gap-1.5" role="group" aria-label="Show abstracts by status">${chips.join('')}</div>`
+  approvalBox.innerHTML = !approvalOrder.length
+    ? `<p class="text-sm text-slate-500 p-4">Nothing waiting for a decision. The accepted abstracts are in Step 2 below.</p>`
+    : `<div class="flex flex-wrap gap-1.5" role="group" aria-label="Show abstracts by status">${chips.join('')}</div>`
     + shown.map(a => `
     <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
       ${abstractCardHeader(a)}
@@ -11251,6 +11259,7 @@ async function updateAbstractStatus(id, status) {
   const data = await res.json().catch(() => ({}));
   if (!data.success) showToast(data.error || 'Could not update the abstract.');
   else if (data.provisional) showToast('Approved provisionally — pending the author\'s registration. No email is sent at this step.', 'success');
+  else if (status === 'ACCEPTED' && can('abstracts.assign')) showToast('Approved. It has moved to Step 2 to assign its format.', 'success');
   renderBackendAbstracts();
 }
 
