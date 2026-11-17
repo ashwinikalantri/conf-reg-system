@@ -320,6 +320,7 @@ const ROUTE_PERMISSIONS = {
   'GET /api/admin/presentations': 'abstracts.view',
   'GET /api/admin/presentations/zip': 'abstracts.view',
   'GET /api/admin/presentations/:id/file': 'abstracts.view',
+  'POST /api/admin/presentations/drive': 'abstracts.assign',
   'POST /api/admin/presentations/:id': 'abstracts.assign',
   'PUT /api/admin/presentations/due': 'abstracts.assign',
   'GET /api/guests': 'guests.view',

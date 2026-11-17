@@ -256,6 +256,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'GET /api/admin/presentations': 'Each abstract with a format, and whether its presenter\'s file has come in. abstracts.view.',
     'GET /api/admin/presentations/zip': 'Every file received (or one format\'s) as one zip, for the AV team. abstracts.view.',
     'GET /api/admin/presentations/:id/file': 'One presenter\'s file. abstracts.view.',
+    'POST /api/admin/presentations/drive': 'Asks for the presenters\' files to be copied to Google Drive now. abstracts.assign.',
     'POST /api/admin/presentations/:id': 'Uploads a file a presenter emailed, on their behalf. abstracts.assign.',
     'PUT /api/admin/presentations/due': 'Moves the last date for presenters\' files. abstracts.assign.',
     'POST /api/desk/collect-cash': 'The seventh, and the only one NOT guarded by a desk.* key: it '

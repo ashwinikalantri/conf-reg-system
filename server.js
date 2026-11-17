@@ -15088,6 +15088,41 @@ app.get('/api/abstracts/me/presentation', requireAuth, async (req, res, next) =>
   }
 });
 
+// The copies on Google Drive (owner, 17 Nov 2026): NQOCN 2026
+// Presentations › Oral / Poster / Award, in the Drive the backups use. The
+// copying is scripts/presentations-drive.sh, run by cron on the host, which
+// alone holds the Drive credential (as with backups); it reports through two
+// files beside the database -- the last good copy (when, the folder links,
+// what is on Drive) and the latest failure -- and acts on a request file the
+// "Copy now" button leaves.
+const PRESENTATIONS_DRIVE_STATUS = path.join(DATA_DIR, '.presentations-drive-status.json');
+const PRESENTATIONS_DRIVE_ERROR = path.join(DATA_DIR, '.presentations-drive-error.json');
+const PRESENTATIONS_DRIVE_REQUEST = path.join(DATA_DIR, '.presentations-drive-request.json');
+const driveFolderUrl = (id) => (id && /^[\w-]+$/.test(id) ? `https://drive.google.com/drive/folders/${id}` : null);
+async function presentationsDrive() {
+  const [status, failed, request] = await Promise.all([
+    readJsonFile(PRESENTATIONS_DRIVE_STATUS), readJsonFile(PRESENTATIONS_DRIVE_ERROR), readJsonFile(PRESENTATIONS_DRIVE_REQUEST)]);
+  const folders = (status && status.folders) || {};
+  const files = new Map(((status && status.files) || []).map((f) => [String(f.path), Number(f.size)]));
+  return {
+    view: {
+      copiedAt: (status && status.checkedAt) || null,
+      folder: (status && status.folder) || 'NQOCN 2026 Presentations',
+      folderUrl: driveFolderUrl(status && status.folderId),
+      folderUrls: Object.fromEntries(Object.entries(presentationsLib.RULES).map(([k, r]) => [k, driveFolderUrl(folders[r.label])])),
+      files: files.size,
+      error: failed ? String(failed.error || 'The copy failed.') : null,
+      failedAt: failed ? failed.at || null : null,
+      requested: !!request,
+    },
+    // Whether this file, as it is now, is the one on Drive.
+    has: (fileName, allocation, size) => {
+      const r = presentationsLib.RULES[allocation];
+      return !!r && files.get(`${r.label}/${fileName}`) === Number(size);
+    },
+  };
+}
+
 // Step 3 of the abstracts desk: every abstract with a format, its file (or
 // not), and when its presenter was last emailed about it.
 app.get('/api/admin/presentations', requirePermission('abstracts.view'), async (req, res, next) => {
@@ -15105,14 +15140,15 @@ app.get('/api/admin/presentations', requirePermission('abstracts.view'), async (
       `SELECT entity_id, MAX(created_at) AS t FROM audit_log
         WHERE entity_type = 'reminder_email' AND action IN ('PRESENTER_EMAIL_SENT', 'PRESENTER_REMINDER_SENT') GROUP BY entity_id`))
       .map((r) => [String(r.entity_id), r.t]));
+    const drive = await presentationsDrive();
     res.json({
-      success: true, ...presentationDueView(),
+      success: true, ...presentationDueView(), drive: drive.view,
       rules: Object.fromEntries(Object.keys(presentationsLib.RULES).map((k) => [k, presentationRulesView(k)])),
       presentations: rows.map((r) => ({
         id: r.id, title: r.title, allocation: r.allocation,
         presenter: reminderName(r.salutation, r.full_name || r.author_name), regNo: r.registration_number || null,
         registered: !!Number(r.registered), emailedAt: emailed.get(String(r.phone_number)) || null,
-        file: r.file_name ? presentationFileView({ ...r, allocation: r.file_allocation }) : null,
+        file: r.file_name ? { ...presentationFileView({ ...r, allocation: r.file_allocation }), inDrive: drive.has(r.file_name, r.file_allocation, r.size) } : null,
       })),
     });
   } catch (err) {
@@ -15157,6 +15193,17 @@ app.get('/api/admin/presentations/:id/file', requirePermission('abstracts.view')
 
 // A presenter who emailed their file instead: staff upload it for them,
 // after the last date too.
+// "Copy to Drive now": a request the host script picks up within the
+// minute, rather than waiting for the next change.
+app.post('/api/admin/presentations/drive', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    await fs.promises.writeFile(PRESENTATIONS_DRIVE_REQUEST, JSON.stringify({ requestedAt: Date.now(), by: req.session.name || null }), 'utf8');
+    res.json({ success: true, drive: (await presentationsDrive()).view });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.post('/api/admin/presentations/:id', requirePermission('abstracts.assign'), receivePresentation, async (req, res, next) => {
   try {
     await savePresentation(req, res, await presentationAbstract('a.id = ?', Number(req.params.id)), true);

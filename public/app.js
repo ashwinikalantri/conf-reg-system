@@ -11050,7 +11050,8 @@ function drawPresentations() {
       <div class="flex flex-wrap gap-2 sm:ml-auto">
         ${can('comms.reminders_view') ? '<button type="button" onclick="openPresenterEmails()" class="h-9 px-3 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-sm rounded-lg">Email presenters</button>' : ''}
         ${zipCount ? `<a href="/api/admin/presentations/zip${format ? `?format=${format}` : ''}" download class="h-9 px-3 inline-flex items-center bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-sm rounded-lg">Download ${format ? `${esc(PRESENTATION_NOUNS[format])}s` : 'all'} (${zipCount}, zip)</a>` : ''}
-      </div>`;
+      </div>
+      ${presentationsDriveLine(d.drive, format, assign)}`;
   }
 
   const chips = document.getElementById('presentations-chips');
@@ -11067,7 +11068,7 @@ function drawPresentations() {
     const f = x.file;
     const state = f
       ? `<p class="font-semibold text-emerald-700">Received ${esc(fmtAuditTime(f.uploadedAt))}${f.byStaff ? ` · uploaded by ${esc(f.uploadedBy || 'staff')}` : ''}</p>
-         <p class="text-slate-500 break-words">${esc(presentationFileLine(f))}</p>
+         <p class="text-slate-500 break-words">${esc(presentationFileLine(f))}${d.drive ? ` · ${f.inDrive ? '<span class="text-emerald-700 font-semibold">In Drive</span>' : 'Not yet in Drive'}` : ''}</p>
          ${f.allocation !== x.allocation ? `<p class="font-semibold text-amber-700">Sent as ${esc(PRESENTATION_NOUNS[f.allocation] || f.allocation)}; the format has changed since</p>` : ''}`
       : `<p class="font-semibold text-amber-700">Awaiting</p>
          <p class="text-slate-500">${x.emailedAt ? `Emailed ${esc(fmtAuditTime(x.emailedAt))}` : 'Not emailed yet'}</p>`;
@@ -11084,6 +11085,32 @@ function drawPresentations() {
       </div>
     </div>`;
   }).join('') : `<p class="text-sm text-slate-500 p-4">${all.length ? 'None here.' : 'No abstract has a presentation format yet: assign one in Step 2.'}</p>`;
+}
+
+// The copies on Google Drive (scripts/presentations-drive.sh on the server):
+// where they are, when they were last copied, and whether that worked. The
+// folder link follows the format shown.
+function presentationsDriveLine(drive, format, assign) {
+  if (!drive) return '';
+  const url = (format && drive.folderUrls && drive.folderUrls[format]) || drive.folderUrl;
+  const where = url ? `<a href="${esc(url)}" target="_blank" rel="noopener" class="font-semibold text-indigo-700 underline">${esc(drive.folder)}${format ? ` › ${esc(PRESENTATION_LABELS[format] || '')}` : ''}</a>` : esc(drive.folder);
+  const state = drive.copiedAt
+    ? `${drive.files} ${drive.files === 1 ? 'file' : 'files'} in ${where}, copied ${esc(fmtAuditTime(drive.copiedAt))}. New and replaced files follow within a few minutes.`
+    : `Files will be copied to ${where}, one folder per format, within a few minutes of each upload.`;
+  const failed = drive.error && (!drive.copiedAt || drive.failedAt > drive.copiedAt)
+    ? `<span class="block text-amber-700 font-semibold">The last copy did not go through (${esc(fmtAuditTime(drive.failedAt))}): ${esc(drive.error)} It tries again each minute.</span>` : '';
+  const button = assign
+    ? (drive.requested ? ' <span class="text-slate-500">Copy asked for.</span>'
+      : ' <button type="button" onclick="copyPresentationsToDrive()" class="font-semibold text-indigo-700 underline min-h-[32px]">Copy now</button>')
+    : '';
+  return `<p class="w-full text-xs text-slate-600">Google Drive: ${state}${button}${failed}</p>`;
+}
+const PRESENTATION_LABELS = { ORAL: 'Oral', POSTER: 'Poster', AWARD: 'Award' };
+async function copyPresentationsToDrive() {
+  const data = await (await fetch('/api/admin/presentations/drive', { method: 'POST' })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not ask for a copy. Try again.');
+  showToast('Asked for a copy to Google Drive. It takes a few minutes.', 'success');
+  renderPresentations();
 }
 
 function togglePresentationsDue() {

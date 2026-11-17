@@ -11,7 +11,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
-const { call, adminLogin, loginOtp, loginPassword, ADMIN_PW, HOST, PORT, appFile, check, report, openDb } = require('./harness');
+const { call, adminLogin, loginOtp, loginPassword, ADMIN_PW, HOST, PORT, appFile, dataDir, check, report, openDb } = require('./harness');
 const P = require('../presentations');
 
 // A PDF of n pages, written out as a slide export is: a catalog, a page
@@ -164,6 +164,35 @@ const istAt = (hours) => new Date(Date.now() + IST + hours * 3600e3).toISOString
       && zip.buf.includes(Buffer.from(mine.file.fileName)) && /Presentations_Poster_/.test(zip.headers['content-disposition']));
     check('...and an empty format says so', (await call('GET', '/api/admin/presentations/zip?format=AWARD', null, admin)).status === 404
       || (await db.get("SELECT 1 FROM presentations p JOIN abstracts a ON a.id = p.abstract_id WHERE a.allocation = 'AWARD'")));
+
+    console.log('\n== Copies on Google Drive ==');
+    // The host script's reports, as it writes them beside the database.
+    const driveFile = (n) => path.join(dataDir(), `.presentations-drive-${n}.json`);
+    const clearDrive = () => ['status', 'error', 'request'].forEach((n) => { try { fs.unlinkSync(driveFile(n)); } catch (e) { /* none */ } });
+    clearDrive();
+    try {
+      let d = (await call('GET', '/api/admin/presentations', null, admin)).body;
+      check('before any copy: the folder named, nothing in it, the file not yet there', d.drive && d.drive.copiedAt === null && d.drive.folder === 'NQOCN 2026 Presentations'
+        && d.drive.files === 0 && d.drive.error === null && d.presentations.find((x) => x.id === abs.id).file.inDrive === false, d.drive);
+      const size = fs.statSync(path.join(dir, mine.file.fileName)).size;
+      fs.writeFileSync(driveFile('status'), JSON.stringify({ checkedAt: Date.now(), folder: 'NQOCN 2026 Presentations', folderId: 'TOPid_1-x',
+        folders: { Oral: 'ORALid', Poster: 'POSTERid', Award: 'AWARDid' }, files: [{ path: `Poster/${mine.file.fileName}`, size }, { path: 'Oral/Someone_Oral.pdf', size: 9 }] }));
+      d = (await call('GET', '/api/admin/presentations', null, admin)).body;
+      check('after one: when, how many, and links to the folder and each format\'s', d.drive.files === 2 && !!d.drive.copiedAt
+        && d.drive.folderUrl === 'https://drive.google.com/drive/folders/TOPid_1-x' && d.drive.folderUrls.POSTER === 'https://drive.google.com/drive/folders/POSTERid', d.drive);
+      check('...and the file is marked as in Drive', d.presentations.find((x) => x.id === abs.id).file.inDrive === true);
+      fs.writeFileSync(driveFile('status'), JSON.stringify({ checkedAt: Date.now(), folderId: 'bad"><script>', files: [{ path: `Poster/${mine.file.fileName}`, size: size + 1 }] }));
+      d = (await call('GET', '/api/admin/presentations', null, admin)).body;
+      check('a different size on Drive is not this file (it was replaced since)', d.presentations.find((x) => x.id === abs.id).file.inDrive === false);
+      check('...and a folder id that is not one makes no link', d.drive.folderUrl === null);
+      fs.writeFileSync(driveFile('error'), JSON.stringify({ at: Date.now(), error: 'rateLimitExceeded' }));
+      check('a failed copy is reported', (await call('GET', '/api/admin/presentations', null, admin)).body.drive.error === 'rateLimitExceeded');
+      check('the front desk cannot ask for a copy', (await call('POST', '/api/admin/presentations/drive', null, desk)).status === 403);
+      const asked = await call('POST', '/api/admin/presentations/drive', null, admin);
+      check('the abstracts desk can, leaving the request for the server', asked.body.success === true && asked.body.drive.requested === true && fs.existsSync(driveFile('request')), asked.body);
+    } finally {
+      clearDrive();
+    }
 
     console.log('\n== After the last date ==');
     await setDue(istAt(-1));
