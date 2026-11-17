@@ -4764,7 +4764,6 @@ function openFacultyFlag(flag) {
 }
 
 // A thin bar of parts, each { n, colour }, as a share of their total.
-const OV_COLOURS = ['#1c3549', '#2f5673', '#628ea8', '#b08d3c', '#d6b46a', '#8a6d2b', '#94a3b8', '#cbd5e1'];
 function overviewBarHtml(parts) {
   const total = parts.reduce((s, p) => s + p.n, 0);
   if (!total) return '';
@@ -4775,11 +4774,29 @@ function overviewLegendHtml(parts) {
   return parts.filter((p) => p.n > 0).map((p) => `<span class="inline-flex items-center gap-1.5"><i class="inline-block w-2.5 h-2.5 rounded-sm" style="background:${p.colour}"></i>${esc(p.label)} <b class="tabular-nums text-slate-900">${p.n}</b></span>`).join('');
 }
 
+// Registrations by category, each { label, n }: a row each in the order
+// given, its bar drawn against the largest so a small category can still be
+// told from the next, and its share of them all beside the count. One colour:
+// the name is on the row, so nothing has to be matched to a key.
+function overviewCategoriesHtml(cats) {
+  const total = cats.reduce((s, c) => s + c.n, 0);
+  const most = cats.reduce((m, c) => Math.max(m, c.n), 0);
+  if (!total) return '';
+  const share = (n) => (n / total < 0.01 ? '&lt;1%' : `${Math.round(n / total * 100)}%`);
+  return cats.filter((c) => c.n > 0).map((c) => `<div class="grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,15rem)_minmax(0,1fr)_5.5rem] items-center gap-x-3 gap-y-1 text-sm">
+      <span class="min-w-0 break-words text-slate-700">${esc(c.label)}</span>
+      <span class="sm:order-3 text-right whitespace-nowrap tabular-nums text-slate-600"><b class="text-slate-900">${c.n}</b> · ${share(c.n)}</span>
+      <div class="col-span-2 sm:col-span-1 sm:order-2 h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full bg-navy" style="width:${(c.n / most * 100).toFixed(1)}%;min-width:4px"></div></div>
+    </div>`).join('');
+}
+
 // Registrations each week (IST, Monday to Sunday), up to the last sixteen
 // weeks; the week still running in gold. A month's name under its first week.
 // A bar carries its count above it, so a week needs room for that number: on
-// a narrow card only the latest weeks that fit are drawn (overviewWeeksFit),
-// and the heading says how many.
+// a narrow card only the latest weeks that fit are drawn (overviewWeeksFit,
+// by the counts of the weeks drawn), and whenever weeks with registrations
+// are left out, by the width or by the sixteen, the heading says how many
+// are shown.
 function overviewWeeksFit(width, digits = 2, most = 16) {
   if (!(width > 0)) return most;
   const need = 4 + 6.5 * digits;
@@ -4802,36 +4819,54 @@ function renderOverviewWeeks(rows) {
     return d.getTime();
   };
   const last = weekOf(Date.now());
-  const since = Math.max(weekOf(Math.min(...times)), last - 15 * WEEK);
+  const first = weekOf(Math.min(...times));
+  const since = Math.max(first, last - 15 * WEEK);
   let weeks = [];
   for (let w = since; w <= last; w += WEEK) weeks.push({ w, n: 0 });
   for (const t of times) {
     const i = Math.round((weekOf(t) - since) / WEEK);
     if (i >= 0 && i < weeks.length) weeks[i].n++;
   }
-  const fit = overviewWeeksFit(bars.clientWidth, String(Math.max(...weeks.map((x) => x.n))).length);
+  // The most weeks whose own counts fit: a three-figure week that is not
+  // drawn does not take room from the ones that are.
+  let fit = weeks.length;
+  while (fit > 1 && overviewWeeksFit(bars.clientWidth, String(Math.max(...weeks.slice(-fit).map((x) => x.n))).length) < fit) fit--;
   bars.dataset.width = String(bars.clientWidth);
-  setText('ov-weeks-span', weeks.length > fit ? `· last ${fit} weeks` : '');
   weeks = weeks.slice(-fit);
+  setText('ov-weeks-span', weeks[0].w > first ? `· last ${fit} weeks` : '');
   const max = Math.max(1, ...weeks.map((x) => x.n));
   const day = (ms) => new Date(ms).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
   bars.innerHTML = weeks.map((x, i) => `<div class="flex-1 min-w-0 h-full flex flex-col items-center justify-end gap-0.5" title="Week of ${esc(day(x.w))}: ${x.n}">
-      <span class="text-[11px] text-slate-500 tabular-nums">${x.n || ''}</span>
+      <span class="text-xs text-slate-600 tabular-nums">${x.n || ''}</span>
       <div class="w-full max-w-[2.25rem] rounded-t ${i === weeks.length - 1 ? 'bg-gold-500' : 'bg-navy'}" style="height:${Math.round(x.n / max * 84)}px"></div>
     </div>`).join('');
+  // A month's name is wider than a narrow week (about 30px with its gap). The
+  // chart can open on a month's last week or two: its name is left out when
+  // the next month's would be drawn over it.
+  const month = (ms) => new Date(ms).toLocaleDateString('en-IN', { month: 'short', timeZone: 'UTC' });
+  const room = bars.clientWidth > 0 ? Math.ceil(30 / (bars.clientWidth / weeks.length)) : 1;
+  const turn = weeks.findIndex((x) => month(x.w) !== month(weeks[0].w));
   labels.innerHTML = weeks.map((x, i) => {
-    const mon = new Date(x.w).toLocaleDateString('en-IN', { month: 'short', timeZone: 'UTC' });
-    const prev = i ? new Date(weeks[i - 1].w).toLocaleDateString('en-IN', { month: 'short', timeZone: 'UTC' }) : null;
-    return `<span class="flex-1 min-w-0 whitespace-nowrap overflow-visible">${mon !== prev ? esc(mon) : ''}</span>`;
+    const named = i ? month(x.w) !== month(weeks[i - 1].w) : !(turn > 0 && turn < room);
+    return `<span class="flex-1 min-w-0 whitespace-nowrap overflow-visible">${named ? esc(month(x.w)) : ''}</span>`;
   }).join('');
+  watchOverviewWeeks(bars);
 }
-// The card changes width (a phone turned, a window dragged): draw the weeks
-// that fit it now.
-window.addEventListener('resize', () => {
-  const bars = document.getElementById('ov-weeks');
-  if (!overviewWeekRows || !bars || !bars.clientWidth) return;
-  if (String(bars.clientWidth) !== bars.dataset.width) renderOverviewWeeks(overviewWeekRows);
-});
+// The card changes width (a phone turned, a window dragged, a scrollbar
+// arriving, the section shown after being drawn hidden): draw the weeks that
+// fit it now. Watched on the chart itself, as watchFitTables watches a table's
+// box, and only once there is a chart.
+let overviewWeeksWatched = false;
+function watchOverviewWeeks(bars) {
+  if (overviewWeeksWatched) return;
+  overviewWeeksWatched = true;
+  const refit = () => {
+    if (!overviewWeekRows || !bars.clientWidth) return;
+    if (String(bars.clientWidth) !== bars.dataset.width) renderOverviewWeeks(overviewWeekRows);
+  };
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(refit).observe(bars);
+  else window.addEventListener('resize', refit);
+}
 
 // Workshops and QI practices: each option's seats taken. From the Workshops
 // screen's own endpoint when the role may open it (it counts past capacity),
@@ -4863,7 +4898,7 @@ function renderOverviewWorkshops(data, exact) {
         const chip = isOver ? `<span class="ml-1.5 rounded-full bg-rose-100 text-rose-800 text-[11px] font-bold px-1.5 py-0.5">+${o.taken - o.cap}</span>`
           : isFull ? '<span class="ml-1.5 rounded-full bg-gold-50 text-gold-700 text-[11px] font-bold px-1.5 py-0.5">Full</span>' : '';
         return `<div class="py-1.5 min-w-0 flex flex-col justify-end">
-          <div class="flex items-end justify-between gap-3"><span class="min-w-0 text-sm text-slate-900 leading-snug break-words sm:line-clamp-2" title="${esc(o.name)}">${esc(o.name)}</span><span class="shrink-0 text-sm text-slate-600 tabular-nums whitespace-nowrap">${o.taken} / ${o.cap}${chip}</span></div>
+          <div class="flex items-end justify-between gap-3"><span class="min-w-0 text-sm text-slate-900 leading-snug break-words">${esc(o.name)}</span><span class="shrink-0 text-sm text-slate-600 tabular-nums whitespace-nowrap">${o.taken} / ${o.cap}${chip}</span></div>
           <div class="mt-1 h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full ${isOver ? 'bg-rose-600' : isFull ? 'bg-gold-500' : 'bg-navy'}" style="width:${Math.min(100, o.taken / o.cap * 100).toFixed(1)}%"></div></div>
         </div>`;
       }).join('')}</div>
@@ -4969,12 +5004,10 @@ async function renderBackendOverview() {
     renderOverviewWeeks(live);
     const byCat = new Map();
     for (const r of live) { const k = r.category_label || 'Other'; byCat.set(k, (byCat.get(k) || 0) + 1); }
-    const cats = [...byCat.entries()].sort((a, b) => b[1] - a[1]).map(([label, n], i) => ({ label, n, colour: OV_COLOURS[Math.min(i, OV_COLOURS.length - 1)] }));
+    const cats = [...byCat.entries()].sort((a, b) => b[1] - a[1]).map(([label, n]) => ({ label, n }));
     show('ov-cats-box', cats.length > 0);
-    const catBar = document.getElementById('ov-cats-bar');
-    if (catBar) catBar.innerHTML = overviewBarHtml(cats);
-    const catLegend = document.getElementById('ov-cats-legend');
-    if (catLegend) catLegend.innerHTML = overviewLegendHtml(cats);
+    const catList = document.getElementById('ov-cats-list');
+    if (catList) catList.innerHTML = overviewCategoriesHtml(cats);
   }
 
   // Signed up, never registered: the Reminders audience of that name, so
@@ -4993,9 +5026,18 @@ async function renderBackendOverview() {
     setText('ov-outstanding-sub', totals.outstanding > 0
       ? `across ${totals.owingCount} delegate${totals.owingCount === 1 ? '' : 's'}`
       : 'nothing owed');
-    const due = (Number(totals.collected) || 0) + (Number(totals.outstanding) || 0);
+    // In red only while something is owed: ₹0 in red reads as a problem.
+    const owing = document.getElementById('ov-outstanding');
+    if (owing) { owing.classList.toggle('text-rose-700', totals.outstanding > 0); owing.classList.toggle('text-slate-900', !(totals.outstanding > 0)); }
+    const collected = Number(totals.collected) || 0;
+    const due = collected + (Number(totals.outstanding) || 0);
     const bar = document.getElementById('ov-money-bar');
-    if (bar) bar.style.width = `${due ? Math.min(100, (Number(totals.collected) || 0) / due * 100).toFixed(1) : 0}%`;
+    if (bar) bar.style.width = `${due ? Math.min(100, collected / due * 100).toFixed(1) : 0}%`;
+    // The bar says what it is a share of. Never "100%" while a rupee is owed,
+    // and with nothing due there is no share to draw.
+    show('ov-money-share', due > 0);
+    const part = due ? collected / due * 100 : 0;
+    setText('ov-money-share-sub', `${collected >= due ? '100' : part > 0 && part < 1 ? '<1' : Math.min(99, Math.floor(part))}% of the ₹${inr(due)} due`);
     // The sub-line under Collected counts confirmed registrations, which only
     // the registration list knows -- left blank for a totals-only role rather
     // than inventing a number it cannot see.
@@ -5060,6 +5102,9 @@ async function renderBackendOverview() {
   }
   if (faculty && faculty.guests) {
     const live = faculty.guests.filter((g) => !g.cancelled);
+    // Nobody on the list: one line, not a nought over three empty bars.
+    show('ov-fac-empty', live.length === 0);
+    show('ov-fac-body', live.length > 0);
     setText('ov-fac-total', live.length);
     const byStatus = new Map();
     for (const g of live) { const k = String(g.overall_status || '').trim(); if (k) byStatus.set(k, (byStatus.get(k) || 0) + 1); }
@@ -5071,9 +5116,9 @@ async function renderBackendOverview() {
       ['Room assigned', staying.filter((g) => String(g.room_no || '').trim()).length, staying.length],
     ];
     const barBox = document.getElementById('ov-fac-bars');
-    if (barBox) barBox.innerHTML = bars.map(([label, n, of]) => `<div>
+    if (barBox) barBox.innerHTML = bars.filter(([, , of]) => of > 0).map(([label, n, of]) => `<div>
         <div class="flex justify-between gap-3 text-sm"><span>${esc(label)}</span><b class="tabular-nums text-slate-900">${n} / ${of}</b></div>
-        <div class="mt-1 h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full bg-navy" style="width:${of ? (n / of * 100).toFixed(1) : 0}%"></div></div>
+        <div class="mt-1 h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full bg-navy" style="width:${(n / of * 100).toFixed(1)}%"></div></div>
       </div>`).join('');
   }
   show('ov-q-rooms', seesFaculty && noRoom > 0);
@@ -5439,8 +5484,8 @@ function drawDelegateMap() {
   const regBtn = document.getElementById('delegate-map-btn-registered');
   const signBtn = document.getElementById('delegate-map-btn-signedup');
   const active = delegateMapMetric === 'registered';
-  if (regBtn) { regBtn.classList.toggle('bg-white', active); regBtn.classList.toggle('shadow-sm', active); regBtn.classList.toggle('text-emerald-700', active); regBtn.classList.toggle('text-slate-500', !active); }
-  if (signBtn) { signBtn.classList.toggle('bg-white', !active); signBtn.classList.toggle('shadow-sm', !active); signBtn.classList.toggle('text-amber-700', !active); signBtn.classList.toggle('text-slate-500', active); }
+  if (regBtn) { regBtn.classList.toggle('bg-white', active); regBtn.classList.toggle('shadow-sm', active); regBtn.classList.toggle('text-emerald-700', active); regBtn.classList.toggle('text-slate-600', !active); }
+  if (signBtn) { signBtn.classList.toggle('bg-white', !active); signBtn.classList.toggle('shadow-sm', !active); signBtn.classList.toggle('text-amber-700', !active); signBtn.classList.toggle('text-slate-600', active); }
 
   const intl = data.international || [];
   const intlReg = intl.reduce((n, c) => n + (c.registered || 0), 0);
@@ -5457,12 +5502,12 @@ function drawDelegateMap() {
     intlBox.classList.toggle('hidden', intl.length === 0);
     if (intl.length) {
       intlBox.innerHTML =
-        `<p class="text-xs font-bold text-slate-600 mb-1.5">${ICON('globe')}International — ${intlReg} registered · ${intlSign} signed up only <span class="font-normal text-slate-400">(not shown on the map)</span></p>`
+        `<p class="text-xs font-bold text-slate-600 mb-1.5">${ICON('globe')}International — ${intlReg} registered · ${intlSign} signed up only <span class="font-normal text-slate-600">(not shown on the map)</span></p>`
         + `<div class="flex flex-wrap gap-1.5">${intl.map((c) => `
-             <span class="inline-flex items-center gap-1.5 bg-white border border-slate-200 rounded-full px-2.5 py-1 text-[11px]">
+             <span class="inline-flex items-center gap-1.5 bg-white border border-slate-200 rounded-full px-2.5 py-1 text-xs">
                <span class="font-semibold text-slate-700">${esc(c.country)}</span>
                <span class="text-emerald-700 font-bold">${c.registered}</span>
-               ${c.signedup ? `<span class="text-amber-600">+${c.signedup}</span>` : ''}
+               ${c.signedup ? `<span class="text-amber-700">+${c.signedup}</span>` : ''}
              </span>`).join('')}</div>`;
     }
   }
@@ -5557,10 +5602,10 @@ function drawDelegateMap() {
   const legend = document.getElementById('delegate-map-legend');
   if (legend) {
     legend.innerHTML = `
-      <span class="text-[10px] text-slate-500">0</span>
+      <span class="text-xs text-slate-600">0</span>
       <span class="inline-block w-24 h-2.5 rounded-full" style="background:linear-gradient(to right, ${colors.ramp[0]}, ${colors.ramp[1]})"></span>
-      <span class="text-[10px] text-slate-500">${maxVal}</span>
-      <span class="text-[10px] text-slate-400 ml-1">${metricKey === 'registered' ? 'delegates registered' : 'signed up only'}</span>`;
+      <span class="text-xs text-slate-600">${maxVal}</span>
+      <span class="text-xs text-slate-600 ml-1">${metricKey === 'registered' ? 'delegates registered' : 'signed up only'}</span>`;
   }
 }
 
@@ -6100,7 +6145,11 @@ function reviewTxnRowHtml(t, i = 0) {
     : isRejected
       ? '<p class="text-slate-500">Rejected — not linked</p>'
       : isCash
-        ? '<p class="text-slate-600">Not yet banked — reconciled from the Bank Statement tab</p>'
+        // A free registration is kept as cash of nothing: no deposit could
+        // hold it, and the Bank Statement tab does not list it.
+        ? (Number(amt) > 0
+          ? '<p class="text-slate-600">Not yet banked — reconciled from the Bank Statement tab</p>'
+          : '<p class="text-slate-600">Nothing to bank — no money was taken</p>')
         : `<p class="font-semibold text-amber-800">Not linked yet. Pick the credit:</p>
            <div id="txn-candidates-${esc(t.id)}" class="space-y-1.5"><p class="text-xs text-slate-500">Looking for matching credits…</p></div>`;
   return `<article class="rounded-xl p-4 space-y-3 ${done ? 'border border-emerald-200 bg-emerald-50/40' : isRejected ? 'border border-slate-200 bg-slate-50' : 'border-2 border-gold-500'}">

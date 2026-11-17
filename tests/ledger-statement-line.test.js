@@ -40,6 +40,13 @@ const row=new Function(`
    utr_number:null,bank_txn_id:null,bank_txn_description:null,submitted_at:Date.now(),has_screenshot:0,collected_by:'Desk A'});
  check('no em-dash placeholder where the UTR was', !/>—</.test(cash));
  check('says who took it, and that it is not yet banked', /₹500 in cash, taken by Desk A/.test(cash) && /Not yet banked/.test(cash));
+ // A free registration (a volunteer, a full discount) is kept as cash of
+ // nothing. The Bank Statement tab does not list it, so the card must not
+ // send anyone there to bank it.
+ const free=row({id:4,amount:0,verified_amount:0,txn_status:'VERIFIED',payment_mode:'CASH',
+   utr_number:null,bank_txn_id:null,bank_txn_description:null,submitted_at:Date.now(),has_screenshot:0,collected_by:'Desk A'});
+ check('cash of nothing has nothing to bank, and says so', /₹0 in cash, taken by Desk A/.test(free) && /Nothing to bank — no money was taken/.test(free)
+   && !/Not yet banked/.test(free) && !/Bank Statement tab/.test(free));
 
  console.log('\n== The likely credits, best match first ==');
  const rank=new Function(`${grab('rankTxnCandidates')} return rankTxnCandidates;`)();

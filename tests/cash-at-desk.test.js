@@ -31,6 +31,11 @@ console.log('\n== A free registration, kept as cash of nothing, is not cash in h
 // How a volunteer or a full discount is recorded: a verified cash payment of
 // zero. No money is in the drawer for it and no deposit could cover it.
 const before=cash.body.count;
+const summaryLine=async()=>{
+  const rep=(await call('GET','/api/admin/reports/summary?format=json',null,ac)).body.report;
+  return JSON.stringify(rep.sections.find(s=>s.name==='Money').rows.find(x=>x[0]==='Cash collected, not yet banked'));
+};
+const lineBefore=await summaryLine();
 const free=await run(`INSERT INTO payment_transactions (registration_id, phone_number, amount, verified_amount, payment_mode, txn_status, submitted_at, reviewed_by, collected_by)
   VALUES (?,?,0,0,'CASH','VERIFIED',?,?,?)`,[ids[0],P(1),Date.now(),mine[0].reviewed_by,mine[0].collected_by]);
 cash=await call('GET','/api/admin/cash-in-hand',null,ac);
@@ -39,6 +44,14 @@ check('...nor counted', cash.body.count===before && cash.body.count===cash.body.
 check('...every row there is money', cash.body.transactions.every(t=>Number(t.amount)>0));
 const float=await call('GET','/api/desk/cash-in-hand',null,ac);
 check('...nor in the collector\'s own float', float.status===200 && !float.body.transactions.some(t=>t.id===free.lastID) && float.body.transactions.every(t=>Number(t.amount)>0), float.body.count);
+check('...nor in the Summary report\'s "not yet banked" line', /^\["Cash collected, not yet banked",/.test(lineBefore) && await summaryLine()===lineBefore, [lineBefore, await summaryLine()]);
+await run(`INSERT INTO bank_statement_transactions (post_date, value_date, branch_code, cheque_number, description, debit, credit, balance, extracted_ref, dedupe_hash, source_file, imported_at, imported_by, is_non_registration)
+  VALUES ('2026-09-01','2026-09-01','TEST','','CASH DEPOSIT FREE',NULL,100,100000,NULL,?,'test.xls',?,'Test',0)`,['freedep'+N,Date.now()]);
+const freeDep=await one('SELECT id FROM bank_statement_transactions WHERE dedupe_hash=?',['freedep'+N]);
+const refused=await call('POST','/api/admin/cash-deposit',{bankTxnId:freeDep.id,txnIds:[free.lastID]},ac);
+check('...and a deposit will not take it, though it is asked for by id', refused.status===409 && /₹0 is not cash to bank/.test(refused.body.error)
+  && (await one('SELECT bank_txn_id FROM payment_transactions WHERE id=?',[free.lastID])).bank_txn_id===null, [refused.status, refused.body.error]);
+await run('DELETE FROM bank_statement_transactions WHERE id=?',[freeDep.id]);
 await run('DELETE FROM payment_transactions WHERE id=?',[free.lastID]);
 
 console.log('\n== Cash is VERIFIED but unbanked -- it counts toward the fee already ==');

@@ -248,6 +248,11 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
 .ov-go { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 600; color: #1c3549; white-space: nowrap; }
 .ov-go::after { content: "›"; font-size: 18px; line-height: 1; }
 @media (max-width: 639px) { .ov-row { grid-template-columns: 3rem minmax(0, 1fr) auto; gap: 10px; } .ov-n { font-size: 21px; } .ov-go { font-size: 0; } .ov-go::after { font-size: 20px; } }
+/* A text link on the Overview reads as text and takes a thumb: the area that
+   answers a tap reaches past the words to 44px, and nothing is moved. */
+.ov-tap, .ov-tap-y { position: relative; }
+.ov-tap::after { content: ""; position: absolute; inset: -12px -8px; }
+.ov-tap-y::after { content: ""; position: absolute; inset: -8px 0; }
 
 /* The Reports tab's list (views/admin/sections/reports.ejs): grouped, each
    report with a line on what it holds, the one open in pale gold. */

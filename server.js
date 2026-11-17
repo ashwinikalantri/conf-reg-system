@@ -7962,8 +7962,10 @@ app.delete('/api/registrations/:id/refund/:refundId', requirePermission('payment
 // A free registration (a volunteer, a full discount) is recorded as a cash
 // payment of nothing. There is no money in the drawer for it and no deposit
 // it could go into, so it is not cash in hand: left out here, of the desk's
-// own float and of the Summary report's count.
-const CASH_IN_HAND_SQL = (t) => `COALESCE(${t}.verified_amount, ${t}.amount, 0) > 0`;
+// own float and of the Summary report's count, and refused by a deposit.
+// The whole of what "cash in hand" means, for the table or alias given.
+const CASH_IN_HAND_SQL = (t) => `${t}.payment_mode = 'CASH' AND ${t}.txn_status = 'VERIFIED' AND ${t}.bank_txn_id IS NULL
+         AND COALESCE(${t}.verified_amount, ${t}.amount, 0) > 0`;
 app.get('/api/admin/cash-in-hand', requirePermission('statement.cash_deposit'), async (req, res, next) => {
   try {
     const rows = await dbAll(`
@@ -7973,10 +7975,7 @@ app.get('/api/admin/cash-in-hand', requirePermission('statement.cash_deposit'), 
              r.registration_number, r.delegate_name, r.category_label
         FROM payment_transactions pt
         LEFT JOIN registrations r ON r.id = pt.registration_id
-       WHERE pt.payment_mode = 'CASH'
-         AND pt.txn_status = 'VERIFIED'
-         AND pt.bank_txn_id IS NULL
-         AND ${CASH_IN_HAND_SQL('pt')}
+       WHERE ${CASH_IN_HAND_SQL('pt')}
        ORDER BY pt.submitted_at ASC, pt.id ASC`);
     const total = rows.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
     res.json({ transactions: rows, total, count: rows.length });
@@ -8013,13 +8012,15 @@ app.post('/api/admin/cash-deposit', requirePermission('statement.cash_deposit'),
     if (rows.length !== txnIds.length) {
       return res.status(404).json({ success: false, error: 'One or more of those payments no longer exists.' });
     }
-    const bad = rows.find((t) => t.payment_mode !== 'CASH' || t.txn_status !== 'VERIFIED' || t.bank_txn_id != null);
+    const bad = rows.find((t) => t.payment_mode !== 'CASH' || t.txn_status !== 'VERIFIED' || t.bank_txn_id != null || !(Number(t.amount) > 0));
     if (bad) {
       return res.status(409).json({
         success: false,
         error: bad.bank_txn_id != null
           ? 'One of those cash collections has already been banked — reload and try again.'
-          : 'Only verified cash collections can be added to a deposit.',
+          : bad.payment_mode === 'CASH' && bad.txn_status === 'VERIFIED'
+            ? 'A payment of ₹0 is not cash to bank.'
+            : 'Only verified cash collections can be added to a deposit.',
       });
     }
 
@@ -11670,9 +11671,8 @@ app.get('/api/desk/cash-in-hand', requirePermission('desk.view'), async (req, re
              pt.collected_by, r.registration_number, r.delegate_name
         FROM payment_transactions pt
         LEFT JOIN registrations r ON r.id = pt.registration_id
-       WHERE pt.payment_mode = 'CASH' AND pt.txn_status = 'VERIFIED'
-         AND pt.bank_txn_id IS NULL AND pt.collected_by = ?
-         AND ${CASH_IN_HAND_SQL('pt')}
+       WHERE ${CASH_IN_HAND_SQL('pt')}
+         AND pt.collected_by = ?
        ORDER BY pt.submitted_at ASC, pt.id ASC`, [me]);
     res.json({
       success: true, collector: me, transactions: rows, count: rows.length,
@@ -13681,8 +13681,7 @@ async function buildReport(type, opts = {}) {
       const cash = await dbGet(
         `SELECT COUNT(*) AS n, COALESCE(SUM(COALESCE(verified_amount, amount, 0)), 0) AS t
            FROM payment_transactions
-          WHERE payment_mode = 'CASH' AND txn_status = 'VERIFIED' AND bank_txn_id IS NULL
-            AND ${CASH_IN_HAND_SQL('payment_transactions')}`);
+          WHERE ${CASH_IN_HAND_SQL('payment_transactions')}`);
       sections.push({
         name: 'Money',
         columns: ['Measure', 'Count', 'Amount'],

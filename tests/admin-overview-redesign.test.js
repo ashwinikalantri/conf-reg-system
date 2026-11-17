@@ -125,7 +125,7 @@ const GUESTS = { dashboard: { noAccommodation: 2, notSignedUp: 1 }, guests: [
   check('each week a bar, from the first registration to this week, the week running in gold', !full.hidden('ov-weeks-box')
     && (weeks.match(/title="Week of/g) || []).length >= 5 && (weeks.match(/bg-gold-500/g) || []).length === 1 && /bg-gold-500[^"]*" style="height:\d+px"><\/div>\s*<\/div>$/.test(weeks.trim()));
   check('...the rejected not counted in them', (weeks.match(/>(\d+)<\/span>/g) || []).map((x) => Number(x.replace(/\D/g, ''))).reduce((a, b) => a + b, 0) === 4, weeks.slice(0, 300));
-  check('categories, largest first', /title="Doctor: 2"/.test(e['ov-cats-bar'].innerHTML) && e['ov-cats-legend'].innerHTML.indexOf('Doctor') < e['ov-cats-legend'].innerHTML.indexOf('Nurse'));
+  check('categories: a row each, largest first, with its count and share', (() => { const h = e['ov-cats-list'].innerHTML; return h.indexOf('Doctor') > -1 && h.indexOf('Doctor') < h.indexOf('Nurse') && /Doctor<\/span>\s*<span[^>]*><b[^>]*>2<\/b> · \d+%/.test(h) && /width:100\.0%/.test(h); })());
   const ws = e['ov-ws-list'].innerHTML;
   check('workshops: seats taken of capacity, by group', !full.hidden('overview-workshops') && /Leadership[\s\S]*?50 \/ 40/.test(ws) && /QI Practices/.test(ws));
   check('...over capacity marked, and full', /\+10<\/span>/.test(ws) && /30 \/ 30<span[^>]*>Full<\/span>/.test(ws) && e['ov-ws-summary'].textContent === '1 full · 1 over capacity', e['ov-ws-summary'].textContent);
@@ -143,7 +143,7 @@ const GUESTS = { dashboard: { noAccommodation: 2, notSignedUp: 1 }, guests: [
   console.log('\n== On a phone: nothing drawn wider than its card ==');
   {
     check('a workshop\'s row cannot be pushed wider than the card by its name', /class="grid grid-cols-1 sm:grid-cols-2 gap-x-7"/.test(ws) && /class="py-1\.5 min-w-0 /.test(ws));
-    check('...the name wraps in full on a phone, two lines from a tablet up; never cut to one', /class="min-w-0 [^"]*break-words sm:line-clamp-2"/.test(ws) && !/truncate/.test(ws));
+    check('...the name wraps in full at every width: a touch screen has no hover to read the rest', /class="min-w-0 [^"]*break-words"/.test(ws) && !/truncate|line-clamp/.test(ws));
     check('...the count stays whole beside it', /class="shrink-0 [^"]*whitespace-nowrap">50 \/ 40/.test(ws));
     const fit = full.sandbox.overviewWeeksFit;
     check('all sixteen weeks where they fit, and where the width is not known', fit(600, 2) === 16 && fit(0, 2) === 16 && fit(undefined, 3) === 16);
@@ -158,6 +158,85 @@ const GUESTS = { dashboard: { noAccommodation: 2, notSignedUp: 1 }, guests: [
     e['ov-weeks'].clientWidth = 600;
     full.sandbox.renderOverviewWeeks(rows);
     check('...a wide one draws them all and says nothing', (e['ov-weeks'].innerHTML.match(/title="Week of/g) || []).length === 14 && e['ov-weeks-span'].textContent === '');
+    const drawn = () => (e['ov-weeks'].innerHTML.match(/title="Week of/g) || []).length;
+    full.sandbox.renderOverviewWeeks(Array.from({ length: 20 }, (_, i) => ({ submitted_at: now - i * WEEK })));
+    check('more than sixteen weeks of registrations: sixteen drawn, and the heading says so on a wide card too', drawn() === 16 && e['ov-weeks-span'].textContent === '· last 16 weeks', e['ov-weeks-span'].textContent);
+    // A three-figure week fourteen weeks back, two figures since. Sized for
+    // three figures a 246px card holds nine weeks; the eleven it does draw
+    // are all two-figure, and the big week is not among them.
+    const big = [...Array.from({ length: 104 }, () => ({ submitted_at: now - 14 * WEEK })),
+      ...Array.from({ length: 14 }, (_, i) => Array.from({ length: 12 }, () => ({ submitted_at: now - i * WEEK }))).flat()];
+    e['ov-weeks'].clientWidth = 246;
+    full.sandbox.renderOverviewWeeks(big);
+    check('a big week that is not drawn takes no room from those that are', drawn() === 11 && !/>104</.test(e['ov-weeks'].innerHTML) && e['ov-weeks-span'].textContent === '· last 11 weeks', drawn());
+    e['ov-weeks'].clientWidth = 600;
+    full.sandbox.renderOverviewWeeks(big);
+    check('...and where it is drawn, it is counted', drawn() === 15 && />104</.test(e['ov-weeks'].innerHTML) && e['ov-weeks-span'].textContent === '');
+
+    // Wednesday 2 December 2026: ten weeks back from it open on Monday
+    // 28 September, the last week of its month, with October in the next.
+    const FIXED = Date.UTC(2026, 11, 2, 6);
+    full.sandbox.Date = class extends Date { constructor(...a) { if (a.length) super(...a); else super(FIXED); } static now() { return FIXED; } };
+    const names = () => (e['ov-weeks-labels'].innerHTML.match(/>[^<]*<\/span>/g) || []).map((x) => x.slice(1, -7));
+    const autumn = Array.from({ length: 14 }, (_, i) => ({ submitted_at: FIXED - i * WEEK }));
+    e['ov-weeks'].clientWidth = 150;
+    full.sandbox.renderOverviewWeeks(autumn);
+    check('a month\'s name is not drawn where the next month\'s would run over it', drawn() === 10 && names()[0] === '' && names()[1] === 'Oct' && names()[5] === 'Nov', names());
+    e['ov-weeks'].clientWidth = 600;
+    full.sandbox.renderOverviewWeeks(autumn);
+    check('...with room for both, both are named', drawn() === 14 && names()[0] === 'Aug' && /^Sep/.test(names()[1]), names());
+    full.sandbox.Date = Date;
+
+    // The chart is refitted when its own box changes, not only the window.
+    const fresh = run({ permissions: [], sections: {}, routes: {} });
+    const watching = [];
+    fresh.sandbox.ResizeObserver = class { constructor(f) { this.f = f; } observe(el) { watching.push({ f: this.f, el }); } };
+    const count = () => (fresh.els['ov-weeks'].innerHTML.match(/title="Week of/g) || []).length;
+    fresh.els['ov-weeks'].clientWidth = 0;
+    fresh.sandbox.renderOverviewWeeks(rows);
+    check('drawn while hidden: every week, and the chart\'s own box is watched', count() === 14 && watching.length === 1 && watching[0].el === fresh.els['ov-weeks']);
+    fresh.els['ov-weeks'].clientWidth = 150;
+    watching[0].f();
+    check('...shown on a narrow card: redrawn to fit, with no window resize', count() === 10 && fresh.els['ov-weeks-span'].textContent === '· last 10 weeks', count());
+    fresh.els['ov-weeks'].clientWidth = 0;
+    watching[0].f();
+    check('...hidden again: left as it was', count() === 10);
+    fresh.sandbox.renderOverviewWeeks(rows);
+    check('...watched once, however often it is drawn', watching.length === 1 && !/window\.addEventListener\('resize', \(\) => \{\s*const bars = document\.getElementById\('ov-weeks'\)/.test(js));
+  }
+
+  console.log('\n== A figure says what it is; a link takes a thumb ==');
+  {
+    check('the money bar says what it is a share of', !full.hidden('ov-money-share') && e['ov-money-share-sub'].textContent === '87% of the ₹10,000 due', e['ov-money-share-sub'].textContent);
+    check('what is owed is in red while something is', e['ov-outstanding'].classList.contains('text-rose-700') && !e['ov-outstanding'].classList.contains('text-slate-900'));
+    check('...faculty on the list: the figures, not the empty line', full.hidden('ov-fac-empty') && !full.hidden('ov-fac-body'));
+    const money = async (totals) => {
+      const r = run({ permissions: ['payments.view_totals'], sections: {}, routes: { '/api/admin/finance-summary': totals } });
+      await r.sandbox.renderBackendOverview();
+      return r;
+    };
+    const paid = await money({ collected: 8750, outstanding: 0, owingCount: 0 });
+    check('nothing owed: ₹0 is not in red, and all of it is in', !paid.els['ov-outstanding'].classList.contains('text-rose-700') && paid.els['ov-outstanding'].classList.contains('text-slate-900')
+      && paid.els['ov-outstanding-sub'].textContent === 'nothing owed' && paid.els['ov-money-share-sub'].textContent === '100% of the ₹8,750 due', paid.els['ov-money-share-sub'].textContent);
+    const nearly = await money({ collected: 99990, outstanding: 10, owingCount: 1 });
+    check('never "100%" while a rupee is owed', nearly.els['ov-money-share-sub'].textContent === '99% of the ₹1,00,000 due' && nearly.els['ov-money-bar'].style.width === '100.0%', nearly.els['ov-money-share-sub'].textContent);
+    const none = await money({ collected: 0, outstanding: 0, owingCount: 0 });
+    check('nothing due at all: no bar', none.hidden('ov-money-share') && !none.hidden('overview-money'));
+    const nobody = run({ permissions: ['guests.view'], sections: {}, routes: { '/api/guests': { dashboard: {}, guests: [{ overall_status: 'Invited', cancelled: 1 }] } } });
+    await nobody.sandbox.renderBackendOverview();
+    check('no faculty on the list: one line, no nought over empty bars', !nobody.hidden('overview-faculty') && !nobody.hidden('ov-fac-empty') && nobody.hidden('ov-fac-body')
+      && nobody.els['ov-fac-bars'].innerHTML === '' && /id="ov-fac-empty"[^>]*>No faculty on the list yet\.</.test(view));
+    const allHome = run({ permissions: ['guests.view'], sections: {}, routes: { '/api/guests': { dashboard: {}, guests: [{ overall_status: 'Confirmed', phone_number: 'x1', arrival_date: '2026-11-20', stay_not_needed: 1 }] } } });
+    await allHome.sandbox.renderBackendOverview();
+    check('...nobody staying with us: no "Room assigned 0 / 0"', /Arrival known<\/span><b[^>]*>1 \/ 1/.test(allHome.els['ov-fac-bars'].innerHTML) && !/Room assigned/.test(allHome.els['ov-fac-bars'].innerHTML));
+    const cats = full.sandbox.overviewCategoriesHtml([{ label: 'Doctor', n: 300 }, { label: 'A & B', n: 150 }, { label: 'Student', n: 2 }, { label: 'None', n: 0 }]);
+    check('categories: one colour, each bar against the largest, a small one still drawn', (cats.match(/bg-navy/g) || []).length === 3 && /width:100\.0%/.test(cats) && /width:50\.0%/.test(cats) && /min-width:4px/.test(cats) && !/background:#/.test(cats));
+    check('...the share of them all, "<1%" under one, an empty category left out', />300<\/b> · 66%/.test(cats) && />2<\/b> · &lt;1%/.test(cats) && !/None/.test(cats) && /A &amp; B/.test(cats));
+    check('...the name wraps beside its count, and the bar takes the row on a phone', /class="min-w-0 break-words /.test(cats) && /whitespace-nowrap tabular-nums/.test(cats) && /class="col-span-2 sm:col-span-1 /.test(cats));
+    const links = view.match(/<button[^>]*hover:underline[^>]*>/g) || [];
+    check('every text link takes a thumb: 44px to tap, drawn as before', links.length >= 8 && links.every((b) => /class="ov-tap /.test(b)) && /\.ov-tap::after \{ content: ""; position: absolute; inset: -12px -8px; \}/.test(css), links.filter((b) => !/class="ov-tap /.test(b)));
+    check('...and the map\'s switch', (view.match(/id="delegate-map-btn-\w+"[^>]*class="ov-tap-y /g) || []).length === 2 && /\.ov-tap-y::after \{ content: ""; position: absolute; inset: -8px 0; \}/.test(css));
+    check('no print under 12px, none in the palest grey', !/text-\[1[01]px\]|text-slate-400/.test(view) && /<span class="text-xs text-slate-600 tabular-nums">/.test(e['ov-weeks'].innerHTML));
   }
 
   console.log('\n== Each part only for a role that can open it ==');
