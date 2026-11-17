@@ -155,8 +155,8 @@ module.exports = {
 
   // Presentation guidelines (/website/presentations), from the organisers'
   // "Guidelines for E-Poster and Paper Presentations" of November 2026 --
-  // except that files are uploaded in the portal, not emailed, a paper may be
-  // a PDF or a .pptx, and the templates are the conference's own (the
+  // except that files are uploaded in the portal, not emailed, every file is
+  // a PDF (papers too, so no video), and the templates are the conference's own (the
   // ePoster of 3 Nov, and the paper template made on its lines), so what is
   // said about using them follows those. The last date is the portal's (abstracts desk,
   // Step 3), not written here. An item is text, or [lead, text].
@@ -240,11 +240,11 @@ module.exports = {
           'Body text at least 24 pt, slide titles at least 28 pt.',
           'Data as graphs, run charts or simple tables rather than text. Label the axes and give units and n.',
           'High-resolution images; no screenshots of dense tables.',
-          'Keep animations minimal, with no sound effects. Embed any video in the file rather than linking to it, and test it beforehand.',
+          'Keep to still slides: a PDF carries no animation, sound or video.',
           'Check the spelling, expand abbreviations at first use, and number the slides.',
         ] },
         { title: 'Your file', items: [
-          ['A PDF or a PowerPoint (.pptx) file,', '16:9, under 50 MB. A video plays only from the PowerPoint file.'],
+          ['A PDF,', '16:9, under 50 MB: in PowerPoint, File › Save As › PDF. A PowerPoint file is not accepted.'],
           ['Upload it in the delegate portal,', 'on the Abstract card, by the last date. The portal names the file for you.'],
           'Bring a backup copy on a USB drive. Personal laptops cannot be connected in the session halls.',
         ] },
@@ -267,7 +267,7 @@ module.exports = {
           'A clear font, readable from a distance, such as Arial or Calibri: at least 24 pt for body text and 28 pt for titles.',
         ] },
         { title: 'Your file', items: [
-          ['A PDF or a PowerPoint (.pptx) file,', 'under 50 MB, uploaded in the delegate portal on the Abstract card by the last date. The portal names the file for you.'],
+          ['A PDF,', 'under 50 MB (in PowerPoint, File › Save As › PDF), uploaded in the delegate portal on the Abstract card by the last date. The portal names the file for you.'],
         ] },
         { title: 'Evaluation', lead: 'Award papers are judged on:', items: [
           'relevance to healthcare quality and patient safety;',

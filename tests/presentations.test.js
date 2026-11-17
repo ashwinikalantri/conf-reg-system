@@ -5,7 +5,8 @@
 // presenter's behalf, and move the last date. The presenters are an audience
 // in the Reminders composer, and the guidelines are a page on the website.
 // The rules: an e-poster is a one-slide PDF under 10 MB; a paper or award
-// paper a PDF or .pptx under 50 MB.
+// paper a PDF under 50 MB (PowerPoint was taken for papers until the owner
+// made every file a PDF, the same day).
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -74,12 +75,13 @@ const istAt = (hours) => new Date(Date.now() + IST + hours * 3600e3).toISOString
   }
   check('an e-poster: one page, PDF only', !P.checkFile('POSTER', one).error && /3 pages/.test(P.checkFile('POSTER', three).error)
     && /PDF/.test(P.checkFile('POSTER', deck).error));
-  check('a paper or award paper: PDF or .pptx, any number of slides', !P.checkFile('ORAL', three).error && P.checkFile('AWARD', deck).kind === 'pptx');
+  check('a paper or award paper: a PDF, any number of slides', !P.checkFile('ORAL', three).error && !P.checkFile('AWARD', one).error);
+  check('...and a PowerPoint file is refused for every format, saying so', ['ORAL', 'AWARD', 'POSTER'].every((f) => /as a PDF, not a PowerPoint file/.test(P.checkFile(f, deck).error)));
   const big = Buffer.concat([one, Buffer.alloc(10 * 1024 * 1024)]);
   check('an e-poster over 10 MB is refused, a paper of that size is not', /under 10 MB/.test(P.checkFile('POSTER', big).error) && !P.checkFile('ORAL', big).error);
   check('named <registration no>_<name>_<type>, the salutation and accents dropped',
     P.fileName('NQOCN20260045', 'Dr. Anjali Deshpandé', 'POSTER', 'pdf') === 'NQOCN20260045_Anjali_Deshpande_Poster.pdf'
-    && P.fileName('NQOCN20260046', 'R. K. Sharma', 'AWARD', 'pptx') === 'NQOCN20260046_R_K_Sharma_Award.pptx'
+    && P.fileName('NQOCN20260046', 'R. K. Sharma', 'AWARD', 'pdf') === 'NQOCN20260046_R_K_Sharma_Award.pdf'
     && P.fileName('NQOCN20260047', 'Asha Patil', 'ORAL', 'pdf') === 'NQOCN20260047_Asha_Patil_Oral.pdf');
   check('the last date reads as India time', P.dueText('2026-11-20T10:00') === '10:00 AM, Friday 20 November 2026'
     && P.isOpen('2026-11-20T10:00', Date.parse('2026-11-20T04:29:00Z')) && !P.isOpen('2026-11-20T10:00', Date.parse('2026-11-20T04:30:00Z')));
@@ -112,11 +114,11 @@ const istAt = (hours) => new Date(Date.now() + IST + hours * 3600e3).toISOString
     console.log('\n== The presenter ==');
     const me = await loginOtp(abs.phone_number);
     const card = (await call('GET', '/api/abstracts/me', null, me)).body.presentation;
-    check('their card says what to send and by when', card && card.label === 'Oral' && card.noun === 'paper' && card.kinds.join() === 'pdf,pptx'
+    check('their card says what to send and by when', card && card.label === 'Oral' && card.noun === 'paper' && card.kinds.join() === 'pdf' && card.text === 'PDF, under 50 MB'
       && card.maxMb === 50 && card.template === 'paper' && card.open === true && card.file === null, card);
     check('nothing is not a file', (await upload('/api/abstracts/me/presentation', Buffer.alloc(0), 'x.pdf', me)).status === 400);
     const junk = await upload('/api/abstracts/me/presentation', Buffer.from('not a presentation at all'), 'talk.pdf', me);
-    check('a file that is no PDF or .pptx is refused, whatever it is called', junk.status === 400 && /PDF or a PowerPoint/.test(junk.body.error), junk.body);
+    check('a file that is no PDF is refused, whatever it is called', junk.status === 400 && /Upload your paper as a PDF/.test(junk.body.error), junk.body);
     const sent = await upload('/api/abstracts/me/presentation', three, 'my talk final v3.pdf', me);
     const name = `${presenter.registration_number}_${P.nameForFile(presenter.full_name)}_Oral.pdf`;
     check('a PDF is received, named for them', sent.body.success === true && sent.body.presentation.file.fileName === name
@@ -125,10 +127,13 @@ const istAt = (hours) => new Date(Date.now() + IST + hours * 3600e3).toISOString
     check('...and logged', !!(await db.get("SELECT 1 FROM audit_log WHERE action = 'PRESENTATION_UPLOADED' AND entity_id = ?", [String(abs.id)])));
     const own = await call('GET', '/api/abstracts/me/presentation', null, me);
     check('they can open it, in the browser', own.status === 200 && own.type === 'application/pdf' && /^inline; filename="/.test(own.headers['content-disposition']) && own.buf.equals(three));
-    const replaced = await upload('/api/abstracts/me/presentation', deck, 'talk.pptx', me);
-    const deckName = name.replace(/\.pdf$/, '.pptx');
-    check('a .pptx replaces it, under the same name', replaced.body.success === true && replaced.body.presentation.file.fileName === deckName, replaced.body);
-    check('...and the PDF is gone', fs.existsSync(path.join(dir, deckName)) && !fs.existsSync(path.join(dir, name)));
+    const ppt = await upload('/api/abstracts/me/presentation', deck, 'talk.pptx', me);
+    check('a PowerPoint file is refused, saying so', ppt.status === 400 && /not a PowerPoint file/.test(ppt.body.error), ppt.body);
+    const two = pdfOf(2);
+    const replaced = await upload('/api/abstracts/me/presentation', two, 'talk final.pdf', me);
+    check('a new PDF replaces the old, under the same name', replaced.body.success === true && replaced.body.presentation.file.fileName === name
+      && replaced.body.presentation.file.pages === 2, replaced.body);
+    check('...the new one is what is kept', fs.readFileSync(path.join(dir, name)).equals(two));
     check('someone else cannot read it', (await call('GET', '/api/abstracts/me/presentation', null, admin)).status === 404);
 
     console.log('\n== As an e-poster ==');
@@ -190,6 +195,7 @@ const istAt = (hours) => new Date(Date.now() + IST + hours * 3600e3).toISOString
       && ['id="eposter"', 'id="paper"', 'id="award"'].every((s) => page.raw.includes(s)));
     check('...with both templates and the way to upload', page.raw.includes('href="/website/files/nqocn-2026-eposter-template.pptx" download')
       && page.raw.includes('href="/website/files/nqocn-2026-paper-template.pptx" download') && /Upload in the portal/.test(page.raw));
+    check('...every file a PDF, papers too', page.raw.includes('<b>Paper or award paper:</b> PDF, under 50 MB.') && !/PowerPoint \(\.pptx\) file,/.test(page.raw));
     check('...the times from the guidelines', ['5 + 2', '6 + 2', '7 + 3'].every((t) => page.raw.includes(`<b>${t}</b>`)));
     check('...and the last date, from the desk', page.raw.includes(P.dueText(istAt(-1)).replace(/,/g, ',')));
     check('...in the menu under Registration', page.raw.includes('href="/website/presentations" aria-current="page"'));

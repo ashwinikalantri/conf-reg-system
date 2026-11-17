@@ -5,7 +5,9 @@
 //
 // The rules follow the presentation guidelines (website /presentations):
 //   e-poster       one 16:9 slide, as a PDF, under 10 MB;
-//   paper / award  PDF or PowerPoint (.pptx), under 50 MB.
+//   paper / award  a PDF, under 50 MB.
+// Every file is a PDF (owner, 17 Nov 2026: PowerPoint was allowed for
+// papers until then).
 // The file is named <registration no>_<name>_<type>, e.g.
 // NQOCN20260045_Ashwini_Kalantri_Poster.pdf, so the AV team never has to.
 
@@ -15,18 +17,19 @@ const MB = 1024 * 1024;
 const RULES = {
   POSTER: { kinds: ['pdf'], maxBytes: 10 * MB, onePage: true, label: 'Poster', noun: 'e-poster',
     text: 'PDF, one slide, under 10 MB', template: 'eposter' },
-  ORAL: { kinds: ['pdf', 'pptx'], maxBytes: 50 * MB, onePage: false, label: 'Oral', noun: 'paper',
-    text: 'PDF or PowerPoint (.pptx), under 50 MB', template: 'paper' },
-  AWARD: { kinds: ['pdf', 'pptx'], maxBytes: 50 * MB, onePage: false, label: 'Award', noun: 'award paper',
-    text: 'PDF or PowerPoint (.pptx), under 50 MB', template: 'paper' },
+  ORAL: { kinds: ['pdf'], maxBytes: 50 * MB, onePage: false, label: 'Oral', noun: 'paper',
+    text: 'PDF, under 50 MB', template: 'paper' },
+  AWARD: { kinds: ['pdf'], maxBytes: 50 * MB, onePage: false, label: 'Award', noun: 'award paper',
+    text: 'PDF, under 50 MB', template: 'paper' },
 };
 // The largest any format takes: what the upload itself is cut off at.
 const MAX_BYTES = Math.max(...Object.values(RULES).map((r) => r.maxBytes));
 
 // What the bytes are, whatever the file was called: a PDF starts "%PDF-"
 // (allowed a little leading junk, as readers do); a .pptx is a zip holding
-// ppt/presentation.xml. An old binary .ppt, a .docx or a renamed image is
-// none of these.
+// ppt/presentation.xml -- told apart only so the refusal can say a
+// PowerPoint file is not accepted. An old binary .ppt, a .docx or a renamed
+// image is neither.
 function fileKind(buf) {
   if (!buf || !buf.length) return null;
   if (buf.slice(0, 1024).toString('latin1').includes('%PDF-')) return 'pdf';
@@ -91,12 +94,9 @@ function checkFile(allocation, buf) {
   const rule = RULES[allocation];
   if (!rule) return { error: 'This abstract has no presentation format yet.' };
   const kind = fileKind(buf);
-  if (!kind) {
-    return { error: rule.kinds.includes('pptx')
-      ? 'Upload a PDF or a PowerPoint (.pptx) file. An old .ppt file can be saved as .pptx or PDF from PowerPoint.'
-      : 'Upload your e-poster as a PDF: in PowerPoint, File › Save As › PDF.' };
+  if (!kind || !rule.kinds.includes(kind)) {
+    return { error: `Upload your ${rule.noun} as a PDF${kind === 'pptx' ? ', not a PowerPoint file' : ''}: in PowerPoint, File › Save As › PDF.` };
   }
-  if (!rule.kinds.includes(kind)) return { error: 'An e-poster is uploaded as a PDF: in PowerPoint, File › Save As › PDF.' };
   if (buf.length > rule.maxBytes) {
     return { error: `The file is ${(buf.length / MB).toFixed(1)} MB. ${rule.noun[0].toUpperCase()}${rule.noun.slice(1)}s must be under ${rule.maxBytes / MB} MB: compress the pictures and save it again.` };
   }
