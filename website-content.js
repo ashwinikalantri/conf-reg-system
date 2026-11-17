@@ -186,7 +186,7 @@ module.exports = {
           'The template is one slide with five sections, each marked by a petal of the NQOCN flower: Background, Aim statement, Methods, Results and Conclusions. Slide 2 is a worked example, from the sample abstract: delete it before you save.',
           'Replace "Title of your abstract, as accepted" with your title exactly as accepted.',
           'Fill in the authors, marking the presenting author, and the department, institution and city.',
-          'Change "Abstract #000" in the top-right box to your abstract number, and put your name and email in the presenting author line at the foot.',
+          'Put your registration number in the top-right box, in place of NQOCN2026XXXX, and your name and email in the presenting author line at the foot.',
           'Results: right-click the run chart and choose Edit Data to put in your own numbers, or replace it with your own chart, table or photo.',
         ] },
         { title: 'Content', items: [
@@ -219,7 +219,7 @@ module.exports = {
       ] },
       { id: 'paper', title: 'Papers (oral presentations)', lead: 'Each paper has 6 minutes to present and 2 for discussion, delivered in person on the paper template.', groups: [
         { title: 'Using the template', items: [
-          'Slide 1, the title slide: the paper title as accepted, the authors with the presenting author underlined, the institution, and the presenting author\'s name and email. Change "Abstract #000" to your abstract number.',
+          'Slide 1, the title slide: the paper title as accepted, the authors with the presenting author underlined, the institution, and the presenting author\'s name and email. Put your registration number in the top-right box, in place of NQOCN2026XXXX.',
           'Slides 2 to 9 follow the structure below, each part marked by its petal. Make each slide\'s title its one message, and put the content in the white card.',
           'Duplicate a slide for more (right-click it › Duplicate Slide) and delete those you do not use.',
           'Results: right-click the run chart and choose Edit Data for your own numbers; the table is for the outcome, process and balancing measures.',
