@@ -1142,10 +1142,8 @@ async function loadDashboard() {
     renderGroupSection(),
     markFromHallCode().then(() => Promise.all([loadAttendanceCard(), loadProgrammeCard()])),
   ]);
-  // The one thing that matters now, from everything just loaded; and the
-  // badge's back, which needs the programme and their workshop.
+  // The one thing that matters now, from everything just loaded.
   renderHomeHero();
-  renderBadgeBack();
   // A link or a refresh that named a page: open it, now that it can be.
   openPendingPortalPage();
   // Every section has had its turn, including the ones that failed -- see
@@ -1153,115 +1151,23 @@ async function loadDashboard() {
   settleSkeletons();
 }
 
-// --- The virtual badge (portal) ---
-// Shown once the registration is verified: the conference, the delegate's
-// role (FACULTY for anyone on the faculty list), name, designation and
-// institution, and their desk pass QR -- the registration number, which the
-// desk and the hall-door volunteers scan.
+// --- The badge (portal) ---
+// Once the registration is verified: their role (FACULTY for anyone on the
+// faculty list), name, and the QR of their registration number, which the
+// desk and the hall-door volunteers scan. Shown full screen from the Badge
+// tab and "Open my badge" (openBadgeFullScreen). The 3D badge on a lanyard
+// that used to sit beside the home screen was removed (owner, 17 Nov 2026).
+let badgeData = null;
 function renderBadge(reg) {
-  const pass = document.getElementById('desk-pass');
-  if (!pass || !/^[A-Za-z0-9-]{3,32}$/.test(reg.registration_number || '')) return;
-  const c = conferenceInfo;
+  if (!/^[A-Za-z0-9-]{3,32}$/.test(reg.registration_number || '')) return;
   const d = currentDelegate || {};
   // Faculty first; someone in the Volunteer category is a volunteer, not a delegate.
   const role = reg.is_faculty_member ? 'FACULTY' : reg.is_volunteer ? 'VOLUNTEER' : 'DELEGATE';
-  setText('badge-acronym', (c.acronym || '').toUpperCase());
-  setText('badge-conference', c.name || '');
-  setText('badge-when', [shortDateRange(c.startDate, c.endDate), c.location].filter(Boolean).join(' · '));
-  const ribbon = document.getElementById('badge-role');
-  ribbon.textContent = role;
-  ribbon.classList.toggle('bg-[#b08d3c]', role === 'FACULTY');
-  ribbon.classList.toggle('bg-[#3d7a5a]', role === 'VOLUNTEER');
-  ribbon.classList.toggle('bg-[#2f5673]', role === 'DELEGATE');
-  setText('badge-name', reg.delegate_name || [d.salutation, d.full_name || d.name].filter(Boolean).join(' '));
-  setText('badge-designation', d.designation || '');
-  setText('badge-institution', d.institution || d.institute || '');
-  document.getElementById('desk-pass-qr').src = `/api/qr/${encodeURIComponent(reg.registration_number)}.png`;
-  // The full-screen badge's QR, loaded now so tapping Badge shows it at once.
+  const qr = `/api/qr/${encodeURIComponent(reg.registration_number)}.png`;
+  badgeData = { role, name: reg.delegate_name || [d.salutation, d.full_name || d.name].filter(Boolean).join(' '), reg: reg.registration_number, qr };
+  // Loaded now, so tapping Badge shows it at once.
   const fullQr = document.getElementById('badge-full-qr');
-  if (fullQr) fullQr.src = `/api/qr/${encodeURIComponent(reg.registration_number)}.png`;
-  setText('badge-reg', reg.registration_number);
-  setText('badge-category', reg.category_label || '');
-  const acr = (c.acronym || '').toUpperCase();
-  setText('badge-strap-text', acr ? `${acr} · ${acr} · ${acr}` : '');
-  setText('badge-back-acronym', acr);
-  pass.classList.remove('hidden');
-  renderBadgeBack();
-  initBadge3d();
-}
-
-// The badge's back: what is coming up -- the next few talks from now, by
-// day, time and hall; of the workshops, only their own; no breaks; a session
-// common to several halls once. Refreshed every minute, so on the day it
-// keeps up with the programme.
-let badgeBackTimer = null;
-function renderBadgeBack() {
-  const box = document.getElementById('badge-back-programme');
-  if (!box) return;
-  if (!badgeBackTimer && typeof setInterval === 'function') badgeBackTimer = setInterval(renderBadgeBack, 60000);
-  const sessions = (programmeData && programmeData.sessions) || [];
-  if (!sessions.length) { box.innerHTML = '<p>The programme will be shown here.</p>'; return; }
-  const ist = new Date(Date.now() + 5.5 * 3600e3);
-  const today = ist.toISOString().slice(0, 10);
-  const nowMin = ist.getUTCHours() * 60 + ist.getUTCMinutes();
-  const mine = new Set(((attendanceMeData && attendanceMeData.workshops) || []).map((w) => w.optionId));
-  const ahead = sessions.filter((x) => !progIsBreak(x) && (!x.workshop || mine.has(x.optionId))
-    && (x.date > today || (x.date === today && progToMin(x.end) >= nowMin)));
-  const allHalls = [...new Set(sessions.map((x) => x.hall))];
-  const items = programmeItems(ahead).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start)).slice(0, 4);
-  const when = (it) => `${it.date === today ? (progToMin(it.start) <= nowMin ? 'Now' : 'Today') : shortDateRange(it.date, it.date).replace(/ \d{4}$/, '')} · ${guestTime12(it.start)}`;
-  box.innerHTML = items.length
-    ? items.map((it) => `<div><p class="text-[11px] font-bold text-indigo-700 uppercase tracking-wide">${esc(when(it))} · ${esc(hallsLabel(it.halls, allHalls))}</p>
-        <p class="text-slate-800 leading-snug line-clamp-2">${esc(it.title)}</p></div>`).join('')
-    : '<p>The programme is over. Thank you for attending.</p>';
-}
-
-// The badge in 3D: it tilts with the pointer, or with the phone (iPhones ask
-// once, on the first tap), and a tap turns it over. Still for anyone who
-// asked for less motion.
-let badge3dReady = false;
-let badgeMotionAsked = false;
-function tiltBadge(x, y) {
-  const swing = document.getElementById('badge3d-swing');
-  const card = document.getElementById('badge-card');
-  if (!swing || !card) return;
-  const cx = Math.max(-1, Math.min(1, x));
-  const cy = Math.max(-1, Math.min(1, y));
-  swing.style.transform = `rotateX(${(-cy * 12).toFixed(1)}deg) rotateY(${(cx * 20).toFixed(1)}deg)`;
-  if (card.style.setProperty) card.style.setProperty('--sheen', `${Math.round(-60 + (cx + 1) * 80)}%`);
-}
-function onBadgeOrientation(e) {
-  if (e.gamma == null || e.beta == null) return;
-  tiltBadge(e.gamma / 30, (e.beta - 45) / 30);
-}
-function initBadge3d() {
-  if (badge3dReady) return;
-  badge3dReady = true;
-  const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const stage = document.getElementById('badge3d-stage');
-  if (!stage || still) return;
-  stage.addEventListener('pointermove', (e) => {
-    if (e.pointerType === 'touch') return;
-    const b = stage.getBoundingClientRect();
-    tiltBadge(((e.clientX - b.left) / b.width) * 2 - 1, ((e.clientY - b.top) / b.height) * 2 - 1);
-  });
-  stage.addEventListener('pointerleave', () => tiltBadge(0, 0));
-  // Phones that hand out motion freely (Android): listen now.
-  if (window.DeviceOrientationEvent && typeof window.DeviceOrientationEvent.requestPermission !== 'function') {
-    window.addEventListener('deviceorientation', onBadgeOrientation);
-  }
-  tiltBadge(0.3, -0.1);
-}
-function flipBadge() {
-  const card = document.getElementById('badge-card');
-  if (card) card.classList.toggle('flipped');
-  // iPhones: motion needs asking, from a tap.
-  if (!badgeMotionAsked && window.DeviceOrientationEvent && typeof window.DeviceOrientationEvent.requestPermission === 'function') {
-    badgeMotionAsked = true;
-    window.DeviceOrientationEvent.requestPermission()
-      .then((answer) => { if (answer === 'granted') window.addEventListener('deviceorientation', onBadgeOrientation); })
-      .catch(() => {});
-  }
+  if (fullQr) fullQr.src = qr;
 }
 
 // --- Menu and the Profile page ---
@@ -1299,10 +1205,11 @@ function renderProfilePage() {
 }
 
 function openBadgeFullScreen() {
-  setText('badge-full-role', document.getElementById('badge-role').textContent);
-  setText('badge-full-name', document.getElementById('badge-name').textContent);
-  setText('badge-full-reg', document.getElementById('badge-reg').textContent);
-  document.getElementById('badge-full-qr').src = document.getElementById('desk-pass-qr').src;
+  if (!badgeData) return;
+  setText('badge-full-role', badgeData.role);
+  setText('badge-full-name', badgeData.name);
+  setText('badge-full-reg', badgeData.reg);
+  document.getElementById('badge-full-qr').src = badgeData.qr;
   document.getElementById('badge-full').classList.remove('hidden');
 }
 function closeBadgeFullScreen() {

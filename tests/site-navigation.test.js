@@ -186,7 +186,7 @@ console.log('\n== The delegate portal: Back stays in the portal ==');
   check('the page asked for stays in the address while signing in and loading', link.b.here() === '/portal#profile' && link.sb.pending() === 'profile');
   link.sb.openPending();
   check('...and opens once the dashboard has loaded', link.opened.join() === 'profile' && link.sb.pending() === '' && link.b.steps.length === 1);
-  check('loadDashboard opens it, after everything it needs', /renderBadgeBack\(\);\n {2}\/\/ A link or a refresh that named a page[^\n]*\n {2}openPendingPortalPage\(\);/.test(js));
+  check('loadDashboard opens it, after everything it needs', /renderHomeHero\(\);\n {2}\/\/ A link or a refresh that named a page[^\n]*\n {2}openPendingPortalPage\(\);/.test(js));
   const elsewhere = portal('/portal#map', { pending: 'map' });
   elsewhere.sb.sync('programme-page', 'push');
   check('going somewhere themselves in the meantime wins over it', elsewhere.sb.pending() === '' && elsewhere.b.here() === '/portal#programme');

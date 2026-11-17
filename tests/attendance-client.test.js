@@ -50,7 +50,7 @@ function page(cookie, perms) {
     showToast = (m, t) => globalThis.__toasts.push([m, t]);
     globalThis.__f = { renderAttendance, attendanceSignIn, renderBackendPrograms, loadAttendanceCard, saveCertificateDetails, renderCertificates, renderCertificateSettings, renderProgramme, loadHallsCard,
       renderProgrammeSessions, fillProgrammeHallFilter, editProgrammeSession, loadProgrammeCard, renderBadge, showAbstractCard,
-      openProgrammePage, renderHomeHero, applyRegistrationState, openProfilePage, renderBadgeBack, flipBadge, dashGo };
+      openProgrammePage, renderHomeHero, applyRegistrationState, openProfilePage, openBadgeFullScreen, dashGo };
     globalThis.__setReg = (r) => { currentRegistration = r; };
     globalThis.__setDelegate = (d) => { currentDelegate = d; };`, sandbox);
   return { el, f: sandbox.__f, toasts, sb: sandbox };
@@ -177,11 +177,12 @@ function page(cookie, perms) {
 
     console.log('\n== The badge ==');
     P.f.renderBadge({ registration_number: `CH${N}`, delegate_name: `Dr Card Holder ${N}`, category_label: 'Doctor', is_faculty_member: true });
-    check('the badge: name, role, number and the desk pass QR', P.el('badge-name').textContent === `Dr Card Holder ${N}` && P.el('badge-role').textContent === 'FACULTY'
-      && P.el('badge-reg').textContent === `CH${N}` && P.el('desk-pass-qr').src === `/api/qr/CH${N}.png` && !P.el('desk-pass').classList.contains('hidden'));
-    check('...the conference across its top', P.el('badge-acronym').textContent === 'FIXCON' && /21 - 22 Nov 2026/.test(P.el('badge-when').textContent));
+    P.f.openBadgeFullScreen();
+    check('the badge, full screen: name, role, number and the desk pass QR', P.el('badge-full-name').textContent === `Dr Card Holder ${N}` && P.el('badge-full-role').textContent === 'FACULTY'
+      && P.el('badge-full-reg').textContent === `CH${N}` && P.el('badge-full-qr').src === `/api/qr/CH${N}.png` && !P.el('badge-full').classList.contains('hidden'));
     P.f.renderBadge({ registration_number: `CH${N}`, delegate_name: 'X', is_faculty_member: false });
-    check('a delegate not on the faculty list: DELEGATE', P.el('badge-role').textContent === 'DELEGATE');
+    P.f.openBadgeFullScreen();
+    check('a delegate not on the faculty list: DELEGATE', P.el('badge-full-role').textContent === 'DELEGATE');
 
     console.log('\n== One registration panel, by stage ==');
     P.f.applyRegistrationState(null);
@@ -194,21 +195,6 @@ function page(cookie, perms) {
     check('confirmed: "You are registered", the number, category and what was paid, their choices', P.el('reg-kicker').textContent === 'You are registered'
       && P.el('reg-title').classList.contains('hidden') && P.el('reg-number-display').innerText === `CH${N}` && P.el('reg-category-line').textContent === 'Doctor · ₹3,000 paid'
       && /Workshops<\/span><span[^>]*>Psychology of Change/.test(P.el('conf-selections').innerHTML) && !P.el('confirmed-block').classList.contains('hidden'));
-
-    console.log('\n== The badge\'s back, and turning it over ==');
-    P.f.renderBadgeBack();
-    const back = P.el('badge-back-programme').innerHTML;
-    check('the back: what is coming up -- the talk on now, with its hall', /Now · /.test(back) && back.includes(`Client Talk ${N}`) && back.includes(`Client Hall ${N}`), back);
-    check('...but not workshops they are not in', !back.includes(`Client Workshop ${N}`));
-    P.f.flipBadge();
-    check('a tap turns it over', P.el('badge-card').classList.contains('flipped'));
-    P.f.flipBadge();
-    check('...and back', !P.el('badge-card').classList.contains('flipped'));
-    const css = fs.readFileSync(appFile('public', 'styles.css'), 'utf8');
-    check('turned over, the back is in front of the edge (it sat behind it and looked blank)',
-      /\.badge3d-back \{ transform: rotateY\(180deg\) translateZ\(8px\)/.test(css) && /\.badge3d-edge \{[^}]*translateZ\(-4px\)/.test(css));
-    check('the card is never wider than the phone, and hangs centred under the lanyard: the swing has the width, the card fills it',
-      /\.badge3d-swing \{[^}]*width: min\(16rem, 100%\)/.test(css) && /\.badge3d-card \{[^}]*width: 100%/.test(css));
 
     console.log('\n== The menu and the Profile page ==');
     P.sb.__setDelegate({ salutation: 'Dr', full_name: `Card Holder ${N}`, designation: 'Professor', institution: 'Test College', email: email, email_verified: 1 });

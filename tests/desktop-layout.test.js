@@ -99,7 +99,7 @@ console.log('\n== Delegate: the badge ==');
   const home = dash.slice(dash.indexOf('<section id="dashboard-page"'), dash.indexOf('</section>', dash.indexOf('<section id="dashboard-page"')));
   check('the full-screen badge is outside the pages, so the Badge tab opens it from any of them', /<div id="badge-full"/.test(dash) && !/id="badge-full"/.test(home)
     && dash.indexOf('id="badge-full"') > dash.lastIndexOf('</section>'));
-  check('...its QR loaded with the badge, not on the tap', /const fullQr = document\.getElementById\('badge-full-qr'\);\s*if \(fullQr\) fullQr\.src = `\/api\/qr\//.test(js));
+  check('...its QR loaded with the badge, not on the tap', /const qr = `\/api\/qr\/[\s\S]{0,400}const fullQr = document\.getElementById\('badge-full-qr'\);\s*if \(fullQr\) fullQr\.src = qr;/.test(js));
 }
 
 console.log('\n== Delegate: map and sign-in ==');
