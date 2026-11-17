@@ -17,12 +17,22 @@
         <p class="text-xs text-slate-500 mb-3">Assign oral or poster presentation. The delegate's decision email is sent from here.</p>
         <div id="abstracts-assignment-container" class="space-y-4"></div>
       </div>
-      <!-- Step 3, Zenodo (abstracts.publish only, and only while it is
+      <!-- Step 3, presentations (renderPresentations()): each presenter
+           uploads their e-poster or paper in the portal by the last date;
+           here, what has come in, the files, and the email to presenters. -->
+      <div id="abstracts-presentations-block" class="pt-4 border-t border-slate-200">
+        <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 3 · Presentations</h3>
+        <p class="text-xs text-slate-500 mb-3">Each presenter uploads their e-poster or paper in the portal, on the Abstract card, by the last date. Files are named registration no_name_type (e.g. NQOCN20260045_Asha_Patil_Poster.pdf). The guidelines and templates: <a href="/website/presentations" target="_blank" rel="noopener" class="font-semibold text-indigo-700 underline">Presentation guidelines</a>.</p>
+        <div id="presentations-head" class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3"></div>
+        <div id="presentations-chips" class="flex flex-wrap gap-1.5 mb-3" role="group" aria-label="Show presentations"></div>
+        <div id="presentations-list" class="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100"></div>
+      </div>
+      <!-- Step 4, Zenodo (abstracts.publish only, and only while it is
            switched on in Conference setup › Zenodo; renderZenodo()): accepted
            abstracts whose presenting author agreed, sent as drafts with the
            DOI reserved, then published -- which cannot be undone. -->
       <div id="abstracts-zenodo-block" class="hidden pt-4 border-t border-slate-200">
-        <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 3 · Publish with DOIs (Zenodo)</h3>
+        <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 4 · Publish with DOIs (Zenodo)</h3>
         <p class="text-xs text-slate-500 mb-3">Only accepted abstracts whose presenting author agreed in the portal, and who has registered. Send as a draft to check it on Zenodo with its DOI reserved, then publish. A published record and its DOI are permanent.</p>
         <p class="text-xs text-slate-500 mb-3">Settings and the on/off switch: <button type="button" onclick="openSetupPage('zenodo')" class="font-semibold text-indigo-700 underline">Conference setup › Zenodo</button>. <span id="zenodo-status"></span></p>
         <div id="zenodo-summary" class="flex flex-wrap items-center gap-2 mb-3"></div>

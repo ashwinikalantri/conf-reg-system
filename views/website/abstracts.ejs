@@ -31,10 +31,12 @@
         <a class="btn btn-outline" href="<%= base %>/sample-abstract" style="align-self: flex-start">Read the sample abstract</a>
       </div>
       <div class="card">
-        <p class="kicker">For posters</p>
-        <h2 style="font-size: 20px">ePoster template</h2>
-        <p class="lead" style="font-size: 16px">One widescreen PowerPoint slide with the five sections laid out, a run chart to fill in, and the sample abstract as a worked example.</p>
-        <a class="btn btn-outline" href="<%= assets %>/files/nqocn-2026-eposter-template.pptx" download style="align-self: flex-start">Download the template (PowerPoint)</a>
+        <p class="kicker">Accepted? Presenting</p>
+        <h2 style="font-size: 20px">Presentation guidelines</h2>
+        <p class="lead" style="font-size: 16px">E-posters and papers are made on the official templates and uploaded in the portal before the conference.</p>
+        <a class="btn btn-outline" href="<%= base %>/presentations" style="align-self: flex-start">Read the presentation guidelines</a>
+        <a class="btn btn-outline" href="<%= assets %>/files/nqocn-2026-eposter-template.pptx" download style="align-self: flex-start">E-poster template (.pptx)</a>
+        <a class="btn btn-outline" href="<%= assets %>/files/nqocn-2026-paper-template.pptx" download style="align-self: flex-start">Paper template (.pptx)</a>
       </div>
       <div class="facts">
         <% content.abstracts.rules.forEach(([b, s]) => { %><div class="fact"><b><%= b %></b><span><%= s %></span></div><% }) %>

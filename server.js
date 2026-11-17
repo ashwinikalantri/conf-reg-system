@@ -39,6 +39,7 @@ const councilsLib = require('./councils');
 const certificatePdfLib = require('./certificate-pdf');
 const { renderAbstractPdf } = require('./abstract-pdf');
 const abstractAuthorsLib = require('./abstract-authors');
+const presentationsLib = require('./presentations');
 const zenodoLib = require('./zenodo');
 const QRCode = require('qrcode');
 // Shared with scripts/daily-digest.js -- see the note there about why the
@@ -145,6 +146,13 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 // from delegate uploads. Never served directly; admin-only, never committed.
 const STATEMENT_DIR = path.join(__dirname, 'bank-statements');
 fs.mkdirSync(STATEMENT_DIR, { recursive: true });
+
+// Presenters' files (e-posters, papers), under the name each is known by --
+// <registration no>_<name>_<type>.pdf. Served only through the routes that
+// check who is asking (the presenter, or staff on the abstracts desk).
+const PRESENTATION_DIR = path.join(UPLOAD_DIR, 'presentations');
+fs.mkdirSync(PRESENTATION_DIR, { recursive: true });
+const presentationUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: presentationsLib.MAX_BYTES + 1, files: 1 } });
 const statementUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
@@ -282,6 +290,10 @@ const CONFERENCE = {
   // the abstract they submitted; blank keeps it open. After it, only an
   // admin can change the list. See abstractAuthorsOpen().
   authorsDeadline: '',
+  // When presenters' files are due ("YYYY-MM-DDTHH:MM", IST); after it the
+  // upload closes, except for staff uploading on someone's behalf. Set from
+  // the abstracts desk, Step 3. See presentations.js.
+  presentationsDue: '',
 };
 // `let`: admin-editable, applies immediately (read fresh wherever it's used).
 // The conference's own address since 3 Nov 2026; the old one
@@ -473,6 +485,7 @@ const GENERAL_SETTINGS_KEYS = {
   conference_location: ['CONFERENCE', 'location'], conference_reg_prefix: ['CONFERENCE', 'regPrefix'],
   conference_abstract_deadline: ['CONFERENCE', 'abstractDeadline'],
   conference_authors_deadline: ['CONFERENCE', 'authorsDeadline'],
+  conference_presentations_due: ['CONFERENCE', 'presentationsDue'],
 };
 
 // The rest of "Other Environment Variables" -- PORT, PORTAL_URL, COOKIE_NAME,
@@ -495,6 +508,8 @@ async function loadGeneralSettings() {
   // visit Settings first. INSERT OR IGNORE: never overwrites a date an admin
   // has since changed -- or cleared, since a cleared field is stored as ''.
   await dbRun("INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('conference_abstract_deadline', '2026-09-15')");
+  // The same for presenters' files: 10 AM on 20 November 2026, as announced.
+  await dbRun("INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('conference_presentations_due', '2026-11-20T10:00')");
   const keys = [...Object.keys(GENERAL_SETTINGS_KEYS), ...Object.keys(RUNTIME_ENV_SETTERS)];
   const rows = await dbAll(`SELECT key, value FROM schema_meta WHERE key IN (${keys.map(() => '?').join(',')})`, keys);
   const targets = { SMS, EMAIL, UPI, BANK, CONFERENCE };
@@ -2003,6 +2018,23 @@ db.serialize(() => {
       status TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       decided_at INTEGER
+    )
+  `);
+  // The file each presenter uploaded: one per abstract, replaced in place.
+  // allocation is the format it was uploaded for, so a format changed since
+  // can be seen.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS presentations (
+      abstract_id INTEGER PRIMARY KEY,
+      file_name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      pages INTEGER,
+      allocation TEXT NOT NULL,
+      uploaded_at INTEGER NOT NULL,
+      uploaded_by_phone TEXT,
+      uploaded_by_name TEXT,
+      by_staff INTEGER NOT NULL DEFAULT 0
     )
   `);
   db.run(`
@@ -5221,6 +5253,8 @@ app.get('/api/conference', (req, res) => {
     abstractSubmissionOpen: abstractSubmissionOpen(),
     authorsDeadline: CONFERENCE.authorsDeadline,
     abstractAuthorsOpen: abstractAuthorsOpen(),
+    presentationsDue: CONFERENCE.presentationsDue,
+    presentationsDueText: presentationsLib.dueText(CONFERENCE.presentationsDue),
     // For links staff send (reminders, codes): the portal at its own address.
     portalUrl: portalHome(),
     siteUrl: portalBase(),
@@ -6299,6 +6333,9 @@ app.get('/api/abstracts/me', requireAuth, async (req, res, next) => {
       authorsWindow: { open: abstractAuthorsOpen(), deadline: CONFERENCE.authorsDeadline, max: abstractAuthorsLib.MAX_AUTHORS },
       registered: await authorHasRegistered(req.session.phone),
       submission: await abstractSubmissionWindowFor(req.session.phone),
+      // Accepted with a format: the file to upload for it, and the one sent.
+      presentation: row && row.status === 'ACCEPTED' && presentationsLib.RULES[row.allocation]
+        ? await presentationFor(row.id, row.allocation) : null,
     });
   } catch (err) {
     next(err);
@@ -8916,6 +8953,33 @@ async function audienceMembers(key, filters = {}) {
     });
   }
 
+  if (key === 'presenters' || key === 'presenters_awaiting') {
+    // One abstract per delegate, so one email each. Awaiting: no file yet.
+    const format = presentationsLib.RULES[filters.format] ? filters.format : null;
+    const rows = await dbAll(
+      `SELECT a.phone_number, a.title, a.allocation, a.author_name, u.salutation, u.full_name, u.email, u.registration_number,
+              p.abstract_id AS received
+         FROM abstracts a
+         LEFT JOIN users u ON u.phone_number = a.phone_number
+         LEFT JOIN presentations p ON p.abstract_id = a.id
+        WHERE a.status = 'ACCEPTED' AND a.allocation IN ('ORAL', 'POSTER', 'AWARD')
+          ${format ? 'AND a.allocation = ?' : ''} ${key === 'presenters_awaiting' ? 'AND p.abstract_id IS NULL' : ''}
+        ORDER BY COALESCE(u.full_name, a.author_name), a.id`, format ? [format] : []);
+    const due = presentationsLib.dueText(CONFERENCE.presentationsDue);
+    return rows.map((r) => {
+      const rule = presentationsLib.RULES[r.allocation];
+      const name = reminderName(r.salutation, r.full_name || r.author_name);
+      return person(r.phone_number, name, r.email, {
+        detail: [r.registration_number, r.title].filter(Boolean).join(' · '),
+        tags: [`${rule.noun[0].toUpperCase()}${rule.noun.slice(1)}`, ...(r.received != null ? ['File received'] : [])],
+        values: {
+          name: escapeHtml(name || 'Delegate'), title: escapeHtml(r.title || 'your abstract'), format: escapeHtml(rule.noun),
+          regno: escapeHtml(r.registration_number || ''), deadline: escapeHtml(due || 'the last date'), filerules: escapeHtml(rule.text),
+        },
+      });
+    });
+  }
+
   if (key === 'codes') {
     return (await unusedPersonalCodeHolders()).map((p) => person(p.email, p.name, p.email, {
       detail: p.codes.map((c) => `${c.code} · ${c.discount}${c.validUntil ? ` · until ${c.validUntil}` : ''}`).join('; '),
@@ -8994,6 +9058,7 @@ const reminderFilters = (src) => ({
   domain: src && src.domain ? String(src.domain) : '',
   category: src && src.category ? String(src.category) : '',
   status: src && src.status ? String(src.status) : '',
+  format: src && src.format ? String(src.format) : '',
 });
 const audienceOr404 = (req, res) => {
   const a = reminderLib.AUDIENCE_BY_KEY[req.params.key];
@@ -9046,6 +9111,8 @@ async function reminderSample(a, filters, recipientId) {
   if (pick) return { recipient: { id: pick.id, name: pick.name, email: pick.email }, values: pick.values };
   const example = {
     name: 'Dr Example Delegate', title: 'An example abstract title', amount: '₹1,500',
+    format: presentationsLib.RULES.POSTER.noun, regno: `${CONFERENCE.regPrefix || 'REG'}0000`,
+    deadline: presentationsLib.dueText(CONFERENCE.presentationsDue) || 'the last date', filerules: presentationsLib.RULES.POSTER.text,
     codes: codeHolderCodesHtml([{ code: 'EXAMPLE2026', discount: 'Pay the Early Bird fee', validUntil: null, waiting: false }]),
   };
   return { recipient: null, values: Object.fromEntries(a.placeholders.map((p) => [p, p === 'codes' ? example.codes : escapeHtml(example[p])])) };
@@ -14887,6 +14954,206 @@ app.put('/api/abstracts/:id/allocation', requirePermission('abstracts.assign'), 
   }
 });
 
+// --- PRESENTATIONS ----------------------------------------------------------
+// Each presenter uploads their e-poster or paper before the last date
+// (CONFERENCE.presentationsDue); staff on the abstracts desk see what has
+// come in, open each file, download them all, and upload one on a
+// presenter's behalf (after the last date too). The rules and the file name
+// -- <registration no>_<name>_<type>.pdf -- are in presentations.js.
+
+// An abstract with its presenter's name and registration number.
+const presentationAbstract = (where, param) => dbGet(
+  `SELECT a.id, a.status, a.allocation, a.phone_number, a.title, a.author_name,
+          u.full_name, u.registration_number, ${authorRegisteredSql('a.phone_number')} AS registered
+     FROM abstracts a LEFT JOIN users u ON u.phone_number = a.phone_number WHERE ${where}`, [param]);
+
+const presentationRulesView = (allocation) => {
+  const r = presentationsLib.RULES[allocation];
+  return { label: r.label, noun: r.noun, text: r.text, kinds: r.kinds, maxMb: r.maxBytes / (1024 * 1024), onePage: r.onePage, template: r.template };
+};
+const presentationFileView = (p) => (p ? {
+  fileName: p.file_name, kind: p.kind, size: p.size, pages: p.pages, allocation: p.allocation,
+  uploadedAt: p.uploaded_at, byStaff: !!p.by_staff, uploadedBy: p.uploaded_by_name || null,
+} : null);
+const presentationDueView = () => ({
+  due: CONFERENCE.presentationsDue, dueText: presentationsLib.dueText(CONFERENCE.presentationsDue), open: presentationsLib.isOpen(CONFERENCE.presentationsDue),
+});
+
+// What the presenter is to upload, by when, and what they have sent.
+async function presentationFor(abstractId, allocation) {
+  const file = await dbGet('SELECT * FROM presentations WHERE abstract_id = ?', [abstractId]);
+  return { ...presentationRulesView(allocation), ...presentationDueView(), file: presentationFileView(file) };
+}
+
+// The upload itself, with a file over the largest limit turned into words.
+function receivePresentation(req, res, next) {
+  presentationUpload.single('file')(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ success: false, error: `The file is too large: the most any presentation may be is ${presentationsLib.MAX_BYTES / (1024 * 1024)} MB.` });
+    }
+    return res.status(400).json({ success: false, error: 'The file could not be read. Choose it again.' });
+  });
+}
+
+// Checks the file, names it, and puts it in place of any earlier one.
+async function savePresentation(req, res, a, byStaff) {
+  if (!a || a.status !== 'ACCEPTED' || !presentationsLib.RULES[a.allocation]) {
+    return res.status(400).json({ success: false, error: 'Only an accepted abstract with a presentation format can have a file.' });
+  }
+  if (!req.file) return res.status(400).json({ success: false, error: 'Choose a file to upload.' });
+  if (!byStaff && !presentationsLib.isOpen(CONFERENCE.presentationsDue)) {
+    return res.status(400).json({ success: false, error: `Uploads closed at ${presentationsLib.dueText(CONFERENCE.presentationsDue)}. Write to the organisers.` });
+  }
+  if (!Number(a.registered) || !a.registration_number) {
+    return res.status(400).json({ success: false, error: byStaff
+      ? 'The presenter has not registered, so there is no registration number to name the file by.'
+      : 'Register for the conference first: only a registered delegate can present.' });
+  }
+  const checked = presentationsLib.checkFile(a.allocation, req.file.buffer);
+  if (checked.error) return res.status(400).json({ success: false, error: checked.error });
+  const name = presentationsLib.fileName(a.registration_number, a.full_name || a.author_name, a.allocation, checked.kind);
+  const old = await dbGet('SELECT file_name FROM presentations WHERE abstract_id = ?', [a.id]);
+  // Written aside, then moved into place, so a reader never meets half a file.
+  const tmp = path.join(PRESENTATION_DIR, `.${a.id}-${crypto.randomBytes(6).toString('hex')}`);
+  await fs.promises.writeFile(tmp, req.file.buffer);
+  await fs.promises.rename(tmp, path.join(PRESENTATION_DIR, name));
+  if (old && old.file_name !== name) await fs.promises.unlink(path.join(PRESENTATION_DIR, path.basename(old.file_name))).catch(() => {});
+  await dbRun(
+    `INSERT INTO presentations (abstract_id, file_name, kind, size, pages, allocation, uploaded_at, uploaded_by_phone, uploaded_by_name, by_staff)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(abstract_id) DO UPDATE SET file_name = excluded.file_name, kind = excluded.kind, size = excluded.size,
+       pages = excluded.pages, allocation = excluded.allocation, uploaded_at = excluded.uploaded_at,
+       uploaded_by_phone = excluded.uploaded_by_phone, uploaded_by_name = excluded.uploaded_by_name, by_staff = excluded.by_staff`,
+    [a.id, name, checked.kind, req.file.buffer.length, checked.pages, a.allocation, Date.now(), req.session.phone, req.session.name || null, byStaff ? 1 : 0]);
+  await recordAudit({
+    req, entityType: 'abstract', entityId: a.id, action: byStaff ? 'PRESENTATION_UPLOADED_BY_STAFF' : 'PRESENTATION_UPLOADED',
+    oldValue: old ? old.file_name : null, newValue: name,
+  });
+  res.json({ success: true, presentation: await presentationFor(a.id, a.allocation) });
+}
+
+// The file, under its own name: a PDF opens in the browser, a .pptx downloads.
+async function sendPresentationFile(res, abstractId, inline) {
+  const p = await dbGet('SELECT file_name, kind FROM presentations WHERE abstract_id = ?', [abstractId]);
+  const file = p && path.join(PRESENTATION_DIR, path.basename(p.file_name));
+  if (!p || !fs.existsSync(file)) return res.status(404).json({ success: false, error: 'No file has been uploaded.' });
+  res.setHeader('Content-Type', p.kind === 'pptx' ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation' : 'application/pdf');
+  res.setHeader('Content-Disposition', `${inline && p.kind === 'pdf' ? 'inline' : 'attachment'}; filename="${p.file_name}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  fs.createReadStream(file).pipe(res);
+}
+
+app.post('/api/abstracts/me/presentation', requireAuth, receivePresentation, async (req, res, next) => {
+  try {
+    await savePresentation(req, res, await presentationAbstract('a.phone_number = ?', req.session.phone), false);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/abstracts/me/presentation', requireAuth, async (req, res, next) => {
+  try {
+    const a = await dbGet('SELECT id FROM abstracts WHERE phone_number = ?', [req.session.phone]);
+    if (!a) return res.status(404).json({ success: false, error: 'No abstract.' });
+    await sendPresentationFile(res, a.id, true);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Step 3 of the abstracts desk: every abstract with a format, its file (or
+// not), and when its presenter was last emailed about it.
+app.get('/api/admin/presentations', requirePermission('abstracts.view'), async (req, res, next) => {
+  try {
+    const rows = await dbAll(
+      `SELECT a.id, a.title, a.allocation, a.phone_number, a.author_name, u.salutation, u.full_name, u.registration_number,
+              ${authorRegisteredSql('a.phone_number')} AS registered,
+              p.file_name, p.kind, p.size, p.pages, p.allocation AS file_allocation, p.uploaded_at, p.uploaded_by_name, p.by_staff
+         FROM abstracts a
+         LEFT JOIN users u ON u.phone_number = a.phone_number
+         LEFT JOIN presentations p ON p.abstract_id = a.id
+        WHERE a.status = 'ACCEPTED' AND a.allocation IN ('ORAL', 'POSTER', 'AWARD')
+        ORDER BY a.id`);
+    const emailed = new Map((await dbAll(
+      `SELECT entity_id, MAX(created_at) AS t FROM audit_log
+        WHERE entity_type = 'reminder_email' AND action IN ('PRESENTER_EMAIL_SENT', 'PRESENTER_REMINDER_SENT') GROUP BY entity_id`))
+      .map((r) => [String(r.entity_id), r.t]));
+    res.json({
+      success: true, ...presentationDueView(),
+      rules: Object.fromEntries(Object.keys(presentationsLib.RULES).map((k) => [k, presentationRulesView(k)])),
+      presentations: rows.map((r) => ({
+        id: r.id, title: r.title, allocation: r.allocation,
+        presenter: reminderName(r.salutation, r.full_name || r.author_name), regNo: r.registration_number || null,
+        registered: !!Number(r.registered), emailedAt: emailed.get(String(r.phone_number)) || null,
+        file: r.file_name ? presentationFileView({ ...r, allocation: r.file_allocation }) : null,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Every file received (or one format's), in one zip, for the AV team.
+app.get('/api/admin/presentations/zip', requirePermission('abstracts.view'), async (req, res, next) => {
+  try {
+    const format = presentationsLib.RULES[req.query.format] ? req.query.format : null;
+    const rows = await dbAll(
+      `SELECT p.file_name, p.size FROM presentations p JOIN abstracts a ON a.id = p.abstract_id
+        WHERE a.status = 'ACCEPTED' AND a.allocation IN ('ORAL', 'POSTER', 'AWARD') ${format ? 'AND a.allocation = ?' : ''}
+        ORDER BY p.file_name`, format ? [format] : []);
+    if (!rows.length) return res.status(404).json({ success: false, error: 'No files have been uploaded yet.' });
+    // A plain zip holds up to 4 GB.
+    if (rows.reduce((n, r) => n + r.size, 0) > 3.5 * 1024 ** 3) {
+      return res.status(400).json({ success: false, error: 'Too large for one download: download each format on its own.' });
+    }
+    const label = format ? presentationsLib.RULES[format].label : 'All';
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="Presentations_${label}_${istDateString()}.zip"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    await presentationsLib.writeZip(res, rows.map((r) => ({
+      name: r.file_name, read: () => fs.promises.readFile(path.join(PRESENTATION_DIR, path.basename(r.file_name))),
+    })));
+    res.end();
+  } catch (err) {
+    if (res.headersSent) return res.destroy(err);
+    next(err);
+  }
+});
+
+app.get('/api/admin/presentations/:id/file', requirePermission('abstracts.view'), async (req, res, next) => {
+  try {
+    await sendPresentationFile(res, Number(req.params.id), req.query.download !== '1');
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A presenter who emailed their file instead: staff upload it for them,
+// after the last date too.
+app.post('/api/admin/presentations/:id', requirePermission('abstracts.assign'), receivePresentation, async (req, res, next) => {
+  try {
+    await savePresentation(req, res, await presentationAbstract('a.id = ?', Number(req.params.id)), true);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/admin/presentations/due', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const due = String((req.body && req.body.due) || '').trim();
+    if (!presentationsLib.dueMs(due)) return res.status(400).json({ success: false, error: 'Choose a date and a time.' });
+    const old = CONFERENCE.presentationsDue;
+    await dbRun("INSERT INTO schema_meta (key, value) VALUES ('conference_presentations_due', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [due]);
+    CONFERENCE.presentationsDue = due;
+    await recordAudit({ req, entityType: 'setting', entityId: 'conference_presentations_due', action: 'PRESENTATIONS_DUE_CHANGED', oldValue: old || null, newValue: due });
+    res.json({ success: true, ...presentationDueView() });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- HELD EMAILS ----------------------------------------------------------
 // Each person sees and decides only the emails their own actions held.
 app.get('/api/admin/held-emails', requireAuth, async (req, res, next) => {
@@ -15714,6 +15981,9 @@ function auditRoutePermissions() {
       'PUT /api/abstracts/me/authors',
       // The presenting author's own consent to Zenodo, on their own abstract.
       'PUT /api/abstracts/me/zenodo-consent',
+      // The presenter's own file: uploaded to, and read from, their own abstract.
+      'POST /api/abstracts/me/presentation',
+      'GET /api/abstracts/me/presentation',
       // Each person's own held emails only: the query is by who is signed in.
       'GET /api/admin/held-emails',
       'POST /api/admin/held-emails/decide',

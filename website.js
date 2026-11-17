@@ -15,6 +15,7 @@ const path = require('path');
 const crypto = require('crypto');
 const content = require('./website-content');
 const peopleLib = require('./programme-people');
+const presentationsLib = require('./presentations');
 
 // The menu: three groups that open to their pages, and two plain links.
 // [page, label, what it is] -- the last shown in the desktop drop-downs.
@@ -26,6 +27,7 @@ const MENU = [
   { label: 'Registration', items: [
     ['registration', 'Registration and fees', 'The fee table, and which fee applies today'],
     ['abstracts', 'Abstract guidelines', 'Eligibility, review, awards and presentation rules'],
+    ['presentations', 'Presentation guidelines', 'E-posters and papers: the templates, the rules and the upload'],
     ['sample-abstract', 'Sample abstract', 'A model structured abstract, to follow its format'],
   ] },
   { label: 'People', items: [
@@ -55,8 +57,9 @@ const timeRange = (s) => `${time12(s.start_time)} – ${time12(s.end_time)}`;
 const rupees = (n) => (n == null ? '—' : `₹${Number(n).toLocaleString('en-IN')}`);
 const nameOrder = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
 
-// A tea, lunch or dinner, or registration: a line between talks, not a card.
-const isBreak = (s) => !s.label && /\b(break|lunch|tea|registration|dinner)\b/i.test(s.title || '');
+// A breakfast, tea, lunch or dinner, or registration: a line between talks,
+// not a card. "Breakfast" is named: \bbreak\b does not match it.
+const isBreak = (s) => !s.label && /\b(break|breakfast|lunch|tea|registration|dinner)\b/i.test(s.title || '');
 // The same session in several halls (an award session), as one item.
 function mergeHalls(sessions) {
   const byKey = new Map();
@@ -293,6 +296,12 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
     },
 
     async 'sample-abstract' () { return {}; },
+
+    // The last date is the portal's (the abstracts desk, Step 3).
+    async presentations() {
+      const due = d.CONFERENCE.presentationsDue;
+      return { due: { text: presentationsLib.dueText(due), open: presentationsLib.isOpen(due) } };
+    },
 
     async faculty(req) {
       const base = req.siteBase;

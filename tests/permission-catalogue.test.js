@@ -247,6 +247,17 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/admin/zenodo/abstracts/:id/draft': 'Sends one consented, registered, accepted abstract to Zenodo as a draft with its DOI reserved. abstracts.publish.',
     'DELETE /api/admin/zenodo/abstracts/:id/draft': 'Discards an unpublished draft. abstracts.publish.',
     'POST /api/admin/zenodo/abstracts/:id/publish': 'Publishes a draft: a permanent record and DOI. abstracts.publish.',
+    // --- Presentations (17 Nov 2026) ---------------------------------------
+    // Step 3 of the abstracts desk: presenters' files. Seeing and opening
+    // them is abstracts.view -- whoever already reads the abstracts; acting
+    // for a presenter and moving the last date is abstracts.assign -- whoever
+    // already assigns the format. No new key, and nobody reaches a delegate
+    // they could not already see.
+    'GET /api/admin/presentations': 'Each abstract with a format, and whether its presenter\'s file has come in. abstracts.view.',
+    'GET /api/admin/presentations/zip': 'Every file received (or one format\'s) as one zip, for the AV team. abstracts.view.',
+    'GET /api/admin/presentations/:id/file': 'One presenter\'s file. abstracts.view.',
+    'POST /api/admin/presentations/:id': 'Uploads a file a presenter emailed, on their behalf. abstracts.assign.',
+    'PUT /api/admin/presentations/due': 'Moves the last date for presenters\' files. abstracts.assign.',
     'POST /api/desk/collect-cash': 'The seventh, and the only one NOT guarded by a desk.* key: it '
       + 'carries payments.add_payment, so Finance Admin reaches it too. That widening is recorded '
       + 'per-role in WIDENED_SINCE_BASELINE below.',

@@ -241,6 +241,11 @@ table.fees thead .past { text-decoration: none; }
 .fact { border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
 .fact b { display: block; font-family: var(--display); font-weight: 800; font-size: 22px; color: var(--navy); }
 .fact span { font-size: 15px; color: var(--text); }
+.facts-one { grid-template-columns: minmax(0, 1fr); }
+/* A page's own parts, to jump to (the presentation guidelines). */
+.jump { display: flex; flex-wrap: wrap; gap: 8px; }
+.jump a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border: 1px solid var(--line-2); border-radius: 999px; font-weight: 600; text-decoration: none; color: var(--navy); }
+.jump a:hover { background: var(--gold-50); border-color: var(--navy); }
 
 /* People */
 .team-grid { display: grid; gap: 24px 16px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }

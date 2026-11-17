@@ -106,13 +106,18 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
       && ['Background', 'Aim statement', 'Methods', 'Results', 'Conclusions'].every((h) => (sample.raw || '').includes(`<h3>${h}</h3>`)));
     check('...linked from the guidelines, with no PDF', got.abstracts.includes('href="/website/sample-abstract"') && !/\.pdf/.test(got.abstracts));
     check('...in the menu under Registration', /href="\/website\/sample-abstract" aria-current="page"/.test(sample.raw || '') && /<summary class="here">Registration/.test(sample.raw || ''));
-    // The ePoster template (3 Nov 2026): a PowerPoint file, offered on the guidelines.
-    check('the ePoster template is offered on the guidelines', got.abstracts.includes('href="/website/files/nqocn-2026-eposter-template.pptx" download'));
-    const tpl = await call('GET', '/website/files/nqocn-2026-eposter-template.pptx', null, null);
-    check('...and downloads as a PowerPoint file', tpl.status === 200 && /presentationml/.test(tpl.headers['content-type'] || ''), tpl.headers['content-type']);
+    // The official templates (17 Nov 2026): the e-poster and the paper, as
+    // PowerPoint files, offered on the guidelines.
+    check('both templates are offered on the abstract guidelines', got.abstracts.includes('href="/website/files/nqocn-2026-eposter-template.pptx" download')
+      && got.abstracts.includes('href="/website/files/nqocn-2026-paper-template.pptx" download') && got.abstracts.includes('href="/website/presentations"'));
+    for (const f of ['eposter', 'paper']) {
+      const tpl = await call('GET', `/website/files/nqocn-2026-${f}-template.pptx`, null, null);
+      check(`...the ${f} template downloads as a PowerPoint file`, tpl.status === 200 && /presentationml/.test(tpl.headers['content-type'] || ''), tpl.headers['content-type']);
+    }
     const portalJs = require('fs').readFileSync(require('./harness').appFile('public', 'app.js'), 'utf8');
-    check('...and from the portal\'s Abstract card once a poster is allotted', /const EPOSTER_TEMPLATE_URL = '\/website\/files\/nqocn-2026-eposter-template\.pptx'/.test(portalJs)
-      && /if \(abs\.allocation === 'POSTER'\) \{\s*desc\.innerHTML \+= ` <a href="\$\{EPOSTER_TEMPLATE_URL\}" download/.test(portalJs));
+    check('...and from the portal\'s Abstract card once a format is assigned, the one for it', /const EPOSTER_TEMPLATE_URL = '\/website\/files\/nqocn-2026-eposter-template\.pptx'/.test(portalJs)
+      && /const PAPER_TEMPLATE_URL = '\/website\/files\/nqocn-2026-paper-template\.pptx'/.test(portalJs)
+      && /const PRESENTATION_TEMPLATES = \{ eposter: \[EPOSTER_TEMPLATE_URL, 'E-poster template'\], paper: \[PAPER_TEMPLATE_URL, 'Paper template'\] \}/.test(portalJs));
 
     console.log('\n== On its own address, at the root ==');
     const home = await asSite('/');
@@ -221,6 +226,15 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     const siteCss = require('fs').readFileSync(require('./harness').appFile('public', 'website', 'site.css'), 'utf8');
     check('...which hides Sign in and Register once signed in', /\.signed-in \.me \{ display: inline-flex; \}/.test(siteCss) && /\.signed-in \.signin, \.signed-in \.register, \.signed-in \.menu-go, \.signed-in \.signed-out \{ display: none; \}/.test(siteCss)
       && /\.me-panel a\[hidden\] \{ display: none; \}/.test(siteCss));
+  }
+  {
+    // Day 2's Breakfast was shown as a session card (17 Nov 2026): \bbreak\b
+    // does not match "Breakfast".
+    const src = require('fs').readFileSync(require('./harness').appFile('website.js'), 'utf8');
+    const isBreak = eval(`(${src.match(/const isBreak = (\(s\) => [^\n]+);/)[1]})`);
+    check('meals and registration are lines between talks, Breakfast too',
+      ['Breakfast', 'Lunch', 'Lunch Break', 'Tea Break', 'Conference Dinner', 'Registration'].every((title) => isBreak({ title }))
+      && !['Breaking the silence on harm', 'Plenary: patient safety', 'Teamwork in the ICU'].some((title) => isBreak({ title })));
   }
   db.close();
   report();

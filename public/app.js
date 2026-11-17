@@ -2249,8 +2249,95 @@ async function saveZenodoConsent(box) {
   showToast(box.checked ? 'Thank you. The organisers will publish it with a DOI.' : 'Your abstract will not be published.', 'success');
 }
 
-// The ePoster template (one PowerPoint slide), on the website.
+// The official templates, on the website: the e-poster (three layouts, one
+// to keep) and the paper (title slide and content slides, also for award
+// papers).
 const EPOSTER_TEMPLATE_URL = '/website/files/nqocn-2026-eposter-template.pptx';
+const PAPER_TEMPLATE_URL = '/website/files/nqocn-2026-paper-template.pptx';
+const PRESENTATION_TEMPLATES = { eposter: [EPOSTER_TEMPLATE_URL, 'E-poster template'], paper: [PAPER_TEMPLATE_URL, 'Paper template'] };
+const PRESENTATION_NOUNS = { ORAL: 'paper', POSTER: 'e-poster', AWARD: 'award paper' };
+const capitalise = (t) => (t ? `${t[0].toUpperCase()}${t.slice(1)}` : '');
+const fileSizeText = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const presentationFileLine = (f) => [f.fileName, fileSizeText(f.size), f.pages ? `${f.pages} page${f.pages === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
+const presentationAccept = (p) => (p.kinds.includes('pptx')
+  ? '.pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation' : '.pdf,application/pdf');
+
+// The presenter's part of the Abstract card, once accepted with a format:
+// what to send and by when, the guidelines and their template, and the
+// upload -- or what they sent, which they can replace until the last date.
+// p is GET /api/abstracts/me's presentation (see presentationFor).
+function renderPresentationPanel(p, registered) {
+  const box = document.getElementById('abstract-presentation');
+  if (!box) return;
+  box.classList.toggle('hidden', !p);
+  if (!p) { box.innerHTML = ''; return; }
+  const [templateUrl, templateLabel] = PRESENTATION_TEMPLATES[p.template] || PRESENTATION_TEMPLATES.paper;
+  const f = p.file;
+  const link = 'inline-flex items-center min-h-[44px] px-3 rounded-lg border border-navy text-navy hover:bg-indigo-50 text-sm font-semibold';
+  let action = '';
+  if (!registered) {
+    action = '<p class="mt-3 text-sm font-semibold text-amber-800">Register for the conference to upload it: only a registered delegate can present.</p>';
+  } else if (p.open) {
+    action = `<label class="mt-3 flex items-center justify-center min-h-[44px] px-4 rounded-lg ${f ? 'border border-navy text-navy hover:bg-indigo-50' : 'bg-navy hover:bg-indigo-700 text-white'} font-semibold text-sm cursor-pointer">
+        <input type="file" accept="${presentationAccept(p)}" class="sr-only" onchange="uploadOwnPresentation(this)">${f ? 'Replace the file' : `Upload your ${esc(p.noun)}`}</label>
+      <p id="presentation-progress" class="mt-1.5 text-sm text-slate-600" aria-live="polite"></p>`;
+  } else if (!f) {
+    action = '<p class="mt-3 text-sm font-semibold text-rose-700">Uploads have closed. Write to the organisers.</p>';
+  }
+  box.innerHTML = `<div class="rounded-xl border border-gold-300 bg-gold-50 p-4">
+      <p class="font-bold text-slate-900">Your ${esc(p.noun)}</p>
+      <p class="text-sm text-slate-700 mt-0.5">${esc(p.text)}, on the official template.
+        ${p.dueText ? (p.open ? `Upload by <b>${esc(p.dueText)}</b>.` : `Uploads closed at <b>${esc(p.dueText)}</b>.`) : ''}</p>
+      <div class="flex flex-wrap gap-2 mt-3">
+        <a href="${siteUrl()}/presentations" target="_blank" rel="noopener" class="${link}">Guidelines</a>
+        <a href="${templateUrl}" download class="${link}">${esc(templateLabel)} (.pptx)</a>
+      </div>
+      ${f ? `<div class="mt-3 rounded-lg bg-white border border-emerald-200 p-3 text-sm">
+          <p class="font-semibold text-emerald-700">Received ${esc(fmtAuditTime(f.uploadedAt))}</p>
+          <p class="text-slate-700 break-words mt-0.5">${esc(presentationFileLine(f))}</p>
+          <a href="/api/abstracts/me/presentation" target="_blank" rel="noopener" class="inline-flex items-center min-h-[44px] font-semibold text-navy underline">Open your file</a>
+        </div>` : ''}
+      ${action}
+    </div>`;
+}
+
+// Sends a presentation file, with progress for a large one on a slow line.
+// Resolves to the server's answer.
+function postPresentationFile(url, file, onProgress) {
+  return new Promise((resolve) => {
+    const form = new FormData();
+    form.append('file', file);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100)); };
+    xhr.onload = () => { try { resolve(JSON.parse(xhr.responseText)); } catch (e) { resolve({ success: false }); } };
+    xhr.onerror = () => resolve({ success: false, error: 'The upload did not go through. Check your connection and try again.' });
+    xhr.send(form);
+  });
+}
+
+// The size is checked here first, so nobody waits through a long upload
+// only to be told it was too big.
+async function uploadOwnPresentation(input) {
+  const file = input.files && input.files[0];
+  const p = cachedOwnPresentation;
+  if (!file || !p) return;
+  if (file.size > p.maxMb * 1048576) {
+    input.value = '';
+    return showToast(`The file is ${fileSizeText(file.size)}. Your ${p.noun} must be under ${p.maxMb} MB: compress the pictures and save it again.`);
+  }
+  const progress = document.getElementById('presentation-progress');
+  input.disabled = true;
+  const data = await postPresentationFile('/api/abstracts/me/presentation', file, (pct) => { if (progress) progress.textContent = `Uploading… ${pct}%`; });
+  input.disabled = false;
+  input.value = '';
+  if (progress) progress.textContent = '';
+  if (!data.success) return showToast(data.error || 'The upload did not go through. Try again.');
+  showToast(`Received, as ${data.presentation.file.fileName}`, 'success');
+  cachedOwnPresentation = data.presentation;
+  renderPresentationPanel(data.presentation, true);
+}
+let cachedOwnPresentation = null;
 
 async function loadAbstractStatus() {
   const tag = document.getElementById('abstract-status-tag');
@@ -2277,6 +2364,8 @@ async function loadAbstractStatus() {
     cachedAbstractSubmission = mine.submission || { open: true, deadline: '' };
     cachedAbstractAuthorsWindow = mine.authorsWindow || null;
     renderOwnAbstractAuthors(abs, cachedAbstractAuthorsWindow);
+    cachedOwnPresentation = mine.presentation || null;
+    renderPresentationPanel(cachedOwnPresentation, registered);
     showAbstractCard(!!abs || cachedAbstractSubmission.open !== false);
     if (abs) {
       let [label, cls] = STYLES[abs.status] || ['Submitted', 'bg-slate-100 text-slate-600'];
@@ -2307,10 +2396,6 @@ async function loadAbstractStatus() {
           desc.innerHTML = registered
             ? `Your abstract has been <b>accepted for ${kind} presentation</b>. Details will be communicated.`
             : `Your abstract has been <b>provisionally accepted for ${kind} presentation</b>, pending your registration.`;
-          // A poster is made on the conference's ePoster template.
-          if (abs.allocation === 'POSTER') {
-            desc.innerHTML += ` <a href="${EPOSTER_TEMPLATE_URL}" download class="block mt-1.5 font-semibold text-navy underline">Download the ePoster template (PowerPoint)</a>`;
-          }
         } else if (abs.status === 'ACCEPTED') {
           desc.innerHTML = registered
             ? 'Your abstract has been <b>accepted</b>. The presentation format will be communicated.'
@@ -4394,7 +4479,7 @@ function applyRoleVisibility() {
   // not get a section full of buttons the server would refuse -- which is
   // what happened before this, silently, since the allocation call never
   // read its response.
-  // Zenodo's Step 3 shows once renderZenodo() knows it is switched on.
+  // Zenodo's Step 4 shows once renderZenodo() knows it is switched on.
   const zenodoBlock = document.getElementById('abstracts-zenodo-block');
   if (zenodoBlock && !can('abstracts.publish')) zenodoBlock.classList.add('hidden');
   const assignBlock = document.getElementById('abstracts-assignment-block');
@@ -9775,6 +9860,44 @@ async function buildAbstractAuthorsBody() {
 <p>Warm regards,<br><b>Organising Committee</b><br>${esc([c.acronym, c.location].filter(Boolean).join(', '))}</p>`;
 }
 
+// For presenters: the guidelines, their template, and where and by when to
+// upload. Their format, registration number and file rules are filled in
+// per person by the server ({{format}}, {{regno}}, {{filerules}},
+// {{deadline}}), so one email suits papers and e-posters alike.
+const presentationDetailsBox = () => `<div style="background:#faf5e8;border:1px solid #d6b46a;border-radius:10px;padding:1rem 1.25rem;margin:1.25rem 0">
+  <div style="font-size:.7rem;letter-spacing:.09em;text-transform:uppercase;color:#8a6d2b;font-weight:700">Your presentation</div>
+  <table style="font-size:.9rem;color:#1c3549;margin:.5rem 0 0;border-collapse:collapse">
+    <tr><td style="padding:2px 12px 2px 0;color:#51606d">Presenting as</td><td style="padding:2px 0"><b>{{format}}</b></td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#51606d">Registration No.</td><td style="padding:2px 0"><b>{{regno}}</b></td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#51606d">File</td><td style="padding:2px 0"><b>{{filerules}}</b></td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#51606d">Upload by</td><td style="padding:2px 0"><b>{{deadline}}</b></td></tr>
+  </table>
+</div>`;
+async function buildPresentationGuidelinesBody() {
+  const c = conferenceInfo;
+  return `<p>Dear {{name}},</p>
+<p>Congratulations once again: your abstract <b>&ldquo;{{title}}&rdquo;</b> is to be presented at <b>${esc(c.name || 'the conference')}</b>. Here is everything you need to prepare it.</p>
+${presentationDetailsBox()}
+<ol style="color:#1c3549;padding-left:1.2rem">
+  <li style="margin-bottom:.4rem"><b>Read the presentation guidelines</b>, for your format: <a href="${siteUrl()}/presentations">${esc(siteUrl().replace(/^https?:\/\//, ''))}/presentations</a>.</li>
+  <li style="margin-bottom:.4rem"><b>Make your presentation on the official template</b> &mdash; the e-poster template or the paper template, both on the same page. Presentations in any other format will not be accepted.</li>
+  <li><b>Upload it in the delegate portal</b>, on the Abstract card, by <b>{{deadline}}</b>. The portal names the file for you, and you can replace it until then.</li>
+</ol>
+${steelButton(`${siteUrl()}/presentations`, 'Read the Guidelines')}
+<p>Late changes will not be accepted. Only presentations made in person by the registered presenting author are eligible for awards and presentation certificates.</p>
+${reminderSignOff()}`;
+}
+// For presenters whose file has not come in yet.
+async function buildPresentationReminderBody() {
+  return `<p>Dear {{name}},</p>
+<p>We have not yet received your presentation for your abstract <b>&ldquo;{{title}}&rdquo;</b>. Please upload it in the delegate portal, on the Abstract card, by <b>{{deadline}}</b>.</p>
+${presentationDetailsBox()}
+<p>Make it on the official template, following the <a href="${siteUrl()}/presentations">presentation guidelines</a>, where both templates can be downloaded.</p>
+${steelButton(portalHomeUrl(), 'Upload My Presentation')}
+<p>Late changes will not be accepted.</p>
+${reminderSignOff()}`;
+}
+
 // For authors who submitted an abstract but have not registered. {{title}}
 // is filled in per recipient by the server, so it only makes sense on the
 // Abstract Submitted, Not Registered card.
@@ -9976,6 +10099,23 @@ const CUSTOM_REMINDER_TEMPLATES = {
     },
     body: buildAbstractExtensionBody,
   },
+  'presentation-guidelines': {
+    label: 'Presentations — guidelines, templates and upload',
+    audiences: ['presenters'],
+    async subject() {
+      const who = conferenceInfo.acronym ? ` at ${conferenceInfo.acronym}` : '';
+      return `Your Presentation${who}: Guidelines, Template and Upload by {{deadline}}`;
+    },
+    body: buildPresentationGuidelinesBody,
+  },
+  'presentation-reminder': {
+    label: 'Presentations — reminder to upload',
+    audiences: ['presenters_awaiting'],
+    async subject() {
+      return 'Reminder: Upload Your Presentation by {{deadline}}';
+    },
+    body: buildPresentationReminderBody,
+  },
   'code-holder': {
     label: 'Your personal code is waiting',
     audiences: ['codes'],
@@ -10011,6 +10151,7 @@ const REMINDER_DEFAULT_TEMPLATE = {
   unverified: 'verify-email', abstract: 'abstract-registration-mandatory', codes: 'code-holder',
   balance: 'balance-due', paste: 'early-bird-ending', certificates: 'certificate-ready',
   abstract_authors: 'abstract-add-authors',
+  presenters: 'presentation-guidelines', presenters_awaiting: 'presentation-reminder',
 };
 
 // --- The composer ------------------------------------------------------------
@@ -10020,7 +10161,7 @@ const REMINDER_DEFAULT_TEMPLATE = {
 // at once if it now uses a placeholder the new audience cannot fill.
 const remState = {
   audiences: [], placeholders: {}, options: { categories: [], statuses: [] },
-  key: null, recipients: [], selected: new Set(), filters: { domain: '', category: '', status: '' },
+  key: null, recipients: [], selected: new Set(), filters: { domain: '', category: '', status: '', format: '' },
   autoFilled: null, problems: { unsupported: [], missing: [] }, previewTimer: null, previewSeq: 0,
 };
 const REMINDER_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -10083,6 +10224,7 @@ async function selectReminderAudience(key, { refresh = false } = {}) {
   setText('rem-audience-desc', a.description);
   document.getElementById('rem-filter-domain').classList.toggle('hidden', !a.filters.includes('domain'));
   document.getElementById('rem-filter-registered').classList.toggle('hidden', !a.filters.includes('category'));
+  document.getElementById('rem-filter-format').classList.toggle('hidden', !a.filters.includes('format'));
   document.getElementById('rem-recipients-wrap').classList.toggle('hidden', a.key === 'paste');
   document.getElementById('rem-paste-wrap').classList.toggle('hidden', a.key !== 'paste');
   const domainBox = document.getElementById('rem-domain');
@@ -10122,6 +10264,7 @@ function applyReminderFilters() {
   }
   remState.filters.category = document.getElementById('rem-category').value;
   remState.filters.status = document.getElementById('rem-status').value;
+  remState.filters.format = document.getElementById('rem-format').value;
   remState.selected = new Set();
   loadReminderRecipients().then(() => scheduleReminderPreview(0));
 }
@@ -10131,6 +10274,7 @@ function reminderFilterQuery() {
   const f = {};
   if (a && a.filters.includes('domain')) f.domain = remState.filters.domain;
   if (a && a.filters.includes('category')) { f.category = remState.filters.category; f.status = remState.filters.status; }
+  if (a && a.filters.includes('format')) f.format = remState.filters.format;
   return f;
 }
 
@@ -10407,7 +10551,8 @@ function reminderFilterLabel(f) {
   if (!f) return '';
   const cat = f.category && (remState.options.categories.find((c) => c.value === f.category) || {}).label;
   const st = f.status && (remState.options.statuses.find((s) => s.value === f.status) || {}).label;
-  return [f.domain ? `@${f.domain}` : '', cat || f.category || '', st || f.status || ''].filter(Boolean).join(' · ');
+  const format = f.format && PRESENTATION_NOUNS[f.format];
+  return [f.domain ? `@${f.domain}` : '', cat || f.category || '', st || f.status || '', format ? `${format[0].toUpperCase()}${format.slice(1)}s` : ''].filter(Boolean).join(' · ');
 }
 
 async function renderReminderHistory() {
@@ -10858,6 +11003,128 @@ let abstractsCache = [];
 // Assignment formats. Submission offers only Oral and Poster; Award is
 // something a reviewer assigns.
 const ABSTRACT_FORMATS = { ORAL: 'Oral', POSTER: 'Poster', AWARD: 'Award' };
+
+// --- Step 3: presentations ---------------------------------------------------
+// Every abstract with a format, and whether its presenter's file has come in
+// (GET /api/admin/presentations). Narrowed by the chips; the email and the
+// zip follow what is shown.
+let presentationsData = null;
+let presentationsFilter = '';
+const PRESENTATION_FILTERS = [['AWAITING', 'Awaiting'], ['RECEIVED', 'Received'], ['ORAL', 'Paper'], ['POSTER', 'E-poster'], ['AWARD', 'Award paper']];
+const presentationShown = (x, f) => (!f ? true : f === 'AWAITING' ? !x.file : f === 'RECEIVED' ? !!x.file : x.allocation === f);
+
+async function renderPresentations() {
+  const list = document.getElementById('presentations-list');
+  if (!list) return;
+  const data = await (await fetch('/api/admin/presentations')).json().catch(() => ({}));
+  if (!data.success) { list.innerHTML = '<p class="text-sm text-slate-500 p-4">Unable to load the presentations.</p>'; return; }
+  presentationsData = data;
+  drawPresentations();
+}
+
+function setPresentationsFilter(key) {
+  presentationsFilter = key;
+  drawPresentations();
+}
+
+function drawPresentations() {
+  const d = presentationsData;
+  const list = document.getElementById('presentations-list');
+  if (!d || !list) return;
+  const all = d.presentations || [];
+  if (presentationsFilter && !all.some((x) => presentationShown(x, presentationsFilter))) presentationsFilter = '';
+  const shown = all.filter((x) => presentationShown(x, presentationsFilter));
+  const assign = can('abstracts.assign');
+  const format = ['ORAL', 'POSTER', 'AWARD'].includes(presentationsFilter) ? presentationsFilter : '';
+
+  const head = document.getElementById('presentations-head');
+  if (head) {
+    const zipCount = all.filter((x) => x.file && (!format || x.allocation === format)).length;
+    head.innerHTML = `<p class="text-sm text-slate-700">Last date: <b>${esc(d.dueText || 'not set')}</b>${d.due && !d.open ? ' <span class="text-rose-700 font-semibold">(closed)</span>' : ''}
+        ${assign ? '<button type="button" onclick="togglePresentationsDue()" class="ml-1 font-semibold text-indigo-700 underline min-h-[32px]">Change</button>' : ''}</p>
+      <form id="presentations-due-form" onsubmit="event.preventDefault(); savePresentationsDue()" class="hidden w-full flex flex-wrap items-center gap-2">
+        <input type="datetime-local" id="presentations-due" value="${esc(d.due || '')}" class="h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white" aria-label="Last date and time (India time)">
+        <button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Save</button>
+        <span class="text-xs text-slate-500">India time. Presenters can upload until then; you can upload for them after it.</span>
+      </form>
+      <div class="flex flex-wrap gap-2 sm:ml-auto">
+        ${can('comms.reminders_view') ? '<button type="button" onclick="openPresenterEmails()" class="h-9 px-3 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-sm rounded-lg">Email presenters</button>' : ''}
+        ${zipCount ? `<a href="/api/admin/presentations/zip${format ? `?format=${format}` : ''}" download class="h-9 px-3 inline-flex items-center bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-sm rounded-lg">Download ${format ? `${esc(PRESENTATION_NOUNS[format])}s` : 'all'} (${zipCount}, zip)</a>` : ''}
+      </div>`;
+  }
+
+  const chips = document.getElementById('presentations-chips');
+  if (chips) {
+    const chip = (key, label, n) => `<button type="button" onclick="setPresentationsFilter('${key}')" aria-pressed="${presentationsFilter === key}"
+        class="h-8 px-3 rounded-full text-xs font-semibold border whitespace-nowrap ${presentationsFilter === key ? 'bg-navy border-navy text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}">${label} <span class="tabular-nums ${presentationsFilter === key ? 'text-white/80' : 'text-slate-500'}">${n}</span></button>`;
+    chips.innerHTML = [chip('', 'All', all.length)].concat(PRESENTATION_FILTERS
+      .map(([key, label]) => [key, label, all.filter((x) => presentationShown(x, key)).length])
+      .filter(([, , n]) => n).map(([key, label, n]) => chip(key, label, n))).join('');
+  }
+
+  const btn = 'h-8 px-3 inline-flex items-center justify-center bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg text-xs cursor-pointer whitespace-nowrap';
+  list.innerHTML = shown.length ? shown.map((x) => {
+    const f = x.file;
+    const state = f
+      ? `<p class="font-semibold text-emerald-700">Received ${esc(fmtAuditTime(f.uploadedAt))}${f.byStaff ? ` · uploaded by ${esc(f.uploadedBy || 'staff')}` : ''}</p>
+         <p class="text-slate-500 break-words">${esc(presentationFileLine(f))}</p>
+         ${f.allocation !== x.allocation ? `<p class="font-semibold text-amber-700">Sent as ${esc(PRESENTATION_NOUNS[f.allocation] || f.allocation)}; the format has changed since</p>` : ''}`
+      : `<p class="font-semibold text-amber-700">Awaiting</p>
+         <p class="text-slate-500">${x.emailedAt ? `Emailed ${esc(fmtAuditTime(x.emailedAt))}` : 'Not emailed yet'}</p>`;
+    return `<div class="p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+      <div class="min-w-0 flex-1">
+        <p class="text-[11px] font-semibold text-slate-500 tabular-nums">#${esc(x.id)} · ${esc(capitalise(PRESENTATION_NOUNS[x.allocation]))}</p>
+        <p class="font-bold text-slate-800 break-words leading-snug">${esc(x.title)}</p>
+        <p class="text-xs text-slate-500 break-words">${esc([x.presenter, x.regNo].filter(Boolean).join(' · '))}${x.registered ? '' : ' · <span class="text-amber-700 font-semibold">not registered</span>'}</p>
+      </div>
+      <div class="text-xs sm:text-right sm:max-w-[20rem] min-w-0">${state}</div>
+      <div class="flex flex-wrap gap-2 shrink-0">
+        ${f ? `<a href="/api/admin/presentations/${esc(x.id)}/file" target="_blank" rel="noopener" class="${btn}">${f.kind === 'pdf' ? 'View PDF' : 'Download'}</a>` : ''}
+        ${assign ? `<label class="${btn}"><input type="file" accept="${presentationAccept(d.rules[x.allocation])}" class="sr-only" onchange="uploadPresentationFor(${esc(x.id)}, this)">${f ? 'Replace' : 'Upload for them'}</label>` : ''}
+      </div>
+    </div>`;
+  }).join('') : `<p class="text-sm text-slate-500 p-4">${all.length ? 'None here.' : 'No abstract has a presentation format yet: assign one in Step 2.'}</p>`;
+}
+
+function togglePresentationsDue() {
+  const form = document.getElementById('presentations-due-form');
+  if (form) form.classList.toggle('hidden');
+}
+async function savePresentationsDue() {
+  const due = document.getElementById('presentations-due').value;
+  const data = await (await fetch('/api/admin/presentations/due', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ due }),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not save the date.');
+  showToast(`Presenters can upload until ${data.dueText}.`, 'success');
+  renderPresentations();
+}
+
+// A presenter who emailed their file: uploaded for them, after the last
+// date too, checked and named as their own would be.
+async function uploadPresentationFor(id, input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  input.disabled = true;
+  showToast('Uploading…', 'info');
+  const data = await postPresentationFile(`/api/admin/presentations/${encodeURIComponent(id)}`, file);
+  input.disabled = false;
+  input.value = '';
+  if (!data.success) return showToast(data.error || 'The upload did not go through. Try again.');
+  showToast(`Uploaded, as ${data.presentation.file.fileName}`, 'success');
+  renderPresentations();
+}
+
+// The Reminders composer, on the presenters: those still awaiting when that
+// is what is shown, and the format chosen here.
+function openPresenterEmails() {
+  remState.key = presentationsFilter === 'AWAITING' ? 'presenters_awaiting' : 'presenters';
+  remState.filters.format = ['ORAL', 'POSTER', 'AWARD'].includes(presentationsFilter) ? presentationsFilter : '';
+  const sel = document.getElementById('rem-format');
+  if (sel) sel.value = remState.filters.format;
+  storageSet('local', 'nqocn_rem_view', 'compose');
+  switchBackendTab('reminders');
+}
 const abstractFormatLabel = (a) => ABSTRACT_FORMATS[a] || a || '';
 
 function openAbstractReview(id) {
@@ -10997,7 +11264,7 @@ function abstractAuthorsReviewHtml(a) {
   </div>`;
 }
 
-// --- ZENODO (Review Desk, Step 3) -------------------------------------------
+// --- ZENODO (Review Desk, Step 4) -------------------------------------------
 // Accepted abstracts with a DOI: settings, then per abstract Send as draft
 // (DOI reserved) and Publish (permanent). The server does the calls; see
 // zenodo.js and /api/admin/zenodo.
@@ -11010,7 +11277,7 @@ async function renderZenodo() {
   if (!data.success) { setText('zenodo-status', 'Zenodo: could not load'); return; }
   zenodoData = data;
   const s = data.settings;
-  // Switched off in Conference setup: no Step 3 at all.
+  // Switched off in Conference setup: no Step 4 at all.
   block.classList.toggle('hidden', !s.enabled);
   if (!s.enabled) return;
   setText('zenodo-status', s.configured ? `Sending to ${s.sandbox ? 'the Zenodo Sandbox (trial DOIs)' : 'zenodo.org'}, community ${s.community}.` : 'No token yet: add it there first.');
@@ -11159,6 +11426,7 @@ async function zenodoBulk(kind) {
 
 async function renderBackendAbstracts() {
   renderZenodo();
+  renderPresentations();
   const res = await fetch('/api/abstracts');
   const approvalBox = document.getElementById('abstracts-approval-container');
   const assignBox = document.getElementById('abstracts-assignment-container');

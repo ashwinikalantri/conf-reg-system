@@ -10,7 +10,8 @@
 //   placeholders -- what {{...}} it can fill in per recipient;
 //   required     -- placeholders an email to it must keep ({{codes}}: without
 //                   it nobody would learn which code is theirs);
-//   filters      -- what narrows it (an email domain, a category, a status);
+//   filters      -- what narrows it (an email domain, a category, a status,
+//                   a presentation format);
 //   cooldown     -- 'person': one email per person per 24 hours, whatever it
 //                   says; 'message': the same subject not twice to an address
 //                   in 24 hours (pasted addresses, which hear many different
@@ -37,6 +38,12 @@ const AUDIENCES = [
   { key: 'abstract_authors', label: 'Abstract authors not added', group: 'Abstracts',
     description: 'Delegates whose abstract (not rejected) still lists only themselves: they have not added their co-authors, or confirmed they are the sole author.',
     action: 'ABSTRACT_AUTHORS_REMINDER_SENT', placeholders: ['name', 'title'] },
+  { key: 'presenters', label: 'Presenters', group: 'Abstracts',
+    description: 'Every accepted abstract with a presentation format: paper, e-poster or award paper. Narrow by format. Each email can carry their own format, registration number and file rules.',
+    action: 'PRESENTER_EMAIL_SENT', placeholders: ['name', 'title', 'format', 'regno', 'deadline', 'filerules'], filters: ['format'] },
+  { key: 'presenters_awaiting', label: 'Presenters, file not received', group: 'Abstracts',
+    description: 'Presenters who have not yet uploaded their e-poster or presentation in the portal -- for a reminder before the last date.',
+    action: 'PRESENTER_REMINDER_SENT', placeholders: ['name', 'title', 'format', 'regno', 'deadline', 'filerules'], filters: ['format'] },
   { key: 'codes', label: 'Unused personal codes', group: 'Not registered yet',
     description: 'Everyone holding a personal code they can still use -- including codes waiting for someone to sign up with the address.',
     action: 'CODE_HOLDER_REMINDER_SENT', placeholders: ['name', 'codes'], required: ['codes'] },
@@ -62,6 +69,10 @@ const PLACEHOLDERS = {
   title: 'Their abstract\'s title',
   codes: 'Their own code(s): what each gives and its last date',
   amount: 'The balance they still owe',
+  format: 'What they present: paper, e-poster or award paper',
+  regno: 'Their registration number',
+  deadline: 'When their file is due, e.g. 10:00 AM, Friday 20 November 2026',
+  filerules: 'The file their format takes, e.g. PDF, one slide, under 10 MB',
 };
 
 // Every {{word}} in a text, once each, in order of appearance.

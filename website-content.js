@@ -103,10 +103,10 @@ module.exports = {
   // The last date is the portal's (Conference setup), not written here.
   abstracts: {
     rules: [
-      ['5 + 2', 'minutes for an oral: five to present, two for questions'],
+      ['6 + 2', 'minutes for a paper: six to present, two for discussion'],
       ['Top 5', 'papers go to the Award Paper session'],
       ['NQOCN Gold Medal', 'for the winner of the award session'],
-      ['Certificates', 'for every presenter; prizes for the best paper and poster'],
+      ['Certificates', 'for every presenter who presents in person; prizes for the best paper and poster'],
     ],
     // The model abstract, as a page (/website/sample-abstract). For
     // reference only: the format, not a submission.
@@ -142,12 +142,145 @@ module.exports = {
       { title: 'Awards and recognition', items: [
         'The winner of the Award Paper session receives the NQOCN Gold Medal.',
         'Prizes are awarded in different categories for the best scientific paper and poster.',
-        'Every paper presenter receives a certificate.',
+        'Every presenter who presents in person receives a presentation certificate.',
       ] },
       { title: 'Presentation rules', items: [
         'Presentations are on 22 November 2026; the time and venue are sent in advance.',
-        'An oral presentation has 5 minutes to present and 2 minutes for discussion.',
+        'A paper has 6 minutes to present and 2 for discussion; an award paper 7 and 3; an e-poster 5 and 2.',
+        'Every presentation is made on the official template and uploaded in the portal before the conference: see the presentation guidelines.',
         "The judges' questions are answered by the presenter and co-author only.",
+      ] },
+    ],
+  },
+
+  // Presentation guidelines (/website/presentations), from the organisers'
+  // "Guidelines for E-Poster and Paper Presentations" of November 2026 --
+  // except that files are uploaded in the portal, not emailed, a paper may be
+  // a PDF or a .pptx, and the templates are the conference's own (the
+  // ePoster of 3 Nov, and the paper template made on its lines), so what is
+  // said about using them follows those. The last date is the portal's (abstracts desk,
+  // Step 3), not written here. An item is text, or [lead, text].
+  presentations: {
+    times: [
+      ['5 + 2', 'minutes for an e-poster: five to present, two for questions'],
+      ['6 + 2', 'minutes for a paper: six to present, two for discussion'],
+      ['7 + 3', 'minutes for an award paper: seven to present, three for discussion'],
+    ],
+    parts: [
+      { id: 'general', title: 'For everyone', lead: 'Every accepted abstract is presented either as an e-poster or as an oral paper. Both are prepared on the official NQOCN templates.', groups: [
+        { items: [
+          ['Eligibility.', 'Only abstracts accepted by the Scientific Committee may be presented. Your acceptance email gives your presentation type, and the portal your Registration No.'],
+          ['Registration.', 'The presenting author must be registered for the conference. Presentations by unregistered authors are withdrawn from the programme.'],
+          ['Presenting author.', 'One author presents each abstract, in person, at the allotted time.'],
+          ['Templates.', 'Use only the official e-poster template or paper template, from this page. Presentations in any other format are not accepted.'],
+          ['Branding.', 'Do not alter the NQOCN and MGIMS logos, the conference name or the background colour. You may resize, move or delete the content boxes.'],
+          ['Slide format.', 'Both templates are 16:9 widescreen. Do not change the slide size or orientation.'],
+          ['Language.', 'All slides, and the presentation itself, are in English.'],
+          ['Consistency.', 'The title, authors and content must match the accepted abstract. You may update results that were pending at submission.'],
+          ['Patient confidentiality.', 'Show no patient names, hospital numbers, faces or other identifying details. Clinical photographs need documented consent and must be de-identified.'],
+          ['Originality.', 'The work must be your own and properly referenced. Plagiarised or fabricated content leads to disqualification.'],
+        ] },
+      ] },
+      { id: 'eposter', title: 'E-posters', lead: 'An e-poster is one 16:9 slide. It is shown on display screens at the venue and presented to judges in a moderated session.', groups: [
+        { title: 'Using the template', items: [
+          'The template is one slide with five sections, each marked by a petal of the NQOCN flower: Background, Aim statement, Methods, Results and Conclusions. Slide 2 is a worked example, from the sample abstract: delete it before you save.',
+          'Replace "Title of your abstract, as accepted" with your title exactly as accepted.',
+          'Fill in the authors, marking the presenting author, and the department, institution and city.',
+          'Change "Abstract #000" in the top-right box to your abstract number, and put your name and email in the presenting author line at the foot.',
+          'Results: right-click the run chart and choose Edit Data to put in your own numbers, or replace it with your own chart, table or photo.',
+        ] },
+        { title: 'Content', items: [
+          'Keep to the five section headings. Rename one only where your work needs it.',
+          'Aim for about 300–500 words in all: a poster is a visual summary, not the full paper.',
+          'Use short bullet points rather than paragraphs, and lead with your key message.',
+          'Prefer graphs, run charts, flow diagrams and tables to text. Label the axes and give units.',
+          'QI posters show the problem, a SMART aim, the change ideas, the measures (outcome, process and balancing), and a run or control chart where there is one.',
+          'List up to 3 key references in one style (Vancouver recommended).',
+        ] },
+        { title: 'Design and readability', items: [
+          "Use the template's fonts and colours; if you change the font, use a clear sans-serif such as Arial or Calibri.",
+          'Keep text at 14 pt or larger, as the template sets it, so it can be read on the screen.',
+          'Images of at least 150 dpi. Rebuild tables in PowerPoint rather than pasting blurry screenshots.',
+          'Strong contrast between text and background.',
+          'No animations, transitions, audio, video or hyperlinks.',
+          'Keep text inside its boxes: resize the boxes instead.',
+        ] },
+        { title: 'Your file', items: [
+          ['A PDF,', 'with one slide only, under 10 MB: in PowerPoint, File › Save As › PDF.'],
+          ['Upload it in the delegate portal,', 'on the Abstract card, by the last date. The portal names the file for you.'],
+          'Late changes are not accepted.',
+        ] },
+        { title: 'At the conference', items: [
+          'E-posters are displayed on screens in the main auditorium.',
+          'You have 5 minutes to present and 2 for questions in your moderated session. The programme gives your date, time and screen.',
+          'Report to the e-poster area at least 15 minutes before your session, and keep to time: the moderator stops presentations that overrun.',
+          'Only e-posters presented in person are eligible for awards and presentation certificates.',
+        ] },
+      ] },
+      { id: 'paper', title: 'Papers (oral presentations)', lead: 'Each paper has 6 minutes to present and 2 for discussion, delivered in person on the paper template.', groups: [
+        { title: 'Using the template', items: [
+          'Slide 1, the title slide: the paper title as accepted, the authors with the presenting author underlined, the institution, and the presenting author\'s name and email. Change "Abstract #000" to your abstract number.',
+          'Slides 2 to 9 follow the structure below, each part marked by its petal. Make each slide\'s title its one message, and put the content in the white card.',
+          'Duplicate a slide for more (right-click it › Duplicate Slide) and delete those you do not use.',
+          'Results: right-click the run chart and choose Edit Data for your own numbers; the table is for the outcome, process and balancing measures.',
+          'Keep the conference name, the logo and the petals as they are on every slide.',
+        ] },
+        { title: 'A suggested structure, in 8–10 slides', items: [
+          'Title slide.',
+          'Background and rationale.',
+          'Aim and objectives.',
+          'Methods: design, setting, participants, intervention or change ideas, and analysis.',
+          'Results, in two or three slides.',
+          'Discussion: what the findings mean, how they compare with other work, and the limitations.',
+          'Conclusions, and recommendations or next steps.',
+          'Acknowledgements, funding, conflicts of interest and key references.',
+        ] },
+        { title: 'Slide design', items: [
+          'One message per slide, stated in its title; no more than six bullet points.',
+          'Body text at least 24 pt, slide titles at least 28 pt.',
+          'Data as graphs, run charts or simple tables rather than text. Label the axes and give units and n.',
+          'High-resolution images; no screenshots of dense tables.',
+          'Keep animations minimal, with no sound effects. Embed any video in the file rather than linking to it, and test it beforehand.',
+          'Check the spelling, expand abbreviations at first use, and number the slides.',
+        ] },
+        { title: 'Your file', items: [
+          ['A PDF or a PowerPoint (.pptx) file,', '16:9, under 50 MB. A video plays only from the PowerPoint file.'],
+          ['Upload it in the delegate portal,', 'on the Abstract card, by the last date. The portal names the file for you.'],
+          'Bring a backup copy on a USB drive. Personal laptops cannot be connected in the session halls.',
+        ] },
+        { title: 'On the day', items: [
+          "Report to the Speakers' Preview Room at least 30 minutes before your session to check your file on the conference computer.",
+          'Be seated in the hall 15 minutes before the session starts.',
+          'Keep strictly to time: you are warned at 1 minute remaining, and the chairperson stops presentations that overrun.',
+          'Answer questions briefly; the discussion can continue after the session.',
+          'Only papers presented in person are eligible for awards and presentation certificates.',
+        ] },
+      ] },
+      { id: 'award', title: 'Award papers', lead: 'Award papers are presented on the paper template, in 7 minutes, with 3 for discussion.', groups: [
+        { title: 'Preparing your presentation', items: [
+          'Use the official paper template, in about 8–10 slides. Do not alter the NQOCN and MGIMS logos.',
+          'Title slide: the title of the study, the presenting author, the other authors, and the institute where the study was done.',
+          'Introduction (1–2 slides): background, aim and objectives.',
+          'QI methodology (2 slides): the problem, SMART aim, setting, team, change ideas or PDSA cycles, and the measures (outcome, process and balancing).',
+          'Results (2–3 slides): the key findings as charts, graphs or run charts.',
+          'Conclusion (1 slide): key conclusions, sustainability and next steps.',
+          'A clear font, readable from a distance, such as Arial or Calibri: at least 24 pt for body text and 28 pt for titles.',
+        ] },
+        { title: 'Your file', items: [
+          ['A PDF or a PowerPoint (.pptx) file,', 'under 50 MB, uploaded in the delegate portal on the Abstract card by the last date. The portal names the file for you.'],
+        ] },
+        { title: 'Evaluation', lead: 'Award papers are judged on:', items: [
+          'relevance to healthcare quality and patient safety;',
+          'soundness of the QI methodology;',
+          'results and impact;',
+          'clarity of the slides;',
+          'keeping to time;',
+          'the answers in the discussion.',
+        ] },
+        { items: [
+          'The chairperson stops presentations that overrun.',
+          'Only papers presented in person by the registered presenting author are eligible for the award. The judges\' decision is final.',
+        ] },
       ] },
     ],
   },

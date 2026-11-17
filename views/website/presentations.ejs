@@ -1,0 +1,58 @@
+<%- include('partials/head', { title: 'Presentation guidelines' }) %>
+
+<section class="band-navy page-head">
+  <div class="wrap">
+    <h1>Presentation guidelines</h1>
+    <p>How to prepare your e-poster or paper for <%= conf.acronym || 'NQOCN 2026' %> on the official templates, and upload it in the portal.</p>
+    <% if (due.text) { %><p class="chip" style="background: rgba(255,255,255,0.12); color: #fff"><%= due.open ? `Upload by ${due.text}` : `Uploads closed at ${due.text}` %></p><% } %>
+  </div>
+</section>
+
+<section>
+  <div class="wrap section split">
+    <div class="stack" style="gap: 40px">
+      <nav class="jump" aria-label="On this page">
+        <% content.presentations.parts.forEach((part) => { %><a href="#<%= part.id %>"><%= part.title %></a><% }) %>
+      </nav>
+      <% content.presentations.parts.forEach((part) => { %>
+        <div class="stack" id="<%= part.id %>" style="gap: 20px; scroll-margin-top: 16px">
+          <div class="group-head"><div class="petals short" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div><h2><%= part.title %></h2></div>
+          <% if (part.lead) { %><p class="lead" style="max-width: 68ch"><%= part.lead %></p><% } %>
+          <% part.groups.forEach((g) => { %>
+            <div class="stack" style="gap: 8px">
+              <% if (g.title) { %><h3 style="font-size: 18px"><%= g.title %></h3><% } %>
+              <% if (g.lead) { %><p style="max-width: 68ch"><%= g.lead %></p><% } %>
+              <ul style="margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; color: var(--text); max-width: 68ch">
+                <% g.items.forEach((it) => { %><li><% if (Array.isArray(it)) { %><b><%= it[0] %></b> <%= it[1] %><% } else { %><%= it %><% } %></li><% }) %>
+              </ul>
+            </div>
+          <% }) %>
+        </div>
+      <% }) %>
+    </div>
+    <aside class="stack" style="gap: 16px">
+      <div class="card card-gold">
+        <p class="kicker">Upload</p>
+        <h2 style="font-size: 20px"><%= due.text ? (due.open ? `By ${due.text}` : `Closed at ${due.text}`) : 'In the portal' %></h2>
+        <p class="lead" style="font-size: 16px">Sign in to the delegate portal and upload your file on the Abstract card. It is named for you, by your registration number, name and presentation type. You can replace it until the last date.</p>
+        <ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px">
+          <li><b>E-poster:</b> PDF, one slide, under 10 MB.</li>
+          <li><b>Paper or award paper:</b> PDF or PowerPoint (.pptx), under 50 MB.</li>
+        </ul>
+        <a class="btn btn-navy" href="<%= portal %>" style="align-self: flex-start">Upload in the portal</a>
+      </div>
+      <div class="card">
+        <p class="kicker">Official templates</p>
+        <h2 style="font-size: 20px">Make it on these</h2>
+        <p class="lead" style="font-size: 16px">Both are 16:9 PowerPoint files, in the conference's colours. The e-poster is one slide, with a worked example on a second to delete; the paper template has a slide for each part of the talk.</p>
+        <a class="btn btn-outline" href="<%= assets %>/files/nqocn-2026-eposter-template.pptx" download style="align-self: flex-start">E-poster template (.pptx)</a>
+        <a class="btn btn-outline" href="<%= assets %>/files/nqocn-2026-paper-template.pptx" download style="align-self: flex-start">Paper template (.pptx)</a>
+      </div>
+      <div class="facts facts-one">
+        <% content.presentations.times.forEach(([b, s]) => { %><div class="fact"><b><%= b %></b><span><%= s %></span></div><% }) %>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<%- include('partials/foot') %>
