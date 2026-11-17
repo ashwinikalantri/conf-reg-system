@@ -3,7 +3,16 @@
 
     <!-- Login Form (Visible by Default) -->
     <form id="login-form" onsubmit="handleLogin(event)" class="space-y-4">
-      <h2 class="text-xl font-bold text-navy mb-1">Delegate Login</h2>
+      <!-- One sign-in for everyone: said here, since staff arrive at this
+           page too, and #login-next-note says where signing in will take
+           someone who was on their way to the admin panel
+           (applySignInAddress). -->
+      <div>
+        <p class="sm:hidden text-xs font-bold uppercase tracking-[0.16em] text-gold-700 mb-1">Delegate portal</p>
+        <h2 class="text-xl font-bold text-navy">Sign in</h2>
+        <p class="text-sm text-slate-600 mt-1">Delegates, organisers and volunteers all sign in here.</p>
+        <p id="login-next-note" class="hidden mt-3 text-sm font-semibold text-navy bg-gold-50 border border-gold-300 rounded-lg px-3 py-2">Sign in to open the admin panel.</p>
+      </div>
 
       <!-- Only meaningful once an account has a password set (see Set
            Password in the dashboard/admin panel) -- everyone can always log
@@ -58,7 +67,7 @@
         </div>
       </div>
 
-      <button type="submit" id="login-submit-btn" class="w-full py-3 bg-navy hover:bg-indigo-700 text-white font-semibold rounded-xl shadow-md">Login</button>
+      <button type="submit" id="login-submit-btn" class="w-full py-3 bg-navy hover:bg-indigo-700 text-white font-semibold rounded-xl shadow-md">Sign in</button>
 
       <p class="text-center text-sm text-slate-600 mt-4">
         Don't have an account? <a href="#" onclick="toggleAuth('register'); return false;" class="text-indigo-600 font-bold hover:underline">Sign up here</a>
@@ -287,7 +296,7 @@
       </div>
 
       <p class="text-center text-sm text-slate-600 mt-4">
-        Already have an account? <a href="#" onclick="toggleAuth('login'); return false;" class="text-indigo-600 font-bold hover:underline">Login here</a>
+        Already have an account? <a href="#" onclick="toggleAuth('login'); return false;" class="text-indigo-600 font-bold hover:underline">Sign in here</a>
       </p>
     </form>
   </section>

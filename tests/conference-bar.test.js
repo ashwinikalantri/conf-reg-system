@@ -23,7 +23,7 @@ const js = read('public', 'app.js');
 console.log('\n== The website ==');
 check('the page you are on: pale gold, bold, no gold underline',
   /\.nav \.top\[aria-current="page"\], \.dd summary\.here \{ background: var\(--gold-50\); font-weight: 700; \}/.test(siteCss) && !/inset 0 -3px 0 var\(--gold\)/.test(siteCss));
-check('its phone menu ends as the others do: Go to, the delegate portal', /<p class="menu-group">Go to<\/p>\s*<a class="menu-go" href="<%= portal %>">Delegate portal<span id="site-menu-me">Sign in<\/span><\/a>\s*<\/nav>/.test(siteHead));
+check('its phone menu ends as the others do: Go to, the delegate portal', /<p class="menu-group menu-go">Go to<\/p>\s*<a class="menu-go" href="<%= portal %>">Delegate portal<span>Sign in<\/span><\/a>\s*<\/nav>/.test(siteHead));
 
 console.log('\n== The same look in the portal and the admin panel ==');
 check('one stylesheet for the bar: white, the logo, a gold tag', /\.cbar \{ background: #fff; border-bottom: 1px solid #e3e7eb;/.test(css) && /\.cbar-place \{[^}]*color: #8a6d2b;/.test(css));
@@ -31,16 +31,21 @@ check('the page you are on and an open drop-down in pale gold, no underline',
   /\.cbar-link\[aria-expanded="true"\], \.cbar-link\[aria-current="page"\] \{ background: #faf5e8; \}/.test(css) && !/\.cbar[^{]*\{[^}]*inset 0 -/.test(css));
 check('drop-down items as the website\'s: a name and a line on it', /\.cbar-item b \{/.test(css) && /\.cbar-item > span \{ font-size: 14px;/.test(css));
 check('a rule here that sets display yields to .hidden', /\.cbar-link\.hidden, \.cbar-item\.hidden, \.cbar-group\.hidden \{ display: none; \}/.test(css));
-check('the logo links to the website, by its own address', [topbar, header].every((h) => /<a href="<%= locals\.websiteUrl \|\| '\/' %>" class="shrink-0" aria-label="The conference website"><img class="cbar-logo" src="\/website\/img\/nqocn-mgims-logo\.png"/.test(h))
+// 17 Nov 2026: the logo is each place's own home (it used to leave for the
+// website, from all three); the other places are under "Go to".
+check('the logo is this place\'s own home', /<a href="\/portal" onclick="dashGo\('home'\); return false;" class="cbar-home" aria-label="Delegate portal home"><img class="cbar-logo" src="\/website\/img\/nqocn-mgims-logo\.png"/.test(topbar)
+  && /<a href="\/admin" onclick="return adminGoHome\(\)" class="cbar-home" aria-label="Admin panel home"><img class="cbar-logo" src="\/website\/img\/nqocn-mgims-logo\.png"/.test(header));
+check('...and the website is reached by its own address', [topbar, header].every((h) => /<a href="<%= locals\.websiteUrl \|\| '\/' %>" class="cbar-item"><b>Conference website<\/b>/.test(h))
   && (server.match(/websiteUrl: `https:\/\/\$\{WEBSITE_HOST\}\/`/g) || []).length === 2);
 
 console.log('\n== The delegate portal ==');
 check('one bar, above sign-in and the pages, hidden until a delegate page opens', /<%- include\('portal\/partials\/topbar'\) %>\s*<!-- Sign in:/.test(index) && /<header id="dash-bar" class="cbar hidden /.test(topbar));
-check('a gold "Delegate" tag, then Home, Programme, Map, Badge', /<span class="cbar-place">Delegate<\/span>/.test(topbar)
+check('a gold "Delegate portal" tag ("Delegate" where the bar is tight), then Home, Programme, Map, Badge', /<span class="cbar-place"><span>Delegate<span class="cbar-place-more"> portal<\/span><\/span><\/span>/.test(topbar)
+  && /\.cbar-place-more \{ display: none; \}/.test(css)
   && ['home', 'programme', 'map', 'badge'].every((t) => new RegExp(`data-tab="${t}"[^>]*class="dash-nav-link cbar-link`).test(topbar)));
 check('the account on the right: initials, the name from a laptop up', /id="dash-menu-btn"[^>]*class="cbar-me"/.test(topbar) && /id="dash-me-initials"/.test(topbar) && /id="dash-me-name" class="hidden lg:inline/.test(topbar));
-check('its menu: Profile, Change password, Admin panel (staff), the website, then Log out',
-  /id="dash-menu" class="hidden cbar-panel">[\s\S]*?dashGo\('profile'\)[\s\S]*?openSetPasswordModal\(false\)[\s\S]*?id="admin-nav-btn" href="\/admin" class="cbar-item hidden"[\s\S]*?Conference website[\s\S]*?onclick="logout\(\)"/.test(topbar));
+check('its menu: Profile, Change password, then Go to (the website, Admin panel for staff), then Log out',
+  /id="dash-menu" class="hidden cbar-panel">[\s\S]*?dashGo\('profile'\)[\s\S]*?openSetPasswordModal\(false\)[\s\S]*?<p class="cbar-group go">Go to<\/p>[\s\S]*?Conference website[\s\S]*?id="admin-nav-btn" href="\/admin" class="cbar-item hidden"[\s\S]*?onclick="logout\(\)"/.test(topbar));
 check('the Admin panel item shows on every delegate page for an admin, not only Home',
   /updateAdminNav\(Object\.prototype\.hasOwnProperty\.call\(DASH_TAB_OF_PAGE, pageId\) && isAdminUser\(\)\)/.test(js));
 

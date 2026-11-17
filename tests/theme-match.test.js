@@ -15,16 +15,17 @@ check('...the same colours as the delegate page, value for value', colours(porta
 
 const header = read('views', 'admin', 'partials', 'header.ejs');
 // 31 Oct 2026: the navy title card gave way to the conference bar, the
-// website's header -- logo, a gold "Admin" tag, the desks, Settings as a
-// drop-down, the account on the right.
-check('the admin header is the conference bar: the logo and a gold "Admin" tag',
-  /<header id="admin-bar" class="cbar /.test(header) && /src="\/website\/img\/nqocn-mgims-logo\.png"/.test(header) && /<span class="cbar-place">Admin<\/span>/.test(header)
+// website's header -- logo, a gold "Admin panel" tag ("Admin" on a phone),
+// the desks, Settings as a drop-down, the account on the right.
+check('the admin header is the conference bar: the logo and a gold "Admin panel" tag',
+  /<header id="admin-bar" class="cbar /.test(header) && /src="\/website\/img\/nqocn-mgims-logo\.png"/.test(header) && /<span class="cbar-place"><span>Admin<span class="cbar-place-more"> panel<\/span><\/span><\/span>/.test(header)
   && /id="conf-name-h1" class="skeleton sr-only"/.test(header) && !/bg-navy text-white/.test(header));
 check('Settings is a drop-down in the bar, as the website\'s are', /id="settings-menu-btn"[^>]*aria-expanded="false" class="cbar-link cbar-drop">Settings <svg/.test(header));
-check('the account: the website, the delegate portal, then Log out, last of all',
-  /id="admin-me-menu">[\s\S]*?Conference website[\s\S]*?id="admin-menu-portal" href="\/portal"[\s\S]*?id="admin-logout-item" onclick="logout\(\)"/.test(header)
+check('the account: Go to the website or the delegate portal, then Log out, last of all',
+  /id="admin-me-menu">[\s\S]*?<p class="cbar-group go">Go to<\/p>[\s\S]*?Conference website[\s\S]*?id="admin-menu-portal" href="\/portal"[\s\S]*?id="admin-logout-item" onclick="logout\(\)"/.test(header)
   && header.lastIndexOf('admin-logout-item') > header.lastIndexOf('settings-item-') && (header.match(/onclick="logout\(\)"/g) || []).length === 1);
-check('below 1200px, one ☰ panel holds all of it', /id="admin-menu-btn" onclick="toggleAdminMenu\(\)" aria-label="Menu"/.test(header)
+check('below 1320px, one ☰ panel holds the desks and Settings; the account is its own button at every width', /id="admin-menu-btn" onclick="toggleAdminMenu\(\)" aria-label="Menu"/.test(header)
+  && /\n {6}<\/div>\n\n {6}<div id="admin-me-wrap"/.test(header) && header.indexOf('id="admin-me-wrap"') < header.indexOf('id="admin-menu-btn"')
   && header.indexOf('id="admin-menu"') < header.indexOf("include('nav-tabs')") && header.indexOf("include('nav-tabs')") < header.indexOf('id="settings-menu"')
   && header.indexOf('id="settings-menu"') < header.indexOf('id="admin-me-menu"'));
 

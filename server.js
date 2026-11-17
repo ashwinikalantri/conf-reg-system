@@ -111,7 +111,7 @@ const PAGE_HEAD_FONT = "'Libre Franklin', 'Source Sans 3', system-ui, sans-serif
 //
 // `title` is plain text, `bodyHtml` is trusted markup from the call sites
 // below (never delegate input, which is escaped by the caller).
-function noticePage(title, bodyHtml, linkHref = '/', linkText = 'Return to the delegate portal') {
+function noticePage(title, bodyHtml, linkHref = '/portal', linkText = 'Return to the delegate portal') {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">`
     + `<meta name="viewport" content="width=device-width, initial-scale=1">`
     + `<title>${escapeHtml(title)}</title>${PAGE_FONTS}</head>`
@@ -3923,9 +3923,12 @@ app.get(['/', '/portal'], async (req, res, next) => {
 });
 
 // Admin panel lives outside the static root and is only served to a
-// logged-in admin. Anonymous users go to the portal to log in first.
+// logged-in admin. Anonymous users go to the portal to log in first, and are
+// brought back here once they have (?next, which the sign-in page checks
+// against the one address it will go on to; the browser carries any #tab
+// across the redirect by itself).
 app.get('/admin', (req, res) => {
-  if (!req.session) return res.redirect('/portal');
+  if (!req.session) return res.redirect(`/portal?next=${encodeURIComponent('/admin')}`);
   // During maintenance the admin panel is super-admin-only: every other role's
   // panel is driven by API calls that maintenanceGate is now 503ing, so it
   // would render as a shell of empty tables rather than anything usable.
@@ -4549,9 +4552,10 @@ app.post('/api/auth/verify-contact/confirm', requireAuth, async (req, res, next)
   }
 });
 
-// Who is signed in, for the public website's header: their name only, or
-// signedIn false. Never an error, so a signed-out visitor costs nothing; and
-// never cached, since the website's pages are (Cache-Control public).
+// Who is signed in, for the public website's header: their name and whether
+// to offer them the admin panel, or signedIn false. Never an error, so a
+// signed-out visitor costs nothing; and never cached, since the website's
+// pages are (Cache-Control public).
 app.get('/api/auth/whoami', async (req, res, next) => {
   try {
     res.set('Cache-Control', 'private, no-store');
@@ -4559,7 +4563,9 @@ app.get('/api/auth/whoami', async (req, res, next) => {
       ? await dbGet('SELECT salutation, full_name FROM users WHERE phone_number = ?', [req.session.phone]) : null;
     if (!user) return res.json({ signedIn: false });
     const name = [user.salutation, user.full_name].filter(Boolean).join(' ').trim();
-    res.json({ signedIn: true, name });
+    // admin: whether to offer the admin panel in the website's account menu.
+    // The panel itself is gated by its own route, not by this.
+    res.json({ signedIn: true, name, admin: rolesOpenAdmin(req.session.roles || [req.session.role]) });
   } catch (err) {
     next(err);
   }

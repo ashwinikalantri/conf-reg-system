@@ -122,13 +122,22 @@ check('...each part a page of its own: the menu shows one, marks it, and keeps i
   const cards = [fake('gs-card-conference'), fake('gs-card-halls', true), fake('gs-card-sms')];
   const btn = (id) => { const b = { dataset: { target: id }, current: null, setAttribute(k, v) { b.current = v; }, removeAttribute() { b.current = null; } }; return b; };
   const btns = cards.map((c) => btn(c.id));
+  // The address, as a browser keeps it: a part chosen is a new step in the
+  // history, the one the page opens on takes the place of the current step.
   const hashes = [];
-  const sb = { document: { querySelectorAll: (q) => (q.includes('gs-jump') ? btns : cards) }, history: { replaceState: (a, b, h) => hashes.push(h) }, window: { scrollTo() {} }, currentBackendTab: 'general' };
-  require('vm').runInNewContext(`let setupPage = 'conference'; ${fn}; this.show = showSetupPage;`, sb);
+  const at = { hash: '#general', pathname: '/admin', search: '' };
+  const write = (how) => (a, b, h) => { at.hash = h; hashes.push(`${how} ${h}`); };
+  const sb = { document: { querySelectorAll: (q) => (q.includes('gs-jump') ? btns : cards) }, history: { pushState: write('push'), replaceState: write('replace') }, window: { scrollTo() {}, location: at }, currentBackendTab: 'general' };
+  const writeFn = js.slice(js.indexOf('function writeAddress(url, push)'), js.indexOf('// Keeps the delegate portal\'s address'));
+  require('vm').runInNewContext(`let setupPage = 'conference'; ${writeFn}; ${fn}; this.show = showSetupPage;`, sb);
+  sb.show();
+  check('...the part it opens on is in the address, in place of the step before', hashes.pop() === 'replace #general/conference');
   sb.show('sms');
-  check('...choosing a part shows it alone', cards[2].classList.contains('gs-off') === false && cards[0].classList.contains('gs-off') && btns[2].current === 'page' && btns[0].current === null && hashes.pop() === '#general/sms');
+  check('...choosing a part shows it alone, as a step Back returns from', cards[2].classList.contains('gs-off') === false && cards[0].classList.contains('gs-off') && btns[2].current === 'page' && btns[0].current === null && hashes.pop() === 'push #general/sms');
+  sb.show('sms');
+  check('...the same part chosen again is not a second step', hashes.length === 0);
   sb.show('halls');
-  check('...a part this role may not open falls back to the first it may', !cards[0].classList.contains('gs-off') && cards[1].classList.contains('gs-off') && hashes.pop() === '#general/conference');
+  check('...a part this role may not open falls back to the first it may', !cards[0].classList.contains('gs-off') && cards[1].classList.contains('gs-off') && hashes.pop() === 'push #general/conference');
 }
 const listFn = js.slice(js.indexOf('function renderGuestList()'), js.indexOf('// A card per person, for a phone'));
 check('the faculty table: no Volunteers or Needs columns (both in the editor)', !/>Volunteers</.test(listFn) && !/Needs · Remarks/.test(listFn) && /colspan="7"/.test(listFn));

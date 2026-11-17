@@ -72,13 +72,15 @@ function formatDMY(isoDate) {
 
 function applyConferenceInfoToDom() {
   const c = conferenceInfo;
-  document.title = document.title.includes('Admin')
-    ? (c.acronym ? `${c.acronym} - Admin & Backend Portal` : 'Admin & Backend Portal')
-    : (c.name || 'Registration Portal');
+  // The tab says which of the two this is, then the conference: "Admin panel
+  // · NQOCN 2026", "Delegate portal · NQOCN 2026" -- the names their menus
+  // and the website use for them.
+  const place = document.title.includes('Admin') ? 'Admin panel' : 'Delegate portal';
+  document.title = c.acronym ? `${place} · ${c.acronym}` : place;
 
   const nameEl = document.getElementById('conf-name-h1');
   if (nameEl) {
-    nameEl.textContent = (c.name || 'Registration Portal') + (nameEl.dataset.suffix || '');
+    nameEl.textContent = (c.name || place) + (nameEl.dataset.suffix || '');
     clearSkeleton(nameEl);
   }
 
@@ -159,6 +161,45 @@ let currentDelegate = readStoredDelegate();
     if (!code) return;
     storageSet('session', 'nqocn_hall', code);
     window.history.replaceState(null, '', window.location.pathname + window.location.hash);
+  } catch (e) { /* no address to read */ }
+}());
+
+// Signing in on the way to the admin panel. /admin sends a signed-out visitor
+// here as /portal?next=/admin (server.js; the admin page does the same when
+// its session has ended), and a fresh sign-in by someone who may open it goes
+// on there (followSignInNext). The value comes from the address, so it is
+// followed only when it names the admin panel and nothing else. The tab they
+// had asked for (/admin#reports) arrives after the #, which this portal uses
+// for its own pages, so it is moved into next here, before those are read.
+const SIGN_IN_NEXT_RE = /^\/admin(#[\w/-]{1,60})?$/;
+let signInNext = '';
+(function captureSignInNext() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    let next = params.get('next') || '';
+    if (!SIGN_IN_NEXT_RE.test(next)) return;
+    const hash = window.location.hash;
+    if (hash.length > 1 && !next.includes('#')) {
+      if (SIGN_IN_NEXT_RE.test(next + hash)) next += hash;
+      params.set('next', next);
+      window.history.replaceState(null, '', `${window.location.pathname}?${params}`);
+    }
+    signInNext = next;
+  } catch (e) { /* no address to read */ }
+}());
+
+// Each page of the delegate portal has an address: /portal is Home, then
+// #programme, #map and #profile; #register is the sign-up form. Opening one
+// adds a step to the browser's history (syncPortalAddress), so Back returns
+// to the page before instead of leaving the portal, and a link or a refresh
+// opens the page it names. The one this visit opened at waits here until it
+// can be shown: after signing in, and once the programme has loaded.
+const PORTAL_HASH_OF_PAGE = { 'dashboard-page': '', 'programme-page': 'programme', 'map-page': 'map', 'profile-page': 'profile' };
+let pendingPortalPage = '';
+(function capturePortalPage() {
+  try {
+    const page = window.location.hash.slice(1);
+    if (page === 'register' || Object.values(PORTAL_HASH_OF_PAGE).includes(page)) pendingPortalPage = page;
   } catch (e) { /* no address to read */ }
 }());
 
@@ -252,7 +293,67 @@ function updateAdminNav(show) {
 }
 
 // --- NAVIGATION & UI TOGGLES ---
-function navigateTo(pageId) {
+// Writes the address: as a new step in the browser's history, which Back
+// returns from, or in place of the current one. Nothing when it already says
+// so, so the same page asked for twice is still one step.
+function writeAddress(url, push) {
+  const at = window.location;
+  if (url === at.hash || url === `${at.pathname}${at.search}${at.hash}`) return;
+  if (push && typeof history.pushState === 'function') history.pushState(null, '', url);
+  else history.replaceState(null, '', url);
+}
+
+// Keeps the delegate portal's address on the page being shown (see
+// PORTAL_HASH_OF_PAGE). `how` is 'push' where the delegate opened the page --
+// a tab, a menu item, a link on Home -- and that is a step in the history;
+// everything else (the first paint, signing in, the session ending) replaces
+// the current step. The maintenance notice has no address of its own.
+function syncPortalAddress(pageId, how) {
+  try {
+    if (!document.getElementById('dashboard-page')) return; // the admin panel names its own tabs
+    let page;
+    if (Object.prototype.hasOwnProperty.call(PORTAL_HASH_OF_PAGE, pageId)) page = PORTAL_HASH_OF_PAGE[pageId];
+    else if (pageId === 'auth-page') page = document.getElementById('register-form').classList.contains('hidden') ? '' : 'register';
+    else return;
+    // The page this visit opened at has not had its turn yet.
+    if (pendingPortalPage && how !== 'push') return;
+    pendingPortalPage = '';
+    writeAddress(`${window.location.pathname}${window.location.search}${page ? `#${page}` : ''}`, how === 'push');
+  } catch (e) { /* no address to write */ }
+}
+
+// The page named in the address this visit opened at, once the dashboard has
+// loaded (loadDashboard): the programme and the map need the programme.
+function openPendingPortalPage() {
+  const page = pendingPortalPage;
+  if (!page) return;
+  pendingPortalPage = '';
+  showPortalPage(page);
+}
+
+// Shows the page an address names. One that cannot be shown -- no programme
+// yet, the sign-up form for someone signed in -- leaves them where they are,
+// and the address then says that instead.
+function showPortalPage(page) {
+  if (page === 'programme') openProgrammePage();
+  else if (page === 'map' && programmeData) openMapPage();
+  else if (page === 'profile') openProfilePage();
+  else if (!page) { navigateTo('dashboard-page'); window.scrollTo(0, 0); }
+  syncPortalAddress(dashTabsPage);
+}
+
+// Back and Forward, in the portal: show what the address now names.
+window.addEventListener('popstate', () => {
+  if (!document.getElementById('dashboard-page') || dashTabsPage === 'maintenance-page') return;
+  const page = window.location.hash.slice(1);
+  closeDashMenu();
+  if (!currentDelegate || dashTabsPage === 'auth-page') return toggleAuth(page === 'register' ? 'register' : 'login', 'replace');
+  // Already there: a link to "#" on the page, not a step through the history.
+  if (PORTAL_HASH_OF_PAGE[dashTabsPage] === page) return;
+  showPortalPage(Object.values(PORTAL_HASH_OF_PAGE).includes(page) ? page : '');
+});
+
+function navigateTo(pageId, how) {
   document.querySelectorAll('main, section').forEach(el => el.classList.add('hidden'));
   const target = document.getElementById(pageId);
   if (target) target.classList.remove('hidden');
@@ -266,6 +367,7 @@ function navigateTo(pageId) {
   // The Admin panel item, in the bar's account menu: for admins, on the
   // delegate's pages.
   updateAdminNav(Object.prototype.hasOwnProperty.call(DASH_TAB_OF_PAGE, pageId) && isAdminUser());
+  syncPortalAddress(pageId, how);
 }
 
 
@@ -281,6 +383,10 @@ function updateDashTabs(pageId) {
   bar.classList.toggle('hidden', !on);
   const topBar = document.getElementById('dash-bar');
   if (topBar) topBar.classList.toggle('hidden', !on);
+  // Signed out (and on the maintenance notice) the bar is the plain one:
+  // the logo, and the way back to the website.
+  const frontBar = document.getElementById('front-bar');
+  if (frontBar) frontBar.classList.toggle('hidden', on);
   if (document.body && document.body.classList) {
     document.body.classList.toggle('has-tabs', on);
     // The delegate's pages start at the top; sign-in stays centred.
@@ -331,7 +437,9 @@ function setBarAccount(name) {
   setText('dash-me-name', name || '');
 }
 
-function toggleAuth(view) {
+// Sign in, or the sign-up form. Choosing one is a step in the history
+// (#register), so Back from the sign-up form is the sign-in page.
+function toggleAuth(view, how) {
   const regForm = document.getElementById('register-form');
   const loginForm = document.getElementById('login-form');
 
@@ -347,6 +455,34 @@ function toggleAuth(view) {
     loginForm.classList.remove('hidden');
     regForm.classList.add('hidden');
   }
+  syncPortalAddress('auth-page', how || 'push');
+}
+
+// The sign-in page as its address asks: the sign-up form for #register (the
+// website's Register buttons), and a line saying what signing in will open
+// when they were on their way to the admin panel.
+function applySignInAddress() {
+  const note = document.getElementById('login-next-note');
+  if (note) note.classList.toggle('hidden', !signInNext);
+  if (pendingPortalPage !== 'register') return;
+  pendingPortalPage = '';
+  toggleAuth('register', 'replace');
+}
+
+// A fresh sign-in on the way to the admin panel goes on to it, in place of
+// this page in the history so Back from there is not the sign-in form. Not
+// for an account that cannot open it: they stay here and are told.
+function followSignInNext() {
+  const next = signInNext;
+  if (!next) return false;
+  signInNext = '';
+  if (!isAdminUser()) {
+    writeAddress(`${window.location.pathname}${window.location.hash}`, false);
+    showToast('You are signed in, but this account cannot open the admin panel.', 'info');
+    return false;
+  }
+  window.location.replace(next);
+  return true;
 }
 
 // OTP vs password is a login-flow choice, not two different accounts --
@@ -363,7 +499,7 @@ function setLoginMode(mode) {
   const pwBtn = document.getElementById('login-mode-password-btn');
   otpBtn.classList.toggle('bg-white', isOtp); otpBtn.classList.toggle('shadow-sm', isOtp); otpBtn.classList.toggle('text-indigo-700', isOtp); otpBtn.classList.toggle('text-slate-500', !isOtp);
   pwBtn.classList.toggle('bg-white', !isOtp); pwBtn.classList.toggle('shadow-sm', !isOtp); pwBtn.classList.toggle('text-indigo-700', !isOtp); pwBtn.classList.toggle('text-slate-500', isOtp);
-  setText('login-submit-btn', isOtp ? 'Verify OTP & Login' : 'Login');
+  setText('login-submit-btn', isOtp ? 'Verify OTP & sign in' : 'Sign in');
 }
 
 // --- PIN CODE ----------------------------------------------------------
@@ -922,6 +1058,7 @@ async function handleLogin(e) {
     // A delegate who logs in mid-maintenance gets the notice, not a dashboard
     // whose every API call is going to come back 503.
     if (await shouldShowMaintenance(currentDelegate)) return navigateTo('maintenance-page');
+    if (followSignInNext()) return;
     loadDashboard();
     runPostLoginPrompts();
   } else if (data.notRegistered) {
@@ -957,6 +1094,7 @@ async function handlePasswordLogin() {
   const welcomeName = currentDelegate.full_name || currentDelegate.name;
   showToast(`Welcome back, ${currentDelegate.salutation ? currentDelegate.salutation + ' ' : ''}${welcomeName}!`, 'success');
   if (await shouldShowMaintenance(currentDelegate)) return navigateTo('maintenance-page');
+  if (followSignInNext()) return;
   loadDashboard();
   runPostLoginPrompts();
 }
@@ -1008,6 +1146,8 @@ async function loadDashboard() {
   // badge's back, which needs the programme and their workshop.
   renderHomeHero();
   renderBadgeBack();
+  // A link or a refresh that named a page: open it, now that it can be.
+  openPendingPortalPage();
   // Every section has had its turn, including the ones that failed -- see
   // settleSkeletons on why a shimmer must not outlive the attempt.
   settleSkeletons();
@@ -1130,14 +1270,14 @@ function dashGo(where) {
   if (where === 'programme') return openProgrammePage();
   if (where === 'map') return openMapPage();
   if (where === 'profile') return openProfilePage();
-  navigateTo('dashboard-page');
+  navigateTo('dashboard-page', 'push');
   window.scrollTo(0, 0);
 }
 
 function openProfilePage() {
   setText('profile-page-acronym', (conferenceInfo.acronym || '').toUpperCase());
   renderProfilePage();
-  navigateTo('profile-page');
+  navigateTo('profile-page', 'push');
   window.scrollTo(0, 0);
 }
 
@@ -1311,7 +1451,7 @@ async function loadProgrammeCard() {
 function openProgrammePage() {
   if (!programmeData) return;
   setText('prog-page-acronym', (conferenceInfo.acronym || '').toUpperCase());
-  navigateTo('programme-page');
+  navigateTo('programme-page', 'push');
   renderProgrammePage();
   window.scrollTo(0, 0);
   // On the day, open at what is on now.
@@ -1320,7 +1460,7 @@ function openProgrammePage() {
 }
 
 function closeProgrammePage() {
-  navigateTo('dashboard-page');
+  navigateTo('dashboard-page', 'push');
   window.scrollTo(0, 0);
 }
 
@@ -1523,7 +1663,7 @@ let campusLocateFirst = false;
 
 async function openMapPage(hallId) {
   setText('map-page-acronym', (conferenceInfo.acronym || '').toUpperCase());
-  navigateTo('map-page');
+  navigateTo('map-page', 'push');
   window.scrollTo(0, 0);
   campusPlacesList = campusPlaces(programmeData && programmeData.halls);
   const target = hallId ? campusPlacesList.find((p) => p.halls.some((h) => h.id === hallId)) : null;
@@ -3722,6 +3862,9 @@ async function shouldShowMaintenance(user) {
 }
 
 async function restoreSession() {
+  // Signed out as far as this browser knows, so the sign-in page is what is
+  // showing: open it as the address asks without waiting for the server.
+  if (!currentDelegate) applySignInAddress();
   try {
     const res = await fetch('/api/auth/me');
     if (!res.ok) {
@@ -3732,6 +3875,7 @@ async function restoreSession() {
       persistDelegate(null);
       if (document.getElementById('dashboard-page')) {
         navigateTo(await shouldShowMaintenance(null) ? 'maintenance-page' : 'auth-page');
+        applySignInAddress();
       }
       return;
     }
@@ -3740,12 +3884,15 @@ async function restoreSession() {
       currentDelegate = data.user;
       persistDelegate(currentDelegate);
       if (await shouldShowMaintenance(data.user)) return navigateTo('maintenance-page');
+      // Already signed in, so there is no sign-in to go on from.
+      if (signInNext) { signInNext = ''; writeAddress(`${window.location.pathname}${window.location.hash}`, false); }
       loadDashboard();
     } else {
       currentDelegate = null;
       persistDelegate(null);
       if (document.getElementById('dashboard-page')) {
         navigateTo(await shouldShowMaintenance(null) ? 'maintenance-page' : 'auth-page');
+        applySignInAddress();
       }
     }
   } catch (e) {
@@ -4373,8 +4520,9 @@ async function initBackendPortal() {
   // Identify the logged-in admin from the session, not a client-side switcher.
   const meRes = await fetch('/api/auth/me');
   if (!meRes.ok) {
-    showToast('Please log in through the delegate portal with an administrator account.');
-    window.location.href = '/portal';
+    // Signed out: to the sign-in page, which returns here -- to this tab --
+    // once they have signed in (captureSignInNext).
+    window.location.href = `/portal?next=${encodeURIComponent(`/admin${window.location.hash}`)}`;
     return;
   }
   const me = await meRes.json();
@@ -4421,11 +4569,12 @@ async function initBackendPortal() {
     // The meal counter volunteers' whole job.
     : canSee('meals') ? 'meals'
     : 'workshops'; // unreachable for the five built-in roles; a defensive fallback for an unrecognised one
+  adminHomeTab = defaultTab;
   const allowed = allowedBackendTabs();
   const hashTab = tabFromHash();
   const loading = document.getElementById('admin-initial-loading');
   if (loading) loading.classList.add('hidden');
-  switchBackendTab(allowed.includes(hashTab) ? hashTab : defaultTab);
+  switchBackendTab(allowed.includes(hashTab) ? hashTab : defaultTab, { replace: true });
 
   // Render every section this session may see (this also fills the tab
   // badges). Each gate is the section that screen belongs to -- the same
@@ -8976,8 +9125,18 @@ function showSetupPage(page) {
   document.querySelectorAll('#gs-jump .gs-jump-btn').forEach((b) => {
     if (b.dataset.target === wanted.id) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
-  if (currentBackendTab === 'general') history.replaceState(null, '', `#general/${setupPage}`);
+  // In the address, so a refresh or a link returns to this part; one chosen
+  // from the menu is a step in the history, which Back returns from.
+  if (currentBackendTab === 'general') writeAddress(`#general/${setupPage}`, !!page);
   window.scrollTo(0, 0);
+}
+
+// A part of Conference setup opened from another screen: the tab and the
+// part in one step of the history.
+function openSetupPage(page) {
+  if (currentBackendTab === 'general') return showSetupPage(page);
+  setupPage = page;
+  switchBackendTab('general');
 }
 
 async function renderGeneralSettings() {
@@ -11709,10 +11868,10 @@ function switchActivityLog(tab) {
   });
 }
 
-// The admin bar's menus (views/admin/partials/header.ejs). From 1320px,
-// Settings and the account are drop-downs, each opened by its button; below
-// it, everything is one panel, #admin-menu, opened by ☰. Each opens by the
-// "open" class, and its button says so in aria-expanded.
+// The admin bar's menus (views/admin/partials/header.ejs). The account is a
+// drop-down under its own button at every width. From 1320px Settings is one
+// too; below it, the desks and Settings are one panel, #admin-menu, opened by
+// ☰. Each opens by the "open" class, and its button says so in aria-expanded.
 const ADMIN_MENUS = [['desk-menu', 'desk-menu-btn'], ['settings-menu', 'settings-menu-btn'], ['admin-me-menu', 'admin-me-btn'], ['admin-menu', 'admin-menu-btn']];
 function setAdminMenu(menuId, open) {
   const pair = ADMIN_MENUS.find(([m]) => m === menuId);
@@ -13916,13 +14075,30 @@ function allowedBackendTabs() {
 // The tab currently shown. Kept so the hashchange listener can tell a
 // user-driven back/forward from the hash we just wrote ourselves.
 let currentBackendTab = null;
+// The tab this role lands on (initBackendPortal): where the logo goes.
+let adminHomeTab = null;
 
-function switchBackendTab(tab) {
+// The logo, in the admin bar: the admin panel's own first screen. Until that
+// is known the link itself (/admin) does it.
+function adminGoHome() {
+  if (!adminHomeTab) return true;
+  switchBackendTab(adminHomeTab);
+  closeAdminMenus();
+  window.scrollTo(0, 0);
+  return false;
+}
+
+function switchBackendTab(tab, opts) {
+  const landing = currentBackendTab === null;
   currentBackendTab = tab;
-  // Persist in the URL so a refresh (or a bookmark, or back/forward) returns
-  // to the section you were on instead of snapping back to the role default.
-  if (window.location.hash.slice(1) !== tab) {
-    history.replaceState(null, '', `#${tab}`);
+  // The address names the tab, so a refresh, a bookmark or a shared link
+  // returns to it instead of the role's default; and each tab opened is a
+  // step in the browser's history, so Back goes to the tab before instead of
+  // out of the admin panel. The tab landed on, and one the address already
+  // asked for under another name (#guests), take the place of the current
+  // step rather than add one.
+  if (window.location.hash.slice(1).split('/')[0] !== tab) {
+    writeAddress(`#${tab}`, !(landing || (opts && opts.replace)));
   }
   // Every section was only ever fetched once at initial page load, so
   // switching away and back (or another admin changing something in the
@@ -13990,11 +14166,6 @@ function switchBackendTab(tab) {
   if (tab === 'statement') loadReconciliation();
 }
 
-// Follow the hash if it changes from outside our own navigation -- editing it
-// in the address bar, or following a link to #general. switchBackendTab writes
-// it with replaceState (no new history entry, so clicking through tabs doesn't
-// bury the previous page behind a dozen Back presses), which doesn't emit
-// hashchange, and the guard below ignores a tab already showing.
 // The tab named in the address. #guests was the Faculty tab's first name, and
 // #certsettings a page before it moved into Conference setup; old bookmarks
 // and links still open them. #general/sms is a part of Conference setup.
@@ -14005,11 +14176,15 @@ function tabFromHash() {
   return { guests: 'faculty', certsettings: 'general' }[tab] || tab;
 }
 
+// Follow the hash when it changes from outside our own navigation: Back and
+// Forward through the tabs opened, editing it in the address bar, or following
+// a link to #general. switchBackendTab's own writes (pushState, replaceState)
+// do not emit hashchange, and the guard below ignores a tab already showing.
 window.addEventListener('hashchange', () => {
   const tab = tabFromHash();
   if (tab === 'general' && tab === currentBackendTab) return showSetupPage();
   if (!tab || tab === currentBackendTab || !activeAdminUser) return;
-  if (allowedBackendTabs().includes(tab)) switchBackendTab(tab);
+  if (allowedBackendTabs().includes(tab)) switchBackendTab(tab, { replace: true });
 });
 
 // --- ATTENDANCE (admin) ---

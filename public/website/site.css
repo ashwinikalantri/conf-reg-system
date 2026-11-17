@@ -37,8 +37,11 @@ p { margin: 0; }
 /* Header */
 .site-header { border-bottom: 1px solid var(--line); background: #fff; }
 .site-header .wrap { display: flex; align-items: center; gap: 12px 24px; padding-top: 10px; padding-bottom: 10px; flex-wrap: wrap; }
-.brand { display: flex; align-items: center; margin-right: auto; }
-.brand img { height: 32px; width: auto; display: block; }
+/* On a narrow phone the logo gives way before the buttons do: it may shrink
+   to 100px, so Register and the menu stay on its row and their panels, which
+   hang from the right end of that row, stay on the screen. */
+.brand { display: flex; align-items: center; flex: 1 1 100px; min-width: 0; max-width: max-content; margin-right: auto; }
+.brand img { height: 32px; width: auto; max-width: 100%; object-fit: contain; object-position: left center; display: block; }
 @media (min-width: 720px) { .brand img { height: 40px; } }
 .nav { display: none; align-items: center; gap: 4px; font-weight: 600; font-size: 15px; }
 .nav .top, .dd summary { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border-radius: 9px; text-decoration: none; color: var(--navy); cursor: pointer; }
@@ -56,17 +59,34 @@ p { margin: 0; }
 .dd-panel a[aria-current="page"] { background: var(--gold-50); }
 .dd-panel b { color: var(--navy); }
 .dd-panel span { font-size: 14px; font-weight: 400; color: var(--muted); }
-.header-actions { display: flex; align-items: center; gap: 10px; }
+.header-actions { display: flex; align-items: center; gap: 10px; position: relative; margin-left: auto; }
 .signin { display: none; font-weight: 600; font-size: 15px; text-decoration: none; padding: 10px 4px; }
-/* Signed in to the portal: their button (initials, and the name from a
-   desktop up) to the portal, in place of Sign in and Register -- the same
-   account button the portal and the admin panel wear. */
+/* Signed in to the portal: their button (initials, and the name on a wide
+   screen), in place of Sign in and Register -- the same account button
+   the portal and the admin panel wear, opening the same menu: "Go to" the
+   other places, then Log out. The panel hangs from the right end of the
+   header's buttons, so on a phone it never leaves the screen. */
+.me-menu { display: none; }
+.signed-in .me-menu { display: block; }
+.me-menu summary { list-style: none; cursor: pointer; }
+.me-menu summary::-webkit-details-marker { display: none; }
+.me-menu summary svg { display: none; transition: transform 0.15s; }
+.me-menu[open] summary { background: var(--gold-50); border-color: var(--navy); }
+.me-menu[open] summary svg { transform: rotate(180deg); }
+.me-panel { position: absolute; right: 0; top: 52px; z-index: 20; width: min(300px, 88vw); background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 16px 40px rgba(19, 33, 45, 0.16); padding: 8px; display: flex; flex-direction: column; }
+.me-panel a, .me-panel button { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 12px 14px; border: 0; border-radius: 10px; background: none; font: inherit; text-align: left; text-decoration: none; color: var(--navy); cursor: pointer; }
+.me-panel a[hidden] { display: none; }
+.me-panel a:hover, .me-panel button:hover { background: var(--tint); }
+.me-panel b { color: var(--navy); font-weight: 600; }
+.me-panel span { font-size: 14px; font-weight: 400; color: var(--muted); }
+.me-panel hr { border: 0; border-top: 1px solid #eef1f4; margin: 6px 0 4px; width: 100%; }
+.me-panel .menu-group.first { border-top: 0; margin-top: 0; padding: 6px 14px 4px; }
 .me { display: none; align-items: center; gap: 8px; height: 44px; padding: 0 4px; border: 1px solid var(--line-2); border-radius: 999px; background: #fff; color: var(--navy); font-weight: 600; font-size: 15px; text-decoration: none; white-space: nowrap; }
 .me:hover { background: var(--gold-50); border-color: var(--navy); color: var(--navy); }
 .me-initials { width: 34px; height: 34px; border-radius: 999px; background: var(--navy); color: var(--gold-300); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; letter-spacing: 0.04em; flex-shrink: 0; }
 .me-name { display: none; max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
 .signed-in .me { display: inline-flex; }
-.signed-in .signin, .signed-in .register { display: none; }
+.signed-in .signin, .signed-in .register, .signed-in .menu-go, .signed-in .signed-out { display: none; }
 .menu { position: relative; }
 .menu summary { list-style: none; width: 44px; height: 44px; border: 1px solid var(--line-2); border-radius: 10px; display: flex; align-items: center; justify-content: center; color: var(--navy); cursor: pointer; }
 .menu summary::-webkit-details-marker { display: none; }
@@ -79,12 +99,16 @@ p { margin: 0; }
 .menu-panel hr { border: 0; border-top: 1px solid #eef1f4; margin: 10px 0 4px; width: 100%; }
 @media (min-width: 1000px) {
   .nav { display: flex; flex: 1 1 auto; }
-  .brand { margin-right: 8px; }
+  .brand { flex: 0 0 auto; margin-right: 8px; }
   .signin { display: inline-block; }
   .menu { display: none; }
-  .me { padding: 0 14px 0 4px; }
-  .me-name { display: inline; }
+  .me { padding: 0 12px 0 4px; }
+  .me-menu summary svg { display: block; }
 }
+/* The name joins the initials only where the header has the room for the
+   longest one beside the whole menu; below that it would push the button
+   onto a row of its own. */
+@media (min-width: 1200px) { .me-name { display: inline; } }
 
 /* Buttons */
 .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 20px; border-radius: 10px; font-weight: 700; font-size: 15px; text-decoration: none; border: 1px solid transparent; }

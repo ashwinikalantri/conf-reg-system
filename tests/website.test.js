@@ -43,7 +43,7 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
       check(`/website/${p} opens without signing in`, r.status === 200, r.status);
     }
     check('every page has the menu and the MGIMS copyright', pages.every((p) => /href="\/website\/programme"/.test(got[p]) && /© Mahatma Gandhi Institute of Medical Sciences, Sevagram/.test(got[p])));
-    check('...and links Register and Sign in to the portal', pages.every((p) => /class="btn btn-navy register" href="\/portal"/.test(got[p])));
+    check('...and links Sign in to the portal, Register to its sign-up form', pages.every((p) => /class="signin" href="\/portal">Sign in</.test(got[p]) && /class="btn btn-navy register" href="\/portal#register"/.test(got[p])));
     const groups = [...got[''].matchAll(/<details class="dd">\s*<summary[^>]*>([A-Za-z ]+)</g)].map((m) => m[1].trim());
     check('the menu is three groups and two links', JSON.stringify(groups) === JSON.stringify(['Programme', 'Registration', 'People'])
       && /class="top" href="\/website\/visit"/.test(got['']) && /class="top" href="\/website\/about"/.test(got['']), groups);
@@ -141,7 +141,9 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
       check('CAHO: the new logo, transparent, served', caho.data[3] === 0
         && /<img src="\/website\/img\/partners\/caho-logo\.png"/.test(home.raw) && (await call('GET', '/website/img/partners/caho-logo.png', null, null)).status === 200);
     }
-    check('...Register and Sign in go to the portal, at /portal', /class="btn btn-navy register" href="\/portal"/.test(home.raw));
+    check('...Sign in goes to the portal, at /portal, and every Register to its sign-up form', /class="signin" href="\/portal">Sign in</.test(home.raw)
+      && /class="btn btn-navy register" href="\/portal#register"/.test(home.raw) && /href="\/portal#register">Register now</.test(home.raw)
+      && /href="\/portal#register">Register now</.test((await asSite('/registration')).raw));
     check('...and it names itself as the address to list', /<link rel="canonical" href="https:\/\/nqocn2026\.mgims\.ac\.in\/">/.test(home.raw));
     const fac = await asSite('/faculty');
     check('the faculty page lists Dr Peter Lachman, no longer Dr Katherine Semrau', fac.raw.includes('Dr Peter Lachman') && !/Semrau/.test(fac.raw));
@@ -157,7 +159,7 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     check('the portal is at /portal', portal.status === 200 && /app\.js\?v=/.test(portal.raw) && !/Two days at Sevagram/.test(portal.raw));
     check('.../portal/ drops the slash (the page\'s files are relative)', (await asSite('/portal/?x=1')).location === '/portal?x=1');
     const adm = await asSite('/admin');
-    check('/admin is served there; signed out, it sends you to /portal', adm.status === 302 && adm.location === '/portal', adm.location);
+    check('/admin is served there; signed out, it sends you to sign in, and remembers where you were going', adm.status === 302 && adm.location === '/portal?next=%2Fadmin', adm.location);
     check('the API is served there', (await asSite('/api/conference')).status === 200);
     check('the group-registration help is served there', (await asSite('/help/group-registration')).status === 200);
     check('an unknown page there is the site\'s 404', (await asSite('/no-such-page')).status === 404 && /Page not found/.test((await asSite('/no-such-page')).raw));
@@ -207,14 +209,18 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     check('signed out: says so, and is never cached', out.status === 200 && out.body && out.body.signedIn === false && /no-store/.test(out.headers['cache-control'] || ''));
     const cookie = await adminLogin();
     const me = await call('GET', '/api/auth/whoami', null, cookie);
-    check('signed in: their name, and nothing more', me.body && me.body.signedIn === true && typeof me.body.name === 'string' && me.body.name.length > 0
-      && Object.keys(me.body).sort().join() === 'name,signedIn');
+    check('signed in: their name, whether the admin panel is theirs to open, and nothing more', me.body && me.body.signedIn === true && typeof me.body.name === 'string' && me.body.name.length > 0
+      && me.body.admin === true && Object.keys(me.body).sort().join() === 'admin,name,signedIn');
     const home = await asSite('/');
-    check('the header has the button, swapped in by the browser (the page itself stays the same for everyone)',
-      /<a class="me" id="site-me" href="\/portal" aria-label="Your delegate portal">/.test(home.raw) && /fetch\('\/api\/auth\/whoami'/.test(home.raw)
+    check('the header has the account button, swapped in by the browser (the page itself stays the same for everyone)',
+      /<details class="me-menu" id="site-me">\s*<summary class="me" aria-label="Your account: the delegate portal, log out">/.test(home.raw) && /fetch\('\/api\/auth\/whoami'/.test(home.raw)
       && /class="signin" href="\/portal">Sign in<\/a>/.test(home.raw));
+    check('...which opens the same "Go to" as the other two: the delegate portal, the admin panel for staff only, then Log out',
+      /<div class="me-panel">\s*<p class="menu-group first">Go to<\/p>\s*<a href="\/portal"><b>Delegate portal<\/b>[\s\S]*?<a id="site-me-admin" href="\/admin" hidden><b>Admin panel<\/b>[\s\S]*?<hr>\s*<button type="button" id="site-me-logout"><b>Log out<\/b><\/button>/.test(home.raw)
+      && /getElementById\('site-me-admin'\)\.hidden = !admin;/.test(home.raw) && /fetch\('\/api\/auth\/logout', \{ method: 'POST'/.test(home.raw));
     const siteCss = require('fs').readFileSync(require('./harness').appFile('public', 'website', 'site.css'), 'utf8');
-    check('...which hides Sign in and Register once signed in', /\.signed-in \.me \{ display: inline-flex; \}/.test(siteCss) && /\.signed-in \.signin, \.signed-in \.register \{ display: none; \}/.test(siteCss));
+    check('...which hides Sign in and Register once signed in', /\.signed-in \.me \{ display: inline-flex; \}/.test(siteCss) && /\.signed-in \.signin, \.signed-in \.register, \.signed-in \.menu-go, \.signed-in \.signed-out \{ display: none; \}/.test(siteCss)
+      && /\.me-panel a\[hidden\] \{ display: none; \}/.test(siteCss));
   }
   db.close();
   report();

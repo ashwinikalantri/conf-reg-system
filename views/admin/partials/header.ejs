@@ -1,17 +1,20 @@
   <!-- The conference bar, as on the website and the delegate's pages: the
-       logo, a gold "Admin" tag, then #admin-menu -- the desks (nav-tabs),
-       Settings in the four groups this role may open (Conference, Fees and
-       discounts, Messages, System and access; a heading shows only when the
-       role may open something under it, SETTINGS_GROUPS in
-       applyRoleVisibility), and the account (the website, the delegate
-       portal, Log out, always last). From 1320px the desks are links in the
-       bar and Settings and the account drop down; narrower, all of it is one
-       panel under the ☰ button (styles.css, #admin-menu). -->
+       logo (this place's own home: the screen this role lands on,
+       adminGoHome), a gold "Admin panel" tag, then #admin-menu -- the desks
+       (nav-tabs) and Settings in the four groups this role may open
+       (Conference, Fees and discounts, Messages, System and access; a heading
+       shows only when the role may open something under it, SETTINGS_GROUPS
+       in applyRoleVisibility) -- and the account: who is signed in, "Go to"
+       the website or the delegate portal, Log out, always last. The account
+       is its own button at every width, as it is on the other two. From
+       1320px the desks are links in the bar and Settings drops down;
+       narrower, they are one panel under the ☰ button (styles.css,
+       #admin-menu). -->
   <header id="admin-bar" class="cbar -mx-4 -mt-4 sm:-mx-8 sm:-mt-8 mb-6">
     <div class="cbar-in">
-      <a href="<%= locals.websiteUrl || '/' %>" class="shrink-0" aria-label="The conference website"><img class="cbar-logo" src="/website/img/nqocn-mgims-logo.png" alt="NQOCN, Nationwide Quality of Care Network, with MGIMS Sevagram" width="1021" height="203"></a>
-      <span class="cbar-place">Admin</span>
-      <h1 id="conf-name-h1" class="skeleton sr-only">Registration Portal</h1>
+      <a href="/admin" onclick="return adminGoHome()" class="cbar-home" aria-label="Admin panel home"><img class="cbar-logo" src="/website/img/nqocn-mgims-logo.png" alt="NQOCN, Nationwide Quality of Care Network, with MGIMS Sevagram" width="1021" height="203"></a>
+      <span class="cbar-place"><span>Admin<span class="cbar-place-more"> panel</span></span></span>
+      <h1 id="conf-name-h1" class="skeleton sr-only">Admin panel</h1>
 
       <div id="admin-menu" aria-label="Menu">
 <%- include('nav-tabs') %>
@@ -44,27 +47,27 @@
             </div>
           </div>
         </div>
+      </div>
 
-        <div id="admin-me-wrap" class="relative shrink-0">
-          <button type="button" id="admin-me-btn" onclick="toggleAdminMeMenu()" aria-label="Your account: the website, the delegate portal, log out" aria-haspopup="true" aria-expanded="false" class="cbar-me cbar-drop">
-            <span id="admin-me-initials" class="cbar-initials" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.6 3.1-6.5 7-6.5s7 2.9 7 6.5"/></svg></span>
-            <svg class="cbar-chev mr-2" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-          </button>
-          <div id="admin-me-menu">
-            <div id="admin-me-head" class="flex-col gap-0.5 px-3.5 pt-2 pb-2.5">
-              <b id="admin-me-name" class="text-[15px] text-slate-900"></b>
-              <span id="admin-me-role" class="text-sm text-slate-600"></span>
-            </div>
-            <p class="cbar-group go">Go to</p>
-            <a href="<%= locals.websiteUrl || '/' %>" class="cbar-item"><b>Conference website</b></a>
-            <a id="admin-menu-portal" href="/portal" class="cbar-item"><b>Delegate portal</b></a>
-            <div class="cbar-rule"></div>
-            <button type="button" id="admin-logout-item" onclick="logout()" class="cbar-item"><b>Log out</b></button>
+      <div id="admin-me-wrap" class="shrink-0">
+        <button type="button" id="admin-me-btn" onclick="toggleAdminMeMenu()" aria-label="Your account: the website, the delegate portal, log out" aria-haspopup="true" aria-expanded="false" class="cbar-me">
+          <span id="admin-me-initials" class="cbar-initials" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.6 3.1-6.5 7-6.5s7 2.9 7 6.5"/></svg></span>
+          <svg class="cbar-chev hidden md:block mr-2" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div id="admin-me-menu">
+          <div id="admin-me-head" class="flex-col gap-0.5 px-3.5 pt-2 pb-2.5">
+            <b id="admin-me-name" class="text-[15px] text-slate-900"></b>
+            <span id="admin-me-role" class="text-sm text-slate-600"></span>
           </div>
+          <p class="cbar-group go">Go to</p>
+          <a href="<%= locals.websiteUrl || '/' %>" class="cbar-item"><b>Conference website</b></a>
+          <a id="admin-menu-portal" href="/portal" class="cbar-item"><b>Delegate portal</b></a>
+          <div class="cbar-rule"></div>
+          <button type="button" id="admin-logout-item" onclick="logout()" class="cbar-item"><b>Log out</b></button>
         </div>
       </div>
 
-      <button type="button" id="admin-menu-btn" onclick="toggleAdminMenu()" aria-label="Menu" aria-controls="admin-menu" aria-expanded="false" class="cbar-burger ml-auto shrink-0">
+      <button type="button" id="admin-menu-btn" onclick="toggleAdminMenu()" aria-label="Menu" aria-controls="admin-menu" aria-expanded="false" class="cbar-burger shrink-0">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
       </button>
     </div>

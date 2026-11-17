@@ -193,7 +193,7 @@ const server = http.createServer((req, res) => {
     const reviewDesk = fs.readFileSync(appFile('views', 'admin', 'sections', 'abstracts.ejs'), 'utf8');
     check('the settings and switch are in Conference setup, not on the Review Desk', /id="gs-card-zenodo"/.test(general) && /id="zenodo-enabled"/.test(general)
       && /id="zenodo-live-token"/.test(general) && /id="zenodo-sandbox-token"/.test(general) && /name="zenodo-site" value="sandbox"/.test(general)
-      && !/zenodo-live-token/.test(reviewDesk) && /showSetupPage\('zenodo'\)/.test(reviewDesk));
+      && !/zenodo-live-token/.test(reviewDesk) && /openSetupPage\('zenodo'\)/.test(reviewDesk));
   } finally {
     await db.run(`UPDATE abstracts SET zenodo_consent = NULL, zenodo_consent_at = NULL, zenodo_id = NULL, zenodo_doi = NULL, zenodo_url = NULL,
       zenodo_state = NULL, zenodo_at = NULL, zenodo_error = NULL, status = 'ACCEPTED' WHERE id IN (?, ?)`, [abs.id, abs2.id]);

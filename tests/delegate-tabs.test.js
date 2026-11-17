@@ -68,7 +68,7 @@ console.log('\n== The tab bar ==');
 check('Home, Programme, Map, Badge, fixed to the bottom', /<nav id="dash-tabs" aria-label="Main" class="hidden md:hidden fixed bottom-0/.test(dash)
   && ['home', 'programme', 'map', 'badge'].every((t) => new RegExp(`id="dash-tab-${t}"`).test(dash)) && /id="dash-tab-badge" onclick="openBadgeFullScreen\(\)"/.test(dash));
 check('...with room kept for it below the page', /body\.has-tabs \{ padding-bottom: calc\(5\.5rem/.test(css));
-check('the menu keeps what is used now and then: profile, admin, password, log out', /aria-label="More: profile, password, log out"/.test(topbar)
+check('the menu keeps what is used now and then: profile, admin, password, log out', /aria-label="Your account: profile, password, the website, log out"/.test(topbar)
   && !/aria-label="More/.test(dash) && !/onclick="dashGo\('home'\)" class="cbar-item/.test(topbar) && !/id="dash-menu-programme"/.test(dash) && !/id="dash-menu-map"/.test(dash));
 check('the programme and map pages lose their Back buttons to it', !/onclick="closeProgrammePage\(\)" aria-label="Back"/.test(dash)
   && !/<section id="map-page"[\s\S]*?aria-label="Back"[\s\S]*?<\/header>/.test(dash.split('<section id="profile-page"')[0]));

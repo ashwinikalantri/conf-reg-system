@@ -171,9 +171,25 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
    design; `.hidden` is restated where a rule here sets display. */
 .cbar { background: #fff; border-bottom: 1px solid #e3e7eb; position: relative; z-index: 45; }
 .cbar-in { display: flex; align-items: center; gap: 16px; min-height: 64px; padding: 0 16px; max-width: 80rem; margin: 0 auto; }
-.cbar-logo { height: 30px; width: auto; display: block; }
+/* The logo is each place's own home. On a narrow phone it is the one thing
+   in the bar that gives way, so the bar never scrolls sideways. */
+.cbar-home { flex: 0 1 auto; min-width: 0; }
+.cbar-logo { height: 30px; width: auto; max-width: 100%; object-fit: contain; object-position: left center; display: block; }
 .cbar-place { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: #8a6d2b; white-space: nowrap; }
 .cbar-place::before { content: ""; width: 1px; height: 24px; background: #c8d0d7; }
+/* The tag in full ("Delegate portal", "Admin panel") where the bar has the
+   room for it; the first word alone where it has not. */
+.cbar-place-more { display: none; }
+@media (min-width: 640px) { #admin-bar .cbar-place-more { display: inline; } }
+@media (min-width: 1024px) { #dash-bar .cbar-place-more { display: inline; } }
+/* The sign-in page's bar: on a phone the logo and the way back are all that
+   fit, and the form's own heading says where this is. */
+#front-bar .cbar-place { display: none; }
+@media (min-width: 640px) { #front-bar .cbar-place { display: flex; } }
+/* Under that bar the sign-in form (or the maintenance notice) stays centred
+   down the page: the bar at the top, the rest of the height shared out above
+   and below. Not on the delegate's own pages, which start at the top. */
+body:not(.has-tabs) #portal-front, body:not(.has-tabs) #maintenance-page { margin-top: auto; margin-bottom: auto; }
 .cbar-link { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 11px; border-radius: 9px; font-weight: 600; font-size: 15px; color: #1c3549; white-space: nowrap; text-decoration: none; background: none; }
 .cbar-link:hover { background: #f5f7f9; }
 .cbar-link[aria-expanded="true"], .cbar-link[aria-current="page"] { background: #faf5e8; }
@@ -188,7 +204,7 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
 .cbar-burger[aria-expanded="true"] { background: #faf5e8; border-color: #1c3549; }
 .cbar-panel { position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; width: min(320px, calc(100vw - 24px)); background: #fff; border: 1px solid #e3e7eb; border-radius: 14px; box-shadow: 0 16px 40px rgba(19, 33, 45, 0.16); padding: 8px; flex-direction: column; text-align: left; }
 .cbar-panel:not(.hidden) { display: flex; }
-.cbar-item { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 10px 14px; border-radius: 10px; text-align: left; text-decoration: none; color: #1c3549; background: none; }
+.cbar-item { display: flex; flex-direction: column; justify-content: center; gap: 2px; width: 100%; min-height: 44px; padding: 10px 14px; border-radius: 10px; text-align: left; text-decoration: none; color: #1c3549; background: none; }
 .cbar-item:hover { background: #f5f7f9; }
 .cbar-item[aria-current="page"] { background: #faf5e8; }
 .cbar-item b { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; color: #1c3549; }
@@ -201,21 +217,28 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
 
 /* The admin panel's menu (#admin-menu). Below 1320px -- where the desks no
    longer fit beside the logo -- it is one panel under the ☰ button, as on
-   the website's phones: the desks, then Settings and the account, each
-   listed in full. From 1320px it is the bar itself: the desks as links,
-   Settings and the account as drop-downs. */
+   the website's phones: the desks, then Settings, each listed in full. From
+   1320px it is the bar itself: the desks as links, Settings as a drop-down.
+   The account (#admin-me-wrap) is outside it: its own button and drop-down
+   at every width, as on the website and the delegate's pages. */
 #admin-menu { display: none; position: absolute; left: 12px; right: 12px; top: calc(100% + 6px); z-index: 60; max-height: calc(100vh - 90px); overflow-y: auto; background: #fff; border: 1px solid #e3e7eb; border-radius: 14px; box-shadow: 0 16px 40px rgba(19, 33, 45, 0.16); padding: 8px; flex-direction: column; }
 #admin-menu.open { display: flex; }
 #admin-menu .cbar-drop { display: none; }
 #nav-tabs { display: flex; flex-direction: column; }
 #nav-tabs .cbar-link { width: 100%; font-size: 16px; min-height: 46px; padding: 0 14px; }
 #nav-tabs .cbar-link > span:last-child:not(:first-child) { margin-left: auto; }
-#settings-menu, #admin-me-menu { display: flex; flex-direction: column; }
+#settings-menu { display: flex; flex-direction: column; }
+/* The account's drop-down hangs from the bar below 1320px, so it can be as
+   wide as a phone allows whatever is beside its button. */
+#admin-me-wrap { margin-left: auto; }
+#admin-me-menu { display: none; position: absolute; top: calc(100% + 6px); right: 12px; z-index: 60; width: min(300px, calc(100vw - 24px)); flex-direction: column; background: #fff; border: 1px solid #e3e7eb; border-radius: 14px; box-shadow: 0 16px 40px rgba(19, 33, 45, 0.16); padding: 8px; }
+#admin-me-menu.open { display: flex; }
+#admin-me-head { display: flex; }
+#admin-me-menu .cbar-group.go { border-top: 0; margin-top: 0; }
 /* Front Desk's drop-down (nav-tabs.ejs): on the one panel its four rows sit among the desks. */
 #desk-menu { display: flex; flex-direction: column; }
 #desk-menu .cbar-item > span { display: none; }
 #settings-menu .cbar-cols { display: flex; flex-direction: column; }
-#admin-me-head { display: none; }
 /* On the one panel, Settings' first group follows the desks, so it keeps its rule. */
 #admin-menu #settings-menu .cbar-group.first { border-top: 1px solid #eef1f4; margin-top: 8px; padding-top: 10px; }
 @media (min-width: 1320px) {
@@ -224,19 +247,17 @@ div::-webkit-scrollbar-thumb:hover, section::-webkit-scrollbar-thumb:hover {
   #admin-menu .cbar-drop { display: inline-flex; }
   #nav-tabs { flex-direction: row; align-items: center; gap: 2px; }
   #nav-tabs .cbar-link { width: auto; font-size: 15px; min-height: 44px; padding: 0 11px; }
-  #admin-me-wrap { margin-left: auto; }
-  #settings-menu, #admin-me-menu { display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; background: #fff; border: 1px solid #e3e7eb; border-radius: 14px; box-shadow: 0 16px 40px rgba(19, 33, 45, 0.16); padding: 8px; }
-  #settings-menu.open, #admin-me-menu.open { display: flex; }
+  #admin-me-wrap { position: relative; margin-left: 0; }
+  #admin-me-menu { right: 0; }
+  #settings-menu { display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; background: #fff; border: 1px solid #e3e7eb; border-radius: 14px; box-shadow: 0 16px 40px rgba(19, 33, 45, 0.16); padding: 8px; }
+  #settings-menu.open { display: flex; }
   #desk-menu { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; width: 320px; background: #fff; border: 1px solid #e3e7eb; border-radius: 14px; box-shadow: 0 16px 40px rgba(19, 33, 45, 0.16); padding: 8px; }
   #desk-menu.open { display: flex; }
   #desk-menu .cbar-item > span { display: block; }
   #settings-menu { width: 680px; }
   #settings-menu .cbar-cols { flex-direction: row; gap: 8px; align-items: flex-start; }
   #settings-menu .cbar-cols > div { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
-  #admin-me-menu { width: 300px; }
-  #admin-me-head { display: flex; }
   #admin-menu #settings-menu .cbar-group.first { border-top: 0; margin-top: 0; padding-top: 6px; }
-  #admin-me-menu .cbar-group.go { border-top: 0; margin-top: 0; }
 }
 
 /* The admin Overview's "Waiting on you" rows (views/admin/sections/

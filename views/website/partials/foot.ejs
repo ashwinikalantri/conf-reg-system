@@ -16,7 +16,7 @@
       <b>Contact</b>
       <% if (content.contactEmail) { %><p>Email: <a href="mailto:<%= content.contactEmail %>"><%= content.contactEmail %></a></p><% } %>
       <p>At the venue: the Registration counter</p>
-      <p><a href="<%= portal %>">Delegate portal: sign in or register</a></p>
+      <p><a href="<%= portal %>">Delegate portal<span class="signed-out">: sign in or register</span></a></p>
     </div>
   </div>
   <div class="wrap legal">© <%= content.copyright %>. All rights reserved.</div>
