@@ -53,6 +53,9 @@ const AUDIENCES = [
   { key: 'certificates', label: 'Certificate issued', group: 'Registered',
     description: 'Everyone who has a certificate issued (and not withdrawn) -- to tell them it is ready to download.',
     action: 'CERTIFICATE_READY_SENT', placeholders: ['name'] },
+  { key: 'workshop_feedback', label: 'Workshop feedback pending', group: 'Registered',
+    description: 'Delegates marked present at a workshop who have not yet given their feedback on it. Its certificate waits for the feedback.',
+    action: 'WORKSHOP_FEEDBACK_REMINDER_SENT', placeholders: ['name', 'workshops'] },
   { key: 'balance', label: 'Balance payment due', group: 'Registered',
     description: 'Registrations with a balance still to pay.',
     action: 'BALANCE_DUE_REMINDER_SENT', placeholders: ['name', 'amount'] },
@@ -73,6 +76,7 @@ const PLACEHOLDERS = {
   regno: 'Their registration number',
   deadline: 'When their file is due, e.g. 10:00 AM, Friday 20 November 2026',
   filerules: 'The file their format takes, e.g. PDF, one slide, under 10 MB',
+  workshops: 'The workshop(s) they have still to give feedback on',
 };
 
 // Every {{word}} in a text, once each, in order of appearance.

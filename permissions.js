@@ -437,6 +437,9 @@ const REPORT_PERMISSIONS = {
   users: 'reports.users',
   summary: 'reports.summary',
   meals: 'meals.view',
+  // Each workshop's ratings and suggestions, by registration number only:
+  // whoever sees the workshop rosters.
+  'workshop-feedback': 'reports.programs',
 };
 
 // Which permission opens each screen of the admin panel -- one entry per file

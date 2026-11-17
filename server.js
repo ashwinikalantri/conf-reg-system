@@ -40,6 +40,7 @@ const certificatePdfLib = require('./certificate-pdf');
 const { renderAbstractPdf } = require('./abstract-pdf');
 const abstractAuthorsLib = require('./abstract-authors');
 const presentationsLib = require('./presentations');
+const workshopFeedbackLib = require('./workshop-feedback');
 const zenodoLib = require('./zenodo');
 const QRCode = require('qrcode');
 // Shared with scripts/daily-digest.js -- see the note there about why the
@@ -1940,6 +1941,23 @@ db.serialize(() => {
     )
   `);
   db.run('CREATE INDEX IF NOT EXISTS attendance_person ON attendance (phone_number, event_key)');
+
+  // Workshop feedback (workshop-feedback.js): one response per delegate per
+  // workshop (its programme option), given once. A workshop certificate
+  // waits for it.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS workshop_feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phone_number TEXT NOT NULL,
+      option_id INTEGER NOT NULL,
+      relevance INTEGER NOT NULL,
+      facilitation INTEGER NOT NULL,
+      usefulness INTEGER NOT NULL,
+      suggestions TEXT,
+      submitted_at INTEGER NOT NULL,
+      UNIQUE (phone_number, option_id)
+    )
+  `);
 
   // The programme: halls (each with the code its door QR carries) and the
   // sessions in them. See PROGRAMME AND ATTENDANCE.
@@ -9009,6 +9027,36 @@ async function audienceMembers(key, filters = {}) {
     }));
   }
 
+  if (key === 'workshop_feedback') {
+    // Marked present at a workshop, registered, and no feedback on it yet:
+    // one email each, naming every workshop still waiting.
+    const workshops = [...(await certificateWorkshops()).values()];
+    const bySession = new Map(workshops.flatMap((w) => [...w.sessionIds].map((id) => [`s:${id}`, w])));
+    const given = new Set((await dbAll('SELECT phone_number, option_id FROM workshop_feedback')).map((f) => `${f.phone_number}|${Number(f.option_id)}`));
+    const rows = await dbAll(
+      `SELECT DISTINCT a.phone_number, a.event_key, u.salutation, u.full_name, u.email, r.registration_number, r.delegate_name
+         FROM attendance a
+         JOIN registrations r ON r.phone_number = a.phone_number AND COALESCE(r.bank_status, '') != 'REJECTED'
+         LEFT JOIN users u ON u.phone_number = a.phone_number
+        WHERE a.removed_at IS NULL AND a.event_key LIKE 's:%'
+        ORDER BY COALESCE(u.full_name, r.delegate_name)`);
+    const people = new Map();
+    for (const r of rows) {
+      const w = bySession.get(r.event_key);
+      if (!w || given.has(`${r.phone_number}|${w.optionId}`)) continue;
+      if (!people.has(r.phone_number)) people.set(r.phone_number, { r, names: new Set() });
+      people.get(r.phone_number).names.add(w.name);
+    }
+    return [...people.values()].map(({ r, names }) => {
+      const name = reminderName(r.salutation, r.full_name || r.delegate_name);
+      const list = [...names];
+      return person(r.phone_number, name, r.email, {
+        detail: [r.registration_number, list.join('; ')].filter(Boolean).join(' · '),
+        values: { name: escapeHtml(name || 'Delegate'), workshops: escapeHtml(list.join(' and ')) },
+      });
+    });
+  }
+
   if (key === 'certificates') {
     const rows = await dbAll(
       `SELECT c.phone_number, u.salutation, u.full_name, u.email, GROUP_CONCAT(c.cert_no, ', ') AS numbers
@@ -9134,6 +9182,7 @@ async function reminderSample(a, filters, recipientId) {
     name: 'Dr Example Delegate', title: 'An example abstract title', amount: '₹1,500',
     format: presentationsLib.RULES.POSTER.noun, regno: `${CONFERENCE.regPrefix || 'REG'}0000`,
     deadline: presentationsLib.dueText(CONFERENCE.presentationsDue) || 'the last date', filerules: presentationsLib.RULES.POSTER.text,
+    workshops: 'An example workshop',
     codes: codeHolderCodesHtml([{ code: 'EXAMPLE2026', discount: 'Pay the Early Bird fee', validUntil: null, waiting: false }]),
   };
   return { recipient: null, values: Object.fromEntries(a.placeholders.map((p) => [p, p === 'codes' ? example.codes : escapeHtml(example[p])])) };
@@ -10091,10 +10140,14 @@ app.get('/api/attendance/me', requireAuth, async (req, res, next) => {
     const attended = sessions.filter((s) => at.has(s.id));
     const done = attendanceLib.completion(attended, attendanceLib.conferenceSessions(sessions, isWorkshopSession), settings.attendance.lunchSplit);
     const enrolled = reg ? (await dbAll('SELECT option_id FROM registration_options WHERE registration_id = ?', [reg.id])).map((r) => Number(r.option_id)) : [];
+    const given = new Map((await dbAll('SELECT option_id, submitted_at FROM workshop_feedback WHERE phone_number = ?', [req.session.phone]))
+      .map((f) => [Number(f.option_id), f.submitted_at]));
     const workshops = [...new Map(sessions.filter((s) => isWorkshopSession(s) && (enrolled.includes(Number(s.option_id)) || at.has(s.id)))
       .map((s) => [s.option_id, s])).values()]
       .map((s) => ({ optionId: s.option_id, name: s.option_name || s.title, date: s.session_date,
-        present: sessions.some((x) => x.option_id === s.option_id && at.has(x.id)) }));
+        present: sessions.some((x) => x.option_id === s.option_id && at.has(x.id)),
+        // Asked for once they are marked present; given once.
+        feedbackAt: given.get(Number(s.option_id)) || null }));
     res.json({
       registered: !!reg,
       attended: attended.map((s) => ({ ...publicSession(s), at: at.get(s.id) })),
@@ -10103,6 +10156,7 @@ app.get('/api/attendance/me', requireAuth, async (req, res, next) => {
       showAttendance: attendanceLib.istParts(Date.now()).date >= attendanceShownFrom(settings),
       showAttendanceFrom: attendanceShownFrom(settings),
       workshops,
+      feedbackForm: { questions: workshopFeedbackLib.QUESTIONS, suggestions: workshopFeedbackLib.SUGGESTIONS, scale: workshopFeedbackLib.SCALE },
       certificate: {
         defaultName: reminderName(me && me.salutation, me && me.full_name),
         name: me && me.certificate_name ? me.certificate_name : null,
@@ -10115,6 +10169,35 @@ app.get('/api/attendance/me', requireAuth, async (req, res, next) => {
         locked: !!(await dbGet('SELECT 1 AS yes FROM certificates WHERE phone_number = ? AND revoked_at IS NULL', [req.session.phone])),
       },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The delegate's feedback on a workshop they were marked present at. Given
+// once: it cannot be changed afterwards.
+app.post('/api/attendance/me/workshop-feedback', requireAuth, async (req, res, next) => {
+  try {
+    const reg = await attendingRegistration(req.session.phone);
+    if (!reg) return res.status(400).json({ success: false, error: 'Only a registered delegate can give feedback.' });
+    const optionId = Number(req.body.optionId);
+    const w = (await certificateWorkshops()).get(optionId);
+    if (!w) return res.status(404).json({ success: false, error: 'No such workshop.' });
+    const present = await dbGet(
+      `SELECT 1 AS yes FROM attendance WHERE phone_number = ? AND removed_at IS NULL AND event_key IN (${[...w.sessionIds].map(() => '?').join(', ')})`,
+      [req.session.phone, ...[...w.sessionIds].map((id) => `s:${id}`)]);
+    if (!present) return res.status(400).json({ success: false, error: 'Feedback opens once you are marked present at the workshop.' });
+    const checked = workshopFeedbackLib.check(req.body);
+    if (checked.error) return res.status(400).json({ success: false, error: checked.error });
+    const v = checked.values;
+    const r = await dbRun(
+      `INSERT OR IGNORE INTO workshop_feedback (phone_number, option_id, relevance, facilitation, usefulness, suggestions, submitted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [req.session.phone, optionId, v.relevance, v.facilitation, v.usefulness, v.suggestions, Date.now()]);
+    if (!r.changes) return res.status(409).json({ success: false, error: 'You have already given your feedback for this workshop. Thank you.' });
+    // The ratings stay in their own table; the log notes only that it came.
+    await recordAudit({ req, entityType: 'workshop_feedback', entityId: r.lastID, action: 'WORKSHOP_FEEDBACK_GIVEN', oldValue: null, newValue: w.name });
+    res.json({ success: true });
   } catch (err) {
     next(err);
   }
@@ -10406,6 +10489,7 @@ async function certificateCandidates() {
   }
   const overrides = new Map((await dbAll('SELECT phone_number, scope, decision, reason, by_name, at FROM certificate_overrides'))
     .map((o) => [`${o.phone_number}|${o.scope}`, o]));
+  const feedback = new Set((await dbAll('SELECT phone_number, option_id FROM workshop_feedback')).map((f) => `${f.phone_number}|${Number(f.option_id)}`));
   const issued = await dbAll('SELECT id, phone_number, kind, option_id, guest_id, cert_no, name, issued_at, revoked_at FROM certificates WHERE revoked_at IS NULL');
   const enrolment = new Map();
   for (const e of await dbAll('SELECT registration_id, option_id FROM registration_options')) {
@@ -10458,9 +10542,11 @@ async function certificateCandidates() {
       else if (wov && wov.decision === 'INCLUDE') eligible = true;
       else if (!signed) whyNot = 'Not marked present';
       else if (!paid) whyNot = 'Payment not complete';
+      else if (!feedback.has(`${r.phone_number}|${w.optionId}`)) whyNot = 'Feedback not given';
       else eligible = true;
       const cert = myIssued.find((c) => c.kind === 'WORKSHOP' && Number(c.option_id) === w.optionId) || null;
-      return { optionId: w.optionId, e: w.e, name: w.name, date: w.date, signed, enrolled, eligible, whyNot, override: wov, issued: cert };
+      return { optionId: w.optionId, e: w.e, name: w.name, date: w.date, signed, enrolled, eligible, whyNot, override: wov, issued: cert,
+        feedback: feedback.has(`${r.phone_number}|${w.optionId}`) };
     }).filter(Boolean);
     return {
       phone: r.phone_number, registrationNumber: r.registration_number, name, category: r.category_label, categoryKey: r.category_key,
@@ -14186,6 +14272,39 @@ async function buildReport(type, opts = {}) {
       sections.push({ name: `${o.group_name}: ${o.name}`, columns, rows: await rowsFor(o.id) });
     }
     return { title: opts.optionId && options[0] ? `Registrations — ${options[0].name}` : 'Registrations per Program Option', sections };
+  }
+  if (type === 'workshop-feedback') {
+    // Each workshop: its three ratings summed up (how many of those marked
+    // present responded), then every response with its suggestions -- by
+    // registration number, never by name (owner, 17 Nov 2026).
+    const workshops = [...(await certificateWorkshops()).values()].filter((w) => !opts.optionId || String(w.optionId) === String(opts.optionId));
+    const responses = await dbAll(
+      `SELECT f.*, r.registration_number FROM workshop_feedback f
+         LEFT JOIN registrations r ON r.phone_number = f.phone_number
+        ORDER BY f.submitted_at`);
+    const presentRows = await dbAll(
+      `SELECT DISTINCT a.phone_number, a.event_key FROM attendance a
+         JOIN registrations r ON r.phone_number = a.phone_number AND COALESCE(r.bank_status, '') != 'REJECTED'
+        WHERE a.removed_at IS NULL AND a.event_key LIKE 's:%'`);
+    const when = (ms) => new Date(Number(ms)).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
+    const scale = workshopFeedbackLib.SCALE.map((s) => `${s.value} ${s.label}`);
+    const sections = [];
+    for (const w of workshops) {
+      const keys = new Set([...w.sessionIds].map((id) => `s:${id}`));
+      const present = new Set(presentRows.filter((a) => keys.has(a.event_key)).map((a) => a.phone_number)).size;
+      const mine = responses.filter((f) => Number(f.option_id) === w.optionId);
+      sections.push({
+        name: `${w.name}: ratings (${mine.length} of ${present} present responded)`,
+        columns: ['Question', 'Responses', 'Average', ...scale],
+        rows: workshopFeedbackLib.summarise(mine).map((q) => [q.label, q.n, q.mean == null ? '' : q.mean.toFixed(1), ...q.counts]),
+      });
+      sections.push({
+        name: `${w.name}: responses`,
+        columns: ['Reg No', ...workshopFeedbackLib.QUESTIONS.map((q) => q.label), 'Suggestions', 'Given'],
+        rows: mine.map((f) => [f.registration_number || '', ...workshopFeedbackLib.QUESTIONS.map((q) => f[q.key]), f.suggestions || '', when(f.submitted_at)]),
+      });
+    }
+    return { title: 'Workshop Feedback', sections };
   }
   if (type === 'users') {
     // Every column the users table actually has, plus the registration

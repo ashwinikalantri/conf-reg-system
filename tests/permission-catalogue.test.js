@@ -355,6 +355,12 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // deliberately, in a diff somebody reads -- rather than absorbed silently
   // into "every role runs the same reports".
   const REPORTS_ADDED_SINCE_BASELINE = {
+    'workshop-feedback': {
+      roles: ['FINANCE_ACADEMIC', 'FINANCE_ADMIN', 'OPERATIONS', 'SUPER_ADMIN'],
+      why: 'Each workshop\'s feedback (owner, 17 Nov 2026): the ratings summed up, and each response with '
+        + 'its suggestions by registration number, never a name. Behind reports.programs, as the workshop '
+        + 'rosters, which already list who is in each workshop.',
+    },
     volunteers: {
       roles: ['OPERATIONS', 'SUPER_ADMIN'],
       why: 'Everyone in the Volunteer category or holding a volunteer role, with contact details, areas, '

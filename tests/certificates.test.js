@@ -3,7 +3,8 @@
 //
 //   * MMC: completed (in on every day, out on the last), paid, a Doctor or
 //     Medical PG, and a council number given. CONF: completed and paid.
-//     WORKSHOP: signed in at it (and paid). An admin may include or exclude
+//     WORKSHOP: signed in at it, paid, and its feedback given (17 Nov 2026).
+//     An admin may include or exclude
 //     anyone, with a reason.
 //   * Issuing numbers them per kind, once; issuing again adds only the new.
 //   * The delegate downloads their own; their details lock once issued.
@@ -108,8 +109,54 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     check('a health worker who completed: participation', of(worker).conference.kind === 'CONF');
     check('a doctor without a council number: participation, flagged', of(nocouncil).conference.kind === 'CONF' && of(nocouncil).mmcCategory && !of(nocouncil).councilRegNo);
     check('only a morning: not yet, saying what is missing', of(partial).conference.kind === null && /after lunch/.test(of(partial).conference.whyNot), of(partial).conference.whyNot);
-    check('the workshop: due for the one who signed in', of(doctor).workshops.some((w) => w.e === ws.e && w.eligible));
+    check('the workshop: present and paid, but waiting for the feedback', of(doctor).workshops.some((w) => w.e === ws.e && !w.eligible && w.whyNot === 'Feedback not given' && w.feedback === false));
     check('...not for one enrolled who was not there', of(worker).workshops.some((w) => w.e === ws.e && !w.eligible && /Not marked present/.test(w.whyNot)));
+
+    console.log('\n== Workshop feedback ==');
+    {
+      const F = require('../workshop-feedback');
+      check('three ratings, 1 to 5, are needed; suggestions are optional', !F.check({ relevance: 5, facilitation: 4, usefulness: 3 }).error
+        && F.check({ relevance: 5, facilitation: 4, usefulness: 3 }).values.suggestions === null
+        && /Quality of facilitation/.test(F.check({ relevance: 5, usefulness: 3 }).error)
+        && !!F.check({ relevance: 6, facilitation: 4, usefulness: 3 }).error && !!F.check({ relevance: 2.5, facilitation: 4, usefulness: 3 }).error);
+      const sum = F.summarise([{ relevance: 5, facilitation: 4, usefulness: 3 }, { relevance: 4, facilitation: 4, usefulness: 1 }]);
+      check('...summed up per question: how many, the average, each rating', sum[0].n === 2 && sum[0].mean === 4.5 && sum[0].counts.join() === '0,0,0,1,1'
+        && sum[2].mean === 2 && sum.map((q) => q.label).join('|') === 'Relevance of content|Quality of facilitation|Usefulness in your professional practice');
+    }
+    const me = async (p) => (await call('GET', '/api/attendance/me', null, p.cookie)).body;
+    const mine0 = (await me(doctor)).workshops.find((w) => Number(w.optionId) === ws.optionId);
+    const form = (await me(doctor)).feedbackForm;
+    check('the delegate is asked for it once marked present', mine0 && mine0.present && mine0.feedbackAt === null
+      && form.questions.length === 3 && form.scale.map((x) => x.label).join() === 'Poor,Fair,Good,Very good,Excellent', { mine0, form });
+    const pending = async () => (await call('GET', '/api/admin/reminders/audiences/workshop_feedback/recipients', null, admin)).body.recipients || [];
+    const waiting = (await pending()).find((x) => x.id === doctor.phone);
+    check('...and is on the "Workshop feedback pending" list, with the workshop named', !!waiting && waiting.detail.includes(`CD${N}`));
+    check('...but not one who was not there', !(await pending()).some((x) => x.id === worker.phone));
+    const give = (p, b) => call('POST', '/api/attendance/me/workshop-feedback', { optionId: ws.optionId, ...b }, p.cookie);
+    const absent = await give(worker, { relevance: 5, facilitation: 5, usefulness: 5 });
+    check('someone not marked present cannot give it', absent.status === 400 && /marked present/.test(absent.body.error), absent.body);
+    const half = await give(doctor, { relevance: 5, facilitation: 4 });
+    check('every rating is needed', half.status === 400 && /Usefulness/.test(half.body.error), half.body);
+    const given = await give(doctor, { relevance: 5, facilitation: 4, usefulness: 3, suggestions: '  More time for the hands-on part <b>please</b>  ' });
+    check('three ratings and a suggestion are received', given.body.success === true, given.body);
+    const twice = await give(doctor, { relevance: 1, facilitation: 1, usefulness: 1 });
+    check('...once: it cannot be changed', twice.status === 409);
+    const stored = await db.get('SELECT * FROM workshop_feedback WHERE phone_number = ? AND option_id = ?', [doctor.phone, ws.optionId]);
+    check('...kept as given, the suggestion trimmed', stored.relevance === 5 && stored.usefulness === 3 && stored.suggestions === 'More time for the hands-on part <b>please</b>');
+    check('the card goes, once given', !!(await me(doctor)).workshops.find((w) => Number(w.optionId) === ws.optionId).feedbackAt);
+    check('...and they leave the pending list', !(await pending()).some((x) => x.id === doctor.phone));
+    list = await cand();
+    check('now the workshop certificate is due', of(doctor).workshops.some((w) => w.e === ws.e && w.eligible && w.feedback === true));
+    check('the front desk cannot read the feedback', (await call('GET', '/api/admin/reports/workshop-feedback?format=json', null, desk)).status === 403);
+    const rep = (await call('GET', '/api/admin/reports/workshop-feedback?format=json', null, admin)).body.report;
+    const ratings = rep.sections.find((x) => x.name.endsWith('present responded)') && x.rows.some((r) => r[1] > 0) && x.name.includes('1 of'));
+    const responses = rep.sections.find((x) => x.name.endsWith(': responses') && x.rows.some((r) => r[0] === `CD${N}`));
+    check('the report sums each workshop up', !!ratings && ratings.rows[0][0] === 'Relevance of content' && ratings.rows[0][2] === '5.0' && ratings.columns.includes('5 Excellent'), ratings);
+    check('...and lists each response by registration number, never a name', !!responses && responses.columns[0] === 'Reg No'
+      && responses.rows.some((r) => r[4] === 'More time for the hands-on part <b>please</b>')
+      && !JSON.stringify(rep).includes(`Cert doc ${N}`), responses);
+    const html = (await call('GET', '/api/admin/reports/workshop-feedback', null, admin)).raw;
+    check('...with a suggestion shown as text, not markup', html.includes('&lt;b&gt;please&lt;/b&gt;') && !html.includes('<b>please</b>'));
     await db.run("UPDATE registrations SET bank_status = 'PARTIAL_PAYMENT' WHERE id = ?", [worker.regId]);
     list = await cand();
     check('a balance still due: not yet', of(worker).conference.kind === null && /Payment/.test(of(worker).conference.whyNot));
@@ -204,6 +251,7 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
       const q = phones.map(() => '?').join(',');
       await db.run(`DELETE FROM certificates WHERE phone_number IN (${q})`, phones);
       await db.run(`DELETE FROM certificate_overrides WHERE phone_number IN (${q})`, phones);
+      await db.run(`DELETE FROM workshop_feedback WHERE phone_number IN (${q})`, phones);
       await db.run(`DELETE FROM attendance WHERE phone_number IN (${q})`, phones);
       await db.run(`DELETE FROM registration_options WHERE registration_id IN (${people.map(() => '?').join(',')})`, people.map((p) => p.regId));
       await db.run(`DELETE FROM registrations WHERE phone_number IN (${q})`, phones);

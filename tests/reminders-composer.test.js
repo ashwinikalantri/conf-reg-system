@@ -84,7 +84,7 @@ const base = { salutation: 'Dr', age: '41', gender: 'Female', designation: 'Prof
 
     console.log('\n== Every audience, counted ==');
     const aud = (await call('GET', '/api/admin/reminders/audiences', null, admin)).body;
-    check('all thirteen, in four groups', aud.audiences.length === 13 && new Set(aud.audiences.map((a) => a.group)).size === 4, aud.audiences.map((a) => a.key));
+    check('all fourteen, in four groups', aud.audiences.length === 14 && new Set(aud.audiences.map((a) => a.group)).size === 4, aud.audiences.map((a) => a.key));
     const count = (k, list = aud) => list.audiences.find((a) => a.key === k).count;
     check('pasted addresses have no count, nor a domain until one is given', count('paste') === null && count('domain') === null);
     const withDomain = (await call('GET', `/api/admin/reminders/audiences?domain=@${DOMAIN.toUpperCase()}`, null, admin)).body;

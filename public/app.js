@@ -1355,7 +1355,8 @@ async function loadAttendanceCard() {
   setText('attendance-title', showAtt ? 'Attendance & certificate' : 'Certificate');
   document.getElementById('attendance-list').innerHTML = [
     ...data.completion.parts.map((p) => tick(p.done, `Conference: ${p.label}`, p.session ? `${p.session.title}, ${p.session.hall}` : '')),
-    ...data.workshops.map((w) => tick(w.present, `Workshop: ${w.name}`, w.present ? '' : formatFullDate(w.date))),
+    ...data.workshops.map((w) => tick(w.present, `Workshop: ${w.name}`,
+      !w.present ? formatFullDate(w.date) : w.feedbackAt ? 'Feedback given' : 'Feedback needed for the certificate: on your home screen')),
   ].join('') || '<li class="text-slate-500">The programme is not out yet.</li>';
   document.getElementById('attendance-sessions').classList.toggle('hidden', !showAtt || !data.attended.length);
   document.getElementById('attendance-session-list').innerHTML = data.attended.map((s) => `<li>${esc(shortDateRange(s.date, s.date))}, ${esc(time(s.at))} · ${esc(s.hall)} · ${esc(s.title)}</li>`).join('');
@@ -1382,6 +1383,68 @@ async function loadAttendanceCard() {
   setText('cert-council-saved-text', councilSaved ? `${c.councilName || 'Medical Council'} · ${c.councilRegNo}` : '');
   document.getElementById('cert-council').innerHTML = councilOptionsHtml(c.councilName || '');
   document.getElementById('cert-council-no').value = c.councilRegNo || '';
+  renderWorkshopFeedback();
+}
+
+// --- Workshop feedback ---
+// A card on the home screen for each workshop they were marked present at
+// and have not yet given feedback on: three ratings, 1 to 5, and optional
+// suggestions. Given once; the workshop's certificate waits for it.
+function renderWorkshopFeedback() {
+  const box = document.getElementById('workshop-feedback');
+  const data = attendanceMeData;
+  if (!box) return;
+  const due = data && data.registered && data.feedbackForm ? (data.workshops || []).filter((w) => w.present && !w.feedbackAt) : [];
+  box.classList.toggle('hidden', !due.length);
+  if (!due.length) { box.innerHTML = ''; return; }
+  const f = data.feedbackForm;
+  box.innerHTML = due.map((w) => `
+    <form onsubmit="submitWorkshopFeedback(event, ${Number(w.optionId)})" class="rounded-2xl border-2 border-gold-500 bg-white p-5 shadow-card">
+      <p class="text-xs font-bold tracking-[0.15em] text-gold-700 uppercase">Workshop feedback</p>
+      <h3 class="text-xl font-bold text-slate-900 mt-1 leading-snug">${esc(w.name)}</h3>
+      <p class="text-[15px] text-slate-600 mt-1">Your certificate for this workshop is issued once you have given your feedback. It can be given once.</p>
+      ${f.questions.map((q, i) => `
+      <fieldset class="mt-5">
+        <legend class="text-[15px] font-semibold text-slate-900">${i + 1}. ${esc(q.label)}</legend>
+        <div class="mt-2 grid grid-cols-5 gap-1.5">
+          ${f.scale.map((s) => `<label class="cursor-pointer">
+            <input type="radio" name="${esc(q.key)}" value="${Number(s.value)}" required class="peer sr-only">
+            <span class="flex flex-col items-center justify-center min-h-[56px] px-1 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 peer-checked:bg-navy peer-checked:border-navy peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-gold-500">
+              <b class="text-lg leading-none tabular-nums">${Number(s.value)}</b><span class="text-[11px] leading-tight mt-1 text-center">${esc(s.label)}</span></span>
+          </label>`).join('')}
+        </div>
+      </fieldset>`).join('')}
+      <label class="block mt-5">
+        <span class="text-[15px] font-semibold text-slate-900">${f.questions.length + 1}. ${esc(f.suggestions.label)}</span>
+        <span class="block text-sm text-slate-500">Optional</span>
+        <textarea name="${esc(f.suggestions.key)}" rows="3" maxlength="${Number(f.suggestions.maxLength)}" class="mt-2 w-full px-3 py-2 border border-slate-300 rounded-lg text-[15px] outline-none focus:border-navy"></textarea>
+      </label>
+      <button type="submit" class="mt-4 w-full sm:w-auto px-5 py-3 bg-navy hover:bg-indigo-700 text-white font-semibold rounded-lg disabled:opacity-60">Send my feedback</button>
+    </form>`).join('');
+}
+
+async function submitWorkshopFeedback(e, optionId) {
+  e.preventDefault();
+  const form = e.target;
+  const body = { optionId };
+  for (const q of attendanceMeData.feedbackForm.questions) {
+    const picked = form.querySelector(`input[name="${q.key}"]:checked`);
+    if (!picked) return showToast(`Choose a rating for "${q.label}".`);
+    body[q.key] = Number(picked.value);
+  }
+  body[attendanceMeData.feedbackForm.suggestions.key] = form.querySelector('textarea').value;
+  const btn = form.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  let data = {};
+  try {
+    data = await (await fetch('/api/attendance/me/workshop-feedback', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })).json();
+  } catch (err) { data = {}; }
+  btn.disabled = false;
+  if (!data.success) return showToast(data.error || 'Your feedback did not go through. Try again.');
+  showToast('Thank you for your feedback.', 'success');
+  loadAttendanceCard();
 }
 
 // --- The programme, for the delegate ---
@@ -4527,6 +4590,7 @@ function applyRoleVisibility() {
     'report-abstracts': 'reports.abstracts',
     'report-users': 'reports.users',
     'report-meals': 'meals.view',
+    'report-workshop-feedback': 'reports.programs',
   };
   Object.entries(reportCards).forEach(([id, permission]) => {
     const el = document.getElementById(id);
@@ -9898,6 +9962,16 @@ ${steelButton(portalHomeUrl(), 'Upload My Presentation')}
 ${reminderSignOff()}`;
 }
 
+// For delegates marked present at a workshop who have not given feedback on
+// it: the workshop certificate is issued only once it is in.
+async function buildWorkshopFeedbackBody() {
+  return `<p>Dear {{name}},</p>
+<p>Thank you for attending <b>{{workshops}}</b>. We would value your feedback: three quick ratings, and any suggestions for improving the workshop in future.</p>
+<p><b>Your workshop certificate is issued once your feedback is in.</b> It takes a minute, on the home screen of the delegate portal.</p>
+${steelButton(portalHomeUrl(), 'Give My Feedback')}
+${reminderSignOff()}`;
+}
+
 // For authors who submitted an abstract but have not registered. {{title}}
 // is filled in per recipient by the server, so it only makes sense on the
 // Abstract Submitted, Not Registered card.
@@ -10134,6 +10208,14 @@ const CUSTOM_REMINDER_TEMPLATES = {
     },
     body: buildCertificateReadyBody,
   },
+  'workshop-feedback': {
+    label: 'Workshop feedback — certificate waits for it',
+    audiences: ['workshop_feedback'],
+    async subject() {
+      return 'Your Feedback on {{workshops}}, for Your Certificate';
+    },
+    body: buildWorkshopFeedbackBody,
+  },
   'balance-due': {
     label: 'Balance payment pending',
     audiences: ['balance'],
@@ -10152,6 +10234,7 @@ const REMINDER_DEFAULT_TEMPLATE = {
   balance: 'balance-due', paste: 'early-bird-ending', certificates: 'certificate-ready',
   abstract_authors: 'abstract-add-authors',
   presenters: 'presentation-guidelines', presenters_awaiting: 'presentation-reminder',
+  workshop_feedback: 'workshop-feedback',
 };
 
 // --- The composer ------------------------------------------------------------
