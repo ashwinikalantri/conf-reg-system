@@ -218,6 +218,18 @@ const tick = (ms) => new Promise((r) => setTimeout(r, ms));
   check('...and puts their Reg No in the box, not the typed name',
     h5.els['desk-search'].value === person(1).registration_number, h5.els['desk-search'].value);
 
+  console.log('\n== A finger can pick one (18 Nov 2026) ==');
+  // A phone treats a tap whose emulated hover changes the page as only a
+  // hover: no click. So the row is taken on click, and nothing redraws the
+  // list on hover.
+  const h8 = harness();
+  h8.setResponder(() => ({ success: true, results: [person(1), person(2)] }));
+  await h8.sandbox.deskSuggestFetch('Per');
+  const rows = h8.els['desk-suggestions'].innerHTML;
+  check('a row is taken on click, which a tap sends', /onclick="deskSuggestPick\(0\)"/.test(rows), rows.slice(0, 300));
+  check('...and hovering it does not redraw the list', !/onmouseenter|onmouseover/.test(rows) && !/function deskSuggestHighlight/.test(js));
+  check('...while mousedown keeps the box focused, so the list stays put', /onmousedown="event\.preventDefault\(\)"/.test(rows));
+
   console.log('\n== Nobody matching is said out loud ==');
   // Silence would look like the search had not run. The desk needs to know
   // this person is genuinely not on file, which is the cue to register them.

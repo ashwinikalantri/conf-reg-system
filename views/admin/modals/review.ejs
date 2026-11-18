@@ -8,17 +8,21 @@
        openReviewModal() and friends in app.js. -->
   <div id="modal-review" class="hidden fixed inset-0 bg-slate-900/70 flex justify-center items-center p-0 sm:p-4 z-50">
     <div role="dialog" aria-modal="true" aria-labelledby="review-name" class="bg-white w-full max-w-6xl sm:rounded-2xl shadow-card relative h-full sm:h-auto sm:max-h-[95vh] flex flex-col">
-      <header class="px-4 sm:px-5 py-3 sm:py-4 border-b border-slate-200 shrink-0 flex items-start gap-3">
+      <!-- On a phone: who this is beside Close, and the state on a line of its
+           own below, so the name and its details get the width (18 Nov 2026). -->
+      <header class="px-4 sm:px-5 py-3 sm:py-4 border-b border-slate-200 shrink-0 flex flex-wrap sm:flex-nowrap items-start gap-x-3 gap-y-2">
         <div class="flex-1 min-w-0">
           <span id="review-title" class="sr-only">Review registration</span>
           <h3 id="review-name" class="text-lg sm:text-xl font-bold text-slate-900 leading-tight"></h3>
-          <p class="text-sm text-slate-600 mt-0.5"><span id="review-category"></span><span id="review-regno" class="font-mono font-semibold text-navy"></span></p>
+          <p class="text-sm text-slate-600 mt-0.5"><span id="review-category"></span><span id="review-regno" class="font-mono font-semibold text-navy whitespace-nowrap"></span></p>
           <p id="review-demographics" class="text-xs text-slate-500 mt-0.5"></p>
         </div>
         <!-- Being flagged is a property of the whole registration, so it sits
              with who this is; the failing checks are marked on each payment. -->
-        <div id="review-flagged-note" class="hidden shrink-0 mr-7 sm:mr-0 self-center bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold rounded-lg px-2.5 py-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>Flagged for manual scrutiny</div>
-        <span id="review-strip-verdict" class="shrink-0 self-center text-xs font-bold px-2.5 py-1 rounded-full border"></span>
+        <div class="order-last sm:order-none w-full sm:w-auto flex flex-wrap items-center gap-2 sm:self-center sm:shrink-0">
+        <div id="review-flagged-note" class="hidden shrink-0 bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold rounded-lg px-2.5 py-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><path d="M12 3 L22 20 L2 20 Z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>Flagged for manual scrutiny</div>
+        <span id="review-strip-verdict" class="shrink-0 text-xs font-bold px-2.5 py-1 rounded-full border"></span>
+        </div>
         <button type="button" onclick="closeModal('modal-review')" aria-label="Close" class="shrink-0 w-11 h-11 -mr-2 -mt-1 rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 flex items-center justify-center">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-5 h-5" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
@@ -28,7 +32,9 @@
         <!-- Documents: the ID card (student categories) and a slip per
              payment, one tab each, marked Seen once opened (setReviewImage).
              Zoom shows the image at its natural size to pan a small ID. -->
-        <div class="bg-slate-900 flex flex-col h-[42vh] md:h-full min-h-0">
+        <!-- On a phone, a third of the screen: the slip is read here, and
+             Zoom or Open give it the whole screen when it needs reading closely. -->
+        <div class="bg-slate-900 flex flex-col h-[36vh] min-h-[240px] md:min-h-0 md:h-full">
           <div id="review-img-switcher" class="hidden items-center gap-1.5 px-2.5 pt-2.5 pb-1.5 shrink-0">
             <div id="review-img-tabs" role="tablist" aria-label="Documents" class="flex flex-wrap gap-1.5"></div>
             <span id="review-img-switcher-hint" class="hidden"></span>

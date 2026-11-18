@@ -16,7 +16,9 @@ fs=require('fs');
  const badgeTxt=h.slice(iBadge, h.indexOf('</div>',iBadge));
  check('the trailing explanation is gone', !/automated checks did not pass/.test(badgeTxt), badgeTxt.slice(-90));
  check('it still reads "Flagged for manual scrutiny"', /Flagged for manual scrutiny/.test(badgeTxt));
- check('it stays clear of the close button', /mr-7/.test(badgeTxt));
+ // Since 18 Nov 2026 the state has a line of its own under the name on a
+ // phone, so it cannot run into the close button.
+ check('it stays clear of the close button', /<div class="order-last sm:order-none w-full sm:w-auto[^"]*">\s*<div id="review-flagged-note"/.test(h));
  check('it is hidden until the record is flagged', /id="review-flagged-note"[^>]*class="[^"]*\bhidden\b/.test(h));
 
  console.log('\n== 2. Check marks replace the pill row ==');

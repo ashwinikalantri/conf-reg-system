@@ -1,6 +1,7 @@
 // The delegate portal does not zoom on a phone: the viewport tag for
 // Android, pinch stopped by script for iPhones (which ignore user-scalable),
-// touch-action for the double tap. The admin page still zooms.
+// touch-action for the double tap. The admin panel the same, since the
+// owner asked on 18 Nov 2026 (the Front Desk is used on phones).
 const { call, check, report, adminLogin } = require('./harness');
 
 (async () => {
@@ -10,6 +11,7 @@ const { call, check, report, adminLogin } = require('./harness');
     && /e\.touches\.length > 1\) e\.preventDefault\(\)/.test(portal));
   check('...and a double tap does not zoom', /html \{ touch-action: pan-x pan-y; \}/.test(portal));
   const admin = (await call('GET', '/admin', null, await adminLogin())).raw || '';
-  check('the admin page still zooms', /<meta name="viewport"/.test(admin) && !/user-scalable=no/.test(admin) && !/gesturestart/.test(admin));
+  check('the admin panel does not zoom either', /<meta name="viewport" content="[^"]*maximum-scale=1\.0, user-scalable=no"/.test(admin)
+    && /addEventListener\('gesturestart', stop, \{ passive: false \}\)/.test(admin) && /html \{ touch-action: pan-x pan-y; \}/.test(admin));
   report();
 })();

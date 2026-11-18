@@ -12365,9 +12365,10 @@ function deskSuggestRender() {
   }
   box.innerHTML = deskSuggestions.map((s, i) => `
     <li role="option" id="desk-suggestion-${i}" aria-selected="${i === deskSuggestActive}"
-        onmousedown="event.preventDefault();deskSuggestPick(${i})"
-        onmouseenter="deskSuggestHighlight(${i})"
-        class="px-3 py-2 cursor-pointer flex items-center justify-between gap-3 ${i === deskSuggestActive ? 'bg-indigo-50' : 'hover:bg-slate-50'}">
+        onpointerdown="deskSuggestPressing = true" onpointercancel="deskSuggestPressing = false"
+        onpointerup="setTimeout(() => { deskSuggestPressing = false; }, 400)"
+        onmousedown="event.preventDefault()" onclick="deskSuggestPick(${i})"
+        class="px-3 py-2.5 min-h-[44px] cursor-pointer flex items-center justify-between gap-3 ${i === deskSuggestActive ? 'bg-indigo-50' : 'hover:bg-slate-50 active:bg-indigo-50'}">
       <span class="min-w-0">
         <span class="block text-sm font-semibold text-slate-800 truncate">${esc(s.full_name || '—')}</span>
         <span class="block text-[11px] text-slate-500 truncate">${esc(s.category_label || 'Not registered')}</span>
@@ -12382,11 +12383,6 @@ function deskSuggestRender() {
   input.setAttribute('aria-activedescendant', deskSuggestActive >= 0 ? `desk-suggestion-${deskSuggestActive}` : '');
 }
 
-function deskSuggestHighlight(i) {
-  deskSuggestActive = i;
-  deskSuggestRender();
-}
-
 function deskSuggestClose() {
   const box = document.getElementById('desk-suggestions');
   const input = document.getElementById('desk-search');
@@ -12396,11 +12392,20 @@ function deskSuggestClose() {
   deskSuggestActive = -1;
 }
 
-// mousedown on a suggestion is preventDefault-ed above so this never fires
-// before the click lands -- otherwise the list would close out from under the
-// pointer and the click would hit whatever was underneath.
+// A suggestion is taken on click, which a mouse and a finger both send.
+// It used to be taken on mousedown, with the list redrawn on mouseenter to
+// highlight the row under the pointer -- and a phone, seeing the page change
+// on that first (emulated) hover, treats the tap as only a hover: no
+// mousedown, no click, and the delegate never opened (18 Nov 2026). Hover
+// is CSS now, and nothing redraws until the pick.
+//
+// mousedown is preventDefault-ed so the box keeps focus and this does not
+// fire; and while a finger or button is down on the list it does not close,
+// so the list cannot go out from under the tap.
+let deskSuggestPressing = false;
 function deskSuggestBlur() {
-  setTimeout(deskSuggestClose, 120);
+  const close = () => (deskSuggestPressing ? setTimeout(close, 400) : deskSuggestClose());
+  setTimeout(close, 150);
 }
 
 function deskSuggestKey(event) {
@@ -12428,6 +12433,7 @@ function deskSuggestKey(event) {
 }
 
 async function deskSuggestPick(i) {
+  deskSuggestPressing = false;
   const picked = deskSuggestions[i];
   if (!picked) return;
   // By the Reg No, which every account has and the lookup resolves exactly

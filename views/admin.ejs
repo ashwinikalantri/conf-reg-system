@@ -2,7 +2,20 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- No zooming on a phone here either (owner, 18 Nov 2026), as in the
+       delegate portal: the viewport tag for Android; for iPhones, which
+       ignore user-scalable, a pinch is stopped by script; touch-action stops
+       the double-tap zoom on both. Nothing in the admin panel pinches. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <style>html { touch-action: pan-x pan-y; }</style>
+  <script>
+    (function () {
+      var stop = function (e) { e.preventDefault(); };
+      document.addEventListener('gesturestart', stop, { passive: false });
+      document.addEventListener('gesturechange', stop, { passive: false });
+      document.addEventListener('touchmove', function (e) { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
+    })();
+  </script>
   <link rel="icon" href="/favicon.ico?v=mgims" sizes="any">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png?v=mgims">
   <link rel="apple-touch-icon" href="/favicon-180.png?v=mgims">
