@@ -15247,7 +15247,7 @@ async function presentationsDrive() {
 app.get('/api/admin/presentations', requirePermission('abstracts.view'), async (req, res, next) => {
   try {
     const rows = await dbAll(
-      `SELECT a.id, a.title, a.allocation, a.phone_number, a.author_name, u.salutation, u.full_name, u.registration_number,
+      `SELECT a.id, a.title, a.allocation, a.phone_number, a.author_name, a.authors, u.salutation, u.full_name, u.registration_number,
               ${authorRegisteredSql('a.phone_number')} AS registered,
               p.file_name, p.kind, p.size, p.pages, p.allocation AS file_allocation, p.uploaded_at, p.uploaded_by_name, p.by_staff
          FROM abstracts a
@@ -15265,7 +15265,7 @@ app.get('/api/admin/presentations', requirePermission('abstracts.view'), async (
       rules: Object.fromEntries(Object.keys(presentationsLib.RULES).map((k) => [k, presentationRulesView(k)])),
       presentations: rows.map((r) => ({
         id: r.id, title: r.title, allocation: r.allocation,
-        presenter: reminderName(r.salutation, r.full_name || r.author_name), regNo: r.registration_number || null,
+        presenter: reminderName(r.salutation, r.full_name || r.author_name), authors: abstractAuthorsLib.effectiveAuthors(r), authorsGiven: !!abstractAuthorsLib.parseAuthors(r.authors), regNo: r.registration_number || null,
         registered: !!Number(r.registered), emailedAt: emailed.get(String(r.phone_number)) || null,
         file: r.file_name ? { ...presentationFileView({ ...r, allocation: r.file_allocation }), inDrive: drive.has(r.file_name, r.file_allocation, r.size) } : null,
       })),

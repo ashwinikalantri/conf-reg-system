@@ -11021,7 +11021,8 @@ function drawPresentations() {
   const d = presentationsData;
   const list = document.getElementById('presentations-list');
   if (!d || !list) return;
-  const all = d.presentations || [];
+  // The "Show the ones without" switch above the steps narrows this list too.
+  const all = (d.presentations || []).filter((x) => !abstractsMissingAuthorsOnly || !x.authorsGiven);
   if (presentationsFilter && !all.some((x) => presentationShown(x, presentationsFilter))) presentationsFilter = '';
   const shown = all.filter((x) => presentationShown(x, presentationsFilter));
   const assign = can('abstracts.assign');
@@ -11029,7 +11030,7 @@ function drawPresentations() {
 
   const head = document.getElementById('presentations-head');
   if (head) {
-    const zipCount = all.filter((x) => x.file && (!format || x.allocation === format)).length;
+    const zipCount = (d.presentations || []).filter((x) => x.file && (!format || x.allocation === format)).length;
     head.innerHTML = `<p class="text-sm text-slate-700">Last date: <b>${esc(d.dueText || 'not set')}</b>${d.due && !d.open ? ' <span class="text-rose-700 font-semibold">(closed)</span>' : ''}
         ${assign ? '<button type="button" onclick="togglePresentationsDue()" class="ml-1 font-semibold text-indigo-700 underline min-h-[32px]">Change</button>' : ''}</p>
       <form id="presentations-due-form" onsubmit="event.preventDefault(); savePresentationsDue()" class="hidden w-full flex flex-wrap items-center gap-2">
@@ -11066,7 +11067,9 @@ function drawPresentations() {
       <div class="min-w-0 flex-1">
         <p class="text-[11px] font-semibold text-slate-500 tabular-nums">#${esc(x.id)} · ${esc(capitalise(PRESENTATION_NOUNS[x.allocation]))}</p>
         <p class="font-bold text-slate-800 break-words leading-snug">${esc(x.title)}</p>
-        <p class="text-xs text-slate-500 break-words">${esc([x.presenter, x.regNo].filter(Boolean).join(' · '))}${x.registered ? '' : ' · <span class="text-amber-700 font-semibold">not registered</span>'}</p>
+        ${x.authorsGiven ? '' : '<p class="mt-1"><span class="text-[10px] font-bold text-gold-700 bg-gold-50 border border-gold-300 rounded-full px-2 py-0.5 whitespace-nowrap">Co-authors not added</span></p>'}
+        <p class="text-xs text-slate-500 mt-1 break-words">${x.authors ? abstractAuthorsLineHtml(x.authors) : esc(x.presenter)}</p>
+        <p class="text-[11px] text-slate-500 tabular-nums">${esc(x.regNo || 'No registration number')}${x.registered ? '' : ' · <span class="text-amber-700 font-semibold">not registered</span>'}</p>
       </div>
       <div class="text-xs sm:text-right sm:max-w-[20rem] min-w-0">${state}</div>
       <div class="flex flex-wrap gap-2 shrink-0">
@@ -11074,7 +11077,7 @@ function drawPresentations() {
         ${assign ? `<label class="${btn}"><input type="file" accept="${presentationAccept(d.rules[x.allocation])}" class="sr-only" onchange="uploadPresentationFor(${esc(x.id)}, this)">${f ? 'Replace' : 'Upload for them'}</label>` : ''}
       </div>
     </div>`;
-  }).join('') : `<p class="text-sm text-slate-500 p-4">${all.length ? 'None here.' : 'No abstract has a presentation format yet: assign one in Step 2.'}</p>`;
+  }).join('') : `<p class="text-sm text-slate-500 p-4">${all.length ? 'None here.' : abstractsMissingAuthorsOnly ? 'Every presentation has its full author list.' : 'No abstract has a presentation format yet: assign one in Step 2.'}</p>`;
 }
 
 // The copies on Google Drive (scripts/presentations-drive.sh on the server):

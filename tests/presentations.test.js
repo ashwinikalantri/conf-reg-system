@@ -156,6 +156,9 @@ const istAt = (hours) => new Date(Date.now() + IST + hours * 3600e3).toISOString
     const mine = list.presentations.find((x) => x.id === abs.id);
     check('each abstract with a format, its presenter, number and file', list.success && mine && mine.regNo === presenter.registration_number
       && mine.allocation === 'POSTER' && mine.file && /_Poster\.pdf$/.test(mine.file.fileName) && list.rules.POSTER.maxMb === 10, mine);
+    check('...with all its authors, the presenting one marked', Array.isArray(mine.authors) && mine.authors.length >= 1
+      && mine.authors.filter((a) => a.presenting).length === 1 && mine.authors.every((a) => a.name)
+      && typeof mine.authorsGiven === 'boolean', mine.authors);
     check('...and only those', list.presentations.every((x) => ['ORAL', 'POSTER', 'AWARD'].includes(x.allocation)));
     const file = await call('GET', `/api/admin/presentations/${abs.id}/file`, null, admin);
     check('a file opens', file.status === 200 && file.buf.equals(one));
