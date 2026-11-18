@@ -33,7 +33,7 @@ const { call, adminLogin, loginOtp, check, report, openDb, appFile } = require('
     check('the portal is told they are a volunteer, for the badge', reg.is_volunteer === true, reg.is_volunteer);
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
     check('...and the badge says VOLUNTEER', /const role = reg\.is_faculty_member \? 'FACULTY' : reg\.is_volunteer \? 'VOLUNTEER' : 'DELEGATE';/.test(js));
-    check('the Front Desk card says Volunteer', /deskCard\(reg && reg\.category_key === 'volunteer' \? 'Volunteer' : 'Delegate'/.test(js));
+    check('the Front Desk card says Volunteer', /const who = reg && reg\.category_key === 'volunteer' \? 'Volunteer' : 'Delegate';/.test(js));
     const found = (await call('GET', `/api/meals/search?q=${encodeURIComponent(`VOL${N}`)}`, null, admin)).body;
     const person = (found.results || found.people || [])[0] || found.person;
     check('the meal counter serves them as Volunteer', person && person.kind === 'VOLUNTEER' && person.kindLabel === 'Volunteer' && person.eligible === true, found);

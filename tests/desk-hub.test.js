@@ -61,8 +61,8 @@ const vm = require('vm');
   check('Profile & roles, for a role that may see users', /can\('users\.view'\) \? deskBtn\('Profile & roles', 'deskOpenProfile\(\)'\)/.test(js));
   check('Payment review, for a role that may see payments', /can\('payments\.view'\) \? deskBtn\('Payment review', `deskOpenPaymentReview\(\$\{esc\(reg\.id\)\}\)`/.test(js));
   check('...loading the payments list first if this session has not', /async function deskOpenPaymentReview\(regId\) \{[\s\S]*?if \(!cachedPaymentRegs\.some[^\n]*await renderBackendPayments\(\);[\s\S]*?openReviewModal\(regId\);/.test(js));
-  check('Abstract review, and oral/poster for a role that allots', /can\('abstracts\.view'\) \? deskBtn\('Review', `deskOpenAbstract/.test(js)
-    && /can\('abstracts\.assign'\) && a\.status === 'ACCEPTED' \? deskBtn\(/.test(js));
+  check('Abstract review, for a role that may see abstracts', /can\('abstracts\.view'\) \? deskBtn\('Review', `deskOpenAbstract/.test(js));
+  check('...but never the presentation format, for any role (owner, 18 Nov 2026)', !/can\('abstracts\.assign'\) && a\.status === 'ACCEPTED' \? deskBtn\(/.test(js));
   check('Faculty travel & stay, for anyone who may see faculty', /const open = can\('guests\.view'\) \? deskBtn\(/.test(js));
   check('the desk reads the record again when one of these editors closes',
     /const DESK_EDITORS = new Set\(\['modal-review', 'modal-guest-edit', 'modal-abstract-review', 'user-detail'\]\);/.test(js)

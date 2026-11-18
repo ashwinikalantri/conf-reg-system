@@ -96,7 +96,7 @@ const base = { salutation: 'Dr', age: '41', gender: 'Female', designation: 'Nurs
     /for \(const id of \['rd-phone', 'rd-name'\]\) document\.getElementById\(id\)\.required = false;/.test(js));
   check('opening the form clears any earlier link', /function resetRegisterDelegateForm\(\) \{\n  unlinkRegisterDelegateAccount\(\);/.test(js));
   check('the desk card for a signed-up, unregistered person offers to register them',
-    /canRegister \? deskBtn\('Register this delegate', 'registerDeskDelegate\(\)', 'primary'\)/.test(js));
+    /canRegister \? \[big\('Register this delegate', 'registerDeskDelegate\(\)', 'navy'\)\]/.test(js));
   check('...only to someone who may', /const canRegister = can\('payments\.desk_register'\);/.test(js));
 
   db.close();

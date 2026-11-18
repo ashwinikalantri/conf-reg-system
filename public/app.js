@@ -3890,6 +3890,7 @@ async function logout() {
   try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
   currentDelegate = null;
   storageRemove('local', 'nqocn_current_user');
+  storageRemove('session', 'nqocn_desk_recent');
   // Full navigation so this works from both the delegate portal and /admin.
   // /portal: on the conference's own address '/' is the website.
   window.location.href = '/portal';
@@ -12264,6 +12265,7 @@ async function initFrontDesk() {
   await Promise.all([ensureReviewCategories(), loadDeskStaff(), loadDeskProgrammes(), refreshDeskCash()]);
   const registerBtn = document.getElementById('desk-register-btn');
   if (registerBtn) registerBtn.classList.toggle('hidden', !can('payments.desk_register'));
+  renderDeskRecent(deskDelegate && deskDelegate.user ? ((deskDelegate.registration && deskDelegate.registration.registration_number) || deskDelegate.user.phone_number) : null);
   const search = document.getElementById('desk-search');
   if (search) search.focus();
 }
@@ -12502,104 +12504,241 @@ function renderDeskRecord() {
   const box = document.getElementById('desk-record');
   const empty = document.getElementById('desk-empty');
   if (!deskDelegate) return;
-  const { user, registration: reg, payment, selections, abstracts, checkedIn, abstractWindow, abstractExtension, guest } = deskDelegate;
+  const d = deskDelegate;
+  const { user, registration: reg, payment, selections, abstracts, abstractWindow, abstractExtension, guest, conferenceDays, presentationDue } = d;
+  deskRememberRecent(user, reg);
 
-  box.innerHTML = [
-    deskWhoCard(user, reg, checkedIn, guest),
-    deskFacultyCard(guest),
-    reg ? deskMoneyCard(reg, payment) : deskNoRegistrationCard(),
-    reg ? deskProgrammeCard(selections) : '',
-    deskAbstractCard(abstracts, abstractWindow, abstractExtension),
-  ].filter(Boolean).join('');
+  // What the counter acts on goes across the top (deskWhoCard). Below it, on
+  // a laptop: where they have been beside what they paid, presented and gave
+  // as their details; on a phone, the same in that order.
+  const left = [deskDaysCard(conferenceDays, reg), reg ? deskProgrammeCard(selections, conferenceDays) : '', deskFacultyCard(guest)].filter(Boolean);
+  const right = [reg ? deskMoneyCard(reg, payment) : '', deskAbstractCard(abstracts, abstractWindow, abstractExtension, presentationDue),
+    deskContactCard(user), deskMoreActions(guest)].filter(Boolean);
+  box.innerHTML = `${deskWhoCard(d)}
+    ${left.length
+    ? `<div class="grid grid-cols-1 lg:grid-cols-[1.35fr_1fr] gap-5 items-start">
+        <div class="space-y-5 min-w-0">${left.join('')}</div>
+        <div class="space-y-5 min-w-0">${right.join('')}</div>
+      </div>`
+    : `<div class="space-y-5 max-w-3xl">${right.join('')}</div>`}`;
   box.classList.remove('hidden');
   empty.classList.add('hidden');
   document.getElementById('desk-candidates').classList.add('hidden');
 }
 
 function deskCard(title, bodyHtml, actionsHtml) {
-  return `<div class="bg-white p-4 sm:p-5 rounded-2xl shadow-card">
-    <div class="flex items-baseline justify-between gap-3 flex-wrap mb-3">
-      <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">${esc(title)}</h3>
-      ${actionsHtml ? `<div class="flex flex-wrap gap-2">${actionsHtml}</div>` : ''}
+  return `<section class="bg-white p-4 sm:p-5 rounded-2xl shadow-card">
+    <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+      <h3 class="text-[13px] font-bold text-slate-500 uppercase tracking-wide">${esc(title)}</h3>
+      ${actionsHtml ? `<div class="flex flex-wrap items-center gap-2">${actionsHtml}</div>` : ''}
     </div>
-    ${bodyHtml}</div>`;
+    ${bodyHtml}</section>`;
 }
 
 const deskBtn = (label, onclick, tone) => {
   const tones = {
-    primary: 'bg-navy hover:bg-indigo-700 text-white',
-    plain: 'border border-slate-300 hover:bg-slate-50 text-slate-700',
-    good: 'bg-emerald-600 hover:bg-emerald-700 text-white',
+    primary: 'h-9 px-3 rounded-lg bg-navy hover:bg-indigo-700 text-white',
+    plain: 'h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700',
+    good: 'h-9 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white',
+    link: 'min-h-[36px] px-1 text-indigo-700 hover:underline',
   };
-  return `<button type="button" onclick="${onclick}" class="px-3 py-1.5 ${tones[tone || 'plain']} text-xs font-bold rounded-lg">${esc(label)}</button>`;
+  return `<button type="button" onclick="${onclick}" class="${tones[tone || 'plain']} text-[13px] font-semibold whitespace-nowrap">${esc(label)}</button>`;
 };
 
 const deskField = (label, value) =>
-  `<div><dt class="text-[11px] text-slate-400 uppercase tracking-wide">${esc(label)}</dt>
-     <dd class="text-sm text-slate-800">${esc(value || '—')}</dd></div>`;
+  `<div class="min-w-0"><dt class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">${esc(label)}</dt>
+     <dd class="text-sm text-slate-800 break-words">${esc(value || '—')}</dd></div>`;
 
-function deskWhoCard(user, reg, checkedIn, guest) {
-  // Arrival lives on this card rather than one of its own: at a counter it is
-  // a fact about the person, and a card holding one button is a card too many.
-  const arrival = checkedIn
-    ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-emerald-100 text-emerald-800 border-emerald-300">${ICON('check')}Arrived ${esc(fmtRegisteredAt(checkedIn.at))}</span>`
-    : `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 border-slate-300">Not arrived</span>`;
-  const actions = [
-    can('desk.checkin') && !checkedIn && reg ? deskBtn('Check in', 'deskCheckIn()', 'good') : '',
-    can('users.edit') ? deskBtn('Edit details', 'deskOpenEdit()') : '',
-    // A delegate at the counter who cannot get into their account is the
-    // commonest reason a desk needs this at all.
-    can('users.reset_password')
-      ? deskBtn('Reset password', `resetUserPassword('${esc(user.phone_number)}', '${esc(user.full_name || '')}')`)
-      : '',
-    // Faculty are on the guest list (Guests tab); marking them puts them there.
-    can('guests.edit') && !guest ? deskBtn('Mark as faculty', 'deskMarkFaculty()') : '',
-    // Their whole account -- details, main and additional roles, password --
-    // in the Users panel, for a role that may see it.
-    can('users.view') ? deskBtn('Profile & roles', 'deskOpenProfile()') : '',
-  ].filter(Boolean).join('');
-  const faculty = guest
-    ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-indigo-100 text-indigo-800 border-indigo-300" title="On the faculty list${guest.overall_status ? ` · ${esc(guest.overall_status)}` : ''}">Faculty</span>` : '';
+const DESK_CHIP = {
+  ok: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+  due: 'bg-amber-100 text-amber-800 border-amber-300',
+  off: 'bg-slate-100 text-slate-500 border-slate-300',
+  gold: 'bg-gold-50 text-gold-700 border-gold-300',
+  faculty: 'bg-indigo-100 text-indigo-800 border-indigo-300',
+};
+const deskChip = (label, tone, title) =>
+  `<span class="inline-flex items-center text-[11px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ${DESK_CHIP[tone]}"${title ? ` title="${esc(title)}"` : ''}>${esc(label)}</span>`;
+const DESK_TICK = '<svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4 shrink-0" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-8 8a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.4L8 12.6l7.3-7.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>';
+const DESK_ALERT = '<svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4 shrink-0" aria-hidden="true"><path d="M10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16Zm-1 4h2v5H9V6Zm0 6h2v2H9v-2Z"/></svg>';
+const DESK_OPEN = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 shrink-0" aria-hidden="true"><circle cx="10" cy="10" r="6"/></svg>';
 
-  // Their QR, the one on their badge: scanned from this screen (at a meal
-  // counter, say) when they have no badge with them; tap for it full size.
+// Times as the counter says them, in India time: "8:52 AM", and "Sat, 21 Nov".
+const DESK_IST_MS = 5.5 * 60 * 60 * 1000;
+const deskIstDate = (ms) => new Date(Number(ms) + DESK_IST_MS).toISOString().slice(0, 10);
+function deskClock(ms) {
+  if (!ms) return '';
+  const d = new Date(Number(ms) + DESK_IST_MS);
+  const h = d.getUTCHours();
+  return `${h % 12 || 12}:${String(d.getUTCMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+function deskDay(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+  if (!m) return '';
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()]}, ${Number(m[3])} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m[2]) - 1]}`;
+}
+const deskWhen = (ms) => (deskIstDate(ms) === deskIstDate(Date.now()) ? `${deskClock(ms)} today` : `${deskClock(ms)}, ${deskDay(deskIstDate(ms))}`);
+function deskTime12(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(hhmm || '');
+  if (!m) return '';
+  const h = Number(m[1]);
+  return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+// What is still owed: the summary's own figure (see deskMoneyCard).
+const deskBalance = (reg, payment) => (payment ? Number(payment.remaining) || 0 : Math.max(0, Number(reg.expected_amount) || 0));
+
+// The one thing to do next for the person at the counter, and the buttons
+// that do it: register them, take the money and see the student ID, check
+// them in -- or, once arrived, when and by whom.
+function deskNextStep(d) {
+  const { registration: reg, payment, checkedIn } = d;
+  const big = (label, onclick, tone) => `<button type="button" onclick="${onclick}" class="h-12 px-5 w-full sm:w-auto ${{
+    go: 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm',
+    navy: 'bg-navy hover:bg-indigo-700 text-white shadow-sm',
+  }[tone] || 'bg-white border border-slate-300 hover:bg-slate-50 text-slate-800'} text-base font-bold rounded-xl whitespace-nowrap">${esc(label)}</button>`;
+  if (!reg) {
+    const canRegister = can('payments.desk_register');
+    return { tone: 'stop', title: 'Has an account, but has not registered.',
+      note: canRegister ? 'Register them here and take their payment.' : 'A desk that registers walk-ins can do it.',
+      buttons: canRegister ? [big('Register this delegate', 'registerDeskDelegate()', 'navy')] : [] };
+  }
+  if (reg.bank_status === 'REJECTED') {
+    return { tone: 'stop', title: 'Their registration was not accepted.',
+      note: can('payments.view') ? 'The payment review says why.' : 'Send them to the organisers.',
+      buttons: can('payments.view') ? [big('Payment review', `deskOpenPaymentReview(${esc(reg.id)})`, 'navy')] : [] };
+  }
+  const balance = deskBalance(reg, payment);
+  const idDue = isStudentCategory(reg.category_key) && !reg.id_verified;
+  const todo = [balance > 0.5 ? `collect ₹${inr(balance)}` : '', idDue ? 'see their student ID' : ''].filter(Boolean);
+  const pending = ((payment && payment.txns) || []).filter((t) => t.txn_status === 'PENDING').reduce((n, t) => n + (Number(t.amount) || 0), 0);
+  const by = checkedIn && checkedIn.by ? `Checked in by ${checkedIn.by}.` : '';
+  if (todo.length) {
+    return {
+      tone: 'stop',
+      title: checkedIn ? `Arrived ${deskWhen(checkedIn.at)}. ${capitalise(todo.join(' and '))}.` : `${capitalise(todo.join(' and '))} before check-in.`,
+      note: [pending > 0.5 ? `₹${inr(pending)} paid online is waiting for the finance team to verify it.` : '', by].filter(Boolean).join(' '),
+      buttons: [
+        balance > 0.5 && can('payments.add_payment') ? big(`Collect ₹${inr(balance)} cash`, 'deskOpenCollect()', 'navy') : '',
+        idDue && can('payments.verify_id') ? big('Verify student ID', 'deskVerifyId()') : '',
+        !checkedIn && can('desk.checkin') ? big('Check in anyway', 'deskCheckIn()') : '',
+      ].filter(Boolean),
+    };
+  }
+  if (checkedIn) return { tone: 'done', title: `Arrived ${deskWhen(checkedIn.at)}`, note: by, buttons: [] };
+  return {
+    tone: 'go',
+    title: (Number(reg.expected_amount) || 0) > 0 ? 'Paid in full. Ready to check in.' : 'Nothing to pay. Ready to check in.',
+    note: 'Hand over the badge and kit once they are checked in.',
+    buttons: can('desk.checkin') ? [big('Check in', 'deskCheckIn()', 'go')] : [],
+  };
+}
+
+// The person, their next step, and four checks at a glance. Their QR (the
+// one on their badge) is here to be scanned from the screen -- at a meal
+// counter, say -- when they have no badge with them; tap for it full size.
+function deskWhoCard(d) {
+  const { user, registration: reg, guest, abstracts } = d;
+  const who = reg && reg.category_key === 'volunteer' ? 'Volunteer' : 'Delegate';
+  const kicker = !reg ? 'No registration yet' : reg.category_label && reg.category_label !== who ? `${who} · ${reg.category_label}` : who;
+  const presenting = (abstracts || []).find((a) => a.status === 'ACCEPTED' && a.allocation && a.decision_sent_at);
+  const chips = [
+    // Faculty are on the guest list (Faculty tab).
+    guest ? deskChip('Faculty', 'faculty', `On the faculty list${guest.overall_status ? ` · ${guest.overall_status}` : ''}`) : '',
+    presenting ? deskChip(`Presenter · ${abstractFormatLabel(presenting.allocation)}`, 'gold') : '',
+  ].join('');
   const regNo = (reg && reg.registration_number) || user.registration_number || '';
   const qr = regNo
-    ? `<a href="/api/qr/${encodeURIComponent(regNo)}.png" target="_blank" rel="noopener" title="Open the QR full size" class="shrink-0 block rounded-lg border border-slate-200 p-1 bg-white hover:border-slate-400">
-        <img id="desk-record-qr" src="/api/qr/${encodeURIComponent(regNo)}.png" alt="QR code for ${esc(regNo)}" width="96" height="96" class="w-24 h-24 block"></a>` : '';
-
-  // Registered in the Volunteer category: a volunteer, not a delegate.
-  return deskCard(reg && reg.category_key === 'volunteer' ? 'Volunteer' : 'Delegate', `
-    <div class="flex items-start gap-3 mb-3">
-      <div class="flex-1 min-w-0 flex items-start justify-between gap-3 flex-wrap">
-        <div class="min-w-0">
-          <p class="font-bold text-slate-800">${esc([user.salutation, user.full_name].filter(Boolean).join(' '))}</p>
-          <p class="text-xs text-slate-500">${esc(reg ? reg.category_label : 'No registration yet')}</p>
-        </div>
-        <div class="flex flex-wrap gap-1.5">
-          ${regNo ? `<span class="text-[11px] font-mono text-slate-500">${esc(regNo)}</span>` : ''}
-          ${faculty}
-          ${arrival}
+    ? `<a href="/api/qr/${encodeURIComponent(regNo)}.png" target="_blank" rel="noopener" title="Open the QR full size" class="shrink-0 block rounded-xl border border-slate-200 p-1.5 bg-white hover:border-slate-400">
+        <img id="desk-record-qr" src="/api/qr/${encodeURIComponent(regNo)}.png" alt="QR code for ${esc(regNo)}" width="112" height="112" class="w-20 h-20 sm:w-28 sm:h-28 block"></a>` : '';
+  const step = deskNextStep(d);
+  const tone = { go: 'bg-emerald-50 border-emerald-300', stop: 'bg-amber-50 border-amber-300', done: 'bg-indigo-50 border-indigo-200' }[step.tone];
+  return `<section class="bg-white rounded-2xl shadow-card overflow-hidden">
+    <div class="p-4 sm:p-6 flex gap-4 sm:gap-6 items-start">
+      <div class="flex-1 min-w-0">
+        <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">${esc(kicker)}</p>
+        <h3 class="desk-name text-2xl sm:text-[28px] font-bold text-navy leading-tight mt-1 break-words">${esc([user.salutation, user.full_name].filter(Boolean).join(' ') || 'Unnamed account')}</h3>
+        <div class="flex flex-wrap items-center gap-2 mt-2">
+          ${regNo ? `<span class="font-mono text-sm text-slate-600">${esc(regNo)}</span>` : ''}${chips}
         </div>
       </div>
       ${qr}
     </div>
-    <dl class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-      ${deskField('Mobile', user.phone)}${deskField('Email', user.email)}
-      ${deskField('Designation', user.designation)}${deskField('Institution', user.institution)}
-      ${deskField('District', user.district)}${deskField('State', user.state)}
-    </dl>
-    <div id="desk-edit-form" class="hidden mt-4 pt-4 border-t border-slate-200"></div>`, actions);
+    <div class="mx-4 sm:mx-6 mb-4 sm:mb-6 rounded-xl border ${tone} p-4 flex flex-col lg:flex-row lg:items-center gap-3" role="status">
+      <div class="flex-1 min-w-0">
+        <p class="text-lg font-bold text-slate-900 leading-snug">${esc(step.title)}</p>
+        ${step.note ? `<p class="text-sm text-slate-600 mt-0.5">${esc(step.note)}</p>` : ''}
+      </div>
+      ${step.buttons.length ? `<div class="flex flex-col sm:flex-row sm:flex-wrap gap-2">${step.buttons.join('')}</div>` : ''}
+    </div>
+    <div id="desk-collect-form" class="hidden mx-4 sm:mx-6 mb-4 sm:mb-6 p-4 rounded-xl border border-slate-200 bg-slate-50"></div>
+    ${reg ? deskChecksRow(d) : ''}
+  </section>`;
 }
 
-function deskNoRegistrationCard() {
-  // Registered on the spot against the account they already have -- the
-  // walk-in form opens linked to them, so nothing is retyped and no second
-  // account is created.
-  const canRegister = can('payments.desk_register');
-  return deskCard('Registration', `
-    <p class="text-sm text-slate-500">This person has an account but has not registered.${canRegister ? ' Register them here to take their payment.' : ''}</p>`,
-  canRegister ? deskBtn('Register this delegate', 'registerDeskDelegate()', 'primary') : '');
+// Payment, student ID, arrival and the certificate, each done, wanting, or
+// not yet.
+function deskChecksRow(d) {
+  const { registration: reg, payment, checkedIn, conferenceDays: cd } = d;
+  const balance = deskBalance(reg, payment);
+  const paid = payment ? Number(payment.netVerifiedTotal) || 0 : 0;
+  const needsId = isStudentCategory(reg.category_key);
+  const items = [
+    ['Payment', balance > 0.5 ? ['bad', `₹${inr(balance)} due`] : (Number(reg.expected_amount) || 0) > 0 ? ['ok', `₹${inr(paid)} paid`] : ['na', 'Nothing to pay']],
+    ['Student ID', !needsId ? ['na', 'Not needed'] : reg.id_verified ? ['ok', 'Verified'] : ['bad', 'Not seen']],
+    ['Arrival', checkedIn ? ['ok', deskWhen(checkedIn.at)] : ['todo', 'Not yet']],
+    ['Certificate', deskCertificateCheck(cd)],
+  ];
+  const look = { ok: ['text-emerald-700', DESK_TICK], bad: ['text-amber-700', DESK_ALERT], todo: ['text-slate-500', DESK_OPEN], na: ['text-slate-500', '<span class="w-4 text-center" aria-hidden="true">–</span>'] };
+  return `<dl class="grid grid-cols-2 sm:grid-cols-4 border-t border-slate-200">
+    ${items.map(([label, [k, value]], i) => `<div class="px-4 sm:px-6 py-3 min-w-0 ${i % 2 ? 'border-l border-slate-200' : ''} ${i === 2 ? 'sm:border-l' : ''} ${i > 1 ? 'border-t sm:border-t-0 border-slate-200' : ''}">
+      <dt class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">${label}</dt>
+      <dd class="flex items-center gap-1.5 mt-0.5 text-sm ${k === 'ok' || k === 'bad' ? 'font-semibold' : ''} ${look[k][0]}">${look[k][1]}<span class="min-w-0">${esc(value)}</span></dd>
+    </div>`).join('')}
+  </dl>`;
+}
+
+// The conference certificate, in a word or two -- certificateCandidates()'s
+// answer, read on the server.
+function deskCertificateCheck(cd) {
+  const c = cd && cd.certificate;
+  if (!c) return ['todo', 'Not yet'];
+  if (c.issued) return ['ok', 'Issued'];
+  if (c.kind) return ['ok', 'Eligible'];
+  if (/^Excluded/.test(c.whyNot || '')) return ['bad', 'Excluded'];
+  if (c.whyNot === 'Payment not complete') return ['bad', 'Payment due'];
+  const parts = cd.days.flatMap((x) => x.parts);
+  return ['todo', parts.length ? `${parts.filter((p) => p.done).length} of ${parts.length} marked` : 'Not yet'];
+}
+
+// Each conference day: present before and after lunch (as the certificate
+// counts it) and the meals served, with the times; then what the certificate
+// still needs.
+function deskDaysCard(cd, reg) {
+  if (!reg || !cd || !cd.days.length) return '';
+  const tile = (label, on, value, title) => `<div class="min-w-0 rounded-xl border px-3 py-2 ${on ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-slate-50 text-slate-500'}"${title ? ` title="${esc(title)}"` : ''}>
+      <p class="text-[11px] font-semibold uppercase tracking-wide truncate">${esc(label)}</p>
+      <p class="text-sm font-semibold flex items-center gap-1">${on ? DESK_TICK : ''}${esc(value)}</p>
+    </div>`;
+  const days = cd.days.map((day) => `<div>
+      <p class="text-sm font-semibold text-slate-700 mb-1.5">${esc(deskDay(day.date))}</p>
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        ${day.parts.map((p) => tile(p.half === 'before' ? 'Before lunch' : 'After lunch', p.done, p.done ? deskClock(p.at) : 'Not yet',
+    p.done ? [p.session, p.hall].filter(Boolean).join(' · ') : '')).join('')}
+        ${day.meals.map((m) => tile(m.title, !!m.servedAt, m.servedAt ? deskClock(m.servedAt) : 'Not served')).join('')}
+      </div>
+    </div>`).join('');
+  const c = cd.certificate;
+  const line = !c ? ''
+    : c.issued ? 'Their conference certificate has been issued.'
+      : c.kind ? 'They are eligible for the conference certificate.'
+        : /^Not present/.test(c.whyNot || '') ? `<b class="text-slate-900">For the certificate</b> they still need: ${esc(cd.missing.join('; '))}.`
+          : `<b class="text-amber-800">No certificate yet:</b> ${esc(c.whyNot || '')}.`;
+  return deskCard('Conference days', `<div class="space-y-3">${days}
+      ${line ? `<p class="text-sm text-slate-600">${line}</p>` : ''}
+    </div>
+    <div id="desk-mark-form" class="hidden mt-4 pt-4 border-t border-slate-100"></div>`,
+  can('attendance.mark') ? deskBtn('Mark present', 'deskOpenMarkPresent()', 'link') : '');
 }
 
 function registerDeskDelegate() {
@@ -12618,64 +12757,111 @@ function deskMoneyCard(reg, payment) {
   // the outstanding figure -- there is no `balance` field.
   const paid = payment ? Number(payment.netVerifiedTotal) || 0 : 0;
   const balance = payment ? Number(payment.remaining) || 0 : Math.max(0, fee - paid);
-  // No chip at all where the category needs no card -- see paymentRowHtml.
-  const needsId = isStudentCategory(reg.category_key);
-  const idChip = !needsId
-    ? ''
-    : reg.id_verified
-      ? `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-emerald-100 text-emerald-800 border-emerald-300">${ICON('gradcap')}ID verified</span>`
-      : `<span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-100 text-amber-800 border-amber-300">${ICON('warning')}ID pending</span>`;
-
+  // Collecting cash and seeing a student ID are the next step's buttons, at
+  // the top; what is here is for looking into the money.
   const actions = [
-    can('payments.add_payment') && balance > 0.5 ? deskBtn('Collect cash', 'deskOpenCollect()', 'primary') : '',
-    can('payments.verify_id') && needsId && !reg.id_verified ? deskBtn('Verify student ID', 'deskVerifyId()') : '',
-    can('payments.revise') ? deskBtn('Correct category', 'deskOpenCategory()') : '',
-    reg.bank_status === 'BANK_VERIFIED' ? `<a href="/api/desk/registrations/${esc(reg.id)}/receipt" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-lg">Receipt</a>` : '',
+    reg.bank_status === 'BANK_VERIFIED' ? `<a href="/api/desk/registrations/${esc(reg.id)}/receipt" target="_blank" rel="noopener" class="min-h-[36px] inline-flex items-center px-1 text-indigo-700 hover:underline text-[13px] font-semibold">Receipt</a>` : '',
+    can('payments.revise') ? deskBtn('Correct category', 'deskOpenCategory()', 'link') : '',
     // The finance review -- evidence, accept or reject, un-approve or
     // un-reject, fee adjustment -- for a role that may open it.
-    can('payments.view') ? deskBtn('Payment review', `deskOpenPaymentReview(${esc(reg.id)})`, 'primary') : '',
+    can('payments.view') ? deskBtn('Payment review', `deskOpenPaymentReview(${esc(reg.id)})`, 'link') : '',
   ].filter(Boolean).join('');
+  const pending = ((payment && payment.txns) || []).filter((t) => t.txn_status === 'PENDING').reduce((n, t) => n + (Number(t.amount) || 0), 0);
 
   // An excess is an obligation to the delegate, so it sits on the record for
   // as long as it is unsettled rather than only appearing in the moment a
   // category change creates it.
   const owedBack = payment ? Number(payment.overpaid) || 0 : 0;
   const refundNote = owedBack > 0
-    ? `<p class="mt-3 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+    ? `<p class="mt-3 text-[13px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
         ${ICON('coin')}<b>₹${inr(owedBack)} refundable.</b> Recorded from Payments against the bank
         debit that pays it out — not settled in cash here, which would leave no record.</p>`
     : '';
 
   return deskCard('Payment', `
-    <div class="flex flex-wrap items-end gap-x-8 gap-y-3">
-      <div><p class="text-[11px] text-slate-400 uppercase tracking-wide">Fee</p>
-        <p class="text-lg font-bold text-slate-800 tabular-nums">₹${inr(fee)}</p></div>
-      <div><p class="text-[11px] text-slate-400 uppercase tracking-wide">Paid</p>
-        <p class="text-lg font-bold text-slate-800 tabular-nums">₹${inr(paid)}</p></div>
-      <div><p class="text-[11px] text-slate-400 uppercase tracking-wide">Balance</p>
-        <p class="text-lg font-bold tabular-nums ${balance > 0.5 ? 'text-amber-700' : 'text-emerald-700'}">₹${inr(balance)}</p></div>
-      <div class="flex flex-wrap items-center gap-1.5">${idChip}</div>
+    <div class="grid grid-cols-3 gap-3">
+      ${[['Fee', fee, 'text-slate-900'], ['Paid', paid, 'text-slate-900'], ['Balance', balance, balance > 0.5 ? 'text-amber-700' : 'text-emerald-700']]
+    .map(([label, n, c]) => `<div class="min-w-0"><p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">${label}</p>
+          <p class="text-xl font-bold tabular-nums ${c}">₹${inr(n)}</p></div>`).join('')}
     </div>
-    ${refundNote}
-    <div id="desk-collect-form" class="hidden mt-4 pt-4 border-t border-slate-200"></div>`, actions);
+    <p class="text-sm text-slate-500 mt-2">${esc(reg.category_label || '')}${pending > 0.5 ? ` · ₹${inr(pending)} paid online, not yet verified` : ''}</p>
+    ${refundNote}`, actions);
 }
 
-function deskProgrammeCard(selections) {
+// Their choices, one per programme group, each changeable here; a workshop
+// with when and where it is, whether they were marked present, and their
+// feedback -- which its certificate waits for.
+function deskProgrammeCard(selections, cd) {
   const chosen = new Map((selections || []).map((s) => [s.group_id, s]));
+  const workshops = new Map(((cd && cd.workshops) || []).map((w) => [Number(w.optionId), w]));
   const body = deskProgrammeGroups.length
     ? deskProgrammeGroups.map((g) => {
       const pick = chosen.get(g.id);
-      return `<div class="py-2 border-b border-slate-100 last:border-0">
-        <p class="text-[11px] text-slate-400 uppercase tracking-wide">${esc(g.name)}</p>
-        <div class="flex items-center justify-between gap-3 flex-wrap">
-          <p class="text-sm text-slate-800">${esc(pick ? pick.option_name : 'Not chosen')}${pick && pick.is_faculty ? ' <span class="text-[11px] text-indigo-700 font-bold">(Faculty)</span>' : ''}</p>
-          ${can('desk.enroll') ? deskBtn('Change', `deskOpenEnroll(${g.id})`) : ''}
+      const w = pick ? workshops.get(Number(pick.option_id)) : null;
+      const when = w ? [deskDay(w.date), w.start ? `${deskTime12(w.start)}–${deskTime12(w.end)}` : '', w.hall].filter(Boolean).join(' · ') : '';
+      const chips = w ? [
+        w.present ? deskChip('Present', 'ok') : deskChip('Not marked present', 'off'),
+        w.present ? (w.feedback ? deskChip('Feedback given', 'ok') : deskChip('Feedback pending', 'due')) : '',
+        w.certificate && w.certificate.issued ? deskChip('Certificate issued', 'ok') : '',
+      ].join('') : '';
+      return `<div class="py-3 first:pt-0 last:pb-0 border-b border-slate-100 last:border-0">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">${esc(g.name)}</p>
+            <p class="text-sm ${pick ? 'font-semibold text-slate-900' : 'text-slate-500'}">${esc(pick ? pick.option_name : 'Not chosen')}${pick && pick.is_faculty ? ' <span class="text-[11px] text-indigo-700 font-bold">(Faculty)</span>' : ''}</p>
+            ${when ? `<p class="text-sm text-slate-500">${esc(when)}</p>` : ''}
+          </div>
+          ${can('desk.enroll') ? deskBtn('Change', `deskOpenEnroll(${g.id})`, 'link') : ''}
         </div>
+        ${chips ? `<div class="flex flex-wrap gap-1.5 mt-2">${chips}</div>` : ''}
+        ${w && w.present && !w.feedback ? '<p class="text-sm text-slate-600 mt-2">The workshop certificate waits for their feedback. They give it on their phone, on the delegate portal home.</p>' : ''}
         <div id="desk-enroll-form-${g.id}" class="hidden mt-3"></div>
       </div>`;
     }).join('')
     : '<p class="text-sm text-slate-500">No programmes are set up.</p>';
   return deskCard('Programme', body, '');
+}
+
+// Mobile and institution on one line; the rest, and changing them, on a tap.
+function deskContactCard(user) {
+  const summary = [user.phone, user.institution].filter(Boolean).join(' · ');
+  const actions = [
+    can('users.edit') ? deskBtn('Edit details', 'deskOpenEdit()') : '',
+    // A delegate at the counter who cannot get into their account is the
+    // commonest reason a desk needs this at all.
+    can('users.reset_password') ? deskBtn('Reset password', `resetUserPassword('${esc(user.phone_number)}', '${esc(user.full_name || '')}')`) : '',
+  ].filter(Boolean).join('');
+  return `<details id="desk-contact" class="group bg-white rounded-2xl shadow-card">
+    <summary class="list-none [&::-webkit-details-marker]:hidden cursor-pointer p-4 sm:p-5 flex items-center justify-between gap-3">
+      <span class="min-w-0">
+        <span class="block text-[13px] font-bold text-slate-500 uppercase tracking-wide">Contact &amp; details</span>
+        <span class="block text-sm text-slate-700 mt-0.5 break-words">${esc(summary || 'No details given')}</span>
+      </span>
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 shrink-0 text-slate-400 transition-transform group-open:rotate-180" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg>
+    </summary>
+    <div class="px-4 sm:px-5 pb-4 sm:pb-5">
+      <dl class="grid grid-cols-2 gap-3">
+        ${deskField('Mobile', user.phone)}${deskField('Email', user.email)}
+        ${deskField('Designation', user.designation)}${deskField('Institution', user.institution)}
+        ${deskField('District', user.district)}${deskField('State', user.state)}
+      </dl>
+      ${actions ? `<div class="flex flex-wrap gap-2 mt-4">${actions}</div>` : ''}
+      <div id="desk-edit-form" class="hidden mt-4 pt-4 border-t border-slate-200"></div>
+    </div>
+  </details>`;
+}
+
+// The rarer things, for a role that may do them.
+function deskMoreActions(guest) {
+  const items = [
+    // Faculty are on the guest list (Faculty tab); marking them puts them there.
+    can('guests.edit') && !guest ? deskBtn('Mark as faculty', 'deskMarkFaculty()') : '',
+    // Their whole account -- details, main and additional roles, password --
+    // in the Users panel, for a role that may see it.
+    can('users.view') ? deskBtn('Profile & roles', 'deskOpenProfile()') : '',
+  ].filter(Boolean);
+  return items.length ? `<div class="flex flex-wrap items-center gap-2">
+      <span class="text-[13px] font-bold text-slate-500 uppercase tracking-wide mr-1">More</span>${items.join('')}</div>` : '';
 }
 
 const DESK_ABSTRACT_STATUS = {
@@ -12685,13 +12871,14 @@ const DESK_ABSTRACT_STATUS = {
   REVISION_REQUESTED: ['due', 'Revision requested'],
 };
 
-function deskAbstractCard(abstracts, win, ext) {
-  // Read-only, deliberately: presentation format is abstracts.assign, which is
-  // Super Admin's, and accepting is abstracts.review. The desk answers "what
-  // happened to mine", it does not decide it. The one thing it can do is let
-  // this person submit after the last date (abstracts.extend_deadline, held
-  // by Super Admin and the Front Desk) -- and only while they have not
-  // submitted.
+function deskAbstractCard(abstracts, win, ext, due) {
+  // Read-only, deliberately: the presentation format is decided on the
+  // abstracts desk (Step 2), never at the Front Desk (owner, 18 Nov 2026),
+  // and accepting is abstracts.review. The desk answers "what happened to
+  // mine" and "did my file come", it does not decide either. The one thing
+  // it can do is let this person submit after the last date
+  // (abstracts.extend_deadline, held by Super Admin and the Front Desk) --
+  // and only while they have not submitted.
   if (!abstracts || !abstracts.length) {
     const deadline = (win && win.deadline) || conferenceInfo.abstractDeadline;
     const open = win ? win.open : conferenceInfo.abstractSubmissionOpen !== false;
@@ -12730,22 +12917,28 @@ function deskAbstractCard(abstracts, win, ext) {
     due: 'bg-amber-100 text-amber-800 border-amber-300',
     bad: 'bg-rose-100 text-rose-800 border-rose-300',
   };
-  // The review window, and oral/poster, for roles that may use them.
-  const abstractActions = (a) => [
-    can('abstracts.view') ? deskBtn('Review', `deskOpenAbstract(${esc(a.id)})`) : '',
-    can('abstracts.assign') && a.status === 'ACCEPTED' ? deskBtn(a.allocation === 'ORAL' ? 'Oral ✓' : 'Oral', `deskAllotAbstract(${esc(a.id)}, 'ORAL')`) : '',
-    can('abstracts.assign') && a.status === 'ACCEPTED' ? deskBtn(a.allocation === 'POSTER' ? 'Poster ✓' : 'Poster', `deskAllotAbstract(${esc(a.id)}, 'POSTER')`) : '',
-    can('abstracts.assign') && a.status === 'ACCEPTED' ? deskBtn(a.allocation === 'AWARD' ? 'Award ✓' : 'Award', `deskAllotAbstract(${esc(a.id)}, 'AWARD')`) : '',
-  ].filter(Boolean).join('');
+  // The review window, for roles that may open it.
+  const abstractActions = (a) => (can('abstracts.view') ? deskBtn('Review', `deskOpenAbstract(${esc(a.id)})`) : '');
+  // A presenter's file: come, or not yet and by when.
+  const fileLine = (a) => {
+    if (a.status !== 'ACCEPTED' || !a.allocation || !a.decision_sent_at) return '';
+    const noun = abstractFormatLabel(a.allocation);
+    if (a.file_uploaded_at) {
+      return `<p class="flex items-center gap-1.5 text-sm font-semibold text-emerald-700 mt-2">${DESK_TICK}${esc(noun)} file received ${esc(fmtAuditTime(a.file_uploaded_at))}</p>
+        ${a.file_allocation && a.file_allocation !== a.allocation ? `<p class="text-[13px] text-amber-800 mt-1">Sent as ${esc(abstractFormatLabel(a.file_allocation))}; the format has changed since.</p>` : ''}`;
+    }
+    return `<p class="text-sm text-amber-800 mt-2"><b>${esc(noun)} file not received.</b> They upload it on the Abstract card in the delegate portal${due && due.dueText ? `, ${due.open ? 'by' : 'which closed at'} ${esc(due.dueText)}` : ''}.</p>`;
+  };
   return deskCard('Abstract', abstracts.map((a) => {
     const [tone, label] = DESK_ABSTRACT_STATUS[a.status] || ['due', a.status || 'Submitted'];
     return `<div class="py-2 border-b border-slate-100 last:border-0">
-      <p class="text-sm text-slate-800">${esc(a.title || 'Untitled')}</p>
+      <p class="text-sm font-semibold text-slate-900 leading-snug">${esc(a.title || 'Untitled')}</p>
       <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
         <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${tones[tone]}">${esc(label)}</span>
         <span class="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${a.allocation ? 'bg-indigo-100 text-indigo-800 border-indigo-300' : 'bg-slate-100 text-slate-500 border-slate-300'}">${esc(a.allocation ? abstractFormatLabel(a.allocation) : 'Format not assigned')}</span>
       </div>
       ${a.revision_note ? `<p class="text-[11px] text-amber-800 mt-1">${esc(a.revision_note)}</p>` : ''}
+      ${fileLine(a)}
       ${abstractActions(a) ? `<div class="flex flex-wrap gap-1.5 mt-2">${abstractActions(a)}</div>` : ''}
     </div>`;
   }).join('') + (ext ? `<p class="text-[11px] text-slate-500 mt-2">They were given a later last date of ${esc(formatFullDate(ext.until))}.</p>` : ''), '');
@@ -12822,15 +13015,6 @@ async function deskOpenPaymentReview(regId) {
 async function deskOpenAbstract(id) {
   if (!abstractsCache.some((a) => String(a.id) === String(id))) await renderBackendAbstracts();
   openAbstractReview(id);
-}
-async function deskAllotAbstract(id, allocation) {
-  if (!(await confirmAllocationEmail(id, allocation))) return;
-  const data = await (await fetch(`/api/abstracts/${encodeURIComponent(id)}/allocation`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allocation }),
-  })).json().catch(() => ({}));
-  if (!data.success) return showToast(data.error || 'Could not allot.');
-  showToast(`Allotted ${abstractFormatLabel(allocation).toLowerCase()}; the author has been emailed.`, 'success');
-  deskReload();
 }
 async function deskOpenFaculty(id) {
   if (!guestData || !guestData.guests.some((g) => g.id === id)) {
@@ -12923,6 +13107,89 @@ async function deskReload() {
   if (data.success && !data.candidates) { deskDelegate = data; renderDeskRecord(); }
 }
 
+// --- marking the person at the desk present ---
+// At whichever session is taking attendance now, in the hall they name:
+// the same scan a volunteer does at the door (POST /api/attendance/scan,
+// attendance.mark), so a workshop still takes only those enrolled -- anyone
+// else with a reason, which goes on the record.
+async function deskOpenMarkPresent() {
+  const box = document.getElementById('desk-mark-form');
+  if (!box) return;
+  box.innerHTML = '<p class="text-sm text-slate-500">Finding the sessions on now…</p>';
+  box.classList.remove('hidden');
+  const data = await (await fetch('/api/attendance/halls')).json().catch(() => ({}));
+  const on = (data.halls || []).filter((h) => h.now);
+  const cancel = deskBtn('Cancel', "document.getElementById('desk-mark-form').classList.add('hidden')");
+  if (!on.length) {
+    const next = (data.halls || []).map((h) => h.next).filter(Boolean)
+      .sort((a, b) => `${a.date} ${a.start}`.localeCompare(`${b.date} ${b.start}`))[0];
+    box.innerHTML = `<div class="flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm text-slate-600">No session is taking attendance now.${next ? ` Next: ${esc(next.title)}, ${esc(next.hall || '')}, ${esc(deskDay(next.date))} ${esc(deskTime12(next.start))}.` : ''}</p>${cancel}</div>`;
+    return;
+  }
+  box.innerHTML = `<p class="text-sm font-semibold text-slate-700 mb-2">Mark them present at</p>
+    <div class="flex flex-col gap-2">
+      ${on.map((h) => `<button type="button" onclick="deskMarkPresent(${Number(h.id)})" class="text-left min-h-[44px] px-3 py-2 rounded-xl border border-slate-300 bg-white hover:border-indigo-400 hover:bg-indigo-50">
+        <span class="block text-sm font-semibold text-slate-900">${esc(h.now.title)}</span>
+        <span class="block text-[13px] text-slate-500">${esc(h.name)} · ${esc(deskTime12(h.now.start))}–${esc(deskTime12(h.now.end))}</span></button>`).join('')}
+    </div>
+    <div id="desk-mark-reason" class="hidden mt-3"></div>
+    <div class="mt-3">${cancel}</div>`;
+}
+
+async function deskMarkPresent(hallId, reason) {
+  const res = await fetch('/api/attendance/scan', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hallId, identifier: deskDelegate.user.phone_number, notEnrolledReason: reason || '' }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!data.success && data.notEnrolled) {
+    const box = document.getElementById('desk-mark-reason');
+    box.innerHTML = `<p class="text-[13px] text-amber-800 font-semibold mb-2">${esc(data.error)} Let them in anyway?</p>
+      <div class="flex flex-col sm:flex-row gap-2">
+        <input id="desk-mark-why" type="text" maxlength="200" placeholder="Why are they being let in?" aria-label="Why are they being let in?"
+               class="flex-1 h-10 px-3 border border-amber-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-amber-200">
+        ${deskBtn('Mark present', `deskMarkPresentWithReason(${Number(hallId)})`, 'primary')}
+      </div>`;
+    box.classList.remove('hidden');
+    return;
+  }
+  if (!data.success) return showToast(data.error || 'Could not mark them present.');
+  showToast(data.already ? `Already marked present at ${data.session.title}.` : `Marked present: ${data.session.title}.`, 'success');
+  await deskReload();
+}
+
+async function deskMarkPresentWithReason(hallId) {
+  const reason = (document.getElementById('desk-mark-why').value || '').trim();
+  if (!reason) return showToast('Record why they are being let in.');
+  await deskMarkPresent(hallId, reason);
+}
+
+// --- the people this desk looked up lately ---
+// Kept for this browser tab only (sessionStorage), and cleared on sign-out:
+// a shared counter laptop should not carry one volunteer's list into the
+// next one's shift.
+const DESK_RECENT_KEY = 'nqocn_desk_recent';
+function deskRecentList() {
+  try { return JSON.parse(storageGet('session', DESK_RECENT_KEY) || '[]').filter((r) => r && r.id); } catch (e) { return []; }
+}
+function deskRememberRecent(user, reg) {
+  const id = (reg && reg.registration_number) || user.phone_number;
+  if (!id) return;
+  const name = [user.salutation, user.full_name].filter(Boolean).join(' ') || id;
+  storageSet('session', DESK_RECENT_KEY, JSON.stringify([{ id, name }, ...deskRecentList().filter((r) => r.id !== id)].slice(0, 7)));
+  renderDeskRecent(id);
+}
+function renderDeskRecent(currentId) {
+  const el = document.getElementById('desk-recent');
+  if (!el) return;
+  const list = deskRecentList().filter((r) => r.id !== currentId).slice(0, 6);
+  el.innerHTML = list.length ? `<span class="text-[13px] text-slate-500 shrink-0">Recent:</span>
+    ${list.map((r) => `<button type="button" onclick="deskPick('${esc(String(r.id).replace(/[^A-Za-z0-9+@._-]/g, ''))}')" title="${esc(r.id)}"
+      class="h-8 px-3 rounded-full bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold shrink-0 max-w-[14rem] truncate">${esc(r.name)}</button>`).join('')}` : '';
+  el.classList.toggle('hidden', !list.length);
+}
+
 async function deskCheckIn() {
   const res = await fetch('/api/desk/checkin', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -12960,8 +13227,9 @@ function deskOpenCollect() {
         ${deskBtn('Cancel', "document.getElementById('desk-collect-form').classList.add('hidden')")}
       </div>
     </div>
-    <p class="text-[11px] text-slate-400 mt-2">Recorded as received. Bank it later from Bank Statement → cash deposit.</p>`;
+    <p class="text-[11px] text-slate-500 mt-2">Recorded as received. Bank it later from Bank Statement → cash deposit.</p>`;
   box.classList.remove('hidden');
+  if (box.scrollIntoView) box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 async function deskCollectCash() {
@@ -12998,8 +13266,10 @@ function deskOpenCategory() {
         ${deskBtn('Cancel', "document.getElementById('desk-collect-form').classList.add('hidden')")}
       </div>
     </div>
-    <p class="text-[11px] text-slate-400 mt-2">Changes the fee too. Any shortfall can then be taken with Collect cash.</p>`;
+    <p class="text-[11px] text-slate-500 mt-2">Changes the fee too. Any shortfall can then be taken with Collect cash.</p>`;
   box.classList.remove('hidden');
+  // The form sits under the next step, at the top; the button is further down.
+  if (box.scrollIntoView) box.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
 async function deskSaveCategory() {
@@ -13130,6 +13400,9 @@ const GENDER_OPTIONS = ['Male', 'Female', 'Other'];
 
 function deskOpenEdit() {
   const u = deskDelegate.user;
+  // The form is inside the folded contact card.
+  const contact = document.getElementById('desk-contact');
+  if (contact) contact.open = true;
   const box = document.getElementById('desk-edit-form');
   const field = (id, label, value, type) =>
     `<div><label class="block text-[11px] text-slate-500 font-semibold mb-1">${esc(label)}</label>

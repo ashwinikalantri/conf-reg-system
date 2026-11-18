@@ -304,3 +304,9 @@ table.is-stacked td:empty { display: none; }
 table.is-carded thead { display: none; }
 table.is-carded td.report-card { display: block !important; }
 table.is-carded td.report-cell { display: none !important; }
+
+/* Front Desk: the person at the counter, named in the heading face. */
+#desk-record .desk-name {
+  font-family: 'Libre Franklin', system-ui, -apple-system, sans-serif;
+  letter-spacing: -.01em;
+}

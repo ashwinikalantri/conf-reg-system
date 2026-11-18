@@ -25,10 +25,10 @@ const fs = require('fs');
   }
   const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
   check('the assignment cards offer Award', /data-alloc="\$\{key\}"/.test(js) && js.includes("${allocBtn(a, 'AWARD', 'Award')}"));
-  check('the desk offers Award', js.includes("deskAllotAbstract(${esc(a.id)}, 'AWARD')"));
-  check('assigning asks before it emails, on the cards and on the desk',
-    /async function updateAbstractAllocation\(id, allocation\) \{\s*if \(!\(await confirmAllocationEmail\(/.test(js)
-    && /async function deskAllotAbstract\(id, allocation\) \{\s*if \(!\(await confirmAllocationEmail\(/.test(js));
+  // The Front Desk shows the format but never changes it (owner, 18 Nov 2026).
+  check('the Front Desk cannot change the format', !/deskAllotAbstract|'Oral ✓'|'Poster ✓'|'Award ✓'/.test(js));
+  check('assigning asks before it emails, on the cards',
+    /async function updateAbstractAllocation\(id, allocation\) \{\s*if \(!\(await confirmAllocationEmail\(/.test(js));
   const form = fs.readFileSync(appFile('views', 'portal', 'modals', 'abstract.ejs'), 'utf8');
   const options = form.match(/name="abstract-format" value="[^"]+"/g) || [];
   check('the submission form still offers only Oral and Poster',

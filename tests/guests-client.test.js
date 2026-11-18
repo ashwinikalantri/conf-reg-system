@@ -329,7 +329,7 @@ check('the Front Desk shows a faculty member\'s travel and stay', /Faculty — t
 check('...and nothing when there is nothing to show', dsb.card({ id: 1 }) === '' && dsb.card(null) === '');
 const dcardOwn = dsb.card({ arrival_date: '2026-11-20', arrival_time: '21:30', arrival_mode: 'Flight', arrival_number: '6E 123', pickup_vehicle: 'Car A', pickup_status: 'Not required' });
 check('...and for a pickup not required, the time and "Not required" only', /09:30 pm<\/p><p class="text-xs mt-0\.5 text-slate-500">Not required/.test(dcardOwn) && !/6E 123|Car A/.test(dcardOwn));
-check('...placed after the delegate card', /deskWhoCard\(user, reg, checkedIn, guest\),\n\s*deskFacultyCard\(guest\),/.test(js));
+check('...placed on the record, after the programme', /const left = \[deskDaysCard\(conferenceDays, reg\), reg \? deskProgrammeCard\(selections, conferenceDays\) : '', deskFacultyCard\(guest\)\]/.test(js));
 vm.runInContext("canKeys = ['guests.view', 'guests.travel'];", dsb);
 check('a coordinator gets Travel & stay on the desk, even before details exist', /deskOpenFaculty\(5\)[^>]*>Travel &amp; stay</.test(dsb.card({ id: 5 })) || /deskOpenFaculty\(5\)[^>]*>Travel & stay</.test(dsb.card({ id: 5 })));
 check('...and the empty card says so', /No travel or stay details yet/.test(dsb.card({ id: 5 })));

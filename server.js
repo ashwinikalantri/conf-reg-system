@@ -11439,6 +11439,48 @@ async function deskFindDelegate(identifier) {
 // they submitted, and whether they have walked in yet. Composed from the
 // same helpers the admin user-detail panel uses, plus the two things the
 // desk needs that no other screen shows together -- abstracts and arrival.
+// The conference days for the person at the desk -- the questions they
+// bring to the counter: was I marked present (each day before and after
+// lunch, as the certificate counts it), was I served my meals, my
+// workshop and its feedback, and why is there no certificate yet. The
+// certificate's answer is certificateCandidates()'s own, so the desk and the
+// Certificates tab cannot disagree.
+async function deskConferenceDays(phone) {
+  const settings = await certificateSettings();
+  const sessions = await programmeSessions();
+  const rows = await dbAll("SELECT event_key, at FROM attendance WHERE phone_number = ? AND removed_at IS NULL AND event_key LIKE 's:%'", [phone]);
+  const at = new Map(rows.map((r) => [Number(r.event_key.slice(2)), r.at]));
+  const done = attendanceLib.completion(sessions.filter((s) => at.has(s.id)),
+    attendanceLib.conferenceSessions(sessions, isWorkshopSession), settings.attendance.lunchSplit);
+  const meals = mealsLib.groupMeals(sessions);
+  const served = new Map((await dbAll(
+    'SELECT meal_key, MIN(at) AS at FROM meal_servings WHERE person_key = ? AND removed_at IS NULL GROUP BY meal_key', [phone]))
+    .map((r) => [r.meal_key, r.at]));
+  const dates = [...new Set([...done.parts.map((p) => p.date), ...meals.map((m) => m.date)])].sort();
+  const me = (await certificateCandidates()).find((p) => p.phone === phone) || null;
+  return {
+    days: dates.map((date) => ({
+      date,
+      parts: done.parts.filter((p) => p.date === date).map((p) => ({
+        half: p.half, done: p.done, at: p.session ? at.get(p.session.id) : null,
+        session: p.session ? p.session.title : null, hall: p.session ? p.session.hall : null,
+      })),
+      meals: meals.filter((m) => m.date === date).map((m) => ({ key: m.key, title: m.title, servedAt: served.get(m.key) || null })),
+    })),
+    complete: done.complete,
+    missing: done.missing,
+    certificate: me ? { kind: me.conference.kind, whyNot: me.conference.whyNot, issued: !!me.conference.issued } : null,
+    workshops: (me ? me.workshops : []).map((w) => {
+      const s = sessions.find((x) => Number(x.option_id) === Number(w.optionId)) || null;
+      return {
+        optionId: w.optionId, name: w.name, present: w.signed, enrolled: w.enrolled, feedback: w.feedback,
+        date: s ? s.session_date : w.date || null, start: s ? s.start_time : null, end: s ? s.end_time : null, hall: s ? s.hall : null,
+        certificate: { eligible: w.eligible, whyNot: w.whyNot, issued: !!w.issued },
+      };
+    }),
+  };
+}
+
 app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async (req, res, next) => {
   try {
     const found = await deskFindDelegate(req.params.identifier);
@@ -11452,8 +11494,11 @@ app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async 
     const [payment, selections, abstracts, abstractWindow, abstractExtension] = await Promise.all([
       reg ? getPaymentSummary(reg.id, reg.expected_amount) : null,
       reg ? fetchRegistrationSelections(reg.id) : [],
-      dbAll(`SELECT id, title, format, status, allocation, revision_note
-               FROM abstracts WHERE phone_number = ? ORDER BY id`, [user.phone_number]),
+      // ...with the presentation file, for one accepted with a format.
+      dbAll(`SELECT a.id, a.title, a.format, a.status, a.allocation, a.revision_note, a.decision_sent_at,
+                    p.uploaded_at AS file_uploaded_at, p.allocation AS file_allocation
+               FROM abstracts a LEFT JOIN presentations p ON p.abstract_id = a.id
+              WHERE a.phone_number = ? ORDER BY a.id`, [user.phone_number]),
       // Whether they may still submit, and any later date given to them
       // alone -- the desk is where that date is set.
       abstractSubmissionWindowFor(user.phone_number),
@@ -11482,6 +11527,8 @@ app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async 
       abstractWindow,
       abstractExtension: abstractExtension || null,
       guest: guest || null,
+      presentationDue: presentationDueView(),
+      conferenceDays: reg ? await deskConferenceDays(user.phone_number) : null,
       // Arrival is a property of the registration, but the desk reads it as a
       // property of the person, so it is lifted out rather than left for the
       // client to dig for.
