@@ -10941,37 +10941,36 @@ function abstractCompletionBadge(a) {
   return `<p class="text-[10px] font-semibold mt-1 ${a.completed_at ? 'text-emerald-700' : passed ? 'text-rose-700' : 'text-indigo-700'}">Asked to complete by ${esc(formatFullDate(a.complete_until))} · ${done}</p>`;
 }
 
-// Shared header markup (title, author, status badge, last-action note, file
-// link) for both the Approval and Assignment cards.
+// One abstract as a compact row (Review Desk, 19 Nov 2026): one status
+// chip, the #id and the format submitted, the title, who and their Reg No,
+// and only the notes that say something about this one. The whole row opens
+// the review. Shared by Approval and Assignment.
+const ABSTRACT_STATUS_WORDS = { UNDER_REVIEW: 'To review', ACCEPTED: 'Accepted', REJECTED: 'Rejected', REVISION_REQUESTED: 'Corrections asked' };
 function abstractCardHeader(a) {
   const status = a.status || 'UNDER_REVIEW';
   const provisional = abstractProvisional(a);
   const badge = ABSTRACT_STATUS_STYLES[provisional ? 'PROVISIONAL' : status] || 'bg-slate-100 text-slate-700 border-slate-200';
-  const label = provisional ? 'ACCEPTED · PROVISIONAL' : status.replace('_', ' ');
+  // One chip says it: accepted, but the author has not registered.
+  const label = provisional ? 'Accepted · not registered' : (ABSTRACT_STATUS_WORDS[status] || status);
   // Before a decision, the reviewer is told approval would be provisional.
-  const registrationNote = provisional
-    ? '<p class="text-[10px] text-sky-700 font-semibold mt-1">Pending registration — the author has not registered</p>'
-    : (!Number(a.author_registered) && status !== 'REJECTED')
-      ? '<p class="text-[10px] text-slate-500 mt-1">Author not registered — approval will be provisional</p>' : '';
-  // Stacked, so the title has the card's whole width on a phone: status and
-  // number on top, then title, authors, what is pending, and Review at the
-  // foot; from a tablet up, Review sits beside them.
+  const registrationNote = !provisional && !Number(a.author_registered) && status !== 'REJECTED'
+    ? '<span class="text-[13px] text-slate-600">Not registered: approval will be provisional</span>' : '';
+  const who = [a.authors ? abstractAuthorsLineHtml(a.authors) : esc(a.author_name), a.reg_no ? `<span class="tabular-nums">${esc(a.reg_no)}</span>` : ''].filter(Boolean).join(' · ');
   return `
-    <div class="flex flex-col sm:flex-row sm:items-start gap-3">
+    <div class="flex items-start sm:items-center gap-3">
      <div class="min-w-0 flex-1">
-      <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span class="${badge} text-xs px-2.5 py-1 rounded-full font-bold border whitespace-nowrap">${esc(label)}</span>
-        <span class="text-[11px] font-semibold text-slate-500 tabular-nums">#${esc(a.id)} · ${esc(a.format)}</span>
-        ${a.authors && !a.authors_given && status !== 'REJECTED' ? '<span class="text-[10px] font-bold text-gold-700 bg-gold-50 border border-gold-300 rounded-full px-2 py-0.5 whitespace-nowrap">Co-authors not added</span>' : ''}
+        <span class="text-[13px] text-slate-500 tabular-nums">#${esc(a.id)} · ${esc(a.format)}</span>
+        ${registrationNote}
       </div>
-      <div class="mt-2 leading-snug break-words"><h4 class="font-bold text-slate-800">${esc(a.title)}</h4></div>
-      <p class="text-xs text-slate-500 mt-1 break-words">${a.authors ? abstractAuthorsLineHtml(a.authors) : esc(a.author_name)}</p>
-      ${status === 'REVISION_REQUESTED' ? `<p class="text-[10px] font-semibold text-orange-600 mt-1">Awaiting delegate resubmission${a.revision_until ? ` · by ${esc(formatFullDate(a.revision_until))}` : ''}</p>` : ''}
+      <div class="mt-1 leading-snug break-words"><h4 class="font-bold text-slate-800">${esc(a.title)}</h4></div>
+      <p class="text-[13px] text-slate-600 mt-0.5 break-words">${who}</p>
+      ${status === 'REVISION_REQUESTED' ? `<p class="text-[13px] font-semibold text-orange-700 mt-0.5">Waiting for the delegate to resubmit${a.revision_until ? ` by ${esc(formatFullDate(a.revision_until))}` : ''}</p>` : ''}
       ${abstractCompletionBadge(a)}
-      ${registrationNote}
-      ${a.last_action_by ? `<p class="text-[10px] text-slate-400 mt-1">by ${esc(a.last_action_by)} · ${esc(fmtAuditTime(a.last_action_at))}</p>` : ''}
+      ${a.last_action_by ? `<p class="text-[13px] text-slate-500 mt-0.5">Last changed by ${esc(a.last_action_by)}, ${esc(fmtAuditTime(a.last_action_at))}</p>` : ''}
      </div>
-     <button type="button" onclick="openAbstractReview(${esc(a.id)})" class="self-end sm:self-start shrink-0 h-8 px-3 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg text-xs">Review Abstract</button>
+     <button type="button" onclick="event.stopPropagation(); openAbstractReview(${esc(a.id)})" class="shrink-0 min-h-[40px] px-2 text-sm font-semibold text-indigo-700 hover:underline whitespace-nowrap">Review →</button>
     </div>`;
 }
 
@@ -11028,8 +11027,8 @@ const ABSTRACT_FORMATS = { ORAL: 'Oral', POSTER: 'Poster', AWARD: 'Award' };
 // zip follow what is shown.
 let presentationsData = null;
 let presentationsFilter = '';
-const PRESENTATION_FILTERS = [['AWAITING', 'Awaiting'], ['RECEIVED', 'Received'], ['ORAL', 'Paper'], ['POSTER', 'E-poster'], ['AWARD', 'Award paper']];
-const presentationShown = (x, f) => (!f ? true : f === 'AWAITING' ? !x.file : f === 'RECEIVED' ? !!x.file : x.allocation === f);
+const PRESENTATION_FILTERS = [['AWAITING', 'Not received'], ['RECEIVED', 'Received'], ['ORAL', 'Paper'], ['POSTER', 'E-poster'], ['AWARD', 'Award paper'], ['NOT_EMAILED', 'Not emailed']];
+const presentationShown = (x, f) => (!f ? true : f === 'AWAITING' ? !x.file : f === 'RECEIVED' ? !!x.file : f === 'NOT_EMAILED' ? !x.emailedAt : x.allocation === f);
 
 async function renderPresentations() {
   const list = document.getElementById('presentations-list');
@@ -11049,8 +11048,13 @@ function drawPresentations() {
   const d = presentationsData;
   const list = document.getElementById('presentations-list');
   if (!d || !list) return;
-  // The "Show the ones without" switch above the steps narrows this list too.
-  const all = (d.presentations || []).filter((x) => !abstractsMissingAuthorsOnly || !x.authorsGiven);
+  // The "without co-authors" switch and the search narrow this list too.
+  const all = (d.presentations || []).filter((x) => !abstractsMissingAuthorsOnly || !x.authorsGiven)
+    .filter((x) => abstractMatches({ id: x.id, title: x.title, regNo: x.regNo, names: [x.presenter, ...((x.authors || []).map((y) => (typeof y === 'string' ? y : y && y.name)))] }));
+  absWait.files = (d.presentations || []).filter((x) => !x.file).length;
+  absHits['3'] = all.length;
+  drawAbstractWaiting();
+  absFollowSearch();
   if (presentationsFilter && !all.some((x) => presentationShown(x, presentationsFilter))) presentationsFilter = '';
   const shown = all.filter((x) => presentationShown(x, presentationsFilter));
   const assign = can('abstracts.assign');
@@ -11082,30 +11086,39 @@ function drawPresentations() {
       .filter(([, , n]) => n).map(([key, label, n]) => chip(key, label, n))).join('');
   }
 
-  const btn = 'h-8 px-3 inline-flex items-center justify-center bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold rounded-lg text-xs cursor-pointer whitespace-nowrap';
-  list.innerHTML = shown.length ? shown.map((x) => {
+  // A table on a laptop -- #, abstract and presenter, format, file, email,
+  // action -- and each row a card on a phone (19 Nov 2026).
+  const btn = 'h-9 px-3 inline-flex items-center justify-center bg-white border border-slate-300 text-slate-800 hover:bg-slate-50 font-semibold rounded-lg text-[13px] cursor-pointer whitespace-nowrap';
+  // Fixed columns, so every row lines up with the header.
+  const grid = 'lg:grid lg:grid-cols-[3.5rem_minmax(0,1fr)_7.5rem_13rem_8rem_11rem] lg:items-center lg:gap-3';
+  const formatChip = (a) => `<span class="inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[12px] font-semibold ${a === 'AWARD' ? 'bg-gold-50 text-gold-700 border-gold-300' : a === 'ORAL' ? 'bg-indigo-50 text-indigo-800 border-indigo-200' : 'bg-slate-100 text-slate-700 border-slate-200'}">${esc(capitalise(PRESENTATION_NOUNS[a] || a))}</span>`;
+  const tableHead = `<div class="hidden ${grid} px-4 py-2 bg-slate-50 text-[12px] font-semibold uppercase tracking-wide text-slate-500">
+      <span>#</span><span>Abstract · presenter</span><span>Format</span><span>File</span><span>Email</span><span></span></div>`;
+  list.innerHTML = shown.length ? tableHead + shown.map((x) => {
     const f = x.file;
-    const state = f
-      ? `<p class="font-semibold text-emerald-700">Received ${esc(fmtAuditTime(f.uploadedAt))}${f.byStaff ? ` · uploaded by ${esc(f.uploadedBy || 'staff')}` : ''}</p>
-         <p class="text-slate-500 break-words">${esc(presentationFileLine(f))}${d.drive ? ` · ${f.inDrive ? '<span class="text-emerald-700 font-semibold">In Drive</span>' : 'Not yet in Drive'}` : ''}</p>
-         ${f.allocation !== x.allocation ? `<p class="font-semibold text-amber-700">Sent as ${esc(PRESENTATION_NOUNS[f.allocation] || f.allocation)}; the format has changed since</p>` : ''}`
-      : `<p class="font-semibold text-amber-700">Awaiting</p>
-         <p class="text-slate-500">${x.emailedAt ? `Emailed ${esc(fmtAuditTime(x.emailedAt))}` : 'Not emailed yet'}</p>`;
-    return `<div class="p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-      <div class="min-w-0 flex-1">
-        <p class="text-[11px] font-semibold text-slate-500 tabular-nums">#${esc(x.id)} · ${esc(capitalise(PRESENTATION_NOUNS[x.allocation]))}</p>
-        <p class="font-bold text-slate-800 break-words leading-snug">${esc(x.title)}</p>
-        ${x.authorsGiven ? '' : '<p class="mt-1"><span class="text-[10px] font-bold text-gold-700 bg-gold-50 border border-gold-300 rounded-full px-2 py-0.5 whitespace-nowrap">Co-authors not added</span></p>'}
-        <p class="text-xs text-slate-500 mt-1 break-words">${x.authors ? abstractAuthorsLineHtml(x.authors) : esc(x.presenter)}</p>
-        <p class="text-[11px] text-slate-500 tabular-nums">${esc(x.regNo || 'No registration number')}${x.registered ? '' : ' · <span class="text-amber-700 font-semibold">not registered</span>'}</p>
+    const fileCell = f
+      ? `<div class="min-w-0"><span class="inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[12px] font-semibold bg-emerald-50 text-emerald-800 border-emerald-200">Received ${esc(fmtAuditTime(f.uploadedAt).split(',')[0])}</span>
+         <p class="text-[12px] text-slate-500 break-words mt-0.5">${esc(presentationFileLine(f))}${f.byStaff ? ' · by staff' : ''}${d.drive ? ` · ${f.inDrive ? 'in Drive' : 'not yet in Drive'}` : ''}</p>
+         ${f.allocation !== x.allocation ? `<p class="text-[12px] font-semibold text-amber-700">Sent as ${esc(PRESENTATION_NOUNS[f.allocation] || f.allocation)}; the format has changed since</p>` : ''}</div>`
+      : '<div><span class="inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[12px] font-semibold bg-amber-50 text-amber-800 border-amber-200">Not received</span></div>';
+    // On a phone: the title, then format, file and email on one line, then
+    // the buttons.
+    return `<div class="${grid} px-4 py-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+      <span class="hidden lg:block text-[13px] text-slate-500 tabular-nums">#${esc(x.id)}</span>
+      <div class="min-w-0 w-full lg:w-auto">
+        <p class="lg:hidden text-[13px] text-slate-500 tabular-nums">#${esc(x.id)}</p>
+        <p class="font-semibold text-slate-900 break-words leading-snug">${esc(x.title)}</p>
+        <p class="text-[13px] text-slate-600 break-words">${x.authors ? abstractAuthorsLineHtml(x.authors) : esc(x.presenter)} · <span class="tabular-nums">${esc(x.regNo || 'no Reg No')}</span>${x.registered ? '' : ' · <span class="text-amber-700 font-semibold">not registered</span>'}</p>
       </div>
-      <div class="text-xs sm:text-right sm:max-w-[20rem] min-w-0">${state}</div>
-      <div class="flex flex-wrap gap-2 shrink-0">
-        ${f ? `<a href="/api/admin/presentations/${esc(x.id)}/file" target="_blank" rel="noopener" class="${btn}">${f.kind === 'pdf' ? 'View PDF' : 'Download'}</a>` : ''}
-        ${assign ? `<label class="${btn}"><input type="file" accept="${presentationAccept(d.rules[x.allocation])}" class="sr-only" onchange="uploadPresentationFor(${esc(x.id)}, this)">${f ? 'Replace' : 'Upload for them'}</label>` : ''}
+      <div>${formatChip(x.allocation)}</div>
+      ${fileCell}
+      <span class="text-[13px] ${x.emailedAt ? 'text-slate-600' : 'text-slate-400'}">${x.emailedAt ? `Emailed ${esc(fmtAuditTime(x.emailedAt).split(',')[0])}` : 'Not emailed'}</span>
+      <div class="w-full lg:w-auto flex flex-wrap gap-2 lg:justify-end">
+        ${f ? `<a href="/api/admin/presentations/${esc(x.id)}/file" target="_blank" rel="noopener" class="${btn}">${f.kind === 'pdf' ? 'View' : 'Download'}</a>` : ''}
+        ${assign ? `<label class="${btn}"><input type="file" accept="${presentationAccept(d.rules[x.allocation])}" class="sr-only" onchange="uploadPresentationFor(${esc(x.id)}, this)">${f ? 'Replace' : 'Upload'}</label>` : ''}
       </div>
     </div>`;
-  }).join('') : `<p class="text-sm text-slate-500 p-4">${all.length ? 'None here.' : abstractsMissingAuthorsOnly ? 'Every presentation has its full author list.' : 'No abstract has a presentation format yet: assign one in Step 2.'}</p>`;
+  }).join('') : `<p class="text-sm text-slate-500 p-4">${absSearch ? 'No presentation matches the search.' : all.length ? 'None here.' : abstractsMissingAuthorsOnly ? 'Every presentation has its full author list.' : 'No abstract has a presentation format yet: assign one under Assignment.'}</p>`;
 }
 
 // The copies on Google Drive (scripts/presentations-drive.sh on the server):
@@ -11191,6 +11204,13 @@ function drawPosterScreens() {
   const all = placed + d.unallotted.length;
   const files = lanes.reduce((n, s) => n + s.posters.filter((p) => p.file).length, 0) + d.unallotted.filter((p) => p.file).length;
   d.sessions.forEach((x) => { if (!x.screens.some((s) => s.id === posterScreenShown[x.id])) posterScreenShown[x.id] = x.screens.length ? x.screens[0].id : null; });
+  // The Review Desk's search dims the posters it does not match, leaving the
+  // running orders whole; its tab counts those it does.
+  const posterHit = (p) => abstractMatches({ id: p.id, title: p.title, regNo: p.regNo, names: [p.presenter] });
+  absWait.unplaced = d.unallotted.length;
+  absHits['4'] = lanes.flatMap((s) => s.posters).concat(d.unallotted).filter(posterHit).length;
+  drawAbstractWaiting();
+  absFollowSearch();
 
   const field = 'h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white';
   const btn = 'h-9 px-3 inline-flex items-center bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-sm rounded-lg whitespace-nowrap';
@@ -11257,7 +11277,7 @@ function drawPosterScreens() {
     : '<span class="inline-flex items-center whitespace-nowrap rounded-full bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 text-[11px] font-semibold">No file yet</span>');
   const arrow = 'w-9 h-9 inline-flex items-center justify-center rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-30';
   const row = (p, x, s) => `<li ${assign ? `draggable="true" ondragstart="posterDragId = ${esc(p.id)}" ondragover="event.preventDefault()" ondrop="event.preventDefault(); event.stopPropagation(); dropPoster(${x ? esc(x.id) : 'null'}, ${s ? esc(s.id) : 'null'}, ${esc(p.place ? p.place - 1 : 0)})"` : ''}
-      class="px-3 py-2.5 flex flex-wrap gap-x-2">
+      class="px-3 py-2.5 flex flex-wrap gap-x-2 ${absSearch && !posterHit(p) ? 'opacity-30' : ''}">
       <span class="w-14 shrink-0 text-xs font-semibold text-slate-500 pt-0.5 tabular-nums">${p.time ? esc(p.time) : p.place ? `#${esc(p.place)}` : ''}</span>
       <div class="min-w-0 flex-1">
         <p class="text-sm font-semibold text-slate-800 break-words">${esc(p.presenter || 'Presenter')}</p>
@@ -11498,24 +11518,21 @@ async function withdrawAbstractCompleteRequest(id) {
 let abstractsAuthorsWindow = null;
 let abstractsMissingAuthorsOnly = false;
 
-// Above the lists: how many abstracts have their full author list.
+// How many abstracts still list only their submitter -- a count in
+// "Waiting on you" that narrows the lists -- and until when delegates may
+// change them, in a line under it while that filter is on.
 function renderAbstractsAuthorsSummary(abstracts) {
   const el = document.getElementById('abstracts-authors-summary');
-  if (!el) return;
   const live = abstracts.filter((a) => a.authors && a.status !== 'REJECTED');
-  if (!live.length) { el.classList.add('hidden'); return; }
   const missing = live.filter((a) => !a.authors_given).length;
   if (!missing) abstractsMissingAuthorsOnly = false;
+  absWait.missingAuthors = missing;
+  if (!el) return;
   const w = abstractsAuthorsWindow;
-  const when = w && w.deadline
-    ? `Delegates can change them until ${esc(formatFullDateWithDay(w.deadline))}${w.open ? '' : ' — that date has passed; only admins can now'}.`
-    : 'No last date is set, so delegates can change them at any time (Conference setup).';
-  el.innerHTML = `<div class="flex-1 min-w-0">
-      <p class="text-sm text-slate-800"><b class="font-bold">${live.length - missing} of ${live.length}</b> abstracts have their full author list${missing ? `; <b class="font-bold">${missing}</b> still list only the submitter` : ''}.</p>
-      <p class="text-xs text-slate-600 mt-0.5">${when}</p>
-    </div>
-    ${missing ? `<button type="button" onclick="toggleAbstractsMissingAuthors()" aria-pressed="${abstractsMissingAuthorsOnly}" class="w-full sm:w-auto h-9 px-3 rounded-lg text-xs font-semibold ${abstractsMissingAuthorsOnly ? 'bg-navy hover:bg-indigo-700 text-white' : 'bg-white border border-slate-300 text-navy hover:bg-slate-50'}">${abstractsMissingAuthorsOnly ? 'Show all abstracts' : `Show the ${missing} without`}</button>` : ''}`;
-  el.classList.remove('hidden');
+  el.textContent = w && w.deadline
+    ? `${live.length - missing} of ${live.length} have their full author list. Delegates can change them until ${formatFullDateWithDay(w.deadline)}${w.open ? '' : ' — that date has passed; only admins can now'}.`
+    : `${live.length - missing} of ${live.length} have their full author list. No last date is set, so delegates can change them at any time (Conference setup).`;
+  el.classList.toggle('hidden', !(abstractsMissingAuthorsOnly && live.length));
 }
 function toggleAbstractsMissingAuthors() {
   abstractsMissingAuthorsOnly = !abstractsMissingAuthorsOnly;
@@ -11551,8 +11568,9 @@ async function renderZenodo() {
   if (!data.success) { setText('zenodo-status', 'Zenodo: could not load'); return; }
   zenodoData = data;
   const s = data.settings;
-  // Switched off in Conference setup: no Step 5 at all.
+  // Switched off in Conference setup: no Step 5 at all, nor its tab.
   block.classList.toggle('hidden', !s.enabled);
+  if (absStep != null) showAbstractStep(absStep);
   if (!s.enabled) return;
   setText('zenodo-status', s.configured ? `Sending to ${s.sandbox ? 'the Zenodo Sandbox (trial DOIs)' : 'zenodo.org'}, community ${s.community}.` : 'No token yet: add it there first.');
 
@@ -11698,56 +11716,148 @@ async function zenodoBulk(kind) {
   showToast(`${kind === 'draft' ? 'Drafts sent' : 'Published'}: ${ok}${failed.length ? `. Failed: ${failed.join(', ')}. See the reason on each.` : '.'}`, failed.length ? undefined : 'success');
 }
 
-// The steps folded away on this browser (each a <details class="abs-step">
-// in abstracts.ejs), kept so the desk opens as it was left.
-const ABSTRACT_STEPS_KEY = 'nqocn_abstract_steps_folded';
-const foldedAbstractSteps = () => { try { return JSON.parse(storageGet('local', ABSTRACT_STEPS_KEY) || '[]'); } catch (e) { return []; } };
-function rememberAbstractStep(el) {
-  const folded = new Set(foldedAbstractSteps());
-  if (el.open) folded.delete(el.dataset.step); else folded.add(el.dataset.step);
-  storageSet('local', ABSTRACT_STEPS_KEY, JSON.stringify([...folded]));
+// --- THE REVIEW DESK: steps as tabs, the search, what is waiting ---------
+// One step is shown at a time (19 Nov 2026). On opening, the one chosen
+// earlier in this tab of the browser, or else the first with work in it.
+// absWait: what each step has waiting, filled as each step loads.
+const ABS_STEP_KEY = 'nqocn_abs_step';
+let absStep = null;
+let absSearch = '';
+const absWait = { review: 0, assign: 0, files: 0, unplaced: 0, missingAuthors: 0 };
+const absHits = {};
+const absStepShown = (n) => { const b = document.querySelector(`#section-abstracts .abs-panel[data-step="${n}"]`); return !!b && !b.classList.contains('hidden'); };
+
+function showAbstractStep(n, chosen) {
+  if (!absStepShown(n)) n = ['1', '2', '3', '4', '5'].find(absStepShown) || '1';
+  absStep = String(n);
+  if (chosen) storageSet('session', ABS_STEP_KEY, absStep);
+  document.querySelectorAll('#section-abstracts .abs-panel').forEach((p) => { p.style.display = p.dataset.step === absStep ? '' : 'none'; });
+  drawAbstractTabs();
+  const tab = document.getElementById(`abs-tab-${absStep}`);
+  if (tab && chosen && tab.scrollIntoView) tab.scrollIntoView({ block: 'nearest', inline: 'center' });
 }
-// Bound here, not in the markup: a <details> open from the start fires its
-// toggle as the page is read, before this script has loaded.
-function restoreAbstractSteps() {
-  const folded = new Set(foldedAbstractSteps());
-  document.querySelectorAll('#section-abstracts .abs-step').forEach((d) => {
-    d.open = !folded.has(d.dataset.step);
-    d.ontoggle = () => rememberAbstractStep(d);
+
+// The first step with something waiting.
+function abstractStepWithWork() {
+  if (absWait.review && absStepShown('1')) return '1';
+  if (absWait.assign && absStepShown('2')) return '2';
+  return absStepShown('3') ? '3' : '1';
+}
+
+// Each tab, with its count: what is waiting there, or while searching, how
+// many match.
+function drawAbstractTabs() {
+  const waiting = { 1: absWait.review, 2: absWait.assign, 3: absWait.files, 4: absWait.unplaced };
+  const words = { 1: 'to review', 2: 'to assign', 3: 'awaiting', 4: 'to place' };
+  ['1', '2', '3', '4', '5'].forEach((n) => {
+    const tab = document.getElementById(`abs-tab-${n}`);
+    if (!tab) return;
+    tab.classList.toggle('hidden', !absStepShown(n));
+    const on = n === absStep;
+    tab.setAttribute('aria-selected', on ? 'true' : 'false');
+    tab.classList.toggle('bg-navy', on);
+    tab.classList.toggle('text-white', on);
+    tab.classList.toggle('text-slate-700', !on);
+    tab.classList.toggle('hover:bg-white', !on);
+    const num = tab.querySelector('.abs-tab-n');
+    if (num) { num.classList.toggle('text-white/70', on); num.classList.toggle('text-slate-400', !on); }
+    const count = document.getElementById(`abs-tab-count-${n}`);
+    if (!count) return;
+    const searching = absSearch && absHits[n] != null;
+    const value = searching ? absHits[n] : waiting[n];
+    count.classList.toggle('hidden', !value && !searching);
+    count.textContent = searching ? `${value} found` : `${value || ''}${words[n] && value ? ` ${words[n]}` : ''}`;
+    count.className = `abs-tab-count text-[12px] px-1.5 py-0.5 rounded-full font-bold ${!value && !searching ? 'hidden' : ''} ${on ? 'bg-white/15 text-white'
+      : searching ? (value ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-200 text-slate-500') : 'bg-amber-100 text-amber-800'}`;
   });
 }
 
-async function renderBackendAbstracts() {
-  restoreAbstractSteps();
-  renderZenodo();
-  renderPresentations();
-  renderPosterScreens();
-  const res = await fetch('/api/abstracts');
+// "Waiting on you": each count a way into its step.
+function drawAbstractWaiting() {
+  const box = document.getElementById('abs-waiting');
+  if (!box) return;
+  const link = (n, text, step, extra = '') => (n ? `<button type="button" onclick="${extra}showAbstractStep('${step}', true)" class="min-h-[32px] hover:underline text-left"><b class="text-amber-700 tabular-nums">${n}</b> ${text} →</button>` : '');
+  const items = [
+    absStepShown('1') ? link(absWait.review, 'to review', '1') : '',
+    absStepShown('2') ? link(absWait.assign, 'to assign a format', '2') : '',
+    link(absWait.files, absWait.files === 1 ? 'file not received' : 'files not received', '3', "setPresentationsFilter('AWAITING'); "),
+    link(absWait.unplaced, absWait.unplaced === 1 ? 'poster without a screen' : 'posters without a screen', '4'),
+  ].filter(Boolean);
+  const authors = absWait.missingAuthors
+    ? `<button type="button" onclick="toggleAbstractsMissingAuthors()" aria-pressed="${abstractsMissingAuthorsOnly}" class="min-h-[32px] text-slate-600 hover:underline">${abstractsMissingAuthorsOnly
+      ? '<b class="text-navy">Showing only those without co-authors</b> · show all' : `· ${absWait.missingAuthors} without co-authors`}</button>` : '';
+  box.innerHTML = (items.join('') || '<span class="text-emerald-800 font-semibold">Nothing waiting.</span>') + authors;
+}
+
+// The search across every step: a #id or number matches that abstract;
+// anything else, the title, an author or the registration number.
+function setAbstractSearch(q) {
+  absSearch = String(q || '').trim().toLowerCase();
+  renderBackendAbstracts(true);
+  drawPresentations();
+  drawPosterScreens();
+}
+function abstractMatches(fields) {
+  if (!absSearch) return true;
+  const id = /^#?(\d+)$/.exec(absSearch);
+  if (id) return String(fields.id) === id[1] || String(fields.regNo || '').toLowerCase().endsWith(id[1]);
+  return [fields.title, fields.regNo, ...(fields.names || [])].some((x) => String(x || '').toLowerCase().includes(absSearch));
+}
+const abstractNames = (a) => [a.author_name, ...((a.authors || []).map((x) => (typeof x === 'string' ? x : x && x.name)))];
+// After a search finds nothing in the step shown, the first step that has it.
+function absFollowSearch() {
+  if (!absSearch || absHits[absStep]) return drawAbstractTabs();
+  const other = ['1', '2', '3', '4'].find((n) => absStepShown(n) && absHits[n]);
+  if (other) showAbstractStep(other); else drawAbstractTabs();
+}
+
+// local: redraw from what was last fetched (a search, a filter), without
+// fetching or reloading the other steps.
+async function renderBackendAbstracts(local) {
   const approvalBox = document.getElementById('abstracts-approval-container');
   const assignBox = document.getElementById('abstracts-assignment-container');
-  if (!approvalBox || !assignBox) return;
-
-  if (!res.ok) {
-    approvalBox.innerHTML = `<p class="text-sm text-slate-500 p-4">Unable to load abstracts.</p>`;
-    assignBox.innerHTML = '';
-    return;
+  let all;
+  if (local === true && abstractsCache) {
+    all = abstractsCache;
+  } else {
+    renderZenodo();
+    renderPresentations();
+    renderPosterScreens();
+    const res = await fetch('/api/abstracts');
+    if (!approvalBox || !assignBox) return;
+    if (!res.ok) {
+      approvalBox.innerHTML = `<p class="text-sm text-slate-500 p-4">Unable to load abstracts.</p>`;
+      assignBox.innerHTML = '';
+      return;
+    }
+    const data = await res.json();
+    all = data.abstracts || [];
+    abstractsCache = all;
+    abstractsAuthorsWindow = data.authorsWindow || null;
   }
-
-  const data = await res.json();
-  const all = data.abstracts || [];
-  abstractsCache = all;
-  abstractsAuthorsWindow = data.authorsWindow || null;
+  if (!approvalBox || !assignBox) return;
   renderAbstractsAuthorsSummary(all);
   // "Show the ones without": abstracts (not rejected) still listing only
-  // their submitter.
-  const abstracts = abstractsMissingAuthorsOnly ? all.filter((a) => a.authors && !a.authors_given && a.status !== 'REJECTED') : all;
+  // their submitter. And the search.
+  const abstracts = (abstractsMissingAuthorsOnly ? all.filter((a) => a.authors && !a.authors_given && a.status !== 'REJECTED') : all)
+    .filter((a) => abstractMatches({ id: a.id, title: a.title, regNo: a.reg_no, names: abstractNames(a) }));
   const underReview = all.filter(a => (a.status || 'UNDER_REVIEW') === 'UNDER_REVIEW');
   setText('badge-pending-abstracts', underReview.length);
   updateDeskMenuBadge();
+  const assigningRole = can('abstracts.assign');
+  absWait.review = underReview.length;
+  absWait.assign = assigningRole ? all.filter((a) => a.status === 'ACCEPTED' && !a.decision_sent_at).length : 0;
+  const decided = all.filter((a) => a.decision_sent_at).length;
+  setText('abs-overall', all.length ? `${all.length} abstracts · ${decided} told their decision` : '');
+  absHits['1'] = abstracts.filter((a) => !assigningRole || a.status !== 'ACCEPTED').length;
+  absHits['2'] = abstracts.filter((a) => a.status === 'ACCEPTED' && !a.decision_sent_at).length;
+  drawAbstractWaiting();
+  if (absStep == null) showAbstractStep(storageGet('session', ABS_STEP_KEY) || abstractStepWithWork());
+  else absFollowSearch();
 
   if (!abstracts.length) {
-    approvalBox.innerHTML = `<p class="text-sm text-slate-500 p-4">${all.length ? 'Every abstract has its author list.' : 'No abstracts submitted yet.'}</p>`;
-    assignBox.innerHTML = '';
+    approvalBox.innerHTML = `<p class="text-sm text-slate-500 p-4">${absSearch ? 'No abstract matches the search here.' : all.length ? 'Every abstract has its author list.' : 'No abstracts submitted yet.'}</p>`;
+    assignBox.innerHTML = absSearch ? '<p class="text-sm text-slate-500 p-4">No abstract matches the search here.</p>' : '';
     return;
   }
 
@@ -11776,13 +11886,12 @@ async function renderBackendAbstracts() {
   const chips = [chip('', 'All', approvalOrder.length)].concat(ABSTRACT_FILTERS.filter(([key]) => counts[key]).map(([key, label]) => chip(key, label, counts[key])));
   const shown = abstractsStatusFilter ? approvalOrder.filter((a) => statusOf(a) === abstractsStatusFilter) : approvalOrder;
   approvalBox.innerHTML = !approvalOrder.length
-    ? `<p class="text-sm text-slate-500 p-4">Nothing waiting for a decision. The accepted abstracts are in Step 2 below.</p>`
+    ? `<p class="text-sm text-slate-500 p-4 bg-white rounded-xl border border-slate-200">${absSearch ? 'No abstract here matches the search.' : 'Nothing waiting for a decision. The accepted abstracts are under Assignment.'}</p>`
     : `<div class="flex flex-wrap gap-1.5" role="group" aria-label="Show abstracts by status">${chips.join('')}</div>`
-    + shown.map(a => `
-    <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
+    + `<div class="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">${shown.map((a) => `
+    <div class="abs-row px-4 py-3 cursor-pointer hover:bg-indigo-50/40" role="button" tabindex="0" onclick="openAbstractReview(${esc(a.id)})" onkeydown="if (event.key === 'Enter') openAbstractReview(${esc(a.id)})">
       ${abstractCardHeader(a)}
-    </div>
-  `).join('');
+    </div>`).join('')}</div>`;
 
   // Step 2: Assignment -- approved abstracts only, not-yet-assigned first
   // for the same reason. Once the author has been emailed the decision the
@@ -11794,19 +11903,19 @@ async function renderBackendAbstracts() {
     .sort((a, b) => (a.allocation ? 1 : 0) - (b.allocation ? 1 : 0));
   const allocBtn = (a, key, label) => `<button type="button" class="abstract-alloc-btn h-9 px-4 text-xs font-semibold ${a.allocation === key ? 'bg-indigo-600 text-white' : 'bg-white text-indigo-700 hover:bg-indigo-50'}" aria-pressed="${a.allocation === key}" data-id="${esc(a.id)}" data-alloc="${key}">${label}</button>`;
   assignBox.innerHTML = approved.length ? approved.map(a => `
-    <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
+    <div class="bg-white rounded-xl px-4 py-3 border border-slate-200">
       ${abstractCardHeader(a)}
-      <div class="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-        <span class="text-[11px] font-semibold text-slate-500">Assign format</span>
+      <div class="mt-2 pt-2 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+        <span class="text-[13px] font-semibold text-slate-600">Assign format</span>
         <div class="grid grid-cols-3 sm:inline-grid divide-x divide-indigo-300 border border-indigo-300 rounded-lg overflow-hidden" role="group" aria-label="Assign format">
           ${allocBtn(a, 'ORAL', 'Oral')}${allocBtn(a, 'POSTER', 'Poster')}${allocBtn(a, 'AWARD', 'Award')}
         </div>
-        ${a.allocation ? `<span class="text-[11px] text-amber-700 font-semibold">${esc(abstractFormatLabel(a.allocation))} chosen — the email has not gone. Choose it again to send it.</span>` : `<span class="text-[11px] text-amber-600 font-semibold">Not yet assigned — delegate has not been notified</span>`}
+        ${a.allocation ? `<span class="text-[13px] text-amber-700 font-semibold">${esc(abstractFormatLabel(a.allocation))} chosen — the email has not gone. Choose it again to send it.</span>` : `<span class="text-[13px] text-amber-700 font-semibold">Not assigned yet; the delegate has not been told</span>`}
       </div>
-      ${abstractProvisional(a) ? `<p class="text-[11px] text-sky-700 mt-2">${a.allocation ? 'The delegate was told the acceptance is provisional, and that registration is mandatory to present.' : 'The email will say the acceptance is provisional, and that registration is mandatory to present.'}</p>` : ''}
+      ${abstractProvisional(a) ? `<p class="text-[13px] text-sky-700 mt-1.5">${a.allocation ? 'The delegate was told the acceptance is provisional, and that registration is mandatory to present.' : 'The email will say the acceptance is provisional, and that registration is mandatory to present.'}</p>` : ''}
     </div>
-  `).join('') : `<p class="text-sm text-slate-500 p-4">${accepted.length
-    ? 'Every approved abstract has its format, and its author has been emailed. They are in Step 3.'
+  `).join('') : `<p class="text-sm text-slate-500 p-4 bg-white rounded-xl border border-slate-200">${absSearch ? 'No abstract here matches the search.' : accepted.length
+    ? `Nothing to assign. All ${accepted.length} approved abstracts have their format, and their authors have been emailed: they are under Presentations.`
     : 'No approved abstracts yet.'}</p>`;
 }
 
@@ -11815,7 +11924,7 @@ const ABSTRACT_FILTERS = [['UNDER_REVIEW', 'Under review'], ['REVISION_REQUESTED
 let abstractsStatusFilter = '';
 function setAbstractsStatusFilter(key) {
   abstractsStatusFilter = key;
-  renderBackendAbstracts();
+  renderBackendAbstracts(true);
 }
 
 async function updateAbstractStatus(id, status) {

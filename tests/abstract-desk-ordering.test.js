@@ -131,7 +131,10 @@ const titlesInOrder = (html) => [...html.matchAll(/<h4 class="font-bold text-sla
     const card = html();
     check('the card is stacked: status, number and format above the title', /PENDING|ACCEPTED/.test(card) && /#1 · Oral<\/span>/.test(card)
       && card.indexOf('#1 · Oral') < card.indexOf('>Already Accepted<'));
-    check('...Review at the foot on a phone, beside the card from a tablet up', /flex flex-col sm:flex-row sm:items-start gap-3/.test(card) && /class="self-end sm:self-start shrink-0 h-8 /.test(card));
+    // Compact rows (Review Desk redesign, 19 Nov 2026): the whole row opens
+    // the review, by tap, click or Enter; Review → says so.
+    check('...each a compact row that opens the review, Review → beside it', /class="abs-row [^"]*cursor-pointer[^"]*" role="button" tabindex="0" onclick="openAbstractReview\(1\)" onkeydown="if \(event\.key === 'Enter'\) openAbstractReview\(1\)"/.test(card)
+      && /onclick="event\.stopPropagation\(\); openAbstractReview\(1\)"[^>]*>Review →<\/button>/.test(card));
     const assign = doc.getElementById('abstracts-assignment-container').innerHTML;
     check('the formats are one control the width of the card on a phone', /class="grid grid-cols-3 sm:inline-grid [^"]*" role="group" aria-label="Assign format"/.test(assign)
       && (assign.match(/class="abstract-alloc-btn h-9 /g) || []).length === 3);
@@ -161,7 +164,7 @@ const titlesInOrder = (html) => [...html.matchAll(/<h4 class="font-bold text-sla
     abstracts.forEach((a) => { a.status = 'ACCEPTED'; });
     await sandbox.renderBackendAbstracts();
     check('with every abstract accepted, Step 1 says they are in Step 2', titlesInOrder(step1()).length === 0
-      && /Nothing waiting for a decision\. The accepted abstracts are in Step 2 below\./.test(step1()) && titlesInOrder(step2()).length === 5);
+      && /Nothing waiting for a decision\. The accepted abstracts are under Assignment\./.test(step1()) && titlesInOrder(step2()).length === 5);
     // Reset brings one back.
     abstracts[0].status = 'UNDER_REVIEW';
     await sandbox.renderBackendAbstracts();
@@ -180,7 +183,7 @@ const titlesInOrder = (html) => [...html.matchAll(/<h4 class="font-bold text-sla
   }
   {
     const views = fs.readFileSync(appFile('views', 'admin', 'sections', 'abstracts.ejs'), 'utf8');
-    check('Step 1 says an accepted abstract moves to Step 2', /Once accepted, it moves to Step 2 below; Reset in its review brings it back here\./.test(views));
+    check('Step 1 says an accepted abstract moves to Assignment', /Accepted ones go on to Assignment; Reset in the review brings one back here\./.test(views));
     check('approving says where it went', /status === 'ACCEPTED' && can\('abstracts\.assign'\)\) showToast\('Approved\. It has moved to Step 2 to assign its format\.'/.test(js));
   }
 
@@ -201,7 +204,7 @@ const titlesInOrder = (html) => [...html.matchAll(/<h4 class="font-bold text-sla
     check('...and none of them is back in Step 1', titlesInOrder(doc.getElementById('abstracts-approval-container').innerHTML).length === 0);
     abstracts.forEach((a) => { a.allocation = a.allocation || 'ORAL'; a.decision_sent_at = 1; });
     await sandbox.renderBackendAbstracts();
-    check('all told: Step 2 says they are in Step 3', titlesInOrder(step2()).length === 0 && /its author has been emailed\. They are in Step 3\./.test(step2()));
+    check('all told: Step 2 says they are under Presentations', titlesInOrder(step2()).length === 0 && /their authors have been emailed: they are under Presentations\./.test(step2()));
     check('choosing a format always asks first, and says it is final', /return showConfirm\(`Assign \$\{kind\} presentation and email \$\{who\} that their abstract is accepted for it\? Once the email has gone, the format cannot be changed\./.test(js)
       && !/if \(a && a\.allocation === allocation\) return true;/.test(js));
   }

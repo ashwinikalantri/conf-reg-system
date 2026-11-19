@@ -1,75 +1,82 @@
-    <!-- TAB 2: ABSTRACT REVIEW. Each step folds away under its heading
-         (owner, 19 Nov 2026); which are folded is remembered on this
-         browser (rememberAbstractStep). -->
-    <section id="section-abstracts" class="hidden space-y-6">
-      <!-- How many abstracts have their full author list, with a filter for
-           the rest. renderAbstractsAuthorsSummary(). -->
-      <div id="abstracts-authors-summary" class="hidden flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-gold-300 bg-gold-50 px-4 py-3"></div>
-      <div>
-        <details class="abs-step group" data-step="1" open>
-          <summary class="abs-step-head flex items-center gap-2 cursor-pointer select-none min-h-[40px] mb-1"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0 text-slate-500 transition-transform group-open:rotate-90" aria-hidden="true"><path d="m7.5 5 5 5-5 5"/></svg>
-            <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 1 · Approval</h3>
-          </summary>
-          <p class="text-xs text-slate-500 mb-3">Accept or reject each submission. Once accepted, it moves to Step 2 below; Reset in its review brings it back here.</p>
-          <div id="abstracts-approval-container" class="space-y-4"></div>
-        </details>
+    <!-- TAB 2: THE REVIEW DESK (redesigned 19 Nov 2026). What is waiting and
+         a search across every abstract, then the five steps as tabs with
+         their counts, one step shown at a time -- opening on the first with
+         work in it. renderBackendAbstracts() and showAbstractStep(). -->
+    <section id="section-abstracts" class="hidden space-y-3">
+      <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 class="text-xl font-bold text-navy">Review Desk</h2>
+        <p id="abs-overall" class="text-sm text-slate-500"></p>
+      </div>
+
+      <!-- What waits on a decision, each a way into its step; the co-author
+           count turns the lists to those without. And one search for every
+           step: title, author, registration number or #id. -->
+      <div class="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+        <span class="text-sm font-bold text-slate-900">Waiting on you</span>
+        <div id="abs-waiting" class="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm text-slate-700"></div>
+        <label class="relative w-full lg:w-80 lg:ml-auto">
+          <span class="sr-only">Find an abstract</span>
+          <svg viewBox="0 0 20 20" class="w-4 h-4 absolute left-3 top-3 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="m14 14 4 4"/></svg>
+          <input id="abs-search" type="search" autocomplete="off" oninput="setAbstractSearch(this.value)" placeholder="Find an abstract: title, author, Reg No, #id" class="w-full h-10 pl-9 pr-3 rounded-lg border border-slate-300 text-[15px] bg-white">
+        </label>
+        <p id="abstracts-authors-summary" class="hidden w-full text-xs text-slate-500"></p>
+      </div>
+
+      <!-- The steps, as tabs that stay in reach while scrolling. Each count
+           is what is waiting there; while searching, how many match. -->
+      <nav id="abs-tabs" class="sticky top-0 z-20 -mx-4 px-4 sm:mx-0 sm:px-0 py-2 bg-slate-100/95 backdrop-blur" aria-label="Review steps">
+        <div class="flex gap-1.5 overflow-x-auto border-b border-slate-200 pb-2" role="tablist">
+          <% [['1', 'Approval'], ['2', 'Assignment'], ['3', 'Presentations'], ['4', 'Poster screens'], ['5', 'Zenodo']].forEach(([n, name]) => { %>
+          <button type="button" id="abs-tab-<%= n %>" role="tab" aria-selected="false" onclick="showAbstractStep('<%= n %>', true)" class="abs-tab shrink-0 h-10 px-3 rounded-lg text-sm font-semibold whitespace-nowrap flex items-center gap-2 text-slate-700 hover:bg-white">
+            <span class="abs-tab-n text-slate-400"><%= n %></span><%= name %><span id="abs-tab-count-<%= n %>" class="abs-tab-count hidden text-[12px] px-1.5 py-0.5 rounded-full font-bold"></span>
+          </button>
+          <% }) %>
+        </div>
+      </nav>
+
+      <div id="abstracts-approval-block" class="abs-panel" data-step="1">
+        <h3 class="text-lg font-bold text-slate-900">Approval</h3>
+        <p class="text-sm text-slate-600 mb-3">Accept or reject each submission. Accepted ones go on to Assignment; Reset in the review brings one back here.</p>
+        <div id="abstracts-approval-container" class="space-y-3"></div>
       </div>
       <!-- Hidden entirely for a role without abstracts.assign (see
-           applyRoleVisibility). The id is on the whole block, not just the
-           list, so the heading and blurb go with it rather than leaving a
-           section that explains an action you cannot take. -->
-      <div id="abstracts-assignment-block" class="pt-4 border-t border-slate-200">
-        <details class="abs-step group" data-step="2" open>
-          <summary class="abs-step-head flex items-center gap-2 cursor-pointer select-none min-h-[40px] mb-1"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0 text-slate-500 transition-transform group-open:rotate-90" aria-hidden="true"><path d="m7.5 5 5 5-5 5"/></svg>
-            <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 2 · Assignment (approved abstracts)</h3>
-          </summary>
-          <p class="text-xs text-slate-500 mb-3">Assign oral, poster or award presentation. The delegate's decision email is sent from here; once it has gone, the format is fixed and the abstract moves to Step 3.</p>
-          <div id="abstracts-assignment-container" class="space-y-4"></div>
-        </details>
+           applyRoleVisibility), and its tab with it. -->
+      <div id="abstracts-assignment-block" class="abs-panel" data-step="2">
+        <h3 class="text-lg font-bold text-slate-900">Assignment</h3>
+        <p class="text-sm text-slate-600 mb-3">Assign oral, poster or award presentation. Assigning emails the delegate their decision; once it has gone the format is fixed and the abstract moves to Presentations.</p>
+        <div id="abstracts-assignment-container" class="space-y-3"></div>
       </div>
       <!-- Step 3, presentations (renderPresentations()): each presenter
            uploads their e-poster or paper in the portal by the last date;
            here, what has come in, the files, and the email to presenters. -->
-      <div id="abstracts-presentations-block" class="pt-4 border-t border-slate-200">
-        <details class="abs-step group" data-step="3" open>
-          <summary class="abs-step-head flex items-center gap-2 cursor-pointer select-none min-h-[40px] mb-1"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0 text-slate-500 transition-transform group-open:rotate-90" aria-hidden="true"><path d="m7.5 5 5 5-5 5"/></svg>
-            <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 3 · Presentations</h3>
-          </summary>
-          <p class="text-xs text-slate-500 mb-3">Each presenter uploads their e-poster or paper in the portal, on the Abstract card, by the last date. Files are named registration no_name_type (e.g. NQOCN20260045_Asha_Patil_Poster.pdf). The guidelines and templates: <a href="/website/presentations" target="_blank" rel="noopener" class="font-semibold text-indigo-700 underline">Presentation guidelines</a>.</p>
-          <div id="presentations-head" class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3"></div>
-          <div id="presentations-chips" class="flex flex-wrap gap-1.5 mb-3" role="group" aria-label="Show presentations"></div>
-          <div id="presentations-list" class="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100"></div>
-        </details>
+      <div id="abstracts-presentations-block" class="abs-panel" data-step="3">
+        <h3 class="text-lg font-bold text-slate-900">Presentations</h3>
+        <p class="text-sm text-slate-600 mb-3">Each presenter uploads their e-poster or paper in the portal, on the Abstract card, by the last date. Files are named registration no_name_type (e.g. NQOCN20260045_Asha_Patil_Poster.pdf). The guidelines and templates: <a href="/website/presentations" target="_blank" rel="noopener" class="font-semibold text-indigo-700 underline">Presentation guidelines</a>.</p>
+        <div id="presentations-head" class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3"></div>
+        <div id="presentations-chips" class="flex flex-wrap gap-1.5 mb-3" role="group" aria-label="Show presentations"></div>
+        <div id="presentations-list" class="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden"></div>
       </div>
       <!-- Step 4, poster screens (renderPosterScreens()): every e-poster
            whose decision has been sent gets a screen and a place in its
            running order; the time follows from the poster session. -->
-      <div id="abstracts-screens-block" class="pt-4 border-t border-slate-200">
-        <details class="abs-step group" data-step="4" open>
-          <summary class="abs-step-head flex items-center gap-2 cursor-pointer select-none min-h-[40px] mb-1"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0 text-slate-500 transition-transform group-open:rotate-90" aria-hidden="true"><path d="m7.5 5 5 5-5 5"/></svg>
-            <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 4 · Poster screens</h3>
-          </summary>
-          <p class="text-xs text-slate-500 mb-3">Every e-poster whose decision has been sent gets a place: a poster session, a screen, and a turn in that screen's running order. The same screens serve each session. Times follow from the session's start and the minutes per poster. Move a poster with its arrows and menu, or drag it on a laptop. Presenters see their screen and time in the portal once you switch it on.</p>
-          <div id="screens-settings" class="mb-3"></div>
-          <div id="screens-fit" class="mb-3"></div>
-          <div id="screens-actions" class="flex flex-wrap items-center gap-2 mb-3"></div>
-          <div id="screens-board" class="space-y-6"></div>
-          <div id="screens-unallotted" class="mt-3"></div>
-        </details>
+      <div id="abstracts-screens-block" class="abs-panel" data-step="4">
+        <h3 class="text-lg font-bold text-slate-900">Poster screens</h3>
+        <p class="text-sm text-slate-600 mb-3">Every e-poster whose decision has been sent gets a place: a poster session, a screen, and a turn in that screen's running order. The same screens serve each session. Times follow from the session's start and the minutes per poster. Move a poster with its arrows and menu, or drag it on a laptop. Presenters see their screen and time in the portal once you switch it on.</p>
+        <div id="screens-settings" class="mb-3"></div>
+        <div id="screens-fit" class="mb-3"></div>
+        <div id="screens-actions" class="flex flex-wrap items-center gap-2 mb-3"></div>
+        <div id="screens-board" class="space-y-6"></div>
+        <div id="screens-unallotted" class="mt-3"></div>
       </div>
       <!-- Step 5, Zenodo (abstracts.publish only, and only while it is
            switched on in Conference setup › Zenodo; renderZenodo()): accepted
            abstracts whose presenting author agreed, sent as drafts with the
            DOI reserved, then published -- which cannot be undone. -->
-      <div id="abstracts-zenodo-block" class="hidden pt-4 border-t border-slate-200">
-        <details class="abs-step group" data-step="5" open>
-          <summary class="abs-step-head flex items-center gap-2 cursor-pointer select-none min-h-[40px] mb-1"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0 text-slate-500 transition-transform group-open:rotate-90" aria-hidden="true"><path d="m7.5 5 5 5-5 5"/></svg>
-            <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 5 · Publish with DOIs (Zenodo)</h3>
-          </summary>
-          <p class="text-xs text-slate-500 mb-3">Only accepted abstracts whose presenting author agreed in the portal, and who has registered. Send as a draft to check it on Zenodo with its DOI reserved, then publish. A published record and its DOI are permanent.</p>
-          <p class="text-xs text-slate-500 mb-3">Settings and the on/off switch: <button type="button" onclick="openSetupPage('zenodo')" class="font-semibold text-indigo-700 underline">Conference setup › Zenodo</button>. <span id="zenodo-status"></span></p>
-          <div id="zenodo-summary" class="flex flex-wrap items-center gap-2 mb-3"></div>
-          <div id="zenodo-list" class="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100"></div>
-        </details>
+      <div id="abstracts-zenodo-block" class="hidden abs-panel" data-step="5">
+        <h3 class="text-lg font-bold text-slate-900">Publish with DOIs (Zenodo)</h3>
+        <p class="text-sm text-slate-600 mb-3">Only accepted abstracts whose presenting author agreed in the portal, and who has registered. Send as a draft to check it on Zenodo with its DOI reserved, then publish. A published record and its DOI are permanent.</p>
+        <p class="text-sm text-slate-600 mb-3">Settings and the on/off switch: <button type="button" onclick="openSetupPage('zenodo')" class="font-semibold text-indigo-700 underline">Conference setup › Zenodo</button>. <span id="zenodo-status"></span></p>
+        <div id="zenodo-summary" class="flex flex-wrap items-center gap-2 mb-3"></div>
+        <div id="zenodo-list" class="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100"></div>
       </div>
     </section>

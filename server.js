@@ -14964,6 +14964,7 @@ app.get('/api/abstracts', requirePermission('abstracts.view'), async (req, res, 
     const rows = await dbAll(`
       SELECT abstracts.*,
         ${authorRegisteredSql('abstracts.phone_number')} AS author_registered,
+        (SELECT registration_number FROM users u WHERE u.phone_number = abstracts.phone_number) AS reg_no,
         (SELECT actor_name FROM audit_log a
            WHERE a.entity_type = 'abstract' AND a.entity_id = CAST(abstracts.id AS TEXT)
            ORDER BY a.id DESC LIMIT 1) AS last_action_by,

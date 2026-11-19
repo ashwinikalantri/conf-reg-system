@@ -238,8 +238,8 @@ const istAt = (hours) => new Date(Date.now() + IST + hours * 3600e3).toISOString
     check('the abstract guidelines give the times in the guidelines', /6 minutes to present and 2 for discussion; an award paper 7 and 3; an e-poster 5 and 2/.test(abstractsPage)
       && !/5 minutes to present and 2 minutes for discussion/.test(abstractsPage));
     const adminHtml = (await call('GET', '/admin', null, admin)).raw;
-    check('the desk has Step 3, Presentations, and Zenodo is Step 5 (Step 4 poster screens, 19 Nov 2026)', /Step 3 · Presentations/.test(adminHtml) && /Step 5 · Publish with DOIs/.test(adminHtml)
-      && adminHtml.indexOf('Step 3 · Presentations') < adminHtml.indexOf('Step 5 · Publish'));
+    check('the desk has Step 3, Presentations, and Zenodo is Step 5 (Step 4 poster screens, 19 Nov 2026)', /<span class="abs-tab-n text-slate-400">3<\/span>Presentations/.test(adminHtml)
+      && /<span class="abs-tab-n text-slate-400">5<\/span>Zenodo/.test(adminHtml) && /id="abstracts-presentations-block" class="abs-panel" data-step="3"/.test(adminHtml));
     check('the composer can narrow by format', /id="rem-format"/.test(adminHtml) && /<option value="POSTER">E-poster<\/option>/.test(adminHtml));
     const portalHtml = (await call('GET', '/portal', null, null)).raw;
     check('the Abstract card has a place for the presentation', /id="abstract-presentation"/.test(portalHtml));

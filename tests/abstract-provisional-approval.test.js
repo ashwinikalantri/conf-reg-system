@@ -173,14 +173,15 @@ const TEST = '/api/admin/reminders/audiences/abstract/test';
     const constant = (n) => { const i = js.indexOf(`const ${n} = {`); return js.slice(i, js.indexOf('\n};', i) + 3); };
     const sb = { Number, String, Date };
     vm.createContext(sb);
-    vm.runInContext([constant('ABSTRACT_STATUS_STYLES'), grab('esc'), grab('fmtAuditTime'), grab('abstractProvisional'), grab('abstractCompletionBadge'), grab('abstractCardHeader')].join('\n')
+    vm.runInContext([constant('ABSTRACT_STATUS_STYLES'), js.match(/const ABSTRACT_STATUS_WORDS = [^\n]+/)[0], grab('esc'), grab('fmtAuditTime'), grab('abstractProvisional'), grab('abstractCompletionBadge'), grab('abstractCardHeader')].join('\n')
       + '\nglobalThis.header = abstractCardHeader;', sb);
     const base = { id: 1, title: 'T', author_name: 'A', format: 'Paper' };
     const prov = sb.header({ ...base, status: 'ACCEPTED', author_registered: 0 });
-    check('an approval pending registration is labelled provisional', />ACCEPTED · PROVISIONAL</.test(prov));
-    check('...and says why', /Pending registration — the author has not registered/.test(prov));
+    // One chip says it (Review Desk redesign, 19 Nov 2026).
+    check('an approval pending registration is labelled so, in one chip', />Accepted · not registered</.test(prov) && /bg-sky-100/.test(prov));
+    check('...and not said twice', !/Pending registration/.test(prov) && (prov.match(/not registered/g) || []).length === 1);
     const full = sb.header({ ...base, status: 'ACCEPTED', author_registered: 1 });
-    check('a registered author\'s is a plain approval', />ACCEPTED</.test(full) && !/PROVISIONAL|Pending registration/.test(full));
+    check('a registered author\'s is a plain approval', />Accepted</.test(full) && !/not registered|provisional/i.test(full));
     const before = sb.header({ ...base, status: 'UNDER_REVIEW', author_registered: 0 });
     check('before deciding, the reviewer is told approval would be provisional', /approval will be provisional/.test(before));
     check('...but not about a registered author', !/provisional/i.test(sb.header({ ...base, status: 'UNDER_REVIEW', author_registered: 1 })));
