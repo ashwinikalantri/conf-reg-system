@@ -11153,11 +11153,13 @@ async function uploadPresentationFor(id, input) {
 }
 
 // --- POSTER SCREENS (Review Desk, Step 4) ----------------------------------
-// Each e-poster on a screen, in running order, with its time
-// (GET /api/admin/poster-screens). Below a laptop's width one screen shows
-// at a time, picked from the chips; on a laptop, every screen side by side.
+// Each e-poster in a poster session, on a screen, in running order, with its
+// time (GET /api/admin/poster-screens). The same screens serve each session
+// (two on 22 Nov, at 12 PM and 2 PM). Below a laptop's width one screen of
+// each session shows at a time, picked from the chips; on a laptop, every
+// screen side by side.
 let posterScreensData = null;
-let posterScreenShown = null;
+const posterScreenShown = {};
 let posterDragId = null;
 
 async function renderPosterScreens() {
@@ -11173,69 +11175,77 @@ function drawPosterScreens() {
   const d = posterScreensData;
   if (!d) return;
   const assign = can('abstracts.assign');
-  const all = d.screens.reduce((n, s) => n + s.posters.length, 0) + d.unallotted.length;
-  const files = d.screens.reduce((n, s) => n + s.posters.filter((p) => p.file).length, 0) + d.unallotted.filter((p) => p.file).length;
-  if (!d.screens.some((s) => s.id === posterScreenShown)) posterScreenShown = d.screens.length ? d.screens[0].id : null;
+  const lanes = d.sessions.flatMap((x) => x.screens);
+  const placed = lanes.reduce((n, s) => n + s.posters.length, 0);
+  const all = placed + d.unallotted.length;
+  const files = lanes.reduce((n, s) => n + s.posters.filter((p) => p.file).length, 0) + d.unallotted.filter((p) => p.file).length;
+  d.sessions.forEach((x) => { if (!x.screens.some((s) => s.id === posterScreenShown[x.id])) posterScreenShown[x.id] = x.screens.length ? x.screens[0].id : null; });
 
   const field = 'h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white';
+  const btn = 'h-9 px-3 inline-flex items-center bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-sm rounded-lg whitespace-nowrap';
   const settings = document.getElementById('screens-settings');
   if (settings) {
-    const session = d.session;
-    settings.innerHTML = assign
-      ? `<div class="flex flex-wrap items-end gap-x-4 gap-y-2">
-          <label class="text-xs text-slate-500 min-w-0 max-w-full">Session (from the programme)<br>
-            <select onchange="savePosterSetting({ sessionId: this.value })" class="${field} mt-1 max-w-full">
-              ${session ? '' : '<option value="">Choose the poster session</option>'}
-              ${d.sessions.map((s) => `<option value="${esc(s.id)}" ${session && session.id === s.id ? 'selected' : ''}>${esc(s.text)}</option>`).join('')}
-            </select></label>
-          <label class="text-xs text-slate-500">Minutes per poster<br>
-            <input type="number" min="2" max="30" step="1" value="${esc(d.settings.minutes)}" onchange="savePosterSetting({ minutes: this.value })" class="${field} mt-1 w-20 tabular-nums"></label>
-        </div>`
-      : `<p class="text-sm text-slate-700">${session ? `${esc(session.title)} · ${esc(session.day)}, ${esc(session.startTime)}–${esc(session.endTime)} · ${esc(session.hall)}` : 'No poster session chosen yet.'} · ${esc(d.settings.minutes)} minutes per poster</p>`;
+    const chosen = new Set(d.sessions.map((x) => x.id));
+    const sessionChips = d.sessions.map((x) => `<span class="inline-flex items-center gap-1 h-9 pl-3 ${assign ? 'pr-1' : 'pr-3'} rounded-lg border border-slate-300 bg-white text-sm text-slate-800">
+        <b class="font-semibold">${esc(x.startTime)}–${esc(x.endTime)}</b><span class="text-slate-500">· ${esc(x.day)} · ${esc(x.hall)}</span>
+        ${assign ? `<button type="button" aria-label="Take this session off" onclick="removePosterSession(${esc(x.id)})" class="w-7 h-7 rounded-md text-slate-500 hover:bg-slate-100">×</button>` : ''}</span>`).join('');
+    const screenChips = d.screens.map((s) => `<span class="inline-flex items-center gap-1">
+        ${assign ? `<button type="button" onclick="togglePosterScreenEdit(${esc(s.id)})" class="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-800" title="Rename, moderator, remove">${esc(s.name)}${s.moderator ? ` <span class="font-normal text-slate-500">· ${esc(s.moderator)}</span>` : ''}</button>`
+          : `<span class="h-9 px-3 inline-flex items-center rounded-lg border border-slate-200 bg-white text-sm font-semibold">${esc(s.name)}${s.moderator ? ` · ${esc(s.moderator)}` : ''}</span>`}
+      </span>`).join('');
+    const edits = assign ? d.screens.map((s) => `<form id="screen-edit-${esc(s.id)}" onsubmit="event.preventDefault(); savePosterScreen(${esc(s.id)})" class="hidden w-full flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+        <input id="screen-name-${esc(s.id)}" value="${esc(s.name)}" maxlength="40" aria-label="Screen name" class="${field} w-40">
+        <input id="screen-mod-${esc(s.id)}" value="${esc(s.moderator)}" maxlength="80" placeholder="Moderator (optional)" aria-label="Moderator" class="${field} flex-1 min-w-[10rem]">
+        <button type="submit" class="h-9 px-3 bg-navy text-white font-semibold text-sm rounded-lg">Save</button>
+        <button type="button" onclick="removePosterScreen(${esc(s.id)})" class="h-9 px-3 border border-rose-300 text-rose-700 font-semibold text-sm rounded-lg">Remove screen</button>
+      </form>`).join('') : '';
+    settings.innerHTML = `<div class="space-y-2">
+        <div class="flex flex-wrap items-center gap-2"><span class="text-xs text-slate-500 w-24 shrink-0">Poster sessions</span>${sessionChips || '<span class="text-sm text-amber-800">None chosen.</span>'}
+          ${assign ? `<select aria-label="Add a poster session" onchange="addPosterSession(this.value)" class="${field} max-w-full sm:max-w-xs">
+              <option value="">+ Add a session from the programme</option>
+              ${d.programme.filter((x) => !chosen.has(x.id)).map((x) => `<option value="${esc(x.id)}">${esc(x.text)}</option>`).join('')}</select>` : ''}</div>
+        <div class="flex flex-wrap items-center gap-2"><span class="text-xs text-slate-500 w-24 shrink-0">Screens</span>${screenChips}
+          ${assign ? '<button type="button" onclick="addPosterScreen()" class="h-9 px-3 rounded-lg border border-dashed border-indigo-400 text-indigo-700 hover:bg-indigo-50 text-sm font-semibold whitespace-nowrap">+ Add screen</button>' : ''}</div>
+        ${edits}
+        <div class="flex flex-wrap items-center gap-2"><span class="text-xs text-slate-500 w-24 shrink-0">Minutes each</span>
+          ${assign ? `<input type="number" min="2" max="30" step="1" value="${esc(d.settings.minutes)}" onchange="savePosterSetting({ minutes: this.value })" aria-label="Minutes per poster" class="${field} w-20 tabular-nums">` : `<b class="text-sm">${esc(d.settings.minutes)}</b>`}
+          <span class="text-xs text-slate-500">per poster, questions included</span></div>
+      </div>`;
   }
 
   const fitBox = document.getElementById('screens-fit');
   if (fitBox) {
     const f = d.fit;
-    if (!d.session) fitBox.innerHTML = '<p class="text-sm text-amber-800">Choose the poster session to give each poster a time.</p>';
+    if (!d.sessions.length) fitBox.innerHTML = '<p class="text-sm text-amber-800">Add the poster sessions from the programme to give each poster a time.</p>';
     else if (!f) fitBox.innerHTML = '';
     else if (f.overrun) {
       fitBox.innerHTML = `<div class="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <b>${esc(f.total)} posters on ${esc(f.screens)} ${f.screens === 1 ? 'screen' : 'screens'} run to about ${esc(f.endTime)}</b>, ${esc(f.overrun)} minutes past the session's ${esc(f.sessionEndTime)} end (${esc(f.minutes)} minutes each; up to ${esc(f.perScreen)} on a screen).
-          <span class="block mt-1 text-amber-800">To finish by ${esc(f.sessionEndTime)}: ${f.screensNeeded ? `${esc(f.screensNeeded)} screens` : 'more screens'}${f.minutesThatFit >= 2 ? `, or ${esc(f.minutesThatFit)} minutes per poster` : ''}, or a longer session.</span></div>`;
+          <b>${esc(f.total)} posters over ${esc(f.sessions)} ${f.sessions === 1 ? 'session' : 'sessions'} on ${esc(f.screens)} ${f.screens === 1 ? 'screen' : 'screens'}: up to ${esc(f.perScreen)} on a screen, ${esc(f.overrun)} minutes past a session's end</b> (${esc(f.minutes)} minutes each).
+          <span class="block mt-1 text-amber-800">To finish on time: ${f.screensNeeded ? `${esc(f.screensNeeded)} screens` : 'more screens'}${f.minutesThatFit >= 2 ? `, or ${esc(f.minutesThatFit)} minutes per poster` : ''}, or longer sessions.</span></div>`;
     } else {
-      fitBox.innerHTML = `<p class="text-sm text-emerald-800 font-semibold">${esc(f.total)} posters finish by about ${esc(f.endTime)}, within the session (ends ${esc(f.sessionEndTime)}).</p>`;
+      fitBox.innerHTML = `<p class="text-sm text-emerald-800 font-semibold">${esc(f.total)} posters fit: up to ${esc(f.perScreen)} on a screen in each session, finishing on time.</p>`;
     }
   }
 
   const actions = document.getElementById('screens-actions');
   if (actions) {
-    const btn = 'h-9 px-3 inline-flex items-center bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-sm rounded-lg whitespace-nowrap';
     actions.innerHTML = `
-      ${assign && d.unallotted.length && d.screens.length ? `<button type="button" onclick="allotPosterScreens()" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg whitespace-nowrap">Allot the rest evenly (${esc(d.unallotted.length)})</button>` : ''}
-      <span class="text-sm text-slate-600"><b class="tabular-nums">${esc(all - d.unallotted.length)}</b> of ${esc(all)} allotted · <b class="tabular-nums">${esc(files)}</b> ${files === 1 ? 'file' : 'files'} in · <b class="tabular-nums">${esc(all - files)}</b> awaited</span>
-      ${assign ? `<button type="button" onclick="addPosterScreen()" class="h-9 px-3 rounded-lg border border-dashed border-indigo-400 text-indigo-700 hover:bg-indigo-50 text-sm font-semibold whitespace-nowrap">+ Add screen</button>` : ''}
-      ${d.screens.length ? `<a href="/api/admin/poster-screens/order.pdf" download class="${btn}">Running order, all screens (PDF)</a>` : ''}
+      ${assign && d.unallotted.length && d.sessions.length && d.screens.length ? `<button type="button" onclick="allotPosterScreens()" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg whitespace-nowrap">Allot the rest evenly (${esc(d.unallotted.length)})</button>` : ''}
+      <span class="text-sm text-slate-600"><b class="tabular-nums">${esc(placed)}</b> of ${esc(all)} allotted · <b class="tabular-nums">${esc(files)}</b> ${files === 1 ? 'file' : 'files'} in · <b class="tabular-nums">${esc(all - files)}</b> awaited</span>
+      ${d.screens.length && d.sessions.length ? `<a href="/api/admin/poster-screens/order.pdf" download class="${btn}">Running order, all screens (PDF)</a>` : ''}
       ${assign ? `<label class="sm:ml-auto inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer min-h-[44px]">
           <input type="checkbox" ${d.settings.published ? 'checked' : ''} onchange="savePosterSetting({ published: this.checked })" class="w-5 h-5 accent-[#1c3549]">
           Show presenters their screen and time in the portal</label>`
         : `<span class="sm:ml-auto text-sm text-slate-600">${d.settings.published ? 'Shown to presenters in the portal' : 'Not shown to presenters yet'}</span>`}`;
   }
 
-  const chips = document.getElementById('screens-chips');
-  if (chips) {
-    chips.innerHTML = d.screens.map((s) => `<button type="button" onclick="posterScreenShown = ${esc(s.id)}; drawPosterScreens()" aria-pressed="${s.id === posterScreenShown}"
-        class="shrink-0 h-9 px-3 rounded-full border text-sm font-semibold whitespace-nowrap ${s.id === posterScreenShown ? 'bg-navy border-navy text-white' : 'bg-white border-slate-300 text-slate-700'}">${esc(s.name)} · ${esc(s.posters.length)}</button>`).join('');
-  }
-
-  const boardBox = document.getElementById('screens-board');
-  const screenOptions = (current) => `<option value="" ${current == null ? 'selected' : ''}>Not allotted</option>`
-    + d.screens.map((s) => `<option value="${esc(s.id)}" ${s.id === current ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
+  const laneOptions = (sessionId, screenId) => `<option value="" ${screenId == null ? 'selected' : ''}>Not allotted</option>`
+    + d.sessions.map((x) => `<optgroup label="${esc(x.startTime)}">${x.screens.map((s) => `<option value="${esc(x.id)}:${esc(s.id)}" ${x.id === sessionId && s.id === screenId ? 'selected' : ''}>${esc(x.startTime)} · ${esc(s.name)}</option>`).join('')}</optgroup>`).join('');
   const fileChip = (p) => (p.file
     ? '<span class="inline-flex items-center whitespace-nowrap rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold">File in</span>'
     : '<span class="inline-flex items-center whitespace-nowrap rounded-full bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 text-[11px] font-semibold">No file yet</span>');
   const arrow = 'w-9 h-9 inline-flex items-center justify-center rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-30';
-  const row = (p, s) => `<li ${assign ? `draggable="true" ondragstart="posterDragId = ${esc(p.id)}" ondragover="event.preventDefault()" ondrop="event.preventDefault(); event.stopPropagation(); dropPoster(${esc(s ? s.id : 'null')}, ${esc(p.place ? p.place - 1 : 0)})"` : ''}
+  const row = (p, x, s) => `<li ${assign ? `draggable="true" ondragstart="posterDragId = ${esc(p.id)}" ondragover="event.preventDefault()" ondrop="event.preventDefault(); event.stopPropagation(); dropPoster(${x ? esc(x.id) : 'null'}, ${s ? esc(s.id) : 'null'}, ${esc(p.place ? p.place - 1 : 0)})"` : ''}
       class="px-3 py-2.5 flex flex-wrap gap-x-2">
       <span class="w-14 shrink-0 text-xs font-semibold text-slate-500 pt-0.5 tabular-nums">${p.time ? esc(p.time) : p.place ? `#${esc(p.place)}` : ''}</span>
       <div class="min-w-0 flex-1">
@@ -11243,42 +11253,50 @@ function drawPosterScreens() {
         <p class="text-xs text-slate-500 break-words line-clamp-2">${esc(p.title)}</p>
         <div class="mt-1 flex flex-wrap items-center gap-1.5"><span class="text-[11px] text-slate-500 tabular-nums">${esc(p.regNo || `#${p.id}`)}</span>${fileChip(p)}</div>
       </div>
-        ${assign ? `<div class="w-full mt-1.5 flex items-center gap-1.5">
-          ${s ? `<button type="button" aria-label="Earlier" onclick="movePoster(${esc(p.id)}, ${esc(s.id)}, ${esc(p.place - 2)})" class="${arrow}" ${p.place === 1 ? 'disabled' : ''}>↑</button>
-                 <button type="button" aria-label="Later" onclick="movePoster(${esc(p.id)}, ${esc(s.id)}, ${esc(p.place)})" class="${arrow}" ${p.place === s.posters.length ? 'disabled' : ''}>↓</button>` : ''}
-          <select aria-label="Screen" onchange="movePoster(${esc(p.id)}, this.value || null)" class="h-9 px-2 border border-slate-300 rounded-lg text-xs bg-white flex-1 min-w-0">${screenOptions(s ? s.id : null)}</select>
-        </div>` : ''}</li>`;
+      ${assign ? `<div class="w-full mt-1.5 flex items-center gap-1.5">
+        ${s ? `<button type="button" aria-label="Earlier" onclick="movePoster(${esc(p.id)}, ${esc(x.id)}, ${esc(s.id)}, ${esc(p.place - 2)})" class="${arrow}" ${p.place === 1 ? 'disabled' : ''}>↑</button>
+               <button type="button" aria-label="Later" onclick="movePoster(${esc(p.id)}, ${esc(x.id)}, ${esc(s.id)}, ${esc(p.place)})" class="${arrow}" ${p.place === s.posters.length ? 'disabled' : ''}>↓</button>` : ''}
+        <select aria-label="Session and screen" onchange="movePosterTo(${esc(p.id)}, this.value)" class="h-9 px-2 border border-slate-300 rounded-lg text-xs bg-white flex-1 min-w-0">${laneOptions(x ? x.id : null, s ? s.id : null)}</select>
+      </div>` : ''}</li>`;
+
+  const boardBox = document.getElementById('screens-board');
   if (boardBox) {
-    boardBox.innerHTML = d.screens.length ? d.screens.map((s) => `<section class="${s.id === posterScreenShown ? 'flex' : 'hidden lg:flex'} flex-col min-w-0 bg-white rounded-xl border border-slate-200"
-        ${assign ? `ondragover="event.preventDefault()" ondrop="event.preventDefault(); dropPoster(${esc(s.id)}, ${esc(s.posters.length)})"` : ''}>
-        <div class="px-3 py-2.5 border-b border-slate-100">
-          <div class="flex items-center justify-between gap-2"><h4 class="font-bold text-slate-900">${esc(s.name)}</h4>
-            <span class="text-xs text-slate-500 whitespace-nowrap">${esc(s.posters.length)} ${s.posters.length === 1 ? 'poster' : 'posters'}</span></div>
-          <p class="text-xs text-slate-500">${d.session && s.posters.length ? `${esc(d.session.startTime)} – ${esc(s.endTime)}` : ''}${s.moderator ? `${d.session && s.posters.length ? ' · ' : ''}Moderator: <span class="text-slate-700">${esc(s.moderator)}</span>` : ''}</p>
-          ${s.overrun ? `<p class="text-[11px] font-semibold text-amber-800 mt-0.5">${esc(s.overrun)} min past ${esc(d.fit ? d.fit.sessionEndTime : 'the end')}</p>` : ''}
-          ${assign ? `<button type="button" onclick="togglePosterScreenEdit(${esc(s.id)})" class="mt-1 text-xs font-semibold text-indigo-700 underline min-h-[32px]">Rename or moderator</button>
-            <form id="screen-edit-${esc(s.id)}" onsubmit="event.preventDefault(); savePosterScreen(${esc(s.id)})" class="hidden mt-1 space-y-1.5">
-              <input id="screen-name-${esc(s.id)}" value="${esc(s.name)}" maxlength="40" aria-label="Screen name" class="${field} w-full">
-              <input id="screen-mod-${esc(s.id)}" value="${esc(s.moderator)}" maxlength="80" placeholder="Moderator (optional)" aria-label="Moderator" class="${field} w-full">
-              <div class="flex gap-2"><button type="submit" class="h-9 px-3 bg-navy text-white font-semibold text-sm rounded-lg">Save</button>
-                <button type="button" onclick="removePosterScreen(${esc(s.id)})" class="h-9 px-3 border border-rose-300 text-rose-700 font-semibold text-sm rounded-lg">Remove screen</button></div>
-            </form>` : ''}
+    boardBox.className = 'space-y-6';
+    boardBox.innerHTML = d.sessions.length && d.screens.length ? d.sessions.map((x) => {
+      const n = x.screens.reduce((k, s) => k + s.posters.length, 0);
+      return `<div>
+        <h4 class="text-base font-bold text-navy">${esc(x.startTime)}–${esc(x.endTime)} <span class="font-normal text-slate-600">· ${esc(x.day)} · ${esc(x.title)} · ${esc(x.hall)} · ${esc(n)} ${n === 1 ? 'poster' : 'posters'}</span></h4>
+        <div class="flex gap-2 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 my-2 lg:hidden" role="group" aria-label="Show screen">
+          ${x.screens.map((s) => `<button type="button" onclick="posterScreenShown[${esc(x.id)}] = ${esc(s.id)}; drawPosterScreens()" aria-pressed="${s.id === posterScreenShown[x.id]}"
+            class="shrink-0 h-9 px-3 rounded-full border text-sm font-semibold whitespace-nowrap ${s.id === posterScreenShown[x.id] ? 'bg-navy border-navy text-white' : 'bg-white border-slate-300 text-slate-700'}">${esc(s.name)} · ${esc(s.posters.length)}</button>`).join('')}
         </div>
-        <ol class="divide-y divide-slate-100">${s.posters.map((p) => row(p, s)).join('') || '<li class="px-3 py-3 text-xs text-slate-500">No posters yet.</li>'}</ol>
-        <div class="mt-auto px-3 py-2 border-t border-slate-100 flex flex-wrap gap-x-3 text-xs font-semibold">
-          <a href="/api/admin/poster-screens/order.pdf?screen=${esc(s.id)}" download class="text-indigo-700 underline min-h-[32px] inline-flex items-center">Running order (PDF)</a>
-          ${s.posters.some((p) => p.file) ? `<a href="/api/admin/poster-screens/${esc(s.id)}/files.zip" download class="text-indigo-700 underline min-h-[32px] inline-flex items-center">Files (zip, ${esc(s.posters.filter((p) => p.file).length)})</a>` : ''}
-        </div>
-      </section>`).join('') : '<p class="text-sm text-slate-500">No screens yet: add one.</p>';
+        <div class="grid gap-3 grid-cols-1 lg:[grid-template-columns:repeat(auto-fill,minmax(230px,1fr))] mt-2">
+          ${x.screens.map((s) => `<section class="${s.id === posterScreenShown[x.id] ? 'flex' : 'hidden lg:flex'} flex-col min-w-0 bg-white rounded-xl border border-slate-200"
+              ${assign ? `ondragover="event.preventDefault()" ondrop="event.preventDefault(); dropPoster(${esc(x.id)}, ${esc(s.id)}, ${esc(s.posters.length)})"` : ''}>
+            <div class="px-3 py-2.5 border-b border-slate-100">
+              <div class="flex items-center justify-between gap-2"><h5 class="font-bold text-slate-900">${esc(s.name)}</h5>
+                <span class="text-xs text-slate-500 whitespace-nowrap">${esc(s.posters.length)} ${s.posters.length === 1 ? 'poster' : 'posters'}</span></div>
+              <p class="text-xs text-slate-500">${s.posters.length ? `${esc(x.startTime)} – ${esc(s.endTime)}` : ''}${s.moderator ? `${s.posters.length ? ' · ' : ''}Moderator: <span class="text-slate-700">${esc(s.moderator)}</span>` : ''}</p>
+              ${s.overrun ? `<p class="text-[11px] font-semibold text-amber-800 mt-0.5">${esc(s.overrun)} min past ${esc(x.endTime)}</p>` : ''}
+            </div>
+            <ol class="divide-y divide-slate-100">${s.posters.map((p) => row(p, x, s)).join('') || '<li class="px-3 py-3 text-xs text-slate-500">No posters yet.</li>'}</ol>
+          </section>`).join('')}
+        </div></div>`;
+    }).join('') + `<div class="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold">
+        <span class="text-slate-500 font-normal">For each screen, both sessions:</span>
+        ${d.screens.map((s) => `<span class="inline-flex gap-2"><span class="text-slate-700">${esc(s.name)}</span>
+          <a href="/api/admin/poster-screens/order.pdf?screen=${esc(s.id)}" download class="text-indigo-700 underline">Running order (PDF)</a>
+          ${d.sessions.some((x) => x.screens.find((y) => y.id === s.id).posters.some((p) => p.file)) ? `<a href="/api/admin/poster-screens/${esc(s.id)}/files.zip" download class="text-indigo-700 underline">Files (zip)</a>` : ''}</span>`).join('')}
+      </div>` : `<p class="text-sm text-slate-500">${d.screens.length ? 'Add the poster sessions first.' : 'No screens yet: add one.'}</p>`;
   }
 
   const rest = document.getElementById('screens-unallotted');
   if (rest) {
     rest.innerHTML = d.unallotted.length
-      ? `<div class="bg-white rounded-xl border border-amber-300" ${assign ? 'ondragover="event.preventDefault()" ondrop="event.preventDefault(); dropPoster(null, 0)"' : ''}>
+      ? `<div class="bg-white rounded-xl border border-amber-300" ${assign ? 'ondragover="event.preventDefault()" ondrop="event.preventDefault(); dropPoster(null, null, 0)"' : ''}>
           <p class="px-3 py-2.5 border-b border-slate-100 text-sm font-semibold text-amber-900">Not allotted (${esc(d.unallotted.length)})</p>
-          <ol class="divide-y divide-slate-100 grid sm:grid-cols-2 lg:grid-cols-3">${d.unallotted.map((p) => row(p, null)).join('')}</ol></div>`
-      : `<p class="text-xs text-slate-500">${all ? 'Every e-poster is on a screen. One accepted later, or one on a removed screen, waits here.' : 'No e-poster has had its decision sent yet.'}</p>`;
+          <ol class="divide-y divide-slate-100 grid sm:grid-cols-2 lg:grid-cols-3">${d.unallotted.map((p) => row(p, null, null)).join('')}</ol></div>`
+      : `<p class="text-xs text-slate-500">${all ? 'Every e-poster has a place. One accepted later, or one on a removed screen or session, waits here.' : 'No e-poster has had its decision sent yet.'}</p>`;
   }
 }
 
@@ -11295,6 +11313,17 @@ async function savePosterSetting(change) {
   if (data.success && 'published' in change) showToast(change.published ? 'Presenters now see their screen and time in the portal.' : 'Hidden from presenters.', 'success');
   renderPosterScreens();
 }
+function addPosterSession(id) {
+  if (!id || !posterScreensData) return;
+  savePosterSetting({ sessionIds: [...posterScreensData.sessions.map((x) => x.id), Number(id)] });
+}
+async function removePosterSession(id) {
+  const x = posterScreensData && posterScreensData.sessions.find((y) => y.id === id);
+  if (!x) return;
+  const n = x.screens.reduce((k, s) => k + s.posters.length, 0);
+  if (n && !(await showConfirm(`Take the ${x.startTime} session off? Its ${n} ${n === 1 ? 'poster goes' : 'posters go'} to Not allotted until you add it back.`, 'Take it off'))) return;
+  savePosterSetting({ sessionIds: posterScreensData.sessions.map((y) => y.id).filter((y) => y !== id) });
+}
 
 async function allotPosterScreens() {
   const data = await posterScreensCall('/api/admin/poster-screens/allot', 'POST');
@@ -11302,22 +11331,27 @@ async function allotPosterScreens() {
   renderPosterScreens();
 }
 
-async function movePoster(abstractId, screenId, index) {
-  await posterScreensCall('/api/admin/poster-screens/move', 'POST', { abstractId, screenId: screenId == null ? null : Number(screenId), index });
+async function movePoster(abstractId, sessionId, screenId, index) {
+  await posterScreensCall('/api/admin/poster-screens/move', 'POST', { abstractId, sessionId, screenId, index });
   renderPosterScreens();
+}
+// From the menu: "<session>:<screen>", or "" for Not allotted.
+function movePosterTo(abstractId, value) {
+  const [sessionId, screenId] = String(value || '').split(':').map(Number);
+  movePoster(abstractId, sessionId || null, screenId || null);
 }
 
 // A drop on a poster puts the dragged one in its place; on a screen's
 // empty part, at the end; on Not allotted, off the screens.
-function dropPoster(screenId, index) {
+function dropPoster(sessionId, screenId, index) {
   const id = posterDragId;
   posterDragId = null;
-  if (id != null) movePoster(id, screenId, index);
+  if (id != null) movePoster(id, sessionId, screenId, index);
 }
 
 async function addPosterScreen() {
   const data = await posterScreensCall('/api/admin/poster-screens', 'POST', {});
-  if (data.success) { posterScreenShown = data.id; showToast('Screen added. Allot posters to it, or move some across.', 'success'); }
+  if (data.success) showToast('Screen added, in every session. Allot posters to it, or move some across.', 'success');
   renderPosterScreens();
 }
 
@@ -11337,8 +11371,8 @@ async function savePosterScreen(id) {
 async function removePosterScreen(id) {
   const s = posterScreensData && posterScreensData.screens.find((x) => x.id === id);
   if (!s) return;
-  const n = s.posters.length;
-  if (!(await showConfirm(`Remove ${s.name}?${n ? ` Its ${n} ${n === 1 ? 'poster goes' : 'posters go'} to Not allotted, to put on another screen.` : ''}`, 'Remove screen'))) return;
+  const n = posterScreensData.sessions.reduce((k, x) => k + x.screens.find((y) => y.id === id).posters.length, 0);
+  if (!(await showConfirm(`Remove ${s.name} from every session?${n ? ` Its ${n} ${n === 1 ? 'poster goes' : 'posters go'} to Not allotted, to put on another screen.` : ''}`, 'Remove screen'))) return;
   const data = await posterScreensCall(`/api/admin/poster-screens/${encodeURIComponent(id)}`, 'DELETE');
   if (data.success) showToast(`${s.name} removed.`, 'success');
   renderPosterScreens();

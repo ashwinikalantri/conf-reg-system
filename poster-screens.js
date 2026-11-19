@@ -39,58 +39,63 @@ const cleanMinutes = (v) => {
   return Number.isInteger(n) && n >= MIN_MINUTES && n <= MAX_MINUTES ? n : null;
 };
 
-// The board: screens in order, each with its posters in running order and
-// their times, and the posters not yet on a screen.
-//   screens: [{ id, name, moderator, sort_order }]
-//   slots:   [{ abstract_id, screen_id, position }]
-//   posters: [{ id, ... }] -- the e-posters that take a screen
-//   session: { date, start, end, ... } or null; minutes: per poster
-function board({ screens, slots, posters, session, minutes }) {
+// The board: for each poster session (owner, 19 Nov 2026: two on 22 Nov,
+// at 12 PM and 2 PM), every screen with its posters in running order and
+// their times; then the posters not yet on a screen. The same screens serve
+// each session; a poster has one place, in one session on one screen.
+//   screens:  [{ id, name, moderator, sort_order }]
+//   slots:    [{ abstract_id, session_id, screen_id, position }]
+//   posters:  [{ id, ... }] -- the e-posters that take a screen
+//   sessions: [{ id, date, start, end, ... }]; minutes: per poster
+function board({ screens, slots, posters, sessions, minutes }) {
   const byId = new Map(posters.map((p) => [Number(p.id), p]));
   const ordered = [...screens].sort((a, b) => a.sort_order - b.sort_order || a.id - b.id);
-  const start = session ? toMin(session.start) : null;
-  const end = session ? toMin(session.end) : null;
   const placed = new Set();
-  const out = ordered.map((s) => {
-    const mine = slots.filter((x) => x.screen_id === s.id && byId.has(Number(x.abstract_id)))
-      .sort((a, b) => a.position - b.position || a.abstract_id - b.abstract_id);
-    const items = mine.map((x, i) => {
-      placed.add(Number(x.abstract_id));
-      const at = start == null ? null : start + i * minutes;
-      return { ...byId.get(Number(x.abstract_id)), place: i + 1, startMin: at, time: at == null ? null : to12(at) };
-    });
-    const finish = start == null ? null : start + items.length * minutes;
+  const out = sessions.map((session) => {
+    const start = toMin(session.start);
+    const end = toMin(session.end);
     return {
-      id: s.id, name: s.name, moderator: s.moderator || '', posters: items,
-      endMin: finish, endTime: finish == null ? null : to12(finish),
-      overrun: finish != null && end != null && items.length ? Math.max(0, finish - end) : 0,
+      ...session,
+      screens: ordered.map((s) => {
+        const mine = slots.filter((x) => x.screen_id === s.id && Number(x.session_id) === Number(session.id) && byId.has(Number(x.abstract_id)))
+          .sort((a, b) => a.position - b.position || a.abstract_id - b.abstract_id);
+        const items = mine.map((x, i) => {
+          placed.add(Number(x.abstract_id));
+          const at = start == null ? null : start + i * minutes;
+          return { ...byId.get(Number(x.abstract_id)), place: i + 1, startMin: at, time: at == null ? null : to12(at) };
+        });
+        const finish = start == null ? null : start + items.length * minutes;
+        return {
+          id: s.id, name: s.name, moderator: s.moderator || '', posters: items,
+          endMin: finish, endTime: finish == null ? null : to12(finish),
+          overrun: finish != null && end != null && items.length ? Math.max(0, finish - end) : 0,
+        };
+      }),
     };
   });
   const unallotted = posters.filter((p) => !placed.has(Number(p.id)));
-  return { screens: out, unallotted };
+  return { sessions: out, unallotted };
 }
 
-// Whether it all fits in the session, and what would make it.
-function fit({ total, screens, minutes, session }) {
-  const start = session ? toMin(session.start) : null;
-  const end = session ? toMin(session.end) : null;
-  if (start == null || end == null || end <= start || !total || !screens) return null;
-  const span = end - start;
-  const perScreen = Math.ceil(total / screens);
-  const finish = start + perScreen * minutes;
-  const fitsPerScreen = Math.floor(span / minutes);
+// Whether every poster fits in the sessions, shared evenly over each
+// session's screens, and what would make it fit.
+function fit({ total, screens, minutes, sessions }) {
+  const spans = (sessions || []).map((x) => ({ start: toMin(x.start), end: toMin(x.end) })).filter((x) => x.start != null && x.end > x.start);
+  if (!spans.length || !total || !screens) return null;
+  const lanes = spans.length * screens;
+  const perScreen = Math.ceil(total / lanes);
+  const overrun = Math.max(...spans.map((x) => Math.max(0, perScreen * minutes - (x.end - x.start))));
+  const perScreenFits = spans.reduce((n, x) => n + Math.floor((x.end - x.start) / minutes), 0);
   return {
-    total, screens, minutes, perScreen,
-    endTime: to12(finish), sessionEndTime: to12(end),
-    overrun: Math.max(0, finish - end),
-    screensNeeded: fitsPerScreen ? Math.ceil(total / fitsPerScreen) : null,
-    minutesThatFit: Math.floor(span / perScreen),
+    total, screens, sessions: spans.length, minutes, perScreen, overrun,
+    screensNeeded: perScreenFits ? Math.ceil(total / perScreenFits) : null,
+    minutesThatFit: Math.min(...spans.map((x) => Math.floor((x.end - x.start) / perScreen))),
   };
 }
 
-// Spread the posters not yet on a screen: each to the screen with fewest,
-// the earlier screen on a tie, at the end of its order. Nothing already
-// placed moves. counts: Map(screen id -> posters on it now).
+// Spread the posters not yet on a screen: each to the lane (a screen in a
+// session) with fewest, the earlier on a tie, at the end of its order.
+// Nothing already placed moves. counts: Map(lane -> posters on it now).
 function allotEvenly(screenIds, counts, abstractIds) {
   const n = new Map(screenIds.map((id) => [id, counts.get(id) || 0]));
   const out = [];
