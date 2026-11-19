@@ -27,12 +27,25 @@
         <div id="presentations-chips" class="flex flex-wrap gap-1.5 mb-3" role="group" aria-label="Show presentations"></div>
         <div id="presentations-list" class="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100"></div>
       </div>
-      <!-- Step 4, Zenodo (abstracts.publish only, and only while it is
+      <!-- Step 4, poster screens (renderPosterScreens()): every e-poster
+           whose decision has been sent gets a screen and a place in its
+           running order; the time follows from the poster session. -->
+      <div id="abstracts-screens-block" class="pt-4 border-t border-slate-200">
+        <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 4 · Poster screens</h3>
+        <p class="text-xs text-slate-500 mb-3">Every e-poster whose decision has been sent gets a screen and a place in its running order. Times follow from the session's start and the minutes per poster. Move a poster with its arrows and Screen menu, or drag it on a laptop. Presenters see their screen and time in the portal once you switch it on.</p>
+        <div id="screens-settings" class="mb-3"></div>
+        <div id="screens-fit" class="mb-3"></div>
+        <div id="screens-actions" class="flex flex-wrap items-center gap-2 mb-3"></div>
+        <div id="screens-chips" class="flex gap-2 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 mb-3 lg:hidden" role="group" aria-label="Show screen"></div>
+        <div id="screens-board" class="grid gap-3 grid-cols-1 lg:[grid-template-columns:repeat(auto-fill,minmax(230px,1fr))]"></div>
+        <div id="screens-unallotted" class="mt-3"></div>
+      </div>
+      <!-- Step 5, Zenodo (abstracts.publish only, and only while it is
            switched on in Conference setup › Zenodo; renderZenodo()): accepted
            abstracts whose presenting author agreed, sent as drafts with the
            DOI reserved, then published -- which cannot be undone. -->
       <div id="abstracts-zenodo-block" class="hidden pt-4 border-t border-slate-200">
-        <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 4 · Publish with DOIs (Zenodo)</h3>
+        <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Step 5 · Publish with DOIs (Zenodo)</h3>
         <p class="text-xs text-slate-500 mb-3">Only accepted abstracts whose presenting author agreed in the portal, and who has registered. Send as a draft to check it on Zenodo with its DOI reserved, then publish. A published record and its DOI are permanent.</p>
         <p class="text-xs text-slate-500 mb-3">Settings and the on/off switch: <button type="button" onclick="openSetupPage('zenodo')" class="font-semibold text-indigo-700 underline">Conference setup › Zenodo</button>. <span id="zenodo-status"></span></p>
         <div id="zenodo-summary" class="flex flex-wrap items-center gap-2 mb-3"></div>

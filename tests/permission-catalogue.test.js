@@ -259,6 +259,20 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/admin/presentations/drive': 'Asks for the presenters\' files to be copied to Google Drive now. abstracts.assign.',
     'POST /api/admin/presentations/:id': 'Uploads a file a presenter emailed, on their behalf. abstracts.assign.',
     'PUT /api/admin/presentations/due': 'Moves the last date for presenters\' files. abstracts.assign.',
+    // --- Poster screens (19 Nov 2026) --------------------------------------
+    // Step 4 of the abstracts desk: e-posters on display screens. The same
+    // split as Step 3: seeing the board, the running orders and a screen's
+    // files is abstracts.view; changing screens, places and settings is
+    // abstracts.assign. No new key.
+    'GET /api/admin/poster-screens': 'The screens, each e-poster\'s place and time, and the settings. abstracts.view.',
+    'PUT /api/admin/poster-screens/settings': 'The poster session, minutes per poster, and whether presenters see it. abstracts.assign.',
+    'POST /api/admin/poster-screens': 'Adds a screen. abstracts.assign.',
+    'POST /api/admin/poster-screens/allot': 'Spreads the posters not on a screen evenly. abstracts.assign.',
+    'POST /api/admin/poster-screens/move': 'Moves one poster to a screen and place, or off the screens. abstracts.assign.',
+    'GET /api/admin/poster-screens/order.pdf': 'The running order of one screen or all, as a PDF. abstracts.view.',
+    'GET /api/admin/poster-screens/:id/files.zip': 'One screen\'s poster files, numbered in running order. abstracts.view.',
+    'PUT /api/admin/poster-screens/:id': 'Renames a screen or names its moderator. abstracts.assign.',
+    'DELETE /api/admin/poster-screens/:id': 'Removes a screen; its posters go to Not allotted. abstracts.assign.',
     'POST /api/desk/collect-cash': 'The seventh, and the only one NOT guarded by a desk.* key: it '
       + 'carries payments.add_payment, so Finance Admin reaches it too. That widening is recorded '
       + 'per-role in WIDENED_SINCE_BASELINE below.',

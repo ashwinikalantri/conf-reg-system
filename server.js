@@ -40,6 +40,7 @@ const certificatePdfLib = require('./certificate-pdf');
 const { renderAbstractPdf } = require('./abstract-pdf');
 const abstractAuthorsLib = require('./abstract-authors');
 const presentationsLib = require('./presentations');
+const posterScreensLib = require('./poster-screens');
 const workshopFeedbackLib = require('./workshop-feedback');
 const zenodoLib = require('./zenodo');
 const QRCode = require('qrcode');
@@ -1636,6 +1637,18 @@ async function retireHolderCodesOnRegistration(phone, usedCode) {
   return codes.length;
 }
 
+// The five e-poster screens the conference has (owner, 19 Nov 2026), made
+// once; more are added, renamed or removed in Step 4.
+async function seedPosterScreensOnBoot() {
+  if (await dbGet("SELECT 1 FROM schema_meta WHERE key = 'poster_screens_seeded'")) return;
+  if (!(await dbGet('SELECT 1 FROM poster_screens'))) {
+    for (let i = 1; i <= 5; i++) {
+      await dbRun('INSERT INTO poster_screens (name, sort_order, created_at) VALUES (?, ?, ?)', [`Screen ${i}`, i, Date.now()]);
+    }
+  }
+  await dbRun("INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('poster_screens_seeded', ?)", [String(Date.now())]);
+}
+
 // Decisions emailed before held emails named their abstract (2026-11-17):
 // an accepted abstract with a format whose author was sent "Your abstract
 // has been ... accepted" counts as told, from when it went. Once.
@@ -2070,6 +2083,24 @@ db.serialize(() => {
       uploaded_by_phone TEXT,
       uploaded_by_name TEXT,
       by_staff INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  // E-poster display screens and each poster's place on one (Step 4 of the
+  // abstracts desk; see POSTER SCREENS and poster-screens.js).
+  db.run(`
+    CREATE TABLE IF NOT EXISTS poster_screens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      moderator TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS poster_slots (
+      abstract_id INTEGER PRIMARY KEY,
+      screen_id INTEGER NOT NULL,
+      position INTEGER NOT NULL
     )
   `);
   db.run(`
@@ -8996,7 +9027,7 @@ async function audienceMembers(key, filters = {}) {
     // One abstract per delegate, so one email each. Awaiting: no file yet.
     const format = presentationsLib.RULES[filters.format] ? filters.format : null;
     const rows = await dbAll(
-      `SELECT a.phone_number, a.title, a.allocation, a.author_name, u.salutation, u.full_name, u.email, u.registration_number,
+      `SELECT a.id, a.phone_number, a.title, a.allocation, a.author_name, u.salutation, u.full_name, u.email, u.registration_number,
               p.abstract_id AS received
          FROM abstracts a
          LEFT JOIN users u ON u.phone_number = a.phone_number
@@ -9005,6 +9036,9 @@ async function audienceMembers(key, filters = {}) {
           ${format ? 'AND a.allocation = ?' : ''} ${key === 'presenters_awaiting' ? 'AND p.abstract_id IS NULL' : ''}
         ORDER BY COALESCE(u.full_name, a.author_name), a.id`, format ? [format] : []);
     const due = presentationsLib.dueText(CONFERENCE.presentationsDue);
+    // Each e-poster's screen line (Step 4), for {{screen}}.
+    const board = await posterBoard();
+    const places = new Map(board.screens.flatMap((sc) => sc.posters.map((p) => [p.id, posterScreensLib.placeLine(sc, p, board.session)])));
     return rows.map((r) => {
       const rule = presentationsLib.RULES[r.allocation];
       const name = reminderName(r.salutation, r.full_name || r.author_name);
@@ -9014,6 +9048,7 @@ async function audienceMembers(key, filters = {}) {
         values: {
           name: escapeHtml(name || 'Delegate'), title: escapeHtml(r.title || 'your abstract'), format: escapeHtml(rule.noun),
           regno: escapeHtml(r.registration_number || ''), deadline: escapeHtml(due || 'the last date'), filerules: escapeHtml(rule.text),
+          screen: escapeHtml(places.get(r.id) || (r.allocation === 'POSTER' ? 'your screen, to be announced' : 'the hall in the programme')),
         },
       });
     });
@@ -9182,6 +9217,7 @@ async function reminderSample(a, filters, recipientId) {
     name: 'Dr Example Delegate', title: 'An example abstract title', amount: '₹1,500',
     format: presentationsLib.RULES.POSTER.noun, regno: `${CONFERENCE.regPrefix || 'REG'}0000`,
     deadline: presentationsLib.dueText(CONFERENCE.presentationsDue) || 'the last date', filerules: presentationsLib.RULES.POSTER.text,
+    screen: 'Screen 2 · Sunday 22 November · about 2:07 PM (2nd) · Hall B',
     workshops: 'An example workshop',
     codes: codeHolderCodesHtml([{ code: 'EXAMPLE2026', discount: 'Pay the Early Bird fee', validUntil: null, waiting: false }]),
   };
@@ -11523,7 +11559,11 @@ app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async 
       registration: reg || null,
       payment,
       selections,
-      abstracts,
+      // An e-poster's screen and time (Step 4), shown to staff whether or
+      // not presenters can see it yet.
+      abstracts: await Promise.all(abstracts.map(async (a) => ({
+        ...a, poster: a.status === 'ACCEPTED' && a.allocation === 'POSTER' ? await posterPlaceFor(a.id) : null,
+      }))),
       abstractWindow,
       abstractExtension: abstractExtension || null,
       guest: guest || null,
@@ -15171,9 +15211,11 @@ const presentationDueView = () => ({
 });
 
 // What the presenter is to upload, by when, and what they have sent.
+// An e-poster's screen and time, once Step 4 shows them to presenters.
 async function presentationFor(abstractId, allocation) {
   const file = await dbGet('SELECT * FROM presentations WHERE abstract_id = ?', [abstractId]);
-  return { ...presentationRulesView(allocation), ...presentationDueView(), file: presentationFileView(file) };
+  const place = allocation === 'POSTER' ? await posterPlaceFor(abstractId) : null;
+  return { ...presentationRulesView(allocation), ...presentationDueView(), file: presentationFileView(file), screen: place && place.published ? place : null };
 }
 
 // The upload itself, with a file over the largest limit turned into words.
@@ -15387,6 +15429,276 @@ app.put('/api/admin/presentations/due', requirePermission('abstracts.assign'), a
     CONFERENCE.presentationsDue = due;
     await recordAudit({ req, entityType: 'setting', entityId: 'conference_presentations_due', action: 'PRESENTATIONS_DUE_CHANGED', oldValue: old || null, newValue: due });
     res.json({ success: true, ...presentationDueView() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- POSTER SCREENS (Step 4 of the abstracts desk) ------------------------
+// Every e-poster whose decision has been sent gets a screen and a place in
+// that screen's running order (poster_slots); the time follows from the
+// poster session (a programme session) and the minutes per poster. Settings
+// in schema_meta: poster_session_id, poster_minutes, poster_published (the
+// presenter sees their screen in the portal only once it is on). Staff see
+// it on the Front Desk whatever the switch. Pure logic: poster-screens.js.
+
+async function posterSettings() {
+  const rows = await dbAll("SELECT key, value FROM schema_meta WHERE key IN ('poster_session_id', 'poster_minutes', 'poster_published')");
+  const v = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  return {
+    sessionId: v.poster_session_id ? Number(v.poster_session_id) : null,
+    minutes: posterScreensLib.cleanMinutes(v.poster_minutes) || posterScreensLib.DEFAULT_MINUTES,
+    published: v.poster_published === '1',
+  };
+}
+const setPosterSetting = (key, value) => dbRun('INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)', [key, String(value)]);
+
+// The session the posters are presented in: the one chosen, or else the
+// programme's first session called a poster session.
+async function posterSession(settings) {
+  const sql = `SELECT s.id, s.session_date AS date, s.start_time AS start, s.end_time AS end, s.title, s.label, h.name AS hall
+                 FROM programme_sessions s JOIN halls h ON h.id = s.hall_id`;
+  if (settings.sessionId) {
+    const chosen = await dbGet(`${sql} WHERE s.id = ?`, [settings.sessionId]);
+    if (chosen) return chosen;
+  }
+  return (await dbGet(`${sql} WHERE s.label LIKE '%poster%' OR s.title LIKE '%poster%' ORDER BY s.session_date, s.start_time, s.id LIMIT 1`)) || null;
+}
+
+// The e-posters that take a screen.
+const posterAbstracts = () => dbAll(
+  `SELECT a.id, a.title, a.phone_number, a.author_name, u.salutation, u.full_name, u.registration_number,
+          p.file_name, p.size
+     FROM abstracts a
+     LEFT JOIN users u ON u.phone_number = a.phone_number
+     LEFT JOIN presentations p ON p.abstract_id = a.id
+    WHERE a.status = 'ACCEPTED' AND a.allocation = 'POSTER' AND a.decision_sent_at IS NOT NULL
+    ORDER BY a.id`);
+
+async function posterBoard() {
+  const settings = await posterSettings();
+  const session = await posterSession(settings);
+  const [screens, slots, rows] = await Promise.all([
+    dbAll('SELECT * FROM poster_screens ORDER BY sort_order, id'), dbAll('SELECT * FROM poster_slots'), posterAbstracts()]);
+  const posters = rows.map((r) => ({
+    id: r.id, title: r.title, presenter: reminderName(r.salutation, r.full_name || r.author_name), regNo: r.registration_number || null,
+    phone: r.phone_number, file: r.file_name ? { fileName: r.file_name, size: r.size } : null,
+  }));
+  const b = posterScreensLib.board({ screens, slots, posters, session, minutes: settings.minutes });
+  return { settings, session, ...b, fit: posterScreensLib.fit({ total: posters.length, screens: screens.length, minutes: settings.minutes, session }) };
+}
+
+// One presenter's place, or null: { screen, place, time, line, ... }.
+async function posterPlaceFor(abstractId) {
+  const b = await posterBoard();
+  for (const s of b.screens) {
+    const p = s.posters.find((x) => x.id === Number(abstractId));
+    if (p) {
+      return {
+        screen: s.name, place: p.place, placeText: posterScreensLib.ordinal(p.place), time: p.time,
+        day: b.session ? posterScreensLib.dayText(b.session.date) : '', hall: b.session ? b.session.hall : '',
+        sessionTitle: b.session ? b.session.title : '', line: posterScreensLib.placeLine(s, p, b.session), published: b.settings.published, minutes: b.settings.minutes,
+      };
+    }
+  }
+  return null;
+}
+
+const posterView = (p) => ({ id: p.id, title: p.title, presenter: p.presenter, regNo: p.regNo, file: !!p.file, place: p.place, time: p.time });
+
+app.get('/api/admin/poster-screens', requirePermission('abstracts.view'), async (req, res, next) => {
+  try {
+    const b = await posterBoard();
+    const sessions = await dbAll(
+      `SELECT s.id, s.session_date AS date, s.start_time AS start, s.end_time AS end, s.title, h.name AS hall
+         FROM programme_sessions s JOIN halls h ON h.id = s.hall_id
+        WHERE s.meal = 0 ORDER BY s.session_date, s.start_time, h.sort_order, s.id`);
+    res.json({
+      success: true, settings: b.settings, fit: b.fit,
+      session: b.session ? { ...b.session, day: posterScreensLib.dayText(b.session.date),
+        startTime: posterScreensLib.to12(posterScreensLib.toMin(b.session.start)), endTime: posterScreensLib.to12(posterScreensLib.toMin(b.session.end)) } : null,
+      sessions: sessions.map((s) => ({ id: s.id, text: `${posterScreensLib.dayText(s.date)}, ${posterScreensLib.to12(posterScreensLib.toMin(s.start))} · ${s.title} · ${s.hall}` })),
+      screens: b.screens.map((s) => ({ ...s, posters: s.posters.map(posterView) })),
+      unallotted: b.unallotted.map(posterView),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The session, the minutes per poster, and whether presenters see it.
+app.put('/api/admin/poster-screens/settings', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const before = await posterSettings();
+    const changes = [];
+    if (req.body.sessionId !== undefined) {
+      const id = Number(req.body.sessionId);
+      if (!(await dbGet('SELECT 1 FROM programme_sessions WHERE id = ?', [id]))) return res.status(400).json({ success: false, error: 'Choose a session from the programme.' });
+      await setPosterSetting('poster_session_id', id);
+      changes.push(`session ${id}`);
+    }
+    if (req.body.minutes !== undefined) {
+      const m = posterScreensLib.cleanMinutes(req.body.minutes);
+      if (!m) return res.status(400).json({ success: false, error: `Minutes per poster: a whole number from ${posterScreensLib.MIN_MINUTES} to ${posterScreensLib.MAX_MINUTES}.` });
+      await setPosterSetting('poster_minutes', m);
+      changes.push(`${m} min each`);
+    }
+    if (req.body.published !== undefined) {
+      await setPosterSetting('poster_published', req.body.published ? 1 : 0);
+      changes.push(req.body.published ? 'shown to presenters' : 'hidden from presenters');
+    }
+    await recordAudit({ req, entityType: 'poster_screen', entityId: 'settings', action: 'POSTER_SCREENS_SETTINGS',
+      oldValue: `session ${before.sessionId || 'default'}, ${before.minutes} min, ${before.published ? 'shown' : 'hidden'}`, newValue: changes.join(', ') });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const cleanScreenText = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
+
+app.post('/api/admin/poster-screens', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const last = await dbGet('SELECT COUNT(*) AS n, MAX(sort_order) AS top FROM poster_screens');
+    const name = cleanScreenText(req.body.name, 40) || `Screen ${last.n + 1}`;
+    const r = await dbRun('INSERT INTO poster_screens (name, moderator, sort_order, created_at) VALUES (?, ?, ?, ?)',
+      [name, cleanScreenText(req.body.moderator, 80) || null, (last.top || 0) + 1, Date.now()]);
+    await recordAudit({ req, entityType: 'poster_screen', entityId: r.lastID, action: 'POSTER_SCREEN_ADDED', oldValue: null, newValue: name });
+    res.json({ success: true, id: r.lastID });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Spread the posters not on a screen across the screens, evenly; nothing
+// already placed moves.
+app.post('/api/admin/poster-screens/allot', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const b = await posterBoard();
+    if (!b.screens.length) return res.status(409).json({ success: false, error: 'Add a screen first.' });
+    // Positions after everything already stored on each screen, so a poster
+    // that has left (and may come back) keeps no one's place.
+    const tops = new Map((await dbAll('SELECT screen_id, MAX(position) AS top FROM poster_slots GROUP BY screen_id')).map((r) => [r.screen_id, r.top + 1]));
+    const counts = new Map(b.screens.map((s) => [s.id, s.posters.length]));
+    const plan = posterScreensLib.allotEvenly(b.screens.map((s) => s.id), counts, b.unallotted.map((p) => p.id));
+    const names = new Map(b.screens.map((s) => [s.id, s.name]));
+    for (const x of plan) {
+      const position = tops.get(x.screenId) || 0;
+      tops.set(x.screenId, position + 1);
+      await dbRun('INSERT OR REPLACE INTO poster_slots (abstract_id, screen_id, position) VALUES (?, ?, ?)', [x.abstractId, x.screenId, position]);
+      await recordAudit({ req, entityType: 'abstract', entityId: x.abstractId, action: 'POSTER_SCREEN_SET', oldValue: null, newValue: names.get(x.screenId) });
+    }
+    res.json({ success: true, allotted: plan.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Put one poster on a screen at a place in its order (index from 0; past
+// the end means last), or take it off (screenId null).
+app.post('/api/admin/poster-screens/move', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const abstractId = Number(req.body.abstractId);
+    const b = await posterBoard();
+    const all = [...b.unallotted, ...b.screens.flatMap((s) => s.posters)];
+    if (!all.some((p) => p.id === abstractId)) return res.status(404).json({ success: false, error: 'That abstract is not an e-poster with its decision sent.' });
+    const from = b.screens.find((s) => s.posters.some((p) => p.id === abstractId));
+    if (req.body.screenId == null || req.body.screenId === '') {
+      await dbRun('DELETE FROM poster_slots WHERE abstract_id = ?', [abstractId]);
+    } else {
+      const target = b.screens.find((s) => s.id === Number(req.body.screenId));
+      if (!target) return res.status(404).json({ success: false, error: 'No such screen.' });
+      const order = target.posters.map((p) => p.id).filter((id) => id !== abstractId);
+      const index = Math.max(0, Math.min(order.length, Number.isInteger(Number(req.body.index)) ? Number(req.body.index) : order.length));
+      order.splice(index, 0, abstractId);
+      await dbRun('DELETE FROM poster_slots WHERE abstract_id = ?', [abstractId]);
+      for (let i = 0; i < order.length; i++) {
+        await dbRun('INSERT OR REPLACE INTO poster_slots (abstract_id, screen_id, position) VALUES (?, ?, ?)', [order[i], target.id, i]);
+      }
+    }
+    const to = req.body.screenId == null || req.body.screenId === '' ? null : b.screens.find((s) => s.id === Number(req.body.screenId));
+    await recordAudit({ req, entityType: 'abstract', entityId: abstractId, action: 'POSTER_SCREEN_SET', oldValue: from ? from.name : null, newValue: to ? to.name : null });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The running order: one screen's, or every screen's, as a PDF for the
+// moderator, with Present and Score to fill in by hand.
+app.get('/api/admin/poster-screens/order.pdf', requirePermission('abstracts.view'), async (req, res, next) => {
+  try {
+    const b = await posterBoard();
+    const which = req.query.screen ? b.screens.filter((s) => s.id === Number(req.query.screen)) : b.screens;
+    if (!which.length) return res.status(404).json({ success: false, error: 'No such screen.' });
+    const where = b.session ? [posterScreensLib.dayText(b.session.date), b.session.hall, `${b.settings.minutes} minutes each`].join(' · ') : `${b.settings.minutes} minutes each`;
+    const rep = {
+      title: which.length === 1 ? `E-poster running order · ${which[0].name}` : 'E-poster running order',
+      sections: which.map((s) => ({
+        name: [s.name, s.moderator ? `Moderator: ${s.moderator}` : '', where].filter(Boolean).join(' · '),
+        columns: ['#', 'Time', 'Presenter', 'Title', 'Reg No', 'Present', 'Score'],
+        rows: s.posters.map((p) => [String(p.place), p.time || '', p.presenter, p.title, p.regNo || '', '', '']),
+      })),
+    };
+    const pdf = await renderReportPdf(rep, { heading: reportHeading(rep), subline: reportSubline(rep), footer: reportHeading(rep) });
+    const slug = which.length === 1 ? which[0].name.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') : 'All-screens';
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `attachment; filename="${reportFilePrefix()}-eposters-${slug}.pdf"`);
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// One screen's poster files, numbered in running order, to load onto it.
+app.get('/api/admin/poster-screens/:id/files.zip', requirePermission('abstracts.view'), async (req, res, next) => {
+  try {
+    const b = await posterBoard();
+    const s = b.screens.find((x) => x.id === Number(req.params.id));
+    if (!s) return res.status(404).json({ success: false, error: 'No such screen.' });
+    const files = s.posters.filter((p) => p.file);
+    if (!files.length) return res.status(404).json({ success: false, error: 'No file has come in for this screen yet.' });
+    const slug = s.name.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || `Screen-${s.id}`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="Eposters_${slug}_${istDateString()}.zip"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    await presentationsLib.writeZip(res, files.map((p) => ({
+      name: `${String(p.place).padStart(2, '0')}_${p.file.fileName}`,
+      read: () => fs.promises.readFile(path.join(PRESENTATION_DIR, path.basename(p.file.fileName))),
+    })));
+    res.end();
+  } catch (err) {
+    if (res.headersSent) return res.destroy(err);
+    next(err);
+  }
+});
+
+// Rename a screen, or name its moderator.
+app.put('/api/admin/poster-screens/:id', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const s = await dbGet('SELECT * FROM poster_screens WHERE id = ?', [req.params.id]);
+    if (!s) return res.status(404).json({ success: false, error: 'No such screen.' });
+    const name = req.body.name !== undefined ? cleanScreenText(req.body.name, 40) : s.name;
+    if (!name) return res.status(400).json({ success: false, error: 'Give the screen a name.' });
+    const moderator = req.body.moderator !== undefined ? (cleanScreenText(req.body.moderator, 80) || null) : s.moderator;
+    await dbRun('UPDATE poster_screens SET name = ?, moderator = ? WHERE id = ?', [name, moderator, s.id]);
+    await recordAudit({ req, entityType: 'poster_screen', entityId: s.id, action: 'POSTER_SCREEN_UPDATED',
+      oldValue: `${s.name}${s.moderator ? ` · ${s.moderator}` : ''}`, newValue: `${name}${moderator ? ` · ${moderator}` : ''}` });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Remove a screen: its posters wait, not allotted, for another.
+app.delete('/api/admin/poster-screens/:id', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const s = await dbGet('SELECT * FROM poster_screens WHERE id = ?', [req.params.id]);
+    if (!s) return res.status(404).json({ success: false, error: 'No such screen.' });
+    const moved = await dbRun('DELETE FROM poster_slots WHERE screen_id = ?', [s.id]);
+    await dbRun('DELETE FROM poster_screens WHERE id = ?', [s.id]);
+    await recordAudit({ req, entityType: 'poster_screen', entityId: s.id, action: 'POSTER_SCREEN_REMOVED', oldValue: s.name, newValue: `${moved.changes} poster(s) now not allotted` });
+    res.json({ success: true, unallotted: moved.changes });
   } catch (err) {
     next(err);
   }
@@ -16167,6 +16479,7 @@ registrationsMigrationReady.then(retitleNamesOnBoot)
   .then(() => backfillPaymentTransactionsOnBoot().catch((err) => console.error('Payment-transaction backfill failed (continuing to start):', err.message)))
   .then(() => retireCodesOfRegisteredHoldersOnBoot().catch((err) => console.error('Code retirement sweep failed (continuing to start):', err.message)))
   .then(() => backfillDecisionSentOnBoot().catch((err) => console.error('Decision-sent backfill failed (continuing to start):', err.message)))
+  .then(() => seedPosterScreensOnBoot().catch((err) => console.error('Poster screens seeding failed (continuing to start):', err.message)))
   .then(() => guestLib.migrateGuestsTable(dbRun, dbAll)
     .then((r) => {
       if (r === 'rebuilt') console.log('Guests table rebuilt: faculty no longer need an account.');

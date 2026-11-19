@@ -40,10 +40,10 @@ const AUDIENCES = [
     action: 'ABSTRACT_AUTHORS_REMINDER_SENT', placeholders: ['name', 'title'] },
   { key: 'presenters', label: 'Presenters', group: 'Abstracts',
     description: 'Every accepted abstract with a presentation format: paper, e-poster or award paper. Narrow by format. Each email can carry their own format, registration number and file rules.',
-    action: 'PRESENTER_EMAIL_SENT', placeholders: ['name', 'title', 'format', 'regno', 'deadline', 'filerules'], filters: ['format'] },
+    action: 'PRESENTER_EMAIL_SENT', placeholders: ['name', 'title', 'format', 'regno', 'deadline', 'filerules', 'screen'], filters: ['format'] },
   { key: 'presenters_awaiting', label: 'Presenters, file not received', group: 'Abstracts',
     description: 'Presenters who have not yet uploaded their e-poster or presentation in the portal -- for a reminder before the last date.',
-    action: 'PRESENTER_REMINDER_SENT', placeholders: ['name', 'title', 'format', 'regno', 'deadline', 'filerules'], filters: ['format'] },
+    action: 'PRESENTER_REMINDER_SENT', placeholders: ['name', 'title', 'format', 'regno', 'deadline', 'filerules', 'screen'], filters: ['format'] },
   { key: 'codes', label: 'Unused personal codes', group: 'Not registered yet',
     description: 'Everyone holding a personal code they can still use -- including codes waiting for someone to sign up with the address.',
     action: 'CODE_HOLDER_REMINDER_SENT', placeholders: ['name', 'codes'], required: ['codes'] },
@@ -76,6 +76,7 @@ const PLACEHOLDERS = {
   regno: 'Their registration number',
   deadline: 'When their file is due, e.g. 10:00 AM, Friday 20 November 2026',
   filerules: 'The file their format takes, e.g. PDF, one slide, under 10 MB',
+  screen: 'An e-poster\'s screen, day, time and hall, e.g. Screen 2 · Sunday 22 November · about 2:07 PM (2nd) · Hall B',
   workshops: 'The workshop(s) they have still to give feedback on',
 };
 
