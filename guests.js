@@ -124,7 +124,11 @@ function isLocalFaculty({ institution, designation, email } = {}) {
 // "Not required" would start asking for a vehicle.
 const PROTECTED_VALUES = { overall_status: [CANCELLED], transfer_status: [NOT_REQUIRED] };
 
-const DEFAULT_SETTINGS = { alertDays: 2, slotBounds: [6, 12, 18], clashMinutes: 60 };
+// Shared trips (owner, 20 Nov 2026): one vehicle with one driver, picking
+// people up at one place on one day within pickupShareMinutes of the
+// trip's first, is one trip; drops likewise within dropShareMinutes. The
+// coordinators set both windows (Settings); 0: never shared.
+const DEFAULT_SETTINGS = { alertDays: 2, slotBounds: [6, 12, 18], clashMinutes: 60, pickupShareMinutes: 45, dropShareMinutes: 60 };
 const SLOT_NAMES = ['Night', 'Morning', 'Afternoon', 'Evening'];
 
 // Longest a field may be. A typed-in designation is often the whole
@@ -173,6 +177,8 @@ function to12h(hhmm) {
 }
 const dateTime12 = (date, time) => (date ? (time ? `${date} ${to12h(time)}` : date) : '');
 // Minutes on a common scale, for comparing two trips; null without a time.
+// Minutes from minutesAt back to "HH:MM".
+const minutesClock = (m) => new Date(m * 60000).toISOString().slice(11, 16);
 const minutesAt = (date, time) => {
   if (!date || !time) return null;
   const [h, mi] = time.split(':').map(Number);
@@ -355,7 +361,15 @@ function validateSettings(body) {
     || !(slotBounds[0] < slotBounds[1] && slotBounds[1] < slotBounds[2])) {
     errors.push('Time slots need three hours in order, each from 1 to 23 (e.g. 6, 12, 18).');
   }
-  return { values: { alertDays, clashMinutes, slotBounds }, errors };
+  const share = (k, label) => {
+    if (body[k] === undefined) return DEFAULT_SETTINGS[k];
+    const n = Number(body[k]);
+    if (!Number.isInteger(n) || n < 0 || n > 240) errors.push(`The ${label} sharing window must be a whole number of minutes from 0 to 240.`);
+    return n;
+  };
+  const pickupShareMinutes = share('pickupShareMinutes', 'pickup');
+  const dropShareMinutes = share('dropShareMinutes', 'drop');
+  return { values: { alertDays, clashMinutes, slotBounds, pickupShareMinutes, dropShareMinutes }, errors };
 }
 
 // Which named slot a 24-hour time falls in, given the three boundaries.
@@ -419,35 +433,91 @@ function buildBoard({ guests = [], vehicles = [], drivers = [], rooms = [], list
         date: g[dateF], time: g[timeF], point: g[pointF], at: minutesAt(g[dateF], g[timeF]) });
     }
   }
+  // Shared trips: one vehicle with one driver meeting, or seeing off,
+  // several people at one place on one day, their times within the sharing
+  // window of the trip's first, is one trip -- one job, not a clash. Car and
+  // driver must both be the same (owner); a trip without a vehicle or a time
+  // is a trip of its own.
+  const shareWindow = { Pickup: settings.pickupShareMinutes ?? DEFAULT_SETTINGS.pickupShareMinutes, Drop: settings.dropShareMinutes ?? DEFAULT_SETTINGS.dropShareMinutes };
+  const jobs = [];
+  const grouped = new Map();
+  for (const t of trips) {
+    if (!t.vehicle || t.at == null) { jobs.push([t]); continue; }
+    const k = [t.kind, norm(t.vehicle), norm(t.driver), t.date, norm(t.point)].join('|');
+    if (!grouped.has(k)) grouped.set(k, []);
+    grouped.get(k).push(t);
+  }
+  for (const list of grouped.values()) {
+    let job = null;
+    for (const t of list.sort((a, b) => a.at - b.at)) {
+      if (job && t.at - job[0].at <= shareWindow[t.kind]) job.push(t);
+      else { job = [t]; jobs.push(job); }
+    }
+  }
+  const jobInfo = jobs.map((list, i) => {
+    const timed = list.filter((t) => t.at != null);
+    const v = list[0].vehicle ? vehicleByKey.get(norm(list[0].vehicle)) : null;
+    const drivers = [...new Set(list.map((t) => t.driver).filter(Boolean))];
+    return {
+      id: `trip-${i + 1}`, kind: list[0].kind, vehicle: list[0].vehicle, drivers, point: list[0].point, date: list[0].date, trips: list,
+      from: timed.length ? Math.min(...timed.map((t) => t.at)) : null, to: timed.length ? Math.max(...timed.map((t) => t.at)) : null,
+      seats: v && v.seats ? Number(v.seats) : null,
+    };
+  });
+  for (const j of jobInfo) {
+    j.shared = j.trips.length > 1;
+    j.overCapacity = !!(j.seats && j.trips.length > j.seats);
+    for (const t of j.trips) t.job = j;
+  }
+  // A clash: one vehicle, or one driver, wanted for two trips within the
+  // clash window of each other -- the same trip shared is not one.
   const clashes = [];
   const closeTogether = (field) => {
     const by = new Map();
-    for (const t of trips) {
-      if (!t[field]) continue;
-      const k = norm(t[field]);
-      if (!by.has(k)) by.set(k, []);
-      by.get(k).push(t);
+    for (const j of jobInfo) {
+      if (j.from == null) continue;
+      const names = field === 'vehicle' ? (j.vehicle ? [j.vehicle] : []) : j.drivers;
+      for (const n of names) {
+        const k = norm(n);
+        if (!by.has(k)) by.set(k, { name: n, jobs: [] });
+        by.get(k).jobs.push(j);
+      }
     }
-    for (const list of by.values()) {
-      const timed = list.filter((t) => t.at != null).sort((a, b) => a.at - b.at);
+    for (const { name, jobs: list } of by.values()) {
+      const timed = list.sort((a, b) => a.from - b.from);
       for (let i = 0; i < timed.length; i++) {
-        for (let j = i + 1; j < timed.length && timed[j].at - timed[i].at <= settings.clashMinutes; j++) {
-          clashes.push({ [field]: timed[i][field], vehicle: field === 'vehicle' ? timed[i].vehicle : null, driver: field === 'driver' ? timed[i].driver : null,
-            minutesApart: timed[j].at - timed[i].at, a: timed[i], b: timed[j] });
+        for (let k = i + 1; k < timed.length && timed[k].from - timed[i].to <= settings.clashMinutes; k++) {
+          // One driver in one car: said once, for the car.
+          if (field === 'driver' && timed[i].vehicle && norm(timed[i].vehicle) === norm(timed[k].vehicle)) continue;
+          clashes.push({ vehicle: field === 'vehicle' ? name : null, driver: field === 'driver' ? name : null,
+            minutesApart: timed[k].from - timed[i].to, a: timed[i], b: timed[k] });
         }
       }
     }
   };
   closeTogether('vehicle');
   closeTogether('driver');
+  const whoOf = (j) => j.trips.map((t) => t.name).join(', ');
   const clashGuests = new Map();
   for (const c of clashes) {
     for (const [self, other] of [[c.a, c.b], [c.b, c.a]]) {
-      if (!clashGuests.has(self.guestId)) clashGuests.set(self.guestId, []);
       const what = c.vehicle ? `in ${c.vehicle}` : `with driver ${c.driver}`;
-      clashGuests.get(self.guestId).push(`${self.kind} ${what} is ${c.minutesApart} min from ${other.name}'s ${other.kind.toLowerCase()} (${to12h(other.time)})`);
+      const span = other.from === other.to ? to12h(minutesClock(other.from)) : `${to12h(minutesClock(other.from))}–${to12h(minutesClock(other.to))}`;
+      const gap = c.minutesApart <= 0 ? 'overlaps' : `is ${c.minutesApart} min from`;
+      for (const t of self.trips) {
+        if (!clashGuests.has(t.guestId)) clashGuests.set(t.guestId, []);
+        clashGuests.get(t.guestId).push(`${t.kind} ${what} ${gap} ${whoOf(other)}'s ${other.kind.toLowerCase()} (${span})`);
+      }
     }
   }
+  // Each person's shared trip, by leg: who else is in it, and what is wrong.
+  const tripOf = new Map();
+  for (const j of jobInfo) for (const t of j.trips) tripOf.set(`${t.guestId}|${t.kind}`, j);
+  const tripView = (j, guestId) => (!j || !j.shared ? null : {
+    id: j.id, size: j.trips.length, with: j.trips.filter((t) => t.guestId !== guestId).map((t) => t.name),
+    from: j.from == null ? null : to12h(minutesClock(j.from)), to: j.to == null ? null : to12h(minutesClock(j.to)),
+    seats: j.seats, overCapacity: j.overCapacity, drivers: j.drivers,
+  });
 
   const rows = ordered.map((g, i) => {
     const cancelled = isCancelled(g);
@@ -470,6 +540,8 @@ function buildBoard({ guests = [], vehicles = [], drivers = [], rooms = [], list
         // Purple, a warning only: sharing can be intended.
         sharedRoom: roommates,
         vehicleClash: clashGuests.get(g.id) || [],
+        sharedPickup: tripView(tripOf.get(`${g.id}|Pickup`), g.id),
+        sharedDrop: tripView(tripOf.get(`${g.id}|Drop`), g.id),
         notRegistered: !Number(g.registered),
         // Added by name, not yet linked to an account.
         notSignedUp: !g.linked,
@@ -568,12 +640,12 @@ function buildBoard({ guests = [], vehicles = [], drivers = [], rooms = [], list
   const pickups = schedule('arrival_date', 'arrival_time').map((g) => ({
     id: g.id, name: g.name, phone: g.phone, at: g.arrival_at, mode: g.arrival_mode, number: g.arrival_number,
     point: g.arrival_point, vehicle: g.pickup_vehicle, driver: g.pickup_driver || null, driverPhone: driverPhone(g.pickup_driver, g.pickup_vehicle), status: g.pickup_status,
-    clash: g.flags.vehicleClash.filter((c) => c.startsWith('Pickup')), alert: g.flags.pickupAlert,
+    clash: g.flags.vehicleClash.filter((c) => c.startsWith('Pickup')), alert: g.flags.pickupAlert, trip: g.flags.sharedPickup,
   }));
   const drops = schedule('departure_date', 'departure_time').map((g) => ({
     id: g.id, name: g.name, phone: g.phone, at: g.departure_at, mode: g.departure_mode, number: g.departure_number,
     point: g.departure_point, vehicle: g.drop_vehicle, driver: g.drop_driver || null, driverPhone: driverPhone(g.drop_driver, g.drop_vehicle), status: g.drop_status,
-    clash: g.flags.vehicleClash.filter((c) => c.startsWith('Drop')),
+    clash: g.flags.vehicleClash.filter((c) => c.startsWith('Drop')), trip: g.flags.sharedDrop,
   }));
 
   const soon = live.filter((g) => !blank(g.arrival_date) && g.arrival_date >= today && g.arrival_date <= windowEnd);
@@ -594,6 +666,8 @@ function buildBoard({ guests = [], vehicles = [], drivers = [], rooms = [], list
     noProgramme: rows.filter((g) => g.flags.noProgramme).length,
     sharedRooms: [...byRoom.values()].filter((gs) => gs.length > 1).length,
     vehicleClashes: clashes.length,
+    sharedTrips: jobInfo.filter((j) => j.shared).length,
+    overCapacity: jobInfo.filter((j) => j.overCapacity).length,
     arrivals: movement('arrival_date', 'arrival_time', 'arrival_point', 'pickup_status'),
     departures: movement('departure_date', 'departure_time', 'departure_point', 'drop_status'),
     perAccommodation,

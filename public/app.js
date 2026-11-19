@@ -14227,6 +14227,12 @@ function guestFlagChips(g) {
   if (f.pickupAlert) out.push(guestPill(GUEST_FLAG_STYLES.pickupAlert, 'Arriving soon · no pickup vehicle'));
   if (f.noAccommodation) out.push(guestPill(GUEST_FLAG_STYLES.noAccommodation, 'No accommodation'));
   if (f.sharedRoom && f.sharedRoom.length) out.push(guestPill(GUEST_FLAG_STYLES.sharedRoom, `Shares room · ${f.sharedRoom.length + 1}`, `With ${f.sharedRoom.join(', ')}`));
+  // Shared trips (20 Nov 2026): who rides with them; over capacity in red.
+  for (const [t, what] of [[f.sharedPickup, 'pickup'], [f.sharedDrop, 'drop']]) {
+    if (!t) continue;
+    out.push(guestPill(t.overCapacity ? 'bg-rose-100 text-rose-800 border-rose-300' : 'bg-indigo-50 text-indigo-800 border-indigo-200',
+      `Shared ${what} · ${t.size}${t.overCapacity ? ' · over capacity' : ''}`, `With ${t.with.join(', ')}`));
+  }
   if (f.vehicleClash && f.vehicleClash.length) out.push(guestPill(GUEST_FLAG_STYLES.vehicleClash, 'Vehicle clash', f.vehicleClash.join('\n')));
   if (f.ownStay) out.push(guestPill(GUEST_FLAG_STYLES.own, 'Own stay'));
   if (g.complimentary) out.push(guestPill('bg-gold-50 text-gold-700 border-gold-300', 'Complimentary'));
@@ -15050,29 +15056,66 @@ function renderGuestDashboard() {
 }
 
 // --- pickup and drop schedules ---
+// In time order; a shared trip (one car and driver, one place, within the
+// sharing window -- see buildBoard) is one block: its time span, how many,
+// the car, the driver, and each person in it (owner, 20 Nov 2026).
 function renderGuestSchedule(kind) {
   const box = document.getElementById(`guests-view-${kind}`);
   const rows = guestData[kind];
   const isPickup = kind === 'pickups';
+  const leg = isPickup ? 'pickup' : 'drop';
   const clashes = rows.filter((r) => r.clash.length).length;
   // "Not required": no vehicle is wanted, so none is missing.
   const noVehicle = (r, word) => (transferNotRequired(r.status) ? '<span class="text-slate-400">—</span>'
     : `<span class="${r.alert ? 'text-orange-700 font-semibold' : 'text-slate-400'}">${word}</span>`);
   // The car, then who drives it and their phone.
   const driverLine = (r) => [r.vehicle ? esc(r.vehicle) : noVehicle(r, 'No vehicle'), r.driver ? `Driver: ${esc(r.driver)}` : '', r.driverPhone ? telLink(r.driverPhone) : ''].filter(Boolean).join(' · ');
-  box.innerHTML = `${clashes ? `<p class="mb-3 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">${clashes} ${isPickup ? 'pickup' : 'drop'}(s) use a vehicle or driver within ${esc(guestData.settings.clashMinutes)} minutes of another trip. Check each is intended — guests on the same flight can share.</p>` : ''}
-    <div class="lg:hidden space-y-2">${rows.length ? rows.map((r) => `
-      <article class="bg-white rounded-2xl border border-slate-200 ${r.alert ? 'border-l-4 border-l-orange-400' : ''} shadow-sm p-3.5">
+  const when = (r) => esc(r.at ? travelWhen(r.at.slice(0, 10), r.at.slice(11)) : 'Not set');
+  // Each shared trip once, where its first person comes; the others with it.
+  const items = [];
+  const seen = new Set();
+  for (const r of rows) {
+    if (r.trip) {
+      if (seen.has(r.trip.id)) continue;
+      seen.add(r.trip.id);
+      items.push({ trip: r.trip, rows: rows.filter((x) => x.trip && x.trip.id === r.trip.id) });
+    } else items.push({ rows: [r] });
+  }
+  const shared = items.filter((it) => it.trip).length;
+  const tripHead = (t, r) => `<span class="font-bold text-indigo-900">Shared ${leg} · ${esc(t.size)} people</span>
+    <span class="text-slate-700"> · ${esc(t.from === t.to ? t.from : `${t.from}–${t.to}`)} · ${esc(r.point || '')}</span>
+    ${t.overCapacity ? `<span class="ml-1 inline-flex text-[11px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300">Over capacity: ${esc(t.seats)} seats</span>` : ''}`;
+  const card = (r, inTrip) => `<div class="${inTrip ? 'pl-3 border-l-2 border-indigo-200 mt-2' : ''}">
         <div class="flex items-baseline justify-between gap-2">
-          <p class="font-bold ${r.at ? 'text-slate-800' : 'text-slate-400'}">${esc(r.at ? travelWhen(r.at.slice(0, 10), r.at.slice(11)) : 'Not set')}</p>
+          <p class="font-bold ${r.at ? 'text-slate-800' : 'text-slate-400'}">${when(r)}</p>
           ${r.status ? guestPill('bg-white text-slate-600 border-slate-300', r.status) : ''}
         </div>
         <button type="button" onclick="openGuestEditor(${esc(r.id)})" class="mt-1 font-semibold text-indigo-700 text-left">${esc(r.name)}</button>
         ${r.phone ? `<p class="text-xs font-mono">${telLink(r.phone)}</p>` : ''}
-        <p class="text-xs text-slate-600 mt-1">${[esc(r.mode || ''), esc(r.number || ''), esc(r.point || '')].filter(Boolean).join(' · ') || '—'}</p>
-        <p class="text-xs mt-1">${driverLine(r)}</p>
+        <p class="text-xs text-slate-600 mt-1">${[esc(r.mode || ''), esc(r.number || ''), inTrip ? '' : esc(r.point || '')].filter(Boolean).join(' · ') || '—'}</p>
+        ${inTrip ? '' : `<p class="text-xs mt-1">${driverLine(r)}</p>`}
         ${r.clash.map((c) => `<p class="text-[11px] text-amber-800 mt-1">${esc(c)}</p>`).join('')}
-      </article>`).join('') : '<p class="p-8 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">No one to schedule yet.</p>'}</div>
+      </div>`;
+  const row = (r, inTrip) => `
+          <tr class="${r.alert ? 'bg-orange-50' : inTrip ? 'bg-indigo-50/30' : ''} align-top">
+            <td class="p-3 whitespace-nowrap font-semibold ${r.at ? 'text-slate-800' : 'text-slate-400'} ${inTrip ? 'pl-6' : ''}">${when(r)}</td>
+            <td class="p-3"><button type="button" onclick="openGuestEditor(${esc(r.id)})" class="font-semibold text-indigo-700 hover:underline text-left">${esc(r.name)}</button></td>
+            <td class="p-3 font-mono text-xs">${telLink(r.phone)}</td>
+            <td class="p-3">${esc(r.mode || '—')}</td><td class="p-3">${esc(r.number || '—')}</td><td class="p-3">${esc(r.point || '—')}</td>
+            <td class="p-3">${inTrip ? '<span class="text-xs text-slate-500">In the shared trip</span>' : `${r.vehicle ? `<p>${esc(r.vehicle)}</p>` : noVehicle(r, 'None')}${r.driver ? `<p class="text-xs text-slate-700">Driver: ${esc(r.driver)}</p>` : ''}${r.driverPhone ? `<p class="text-xs text-slate-500 font-mono">${telLink(r.driverPhone, 'text-slate-500 hover:underline')}</p>` : ''}`}
+              ${r.clash.map((c) => `<p class="text-[11px] text-amber-800 mt-1">${esc(c)}</p>`).join('')}</td>
+            <td class="p-3">${r.status ? guestPill('bg-white text-slate-600 border-slate-300', r.status) : '<span class="text-xs text-slate-400">Not set</span>'}</td>
+          </tr>`;
+  box.innerHTML = `${shared ? `<p class="mb-2 text-xs text-indigo-900 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2"><b>${shared}</b> shared ${leg}${shared === 1 ? '' : 's'}: one car and driver for several people at one place, within ${esc(isPickup ? guestData.settings.pickupShareMinutes : guestData.settings.dropShareMinutes)} minutes (Settings). Each is one trip below.</p>` : ''}
+    ${clashes ? `<p class="mb-3 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">${clashes} ${leg}(s) need a vehicle or driver within ${esc(guestData.settings.clashMinutes)} minutes of another trip. Check each one.</p>` : ''}
+    <div class="lg:hidden space-y-2">${items.length ? items.map((it) => it.trip ? `
+      <article class="bg-white rounded-2xl border border-indigo-200 shadow-sm p-3.5">
+        <p class="text-sm">${tripHead(it.trip, it.rows[0])}</p>
+        <p class="text-xs mt-1">${driverLine(it.rows[0])}</p>
+        ${it.rows.map((r) => card(r, true)).join('')}
+      </article>` : `
+      <article class="bg-white rounded-2xl border border-slate-200 ${it.rows[0].alert ? 'border-l-4 border-l-orange-400' : ''} shadow-sm p-3.5">${card(it.rows[0], false)}</article>`).join('')
+    : '<p class="p-8 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">No one to schedule yet.</p>'}</div>
     <div class="hidden lg:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
       <table class="w-full text-sm min-w-[56rem]">
         <thead class="bg-slate-50 text-[11px] text-slate-500 uppercase tracking-wide"><tr>
@@ -15080,16 +15123,10 @@ function renderGuestSchedule(kind) {
           <th class="p-3 text-left">Mode</th><th class="p-3 text-left">Flight/Train No</th><th class="p-3 text-left">Point</th>
           <th class="p-3 text-left">Vehicle · Driver</th><th class="p-3 text-left">${isPickup ? 'Pickup' : 'Drop'} Status</th>
         </tr></thead>
-        <tbody class="divide-y divide-slate-100">${rows.length ? rows.map((r) => `
-          <tr class="${r.alert ? 'bg-orange-50' : ''} align-top">
-            <td class="p-3 whitespace-nowrap font-semibold ${r.at ? 'text-slate-800' : 'text-slate-400'}">${esc(r.at ? travelWhen(r.at.slice(0, 10), r.at.slice(11)) : 'Not set')}</td>
-            <td class="p-3"><button type="button" onclick="openGuestEditor(${esc(r.id)})" class="font-semibold text-indigo-700 hover:underline text-left">${esc(r.name)}</button></td>
-            <td class="p-3 font-mono text-xs">${telLink(r.phone)}</td>
-            <td class="p-3">${esc(r.mode || '—')}</td><td class="p-3">${esc(r.number || '—')}</td><td class="p-3">${esc(r.point || '—')}</td>
-            <td class="p-3">${r.vehicle ? `<p>${esc(r.vehicle)}</p>` : noVehicle(r, 'None')}${r.driver ? `<p class="text-xs text-slate-700">Driver: ${esc(r.driver)}</p>` : ''}${r.driverPhone ? `<p class="text-xs text-slate-500 font-mono">${telLink(r.driverPhone, 'text-slate-500 hover:underline')}</p>` : ''}
-              ${r.clash.map((c) => `<p class="text-[11px] text-amber-800 mt-1">${esc(c)}</p>`).join('')}</td>
-            <td class="p-3">${r.status ? guestPill('bg-white text-slate-600 border-slate-300', r.status) : '<span class="text-xs text-slate-400">Not set</span>'}</td>
-          </tr>`).join('') : '<tr><td colspan="8" class="p-8 text-center text-slate-400">No one to schedule yet.</td></tr>'}
+        <tbody class="divide-y divide-slate-100">${items.length ? items.map((it) => (it.trip ? `
+          <tr class="bg-indigo-50 align-top"><td colspan="6" class="p-3 text-sm">${tripHead(it.trip, it.rows[0])}</td>
+            <td colspan="2" class="p-3 text-sm">${driverLine(it.rows[0])}</td></tr>${it.rows.map((r) => row(r, true)).join('')}`
+    : row(it.rows[0], false))).join('') : '<tr><td colspan="8" class="p-8 text-center text-slate-400">No one to schedule yet.</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -15297,13 +15334,15 @@ function renderGuestSettings() {
   const btn = 'px-2 py-1 border border-slate-300 hover:bg-slate-50 text-slate-600 text-[11px] font-semibold rounded-md disabled:opacity-40';
   box.innerHTML = `<form onsubmit="saveGuestSettings(event)" class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm mb-4">
       <h4 class="text-sm font-bold text-slate-800 mb-3">Settings</h4>
-      <div class="grid sm:grid-cols-3 gap-3 items-end">
+      <div class="grid sm:grid-cols-3 xl:grid-cols-5 gap-3 items-end">
         <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Arrival alert window (days)</span><input name="alertDays" type="number" min="0" max="30" step="1" value="${esc(s.alertDays)}" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
         <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Vehicle clash window (minutes)</span><input name="clashMinutes" type="number" min="1" max="720" step="1" value="${esc(s.clashMinutes)}" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
+        <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Shared pickup window (minutes)</span><input name="pickupShareMinutes" type="number" min="0" max="240" step="1" value="${esc(s.pickupShareMinutes)}" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
+        <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Shared drop window (minutes)</span><input name="dropShareMinutes" type="number" min="0" max="240" step="1" value="${esc(s.dropShareMinutes)}" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
         <div><span class="block text-[11px] font-semibold text-slate-600 mb-1">Time slots start (Morning / Afternoon / Evening, hour)</span>
           <div class="flex gap-2">${s.slotBounds.map((h, i) => `<input name="slot${i}" type="number" min="1" max="23" step="1" value="${esc(h)}" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm">`).join('')}</div></div>
       </div>
-      <p class="text-[11px] text-slate-500 mt-2">Now: ${esc(guestData.slotLabels.join(' · '))}.</p>
+      <p class="text-[11px] text-slate-500 mt-2">Now: ${esc(guestData.slotLabels.join(' · '))}. A shared trip: one vehicle with one driver, at one place on one day, everyone within the window of the trip's first; 0 turns sharing off.</p>
       <button type="submit" class="mt-3 h-9 px-4 bg-navy hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Save settings</button>
     </form>
     <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-3">${Object.entries(guestData.listLabels).map(([key, label]) => `
@@ -15328,7 +15367,8 @@ async function saveGuestSettings(ev) {
   const f = ev.target;
   const data = await (await fetch('/api/guests/settings', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ alertDays: Number(f.alertDays.value), clashMinutes: Number(f.clashMinutes.value), slotBounds: [0, 1, 2].map((i) => Number(f[`slot${i}`].value)) }),
+    body: JSON.stringify({ alertDays: Number(f.alertDays.value), clashMinutes: Number(f.clashMinutes.value), slotBounds: [0, 1, 2].map((i) => Number(f[`slot${i}`].value)),
+      pickupShareMinutes: Number(f.pickupShareMinutes.value), dropShareMinutes: Number(f.dropShareMinutes.value) }),
   })).json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not save the settings.');
   showToast('Settings saved.', 'success');

@@ -82,7 +82,9 @@ const rooms = [
   { id: 3, accommodation: 'Yatri Nivas', room_no: '102', beds: 1 },
   { id: 4, accommodation: 'mgims guesthouse', room_no: '8', beds: 1 },
 ];
-const settings = { alertDays: 2, slotBounds: [6, 12, 18], clashMinutes: 60 };
+// Sharing off: these clashes are of separate trips. Shared trips (20 Nov
+// 2026) are tests/guest-shared-trips.test.js.
+const settings = { alertDays: 2, slotBounds: [6, 12, 18], clashMinutes: 60, pickupShareMinutes: 0, dropShareMinutes: 0 };
 const b = G.buildBoard({ guests, vehicles, rooms, lists, settings, today });
 const by = (n) => b.guests.find((g) => g.name === n);
 

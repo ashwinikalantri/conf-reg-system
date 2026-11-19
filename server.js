@@ -16225,7 +16225,8 @@ app.post('/api/admin/held-emails/decide', requireAuth, async (req, res, next) =>
 //   guests.stay    accommodation, room, check-in/out, accommodation coordinator, rooms
 //   guests.manage  remove a guest, delete vehicles/rooms, dropdown lists, settings
 
-const GUEST_SETTING_KEYS = { alertDays: 'guests_alert_days', clashMinutes: 'guests_clash_minutes', slotBounds: 'guests_slot_bounds' };
+const GUEST_SETTING_KEYS = { alertDays: 'guests_alert_days', clashMinutes: 'guests_clash_minutes', slotBounds: 'guests_slot_bounds',
+  pickupShareMinutes: 'guests_pickup_share_minutes', dropShareMinutes: 'guests_drop_share_minutes' };
 
 async function guestSettings() {
   const rows = await dbAll("SELECT key, value FROM schema_meta WHERE key LIKE 'guests_%'");
@@ -16236,6 +16237,8 @@ async function guestSettings() {
     alertDays: v[GUEST_SETTING_KEYS.alertDays] != null ? Number(v[GUEST_SETTING_KEYS.alertDays]) : d.alertDays,
     clashMinutes: v[GUEST_SETTING_KEYS.clashMinutes] != null ? Number(v[GUEST_SETTING_KEYS.clashMinutes]) : d.clashMinutes,
     slotBounds: guestLib.validateSettings({ alertDays: 0, clashMinutes: 1, slotBounds: bounds }).errors.length ? d.slotBounds : bounds,
+    pickupShareMinutes: v[GUEST_SETTING_KEYS.pickupShareMinutes] != null ? Number(v[GUEST_SETTING_KEYS.pickupShareMinutes]) : d.pickupShareMinutes,
+    dropShareMinutes: v[GUEST_SETTING_KEYS.dropShareMinutes] != null ? Number(v[GUEST_SETTING_KEYS.dropShareMinutes]) : d.dropShareMinutes,
   };
 }
 
@@ -16595,7 +16598,9 @@ app.put('/api/guests/settings', requirePermission('guests.manage'), async (req, 
     await put(GUEST_SETTING_KEYS.alertDays, values.alertDays);
     await put(GUEST_SETTING_KEYS.clashMinutes, values.clashMinutes);
     await put(GUEST_SETTING_KEYS.slotBounds, values.slotBounds.join(','));
-    const fmt = (s) => `alert ${s.alertDays} day(s), clash ${s.clashMinutes} min, slots ${s.slotBounds.join('/')}`;
+    await put(GUEST_SETTING_KEYS.pickupShareMinutes, values.pickupShareMinutes);
+    await put(GUEST_SETTING_KEYS.dropShareMinutes, values.dropShareMinutes);
+    const fmt = (s) => `alert ${s.alertDays} day(s), clash ${s.clashMinutes} min, slots ${s.slotBounds.join('/')}, sharing ${s.pickupShareMinutes}/${s.dropShareMinutes} min`;
     await recordAudit({ req, entityType: 'guest_settings', entityId: 'guests', action: 'GUEST_SETTINGS_UPDATED', oldValue: fmt(before), newValue: fmt(values) });
     res.json({ success: true, settings: values });
   } catch (err) {
