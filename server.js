@@ -2260,6 +2260,16 @@ db.serialize(() => {
       created_at INTEGER NOT NULL
     )
   `);
+  // The drivers, a list apart from the vehicles: one car may be driven by
+  // different drivers, chosen for each pickup and drop (owner, 19 Nov 2026).
+  db.run(`
+    CREATE TABLE IF NOT EXISTS guest_drivers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      phone TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
   db.run(`
     CREATE TABLE IF NOT EXISTS guest_rooms (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -11571,8 +11581,8 @@ app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async 
     // ...with their travel and stay, which the desk shows read-only.
     const guest = await dbGet(
       `SELECT g.id, g.overall_status, g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point,
-              g.pickup_vehicle, g.pickup_status, g.departure_date, g.departure_time, g.departure_mode, g.departure_number,
-              g.departure_point, g.drop_vehicle, g.drop_status, g.stay_not_needed, g.accommodation, g.room_no,
+              g.pickup_vehicle, g.pickup_driver, g.pickup_status, g.departure_date, g.departure_time, g.departure_mode, g.departure_number,
+              g.departure_point, g.drop_vehicle, g.drop_driver, g.drop_status, g.stay_not_needed, g.accommodation, g.room_no,
               g.checkin_date, g.checkout_date, g.room_type, g.special_needs,
               tv.full_name AS transport_volunteer, av.full_name AS accommodation_volunteer
          FROM guests g
@@ -14388,7 +14398,8 @@ async function buildReport(type, opts = {}) {
     const day = (d) => (d ? attendanceLib.dateRange(d, d) : '');
     const when = (d, t) => (d ? `${day(d)}${t ? ` ${guestLib.to12h(t)}` : ''}` : '');
     const join = (...v) => v.filter((x) => x != null && String(x).trim()).join(' · ');
-    const leg = (g, status, vehicle) => (guestLib.transferNotRequired(g[status]) ? 'Not required' : join(g[vehicle], g[status]));
+    const leg = (g, status, vehicle) => (guestLib.transferNotRequired(g[status]) ? 'Not required'
+      : join(g[vehicle], g[vehicle.replace('_vehicle', '_driver')] && `Driver: ${g[vehicle.replace('_vehicle', '_driver')]}`, g[status]));
     const guests = [...board.guests].sort((a, b) => (a.cancelled ? 1 : 0) - (b.cancelled ? 1 : 0) || String(a.name || '').localeCompare(String(b.name || '')));
     return {
       title: 'Faculty',
@@ -16163,16 +16174,17 @@ async function unlinkedGuestMatching(phone, email, exceptId = null) {
 }
 
 async function guestBoard() {
-  const [guests, vehicles, rooms, listRows, settings] = await Promise.all([
+  const [guests, vehicles, drivers, rooms, listRows, settings] = await Promise.all([
     guestRowsJoined(),
     dbAll('SELECT id, label, driver_phone, seats FROM guest_vehicles ORDER BY label'),
+    dbAll('SELECT id, name, phone FROM guest_drivers ORDER BY name'),
     dbAll('SELECT id, accommodation, room_no, room_type, beds FROM guest_rooms ORDER BY accommodation, room_no'),
     guestListRows(),
     guestSettings(),
   ]);
   const lists = activeGuestLists(listRows);
-  const board = guestLib.buildBoard({ guests, vehicles, rooms, lists, settings, today: istDateString() });
-  return { board, guests, vehicles, rooms, listRows, lists, settings };
+  const board = guestLib.buildBoard({ guests, vehicles, drivers, rooms, lists, settings, today: istDateString() });
+  return { board, guests, vehicles, drivers, rooms, listRows, lists, settings };
 }
 
 // Seed each dropdown list once, the first time it is found empty.
@@ -16477,6 +16489,56 @@ app.delete('/api/guests/vehicles/:id', requirePermission('guests.manage'), async
     if (!existing) return res.status(404).json({ success: false, error: 'Vehicle not found.' });
     await dbRun('DELETE FROM guest_vehicles WHERE id = ?', [existing.id]);
     await recordAudit({ req, entityType: 'guest_vehicle', entityId: String(existing.id), action: 'GUEST_VEHICLE_DELETED', oldValue: existing.label, newValue: null });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- drivers ---
+// The same shape as the vehicles: add, edit (a new name follows onto every
+// trip it was chosen for), delete (the trips keep the name as text).
+app.post('/api/guests/drivers', requirePermission('guests.travel'), async (req, res, next) => {
+  try {
+    const { values, errors } = guestLib.validateDriver(req.body || {});
+    if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
+    if (await dbGet('SELECT id FROM guest_drivers WHERE LOWER(TRIM(name)) = LOWER(?)', [values.name])) {
+      return res.status(409).json({ success: false, error: 'A driver with that name is already on the list.' });
+    }
+    const r = await dbRun('INSERT INTO guest_drivers (name, phone, created_at) VALUES (?, ?, ?)', [values.name, values.phone, Date.now()]);
+    await recordAudit({ req, entityType: 'guest_vehicle', entityId: `driver-${r.lastID}`, action: 'GUEST_DRIVER_ADDED', oldValue: null, newValue: `${values.name} · ${values.phone || '—'}` });
+    res.json({ success: true, id: r.lastID });
+  } catch (err) {
+    next(err);
+  }
+});
+app.put('/api/guests/drivers/:id', requirePermission('guests.travel'), async (req, res, next) => {
+  try {
+    const existing = await dbGet('SELECT * FROM guest_drivers WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ success: false, error: 'Driver not found.' });
+    const { values, errors } = guestLib.validateDriver(req.body || {});
+    if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
+    if (await dbGet('SELECT id FROM guest_drivers WHERE LOWER(TRIM(name)) = LOWER(?) AND id != ?', [values.name, existing.id])) {
+      return res.status(409).json({ success: false, error: 'A driver with that name is already on the list.' });
+    }
+    await dbRun('UPDATE guest_drivers SET name = ?, phone = ? WHERE id = ?', [values.name, values.phone, existing.id]);
+    if (values.name !== existing.name) {
+      await dbRun('UPDATE guests SET pickup_driver = ? WHERE LOWER(TRIM(pickup_driver)) = LOWER(?)', [values.name, existing.name]);
+      await dbRun('UPDATE guests SET drop_driver = ? WHERE LOWER(TRIM(drop_driver)) = LOWER(?)', [values.name, existing.name]);
+    }
+    await recordAudit({ req, entityType: 'guest_vehicle', entityId: `driver-${existing.id}`, action: 'GUEST_DRIVER_UPDATED',
+      oldValue: `${existing.name} · ${existing.phone || '—'}`, newValue: `${values.name} · ${values.phone || '—'}` });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+app.delete('/api/guests/drivers/:id', requirePermission('guests.manage'), async (req, res, next) => {
+  try {
+    const existing = await dbGet('SELECT * FROM guest_drivers WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ success: false, error: 'Driver not found.' });
+    await dbRun('DELETE FROM guest_drivers WHERE id = ?', [existing.id]);
+    await recordAudit({ req, entityType: 'guest_vehicle', entityId: `driver-${existing.id}`, action: 'GUEST_DRIVER_DELETED', oldValue: `${existing.name} · ${existing.phone || '—'}`, newValue: null });
     res.json({ success: true });
   } catch (err) {
     next(err);

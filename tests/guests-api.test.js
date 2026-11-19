@@ -238,7 +238,7 @@ const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `
     check('...and nothing for faculty not assigned to them', (await put(ids.unreg, { room_no: '1' }, av)).status === 403);
     const vRow = await guestRow(ids.reg);
     check('what they changed is stored', vRow.pickup_vehicle === 'Volunteer Car' && vRow.pickup_status === 'Done' && vRow.room_type === 'Single', vRow);
-    check('...and logged under their name', !!(await db.get("SELECT 1 FROM audit_log WHERE action = 'GUEST_UPDATED' AND entity_id = ? AND actor_role = 'VOLUNTEER_TRANSPORT' AND new_value LIKE 'Pickup Vehicle/Driver%'", [String(ids.reg)])));
+    check('...and logged under their name', !!(await db.get("SELECT 1 FROM audit_log WHERE action = 'GUEST_UPDATED' AND entity_id = ? AND actor_role = 'VOLUNTEER_TRANSPORT' AND new_value LIKE 'Pickup Vehicle%'", [String(ids.reg)])));
     check('once unassigned, they can change nothing', (await put(ids.reg, { transport_coordinator: P.tc }, tc)).body.success === true
       && (await put(ids.reg, { pickup_status: 'Pending' }, tv)).status === 403);
     check('the front desk, which can only look, cannot edit through the same route', (await put(ids.reg, { remarks: 'x' }, await loginPassword('9000000006', ADMIN_PW))).status === 403);

@@ -140,6 +140,10 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/guests/vehicles': 'Adds a vehicle. guests.travel.',
     'PUT /api/guests/vehicles/:id': 'Edits a vehicle (a new label carries onto its guests). guests.travel.',
     'DELETE /api/guests/vehicles/:id': 'Deletes a vehicle. guests.manage.',
+    // Drivers, a list apart from the vehicles (19 Nov 2026): as the vehicles.
+    'POST /api/guests/drivers': 'Adds a driver. guests.travel.',
+    'PUT /api/guests/drivers/:id': 'Edits a driver; a new name follows onto their trips. guests.travel.',
+    'DELETE /api/guests/drivers/:id': 'Deletes a driver. guests.manage.',
     'POST /api/guests/rooms': 'Adds a room. guests.stay.',
     'PUT /api/guests/rooms/:id': 'Edits a room. guests.stay.',
     'DELETE /api/guests/rooms/:id': 'Deletes a room. guests.manage.',

@@ -13622,8 +13622,8 @@ function deskFacultyCard(g) {
   const open = can('guests.view') ? deskBtn(can('guests.edit') || can('guests.travel') || can('guests.stay')
     || can('guests.travel_assigned') || can('guests.stay_assigned') ? 'Travel & stay' : 'View record', `deskOpenFaculty(${esc(g.id)})`) : '';
   // Whatever has been entered, piece by piece (see guestLegHtml/guestStayHtml).
-  const arrival = guestLegHtml(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status);
-  const departure = guestLegHtml(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status);
+  const arrival = guestLegHtml(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status, g.pickup_driver);
+  const departure = guestLegHtml(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status, g.drop_driver);
   const rows = [
     ['Arrival · pickup', arrival], ['Departure · drop', departure],
     ['Stay', guestStayHtml(g)], ['Transport volunteer', esc(g.transport_volunteer || '')], ['Accommodation volunteer', esc(g.accommodation_volunteer || '')],
@@ -14388,7 +14388,7 @@ function filteredGuests() {
   return guestData.guests.filter((g) => {
     if (institution && guestInstitutionKey(g) !== (institution === '__none' ? '' : institution)) return false;
     if (district && guestDistrictKey(g) !== (district === '__none' ? '' : district)) return false;
-    if (q && ![g.name, g.phone, g.designation, g.registration_number, g.arrival_number, g.departure_number, g.pickup_vehicle,
+    if (q && ![g.name, g.phone, g.designation, g.registration_number, g.arrival_number, g.departure_number, g.pickup_vehicle, g.pickup_driver, g.drop_driver,
       g.drop_vehicle, g.room_no, g.accommodation, g.remarks, g.special_needs].some((v) => String(v || '').toLowerCase().includes(q))) return false;
     if (status === '__live' && g.cancelled) return false;
     if (status === '__none' && g.overall_status) return false;
@@ -14449,8 +14449,8 @@ function renderGuestList() {
           ${(g.sessions || []).length ? `<p class="text-[11px] font-semibold text-indigo-700 mt-1">${g.sessions.length} session${g.sessions.length === 1 ? '' : 's'} in the programme</p>` : ''}
         </div>
       </td>
-      <td class="p-3">${travel(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status)}</td>
-      <td class="p-3">${travel(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status)}</td>
+      <td class="p-3">${travel(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status, g.pickup_driver)}</td>
+      <td class="p-3">${travel(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status, g.drop_driver)}</td>
       <td class="p-3">${guestStayHtml(g) || notSet}</td>
       <td class="p-3">${guestStatusBadge(g.overall_status)}</td>
       <td class="p-3 text-right"><button type="button" onclick="openGuestEditor(${esc(g.id)})" class="px-3 py-1.5 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold rounded-lg">${can('guests.edit') || guestVolunteerOf(g).mineT || guestVolunteerOf(g).mineS ? 'Edit' : 'View'}</button></td>
@@ -14462,9 +14462,9 @@ function renderGuestList() {
     const sortSel = document.getElementById('guests-sort-mobile');
     if (sortSel && sortSel.value !== guestSort.key && Array.from(sortSel.options || []).some((o) => o.value === guestSort.key)) sortSel.value = guestSort.key;
     const edge = (g) => (g.cancelled ? 'border-l-slate-300' : g.flags.noAccommodation ? 'border-l-rose-400' : g.flags.pickupAlert ? 'border-l-orange-400' : 'border-l-slate-200');
-    const legLine = (label, date, time, mode, number, point, vehicle, status) => `<div class="flex gap-2 text-sm">
+    const legLine = (label, date, time, mode, number, point, vehicle, status, driver) => `<div class="flex gap-2 text-sm">
         <span class="w-16 shrink-0 text-[11px] font-semibold text-slate-400 uppercase pt-0.5">${label}</span>
-        <div class="min-w-0">${guestLegHtml(date, time, mode, number, point, vehicle, status) || '<p class="text-xs text-slate-400 pt-0.5">Not set</p>'}</div>
+        <div class="min-w-0">${guestLegHtml(date, time, mode, number, point, vehicle, status, driver) || '<p class="text-xs text-slate-400 pt-0.5">Not set</p>'}</div>
       </div>`;
     cards.innerHTML = rows.length ? rows.map((g) => `
       <article class="bg-white rounded-2xl border border-slate-200 border-l-4 ${edge(g)} shadow-sm p-4 ${g.cancelled ? 'opacity-70' : ''}">
@@ -14478,8 +14478,8 @@ function renderGuestList() {
         </div>
         ${guestFlagChips(g) ? `<div class="flex flex-wrap gap-1 mt-2">${guestFlagChips(g)}</div>` : ''}
         <div class="mt-3 space-y-2 border-t border-slate-100 pt-3">
-          ${legLine('Arrival', g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status)}
-          ${legLine('Departure', g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status)}
+          ${legLine('Arrival', g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status, g.pickup_driver)}
+          ${legLine('Departure', g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status, g.drop_driver)}
           <div class="flex gap-2 text-sm">
             <span class="w-16 shrink-0 text-[11px] font-semibold text-slate-400 uppercase pt-0.5">Stay</span>
             <div class="min-w-0">${guestStayHtml(g) || '<p class="text-xs text-slate-400 pt-0.5">Not set</p>'}</div>
@@ -14531,13 +14531,14 @@ function travelWhen(date, time) {
 function transferNotRequired(status) {
   return String(status || '').trim().toLowerCase() === 'not required';
 }
-function guestLegHtml(date, time, mode, number, point, vehicle, status) {
+// driver: who drives that pickup or drop, chosen apart from the car.
+function guestLegHtml(date, time, mode, number, point, vehicle, status, driver) {
   if (transferNotRequired(status)) {
     return (date ? `<p class="font-semibold text-slate-800">${esc(travelWhen(date, time))}</p>` : '')
       + `<p class="text-xs mt-0.5 text-slate-500">${esc(status)}</p>`;
   }
   const route = [mode, number, point].filter(Boolean).map(esc).join(' · ');
-  const transfer = [vehicle ? esc(vehicle) : (date ? '<span class="text-slate-400">No vehicle</span>' : ''), status ? esc(status) : ''].filter(Boolean).join(' · ');
+  const transfer = [vehicle ? esc(vehicle) : (date ? '<span class="text-slate-400">No vehicle</span>' : ''), driver ? `Driver: ${esc(driver)}` : '', status ? esc(status) : ''].filter(Boolean).join(' · ');
   return [
     date ? `<p class="font-semibold text-slate-800">${esc(travelWhen(date, time))}</p>` : '',
     route ? `<p class="text-xs text-slate-500">${route}</p>` : '',
@@ -14725,7 +14726,8 @@ function openGuestEditor(id) {
     if (g[name] && !opts.some((p) => p.phone === g[name])) opts.push({ phone: g[name], name: g[`${name}_name`] || g[name] });
     return `<select name="${name}" ${enabled ? '' : 'disabled'} class="${cls}"><option value="">—</option>${opts.map((p) => `<option value="${esc(p.phone)}" ${p.phone === g[name] ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>`;
   };
-  const vehicles = `<datalist id="guest-vehicle-options">${guestData.vehicles.map((v) => `<option value="${esc(v.label)}">${esc([v.driver_phone, v.seats ? `${v.seats} seats` : ''].filter(Boolean).join(' · '))}</option>`).join('')}</datalist>`;
+  const vehicles = `<datalist id="guest-vehicle-options">${guestData.vehicles.map((v) => `<option value="${esc(v.label)}">${esc(v.seats ? `${v.seats} seats` : '')}</option>`).join('')}</datalist>`
+    + `<datalist id="guest-driver-options">${(guestData.drivers || []).map((d) => `<option value="${esc(d.name)}">${esc(d.phone || '')}</option>`).join('')}</datalist>`;
   // Hour, minutes, am/pm (onTime12Change); the hidden input under the
   // field's name holds the 24-hour value that is saved.
   const time = (name, enabled) => {
@@ -14798,22 +14800,24 @@ function openGuestEditor(id) {
       field('arrival_date', 'Date', input('arrival_date', 'date', travel))
       + field('arrival_time', 'Time', time('arrival_time', travel), ' md:col-span-2')
       + field('pickup_status', 'Pickup Status', select('pickup_status', 'transfer_status', pickupOk, `onchange="syncGuestTransferFields('arrival')"`))
-      + legNote('arrival', 'Pickup', g.arrival_mode || g.arrival_number || g.arrival_point || g.pickup_vehicle)
+      + legNote('arrival', 'Pickup', g.arrival_mode || g.arrival_number || g.arrival_point || g.pickup_vehicle || g.pickup_driver)
       + legDetails('arrival',
         field('arrival_mode', 'Mode', modeSelect('arrival'))
         + numberField('arrival')
         + field('arrival_point', 'Point', select('arrival_point', 'point', travel))
-        + field('pickup_vehicle', 'Pickup Vehicle/Driver', input('pickup_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off"')))),
+        + field('pickup_vehicle', 'Pickup Vehicle', input('pickup_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off" placeholder="Choose or type"'))
+        + field('pickup_driver', 'Pickup Driver', input('pickup_driver', 'text', pickupOk, 'list="guest-driver-options" autocomplete="off" placeholder="Choose or type"')))),
     group('Departure', travel, mineT ? 'As their transport volunteer you can update the drop; the itinerary is the coordinator\'s.' : 'Only a transport coordinator can change travel.',
       field('departure_date', 'Date', input('departure_date', 'date', travel))
       + field('departure_time', 'Time', time('departure_time', travel), ' md:col-span-2')
       + field('drop_status', 'Drop Status', select('drop_status', 'transfer_status', pickupOk, `onchange="syncGuestTransferFields('departure')"`))
-      + legNote('departure', 'Drop', g.departure_mode || g.departure_number || g.departure_point || g.drop_vehicle)
+      + legNote('departure', 'Drop', g.departure_mode || g.departure_number || g.departure_point || g.drop_vehicle || g.drop_driver)
       + legDetails('departure',
         field('departure_mode', 'Mode', modeSelect('departure'))
         + numberField('departure')
         + field('departure_point', 'Point', select('departure_point', 'point', travel))
-        + field('drop_vehicle', 'Drop Vehicle/Driver', input('drop_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off"')))),
+        + field('drop_vehicle', 'Drop Vehicle', input('drop_vehicle', 'text', pickupOk, 'list="guest-vehicle-options" autocomplete="off" placeholder="Choose or type"'))
+        + field('drop_driver', 'Drop Driver', input('drop_driver', 'text', pickupOk, 'list="guest-driver-options" autocomplete="off" placeholder="Choose or type"')))),
     group('Stay', stay, mineS ? 'As their accommodation volunteer you can update the stay details.' : 'Only an accommodation coordinator can change the stay.',
       `<label class="col-span-full flex items-center gap-2 text-sm text-slate-700 ${stay ? 'cursor-pointer' : 'opacity-60'}">
         <input type="checkbox" name="stay_not_needed" ${Number(g.stay_not_needed) ? 'checked' : ''} ${stay ? '' : 'disabled'} onchange="syncGuestStayFields()"> Accommodation not needed — they arrange their own stay</label>
@@ -15054,8 +15058,9 @@ function renderGuestSchedule(kind) {
   // "Not required": no vehicle is wanted, so none is missing.
   const noVehicle = (r, word) => (transferNotRequired(r.status) ? '<span class="text-slate-400">—</span>'
     : `<span class="${r.alert ? 'text-orange-700 font-semibold' : 'text-slate-400'}">${word}</span>`);
-  const driverLine = (r) => (r.vehicle ? `${esc(r.vehicle)}${r.driverPhone ? ` · ${telLink(r.driverPhone)}` : ''}` : noVehicle(r, 'No vehicle'));
-  box.innerHTML = `${clashes ? `<p class="mb-3 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">${clashes} ${isPickup ? 'pickup' : 'drop'}(s) use a vehicle within ${esc(guestData.settings.clashMinutes)} minutes of another trip. Check each is intended — guests on the same flight can share.</p>` : ''}
+  // The car, then who drives it and their phone.
+  const driverLine = (r) => [r.vehicle ? esc(r.vehicle) : noVehicle(r, 'No vehicle'), r.driver ? `Driver: ${esc(r.driver)}` : '', r.driverPhone ? telLink(r.driverPhone) : ''].filter(Boolean).join(' · ');
+  box.innerHTML = `${clashes ? `<p class="mb-3 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">${clashes} ${isPickup ? 'pickup' : 'drop'}(s) use a vehicle or driver within ${esc(guestData.settings.clashMinutes)} minutes of another trip. Check each is intended — guests on the same flight can share.</p>` : ''}
     <div class="lg:hidden space-y-2">${rows.length ? rows.map((r) => `
       <article class="bg-white rounded-2xl border border-slate-200 ${r.alert ? 'border-l-4 border-l-orange-400' : ''} shadow-sm p-3.5">
         <div class="flex items-baseline justify-between gap-2">
@@ -15073,7 +15078,7 @@ function renderGuestSchedule(kind) {
         <thead class="bg-slate-50 text-[11px] text-slate-500 uppercase tracking-wide"><tr>
           <th class="p-3 text-left">${isPickup ? 'Arrival' : 'Departure'}</th><th class="p-3 text-left">Name</th><th class="p-3 text-left">Phone</th>
           <th class="p-3 text-left">Mode</th><th class="p-3 text-left">Flight/Train No</th><th class="p-3 text-left">Point</th>
-          <th class="p-3 text-left">Vehicle/Driver</th><th class="p-3 text-left">${isPickup ? 'Pickup' : 'Drop'} Status</th>
+          <th class="p-3 text-left">Vehicle · Driver</th><th class="p-3 text-left">${isPickup ? 'Pickup' : 'Drop'} Status</th>
         </tr></thead>
         <tbody class="divide-y divide-slate-100">${rows.length ? rows.map((r) => `
           <tr class="${r.alert ? 'bg-orange-50' : ''} align-top">
@@ -15081,7 +15086,7 @@ function renderGuestSchedule(kind) {
             <td class="p-3"><button type="button" onclick="openGuestEditor(${esc(r.id)})" class="font-semibold text-indigo-700 hover:underline text-left">${esc(r.name)}</button></td>
             <td class="p-3 font-mono text-xs">${telLink(r.phone)}</td>
             <td class="p-3">${esc(r.mode || '—')}</td><td class="p-3">${esc(r.number || '—')}</td><td class="p-3">${esc(r.point || '—')}</td>
-            <td class="p-3">${r.vehicle ? `<p>${esc(r.vehicle)}</p>${r.driverPhone ? `<p class="text-xs text-slate-500 font-mono">${telLink(r.driverPhone, 'text-slate-500 hover:underline')}</p>` : ''}` : noVehicle(r, 'None')}
+            <td class="p-3">${r.vehicle ? `<p>${esc(r.vehicle)}</p>` : noVehicle(r, 'None')}${r.driver ? `<p class="text-xs text-slate-700">Driver: ${esc(r.driver)}</p>` : ''}${r.driverPhone ? `<p class="text-xs text-slate-500 font-mono">${telLink(r.driverPhone, 'text-slate-500 hover:underline')}</p>` : ''}
               ${r.clash.map((c) => `<p class="text-[11px] text-amber-800 mt-1">${esc(c)}</p>`).join('')}</td>
             <td class="p-3">${r.status ? guestPill('bg-white text-slate-600 border-slate-300', r.status) : '<span class="text-xs text-slate-400">Not set</span>'}</td>
           </tr>`).join('') : '<tr><td colspan="8" class="p-8 text-center text-slate-400">No one to schedule yet.</td></tr>'}
@@ -15091,38 +15096,61 @@ function renderGuestSchedule(kind) {
     <p class="text-xs text-slate-500 mt-2">Cancelled faculty are left out. Anyone with no ${isPickup ? 'arrival' : 'departure'} date is at the end.</p>`;
 }
 
-// --- vehicles ---
+// --- vehicles and drivers ---
+// Two lists (owner, 19 Nov 2026): the cars, and the drivers -- one car may
+// be driven by different drivers, so each pickup and drop names both.
 function renderGuestVehicles() {
   const box = document.getElementById('guests-view-vehicles');
   const edit = can('guests.travel');
-  box.innerHTML = `${edit ? `<form id="guest-vehicle-form" onsubmit="saveGuestVehicle(event)" class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm mb-3 grid sm:grid-cols-[2fr_1fr_6rem_auto_auto] gap-3 items-end">
-      <input type="hidden" name="recordId">
-      <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Vehicle / Driver</span><input name="label" required maxlength="120" placeholder="e.g. Innova MH32 AB 1234 · Ramesh" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
-      <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Driver Phone</span><input name="driverPhone" inputmode="tel" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
-      <label class="block"><span class="block text-[11px] font-semibold text-slate-600 mb-1">Seats</span><input name="seats" type="number" min="1" max="99" step="1" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm"></label>
-      <button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Save vehicle</button>
-      <button type="button" onclick="this.form.reset()" class="h-9 px-3 border border-slate-300 text-slate-600 text-sm rounded-lg">Clear</button>
-    </form>` : ''}
-    <div class="md:hidden space-y-2">${guestData.vehicles.length ? guestData.vehicles.map((v) => `
-      <article class="bg-white rounded-2xl border border-slate-200 shadow-sm p-3.5">
-        <p class="font-semibold text-slate-800">${esc(v.label)}</p>
-        <p class="text-xs text-slate-500">${[v.driver_phone ? telLink(v.driver_phone) : '', v.seats ? `${esc(v.seats)} seats` : ''].filter(Boolean).join(' · ') || '—'}</p>
-        <p class="text-xs mt-1"><b>${esc(v.pickups)}</b> pickups · <b>${esc(v.drops)}</b> drops</p>
-        ${edit || can('guests.manage') ? `<div class="flex gap-2 mt-2">${edit ? `<button type="button" onclick="editGuestVehicle(${esc(v.id)})" class="flex-1 h-9 border border-indigo-300 text-indigo-700 text-xs font-semibold rounded-lg">Edit</button>` : ''}${can('guests.manage') ? `<button type="button" onclick="deleteGuestVehicle(${esc(v.id)})" class="flex-1 h-9 border border-rose-300 text-rose-700 text-xs font-semibold rounded-lg">Delete</button>` : ''}</div>` : ''}
-      </article>`).join('') : '<p class="p-6 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">No vehicles yet.</p>'}</div>
-    <div class="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-      <table class="w-full text-sm"><thead class="bg-slate-50 text-[11px] text-slate-500 uppercase tracking-wide"><tr>
-        <th class="p-3 text-left">Vehicle / Driver</th><th class="p-3 text-left">Driver Phone</th><th class="p-3 text-right">Seats</th>
-        <th class="p-3 text-right">Pickups</th><th class="p-3 text-right">Drops</th><th class="p-3"></th></tr></thead>
-      <tbody class="divide-y divide-slate-100">${guestData.vehicles.length ? guestData.vehicles.map((v) => `<tr>
-        <td class="p-3 font-semibold text-slate-800">${esc(v.label)}</td><td class="p-3 font-mono text-xs">${v.driver_phone ? telLink(v.driver_phone) : '—'}</td>
-        <td class="p-3 text-right tabular-nums">${esc(v.seats || '—')}</td><td class="p-3 text-right tabular-nums font-semibold">${esc(v.pickups)}</td>
-        <td class="p-3 text-right tabular-nums font-semibold">${esc(v.drops)}</td>
-        <td class="p-3 text-right whitespace-nowrap">${edit ? `<button type="button" onclick="editGuestVehicle(${esc(v.id)})" class="px-3 py-1.5 border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold rounded-lg">Edit</button>` : ''}
-          ${can('guests.manage') ? `<button type="button" onclick="deleteGuestVehicle(${esc(v.id)})" class="px-3 py-1.5 border border-rose-300 text-rose-700 hover:bg-rose-50 text-xs font-semibold rounded-lg">Delete</button>` : ''}</td>
-      </tr>`).join('') : '<tr><td colspan="6" class="p-6 text-center text-slate-400">No vehicles yet.</td></tr>'}</tbody></table>
+  const del = can('guests.manage');
+  const drivers = guestData.drivers || [];
+  const lbl = 'block text-[11px] font-semibold text-slate-600 mb-1';
+  const inp = 'w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm';
+  const rowBtns = (kind, id) => `${edit ? `<button type="button" onclick="editGuest${kind}(${esc(id)})" class="px-3 py-1.5 border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold rounded-lg">Edit</button>` : ''}
+    ${del ? `<button type="button" onclick="deleteGuest${kind}(${esc(id)})" class="px-3 py-1.5 border border-rose-300 text-rose-700 hover:bg-rose-50 text-xs font-semibold rounded-lg">Delete</button>` : ''}`;
+  const list = (title, items, head, row, empty) => `<section class="space-y-2">
+      <h3 class="text-base font-bold text-slate-900">${title}</h3>
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="hidden sm:grid ${head[0]} gap-3 px-4 py-2 bg-slate-50 text-[11px] text-slate-500 uppercase tracking-wide font-semibold">${head[1]}</div>
+        <div class="divide-y divide-slate-100">${items.length ? items.map(row).join('') : `<p class="p-6 text-center text-slate-400">${empty}</p>`}</div>
+      </div></section>`;
+  const vGrid = 'sm:grid-cols-[minmax(0,1fr)_5rem_5rem_5rem_9rem]';
+  const dGrid = 'sm:grid-cols-[minmax(0,1fr)_9rem_5rem_5rem_9rem]';
+  box.innerHTML = `<div class="grid gap-6 xl:grid-cols-2">
+    <div class="space-y-3">
+      ${edit ? `<form id="guest-vehicle-form" onsubmit="saveGuestVehicle(event)" class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm grid sm:grid-cols-[minmax(0,1fr)_6rem_auto_auto] gap-3 items-end">
+        <input type="hidden" name="recordId"><input type="hidden" name="driverPhone">
+        <label class="block"><span class="${lbl}">Vehicle</span><input name="label" required maxlength="120" placeholder="e.g. Kia Carens MH32 AJ 6239" class="${inp}"></label>
+        <label class="block"><span class="${lbl}">Seats</span><input name="seats" type="number" min="1" max="99" step="1" class="${inp}"></label>
+        <button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Save vehicle</button>
+        <button type="button" onclick="this.form.reset()" class="h-9 px-3 border border-slate-300 text-slate-600 text-sm rounded-lg">Clear</button>
+      </form>` : ''}
+      ${list('Vehicles', guestData.vehicles, [vGrid, '<span>Vehicle</span><span class="text-right">Seats</span><span class="text-right">Pickups</span><span class="text-right">Drops</span><span></span>'],
+        (v) => `<div class="grid grid-cols-[minmax(0,1fr)_auto] ${vGrid} gap-x-3 gap-y-1 px-4 py-3 items-center">
+          <div class="min-w-0"><p class="font-semibold text-slate-800 break-words">${esc(v.label)}</p>
+            ${v.driver_phone ? `<p class="text-xs text-slate-500">Phone kept from before drivers were listed: ${telLink(v.driver_phone)}</p>` : ''}</div>
+          <span class="text-sm sm:text-right tabular-nums text-slate-600">${v.seats ? `${esc(v.seats)}<span class="sm:hidden"> seats</span>` : '—'}</span>
+          <span class="text-sm sm:text-right tabular-nums"><b>${esc(v.pickups)}</b><span class="sm:hidden"> pickups</span></span>
+          <span class="text-sm sm:text-right tabular-nums"><b>${esc(v.drops)}</b><span class="sm:hidden"> drops</span></span>
+          <div class="col-span-2 sm:col-span-1 flex gap-2 sm:justify-end">${rowBtns('Vehicle', v.id)}</div></div>`, 'No vehicles yet.')}
     </div>
-    <p class="text-xs text-slate-500 mt-2">Pickups and drops count non-cancelled faculty whose Vehicle/Driver matches the label. A vehicle can also be typed freely; free text is not counted here.</p>`;
+    <div class="space-y-3">
+      ${edit ? `<form id="guest-driver-form" onsubmit="saveGuestDriver(event)" class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm grid sm:grid-cols-[minmax(0,1fr)_10rem_auto_auto] gap-3 items-end">
+        <input type="hidden" name="recordId">
+        <label class="block"><span class="${lbl}">Driver</span><input name="name" required maxlength="80" placeholder="e.g. Vedant" class="${inp}"></label>
+        <label class="block"><span class="${lbl}">Phone</span><input name="phone" inputmode="tel" maxlength="20" class="${inp}"></label>
+        <button type="submit" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg">Save driver</button>
+        <button type="button" onclick="this.form.reset()" class="h-9 px-3 border border-slate-300 text-slate-600 text-sm rounded-lg">Clear</button>
+      </form>` : ''}
+      ${list('Drivers', drivers, [dGrid, '<span>Driver</span><span>Phone</span><span class="text-right">Pickups</span><span class="text-right">Drops</span><span></span>'],
+        (d) => `<div class="grid grid-cols-[minmax(0,1fr)_auto] ${dGrid} gap-x-3 gap-y-1 px-4 py-3 items-center">
+          <p class="font-semibold text-slate-800 break-words">${esc(d.name)}</p>
+          <span class="text-sm font-mono">${d.phone ? telLink(d.phone) : '—'}</span>
+          <span class="text-sm sm:text-right tabular-nums"><b>${esc(d.pickups)}</b><span class="sm:hidden"> pickups</span></span>
+          <span class="text-sm sm:text-right tabular-nums"><b>${esc(d.drops)}</b><span class="sm:hidden"> drops</span></span>
+          <div class="col-span-2 sm:col-span-1 flex gap-2 sm:justify-end">${rowBtns('Driver', d.id)}</div></div>`, 'No drivers yet.')}
+    </div></div>
+    <p class="text-xs text-slate-500 mt-3">Each pickup and drop names its vehicle and its driver, chosen from these lists or typed. A car can be driven by different drivers on different trips, and a driver can change cars. Pickups and drops count non-cancelled faculty whose vehicle or driver matches a name here; typed-in names are not counted. Renaming one here renames it on every trip.</p>`;
 }
 function editGuestVehicle(id) {
   const v = guestData.vehicles.find((x) => x.id === id);
@@ -15149,6 +15177,33 @@ async function deleteGuestVehicle(id) {
   const data = await (await fetch(`/api/guests/vehicles/${encodeURIComponent(id)}`, { method: 'DELETE' })).json().catch(() => ({}));
   if (!data.success) return showToast(data.error || 'Could not delete.');
   showToast('Vehicle deleted.', 'success');
+  renderGuests();
+}
+function editGuestDriver(id) {
+  const d = (guestData.drivers || []).find((x) => x.id === id);
+  const f = document.getElementById('guest-driver-form');
+  if (!d || !f) return;
+  f.recordId.value = d.id; f.name.value = d.name; f.phone.value = d.phone || '';
+  f.name.focus();
+}
+async function saveGuestDriver(ev) {
+  ev.preventDefault();
+  const f = ev.target;
+  const id = f.recordId.value;
+  const data = await (await fetch(id ? `/api/guests/drivers/${encodeURIComponent(id)}` : '/api/guests/drivers', {
+    method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: f.name.value, phone: f.phone.value }),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not save the driver.');
+  showToast(id ? 'Driver updated.' : 'Driver added.', 'success');
+  renderGuests();
+}
+async function deleteGuestDriver(id) {
+  const d = (guestData.drivers || []).find((x) => x.id === id);
+  if (!d || !(await showConfirm(`Delete ${d.name}? Trips they were chosen for keep the name, but it is no longer counted or offered.`))) return;
+  const data = await (await fetch(`/api/guests/drivers/${encodeURIComponent(id)}`, { method: 'DELETE' })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not delete.');
+  showToast('Driver deleted.', 'success');
   renderGuests();
 }
 

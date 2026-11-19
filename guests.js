@@ -14,8 +14,8 @@
 // Who may edit what. Travel belongs to the Transport Coordinator, stay to the
 // Accommodation Coordinator; the rest is shared by both.
 const TRAVEL_FIELDS = [
-  'arrival_date', 'arrival_time', 'arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle', 'pickup_status',
-  'departure_date', 'departure_time', 'departure_mode', 'departure_number', 'departure_point', 'drop_vehicle', 'drop_status',
+  'arrival_date', 'arrival_time', 'arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle', 'pickup_driver', 'pickup_status',
+  'departure_date', 'departure_time', 'departure_mode', 'departure_number', 'departure_point', 'drop_vehicle', 'drop_driver', 'drop_status',
   'transport_coordinator',
 ];
 const STAY_FIELDS = ['stay_not_needed', 'accommodation', 'room_no', 'checkin_date', 'checkout_date', 'room_type', 'accommodation_coordinator'];
@@ -35,7 +35,7 @@ const FIELD_PERMISSION = Object.fromEntries([
 // volunteer the stay details. Itineraries, "accommodation not needed", who
 // is assigned and the overall status stay with coordinators.
 const VOLUNTEER_FIELDS = {
-  transport: ['pickup_vehicle', 'pickup_status', 'drop_vehicle', 'drop_status'],
+  transport: ['pickup_vehicle', 'pickup_driver', 'pickup_status', 'drop_vehicle', 'drop_driver', 'drop_status'],
   accommodation: ['accommodation', 'room_no', 'checkin_date', 'checkout_date', 'room_type'],
 };
 // May this person change this field on this faculty member? `can(perm)` is
@@ -60,10 +60,12 @@ const FIELD_LABELS = {
   stay_not_needed: 'Accommodation not needed',
   arrival_date: 'Arrival Date', arrival_time: 'Arrival Time', arrival_mode: 'Arrival Mode',
   arrival_number: 'Arrival Flight/Train No', arrival_point: 'Arrival Point',
-  pickup_vehicle: 'Pickup Vehicle/Driver', pickup_status: 'Pickup Status',
+  // The car and who drives it are chosen apart (owner, 19 Nov 2026): one
+  // car may be driven by different drivers.
+  pickup_vehicle: 'Pickup Vehicle', pickup_driver: 'Pickup Driver', pickup_status: 'Pickup Status',
   departure_date: 'Departure Date', departure_time: 'Departure Time', departure_mode: 'Departure Mode',
   departure_number: 'Departure Flight/Train No', departure_point: 'Departure Point',
-  drop_vehicle: 'Drop Vehicle/Driver', drop_status: 'Drop Status',
+  drop_vehicle: 'Drop Vehicle', drop_driver: 'Drop Driver', drop_status: 'Drop Status',
   transport_coordinator: 'Transport Volunteer',
   accommodation: 'Accommodation', room_no: 'Room No', checkin_date: 'Check-in Date',
   checkout_date: 'Check-out Date', room_type: 'Room Type', accommodation_coordinator: 'Accommodation Volunteer',
@@ -97,8 +99,8 @@ const CANCELLED = 'Cancelled';
 // before are kept, unused, and return if the status is changed back.
 const NOT_REQUIRED = 'Not required';
 const LEG_DETAILS = {
-  pickup_status: ['arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle'],
-  drop_status: ['departure_mode', 'departure_number', 'departure_point', 'drop_vehicle'],
+  pickup_status: ['arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle', 'pickup_driver'],
+  drop_status: ['departure_mode', 'departure_number', 'departure_point', 'drop_vehicle', 'drop_driver'],
 };
 const transferNotRequired = (status) => String(status == null ? '' : status).trim().toLowerCase() === NOT_REQUIRED.toLowerCase();
 // The guest as the board reads them: set-aside leg details blanked.
@@ -263,7 +265,7 @@ function changedFields(before, values, fields = ALL_FIELDS) {
 function validateVehicle(body) {
   const errors = [];
   const label = blank(body.label) ? '' : String(body.label).trim();
-  if (!label) errors.push('Enter the vehicle or driver label.');
+  if (!label) errors.push('Enter the vehicle, e.g. Kia Carens MH32 AJ 6239.');
   else if (label.length > 120) errors.push('The label is too long.');
   // Saved without spaces, like a guest's phone.
   const driverPhone = blank(body.driverPhone) ? null : String(body.driverPhone).replace(/\s+/g, '');
@@ -274,6 +276,19 @@ function validateVehicle(body) {
     if (!Number.isInteger(seats) || seats < 1 || seats > 99) errors.push('Seats must be a whole number from 1 to 99.');
   }
   return { values: { label, driver_phone: driverPhone, seats }, errors };
+}
+
+// A driver: a name, and the phone to reach them on. Drivers are a list of
+// their own, apart from the vehicles, since one car may be driven by
+// different drivers (owner, 19 Nov 2026).
+function validateDriver(body) {
+  const errors = [];
+  const name = blank(body.name) ? '' : String(body.name).replace(/\s+/g, ' ').trim();
+  if (!name) errors.push('Enter the driver\'s name.');
+  else if (name.length > 80) errors.push('The name is too long.');
+  const phone = blank(body.phone) ? null : String(body.phone).replace(/\s+/g, '');
+  if (phone && !/^\+?[0-9][0-9-]{3,19}$/.test(phone)) errors.push('Phone should be digits, with an optional leading +.');
+  return { values: { name, phone }, errors };
 }
 
 // Nights between check-in and check-out (both IST calendar dates); null
@@ -363,11 +378,12 @@ function slotLabels(bounds) {
 //   guests   -- rows with the account's name/designation/phone joined on,
 //               plus `registered`
 //   vehicles -- { id, label, driver_phone, seats }
+//   drivers  -- { id, name, phone }
 //   rooms    -- { id, accommodation, room_no, room_type, beds }
 //   lists    -- { listKey: [values in order] }, used to order the counts
 //   settings -- { alertDays, slotBounds, clashMinutes }
 //   today    -- the IST calendar date
-function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settings = DEFAULT_SETTINGS, today }) {
+function buildBoard({ guests = [], vehicles = [], drivers = [], rooms = [], lists = {}, settings = DEFAULT_SETTINGS, today }) {
   const ordered = [...guests].sort((a, b) => a.id - b.id);
   const isCancelled = (g) => norm(g.overall_status) === norm(CANCELLED);
   // Rows keep every value (the editor needs the set-aside ones); trips,
@@ -389,39 +405,47 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
     byRoom.get(k).push(g);
   }
 
-  // Every timed trip a named vehicle makes, pickups and drops together -- a
-  // car cannot be at the airport and the station at once.
+  // Every timed trip, pickups and drops together, with its car and its
+  // driver -- a car cannot be at the airport and the station at once, and
+  // nor can a driver, whichever car they are in.
   const vehicleByKey = new Map(vehicles.map((v) => [norm(v.label), v]));
+  const driverByKey = new Map(drivers.map((d) => [norm(d.name), d]));
   const trips = [];
   for (const g of live) {
-    if (!blank(g.pickup_vehicle)) {
-      trips.push({ key: norm(g.pickup_vehicle), vehicle: g.pickup_vehicle, kind: 'Pickup', guestId: g.id, name: g.name,
-        date: g.arrival_date, time: g.arrival_time, point: g.arrival_point, at: minutesAt(g.arrival_date, g.arrival_time) });
-    }
-    if (!blank(g.drop_vehicle)) {
-      trips.push({ key: norm(g.drop_vehicle), vehicle: g.drop_vehicle, kind: 'Drop', guestId: g.id, name: g.name,
-        date: g.departure_date, time: g.departure_time, point: g.departure_point, at: minutesAt(g.departure_date, g.departure_time) });
+    for (const [kind, vF, dF, dateF, timeF, pointF] of [['Pickup', 'pickup_vehicle', 'pickup_driver', 'arrival_date', 'arrival_time', 'arrival_point'],
+      ['Drop', 'drop_vehicle', 'drop_driver', 'departure_date', 'departure_time', 'departure_point']]) {
+      if (blank(g[vF]) && blank(g[dF])) continue;
+      trips.push({ vehicle: blank(g[vF]) ? null : g[vF], driver: blank(g[dF]) ? null : g[dF], kind, guestId: g.id, name: g.name,
+        date: g[dateF], time: g[timeF], point: g[pointF], at: minutesAt(g[dateF], g[timeF]) });
     }
   }
   const clashes = [];
-  const byVehicle = new Map();
-  for (const t of trips) {
-    if (!byVehicle.has(t.key)) byVehicle.set(t.key, []);
-    byVehicle.get(t.key).push(t);
-  }
-  for (const list of byVehicle.values()) {
-    const timed = list.filter((t) => t.at != null).sort((a, b) => a.at - b.at);
-    for (let i = 0; i < timed.length; i++) {
-      for (let j = i + 1; j < timed.length && timed[j].at - timed[i].at <= settings.clashMinutes; j++) {
-        clashes.push({ vehicle: timed[i].vehicle, minutesApart: timed[j].at - timed[i].at, a: timed[i], b: timed[j] });
+  const closeTogether = (field) => {
+    const by = new Map();
+    for (const t of trips) {
+      if (!t[field]) continue;
+      const k = norm(t[field]);
+      if (!by.has(k)) by.set(k, []);
+      by.get(k).push(t);
+    }
+    for (const list of by.values()) {
+      const timed = list.filter((t) => t.at != null).sort((a, b) => a.at - b.at);
+      for (let i = 0; i < timed.length; i++) {
+        for (let j = i + 1; j < timed.length && timed[j].at - timed[i].at <= settings.clashMinutes; j++) {
+          clashes.push({ [field]: timed[i][field], vehicle: field === 'vehicle' ? timed[i].vehicle : null, driver: field === 'driver' ? timed[i].driver : null,
+            minutesApart: timed[j].at - timed[i].at, a: timed[i], b: timed[j] });
+        }
       }
     }
-  }
+  };
+  closeTogether('vehicle');
+  closeTogether('driver');
   const clashGuests = new Map();
   for (const c of clashes) {
     for (const [self, other] of [[c.a, c.b], [c.b, c.a]]) {
       if (!clashGuests.has(self.guestId)) clashGuests.set(self.guestId, []);
-      clashGuests.get(self.guestId).push(`${self.kind} in ${c.vehicle} is ${c.minutesApart} min from ${other.name}'s ${other.kind.toLowerCase()} (${to12h(other.time)})`);
+      const what = c.vehicle ? `in ${c.vehicle}` : `with driver ${c.driver}`;
+      clashGuests.get(self.guestId).push(`${self.kind} ${what} is ${c.minutesApart} min from ${other.name}'s ${other.kind.toLowerCase()} (${to12h(other.time)})`);
     }
   }
 
@@ -506,6 +530,11 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
     pickups: live.filter((g) => norm(g.pickup_vehicle) === norm(v.label)).length,
     drops: live.filter((g) => norm(g.drop_vehicle) === norm(v.label)).length,
   }));
+  const driverRows = drivers.map((d) => ({
+    ...d,
+    pickups: live.filter((g) => norm(g.pickup_driver) === norm(d.name)).length,
+    drops: live.filter((g) => norm(g.drop_driver) === norm(d.name)).length,
+  }));
 
   // Per accommodation: guests placed there against beds on the room list.
   const accNames = [...(lists.accommodation || [])];
@@ -526,15 +555,24 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
     if (blank(a[timeF]) !== blank(b[timeF])) return blank(a[timeF]) ? 1 : -1;
     return String(a[timeF] || '').localeCompare(String(b[timeF] || '')) || a.id - b.id;
   });
-  const driverOf = (label) => { const v = vehicleByKey.get(norm(label)); return v ? v.driver_phone || null : null; };
+  // The driver's phone: the driver chosen for the trip; for a trip with no
+  // driver chosen, the one kept on the vehicle, as entered before drivers
+  // had a list of their own.
+  const driverPhone = (driver, vehicle) => {
+    const d = blank(driver) ? null : driverByKey.get(norm(driver));
+    if (d) return d.phone || null;
+    if (!blank(driver)) return null;
+    const v = vehicleByKey.get(norm(vehicle));
+    return v ? v.driver_phone || null : null;
+  };
   const pickups = schedule('arrival_date', 'arrival_time').map((g) => ({
     id: g.id, name: g.name, phone: g.phone, at: g.arrival_at, mode: g.arrival_mode, number: g.arrival_number,
-    point: g.arrival_point, vehicle: g.pickup_vehicle, driverPhone: driverOf(g.pickup_vehicle), status: g.pickup_status,
+    point: g.arrival_point, vehicle: g.pickup_vehicle, driver: g.pickup_driver || null, driverPhone: driverPhone(g.pickup_driver, g.pickup_vehicle), status: g.pickup_status,
     clash: g.flags.vehicleClash.filter((c) => c.startsWith('Pickup')), alert: g.flags.pickupAlert,
   }));
   const drops = schedule('departure_date', 'departure_time').map((g) => ({
     id: g.id, name: g.name, phone: g.phone, at: g.departure_at, mode: g.departure_mode, number: g.departure_number,
-    point: g.departure_point, vehicle: g.drop_vehicle, driverPhone: driverOf(g.drop_vehicle), status: g.drop_status,
+    point: g.departure_point, vehicle: g.drop_vehicle, driver: g.drop_driver || null, driverPhone: driverPhone(g.drop_driver, g.drop_vehicle), status: g.drop_status,
     clash: g.flags.vehicleClash.filter((c) => c.startsWith('Drop')),
   }));
 
@@ -561,7 +599,7 @@ function buildBoard({ guests = [], vehicles = [], rooms = [], lists = {}, settin
     perAccommodation,
   };
 
-  return { guests: rows, vehicles: vehicleRows, rooms: roomRows, unlistedRooms, pickups, drops, clashes, dashboard, slotLabels: labels };
+  return { guests: rows, vehicles: vehicleRows, drivers: driverRows, rooms: roomRows, unlistedRooms, pickups, drops, clashes, dashboard, slotLabels: labels };
 }
 
 // The guest list as CSV, in the order of the record, then the derived
@@ -573,8 +611,8 @@ const CSV_COLUMNS = [
   ['Email', (g) => g.email],
   ['Registration No', (g) => g.registration_number],
   ['Account', (g) => (!g.linked ? 'Not signed up' : Number(g.registered) ? 'Registered' : 'Signed up, not registered')],
-  ...['arrival_date', 'arrival_time', 'arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle', 'pickup_status',
-    'departure_date', 'departure_time', 'departure_mode', 'departure_number', 'departure_point', 'drop_vehicle', 'drop_status',
+  ...['arrival_date', 'arrival_time', 'arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle', 'pickup_driver', 'pickup_status',
+    'departure_date', 'departure_time', 'departure_mode', 'departure_number', 'departure_point', 'drop_vehicle', 'drop_driver', 'drop_status',
     'accommodation', 'room_no', 'checkin_date', 'checkout_date']
     .map((f) => [FIELD_LABELS[f], (g) => (TIME_FIELDS.has(f) ? to12h(g[f]) : travelInUse(g)[f])]),
   ['Nights', (g) => (g.nights == null ? '' : g.nights)],
@@ -610,9 +648,9 @@ const GUEST_TABLE_SQL = (name) => `
     phone_number TEXT UNIQUE,
     guest_name TEXT, guest_designation TEXT, guest_phone TEXT, guest_email TEXT, guest_institution TEXT,
     arrival_date TEXT, arrival_time TEXT, arrival_mode TEXT, arrival_number TEXT, arrival_point TEXT,
-    pickup_vehicle TEXT, pickup_status TEXT,
+    pickup_vehicle TEXT, pickup_driver TEXT, pickup_status TEXT,
     departure_date TEXT, departure_time TEXT, departure_mode TEXT, departure_number TEXT, departure_point TEXT,
-    drop_vehicle TEXT, drop_status TEXT,
+    drop_vehicle TEXT, drop_driver TEXT, drop_status TEXT,
     accommodation TEXT, room_no TEXT, checkin_date TEXT, checkout_date TEXT, room_type TEXT,
     special_needs TEXT, transport_coordinator TEXT, accommodation_coordinator TEXT, overall_status TEXT, remarks TEXT,
     created_at INTEGER NOT NULL, created_by TEXT, updated_at INTEGER, updated_by TEXT,
@@ -627,6 +665,9 @@ const LATER_COLUMNS = [
   // Where a typed-in faculty member works (3 Nov 2026); an account's own
   // institution is used once linked.
   ['guest_institution', 'TEXT'],
+  // Who drives each pickup and drop, chosen apart from the car (19 Nov 2026).
+  ['pickup_driver', 'TEXT'],
+  ['drop_driver', 'TEXT'],
 ];
 
 // The first version of the table made phone_number NOT NULL -- every guest
@@ -667,7 +708,7 @@ module.exports = {
   LIST_LABELS, DEFAULT_LISTS, PROTECTED_VALUES, CANCELLED, DEFAULT_SETTINGS, SLOT_NAMES,
   NOT_REQUIRED, LEG_DETAILS, transferNotRequired, travelInUse, isLocalFaculty,
   naturalCompare,
-  validDate, validTime, addDays, joinDateTime, to12h, dateTime12, slotOf, slotLabels,
+  validDate, validTime, addDays, joinDateTime, to12h, dateTime12, slotOf, slotLabels, validateDriver,
   validateGuestFields, forbiddenChanges, changedFields, validateVehicle, validateRoom, validateSettings,
   nightsBetween, parseRoomNumbers, MAX_BULK_ROOMS,
   buildBoard, guestsCsv,

@@ -200,7 +200,7 @@ const ncsv = G.guestsCsv(nrBoard.guests).split('\r\n');
 const col = (name) => ncsv[0].split(',').indexOf(name);
 const cells = ncsv[1].split(',');
 check('the CSV leaves the set-aside details out, keeps date, time and status',
-  cells[col('Arrival Mode')] === '' && cells[col('Pickup Vehicle/Driver')] === '' && cells[col('Arrival Date')] === '2026-11-20' && cells[col('Pickup Status')] === 'Not required');
+  cells[col('Arrival Mode')] === '' && cells[col('Pickup Vehicle')] === '' && cells[col('Pickup Driver')] === '' && cells[col('Arrival Date')] === '2026-11-20' && cells[col('Pickup Status')] === 'Not required');
 check('"Not required" cannot be switched off or removed from the list', G.PROTECTED_VALUES.transfer_status.includes('Not required') && G.DEFAULT_LISTS.transfer_status.includes(G.NOT_REQUIRED));
 
 console.log('\n== Own stay ==');

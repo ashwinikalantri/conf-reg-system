@@ -356,7 +356,8 @@ check('pickups as cards too, phones to tap', /<article [^>]*>[\s\S]*?Alpha Arriv
 sb.__g.renderGuestRooms();
 check('rooms as cards: beds used of beds', /Yatri Nivas · 1<\/p>/.test(el('guests-view-rooms').innerHTML) && /2 of 2 beds/.test(el('guests-view-rooms').innerHTML));
 sb.__g.renderGuestVehicles();
-check('vehicles as cards', /<article [^>]*>\s*<p class="font-semibold text-slate-800">Car A<\/p>/.test(el('guests-view-vehicles').innerHTML));
+// Vehicles and drivers, two lists (19 Nov 2026): a row each, stacked on a phone.
+check('vehicles listed, each a row that stacks on a phone', /<p class="font-semibold text-slate-800 break-words">Car A<\/p>/.test(el('guests-view-vehicles').innerHTML) && />Drivers<\/h3>/.test(el('guests-view-vehicles').innerHTML));
 const modal = fs.readFileSync(appFile('views', 'admin', 'modals', 'guest-edit.ejs'), 'utf8');
 check('the editor is full-screen on a phone, Save always in view', /id="modal-guest-edit" class="hidden fixed inset-0[^"]*items-stretch sm:items-center p-0 sm:p-4/.test(modal)
   && /h-full sm:h-auto/.test(modal) && /overflow-y-auto flex-1 min-h-0/.test(modal));
