@@ -4204,17 +4204,7 @@ function setupAdminDelegation() {
     });
   });
 
-  // Approve/Reject/Reset inside the abstract review modal -- id comes from
-  // the container's data-id (set by openAbstractReview), not the button itself.
-  const abstractReviewActions = document.getElementById('abstract-review-modal-actions');
-  if (abstractReviewActions) {
-    abstractReviewActions.addEventListener('click', (e) => {
-      const btn = e.target.closest('.abstract-status-btn');
-      if (!btn) return;
-      updateAbstractStatus(abstractReviewActions.dataset.id, btn.dataset.status);
-      closeModal('modal-abstract-review');
-    });
-  }
+
 
   // Every group's option rows, plus the group-level controls, live in one
   // dynamically-rendered container -- see renderBackendPrograms().
@@ -10980,7 +10970,8 @@ function abstractCardHeader(a) {
 // through esc(), which would double-escape and show literal "&lt;b&gt;"
 // instead of bold.
 function abstractSectionsHtml(a) {
-  const section = (label, html) => html ? `<div class="mb-2"><p class="text-[10px] font-bold text-slate-500 uppercase tracking-wide">${esc(label)}</p><p class="text-sm text-slate-700 whitespace-pre-wrap">${html}</p></div>` : '';
+  const section = (label, html) => html ? `<div class="mb-4"><p class="text-[12px] font-bold text-slate-500 uppercase tracking-wide">${esc(label)}</p><p class="text-[15px] leading-relaxed text-slate-800 whitespace-pre-wrap mt-0.5">${html}</p></div>` : '';
+  const sectioned = a.background || a.aim || a.methods || a.results || a.conclusion;
   const revisionNote = a.status === 'REVISION_REQUESTED' && a.revision_note
     ? `<div class="mb-3 bg-orange-50 border border-orange-200 rounded-lg p-3">
          <p class="text-[10px] font-bold text-orange-700 uppercase tracking-wide">Corrections requested — awaiting resubmission${a.revision_until ? ` by ${esc(formatFullDate(a.revision_until))}` : ''}</p>
@@ -10997,16 +10988,16 @@ function abstractSectionsHtml(a) {
          <p class="text-[11px] mt-1 ${a.completed_at ? 'text-emerald-700 font-semibold' : 'text-indigo-700'}">${a.completed_at ? `Updated by the author ${esc(fmtAuditTime(a.completed_at))}: what you see below is the updated abstract.` : 'Not updated yet.'}</p>
        </div>`
     : '';
-  return `<div class="border-t border-slate-100 pt-3">
+  return `<div>
     ${revisionNote}
     ${completeNote}
+    ${sectioned ? '' : section('Abstract', a.text ? esc(a.text) : '')}
     ${section('Background', a.background)}
     ${section('Aim', a.aim)}
     ${section('Methods', a.methods)}
     ${section('Results', a.results)}
     ${section('Conclusion', a.conclusion)}
-    ${a.keywords ? `<p class="text-[11px] text-slate-500"><span class="font-bold">Keywords:</span> ${esc(a.keywords)}</p>` : ''}
-    <p class="text-[10px] text-slate-400 mt-1">${a.word_count ? esc(a.word_count) + ' words' : ''}</p>
+    ${a.keywords ? `<p class="text-[13px] text-slate-600"><span class="font-bold">Keywords:</span> ${esc(a.keywords)}</p>` : ''}
   </div>`;
 }
 
@@ -11421,15 +11412,43 @@ function openPresenterEmails() {
 }
 const abstractFormatLabel = (a) => ABSTRACT_FORMATS[a] || a || '';
 
-function openAbstractReview(id) {
+// --- The review window -----------------------------------------------------
+// Opened from a list, it walks that list (Previous / Next, and Approve &
+// next) as it was shown -- the step, its status chip, the search. absListIds
+// holds each list's order as last drawn.
+const absListIds = { 1: [], 2: [] };
+let abstractReviewQueue = [];
+let abstractReviewQueueName = '';
+let abstractReviewQueueStep = null;
+
+function openAbstractReview(id, queue, queueName) {
   const a = abstractsCache.find((x) => String(x.id) === String(id));
   if (!a) return;
+  if (queue) { abstractReviewQueue = queue; abstractReviewQueueName = queueName || ''; }
+  else {
+    const step = ['1', '2'].find((n) => absListIds[n].some((x) => String(x) === String(id)));
+    abstractReviewQueueStep = step || null;
+    abstractReviewQueue = step ? absListIds[step] : [a.id];
+    abstractReviewQueueName = step === '2' ? 'Assignment' : step === '1' ? (ABSTRACT_FILTERS.find(([k]) => k === abstractsStatusFilter) || [null, 'Approval'])[1] : '';
+  }
   const titleEl = document.getElementById('abstract-review-modal-title');
   if (titleEl) titleEl.innerText = a.title || 'Abstract';
+  setText('abstract-review-meta', [`#${a.id}`, a.format ? `submitted as ${a.format}` : '', a.word_count ? `${a.word_count} words` : ''].filter(Boolean).join(' · '));
   const body = document.getElementById('abstract-review-modal-body');
-  if (body) body.innerHTML = abstractAuthorsReviewHtml(a) + abstractSectionsHtml(a);
+  if (body) body.innerHTML = abstractSectionsHtml(a);
+  const side = document.getElementById('abstract-review-side');
+  if (side) side.innerHTML = abstractReviewSideHtml(a);
   const actions = document.getElementById('abstract-review-modal-actions');
   if (actions) actions.dataset.id = a.id;
+  drawAbstractReviewActions(a);
+  // Where it is in the list, and whether there is one before and after.
+  const at = abstractReviewQueue.findIndex((x) => String(x) === String(a.id));
+  setText('abstract-review-position', at >= 0 && abstractReviewQueue.length > 1
+    ? `${abstractReviewQueueName ? `${abstractReviewQueueName} · ` : ''}${at + 1} of ${abstractReviewQueue.length}` : '');
+  const prev = document.getElementById('abstract-review-prev');
+  const next = document.getElementById('abstract-review-next');
+  if (prev) prev.disabled = !(at > 0);
+  if (next) next.disabled = !(at >= 0 && at < abstractReviewQueue.length - 1);
   // Shared modal, reused per abstract -- collapse the revision note box and
   // clear any text left over from a previous open.
   const revisionBox = document.getElementById('abstract-revision-box');
@@ -11446,14 +11465,105 @@ function openAbstractReview(id) {
   if (completeBox) completeBox.classList.add('hidden');
   const completeNote = document.getElementById('abstract-complete-note');
   if (completeNote) completeNote.value = a.complete_note || '';
-  // Not for one rejected, or already back with the author for corrections.
-  const completeBtn = document.getElementById('abstract-complete-btn');
-  if (completeBtn) {
-    completeBtn.classList.toggle('hidden', a.status === 'REJECTED' || a.status === 'REVISION_REQUESTED');
-    completeBtn.textContent = a.complete_until ? 'Ask Again to Complete' : 'Ask to Complete';
-  }
   openModal('modal-abstract-review');
+  const scroller = document.querySelector('#modal-abstract-review .overflow-y-auto');
+  if (scroller) scroller.scrollTop = 0;
 }
+
+// Beside the text: who wrote it, whether the presenter has registered,
+// where it stands and who last changed it, and the PDF.
+function abstractReviewSideHtml(a) {
+  const status = a.status || 'UNDER_REVIEW';
+  const provisional = abstractProvisional(a);
+  const label = (t) => `<p class="text-[12px] font-bold uppercase tracking-wide text-slate-500">${t}</p>`;
+  const authors = a.authors
+    ? `<p class="text-sm text-slate-800 mt-1">${abstractAuthorsLineHtml(a.authors)}</p>
+       <p class="text-[13px] mt-0.5 ${a.authors_given ? 'text-slate-500' : 'text-gold-700 font-semibold'}">${!a.authors_given ? 'Co-authors not added yet' : a.authors.length > 1 ? 'Presenting author underlined' : 'Confirmed as the only author'}</p>`
+    : `<p class="text-sm text-slate-800 mt-1">${esc(a.author_name || '')}</p>`;
+  return `<div>${label('Authors')}${authors}
+      ${a.authors && can('abstracts.review') ? `<button type="button" onclick="openAbstractAuthors(${esc(a.id)})" class="mt-1 min-h-[32px] text-[13px] font-semibold text-indigo-700 underline">Edit authors</button>` : ''}</div>
+    <div>${label('Presenter')}
+      <p class="text-sm text-slate-800 mt-1">${Number(a.author_registered) ? `Registered${a.reg_no ? ` · <span class="tabular-nums">${esc(a.reg_no)}</span>` : ''}` : 'Not registered'}</p>
+      ${!Number(a.author_registered) && status !== 'REJECTED' ? `<p class="text-[13px] text-slate-600">${provisional ? 'Accepted provisionally, until they register.' : 'Approval will be provisional until they register.'}</p>` : ''}</div>
+    <div>${label('Where it stands')}
+      <p class="mt-1"><span class="${ABSTRACT_STATUS_STYLES[provisional ? 'PROVISIONAL' : status] || ''} text-xs px-2.5 py-1 rounded-full font-bold border whitespace-nowrap">${esc(provisional ? 'Accepted · not registered' : ABSTRACT_STATUS_WORDS[status] || status)}</span></p>
+      ${a.allocation ? `<p class="text-[13px] text-slate-700 mt-1.5">${esc(abstractFormatLabel(a.allocation))}${a.decision_sent_at ? ' · decision emailed' : ' · decision not emailed yet'}</p>` : ''}
+      ${a.last_action_by ? `<p class="text-[13px] text-slate-500 mt-1">Last changed by ${esc(a.last_action_by)}, ${esc(fmtAuditTime(a.last_action_at))}</p>` : ''}</div>
+    <button type="button" onclick="downloadAbstractPdf()" class="min-h-[36px] text-[13px] font-semibold text-indigo-700 underline">Download PDF</button>`;
+}
+
+// The decision bar, for this abstract's status: Approve & next first (with
+// a next one to go to), Approve, Send back; the rest under More, Reject
+// asking first. A role that may not review sees no decisions.
+function drawAbstractReviewActions(a) {
+  const box = document.getElementById('abstract-review-modal-actions');
+  if (!box) return;
+  if (!can('abstracts.review')) { box.innerHTML = '<p class="text-sm text-slate-500">You can read the abstract; deciding is for a reviewer.</p>'; return; }
+  const status = a.status || 'UNDER_REVIEW';
+  const at = abstractReviewQueue.findIndex((x) => String(x) === String(a.id));
+  const hasNext = at >= 0 && at < abstractReviewQueue.length - 1;
+  const btn = 'h-11 px-4 rounded-lg font-semibold text-sm whitespace-nowrap';
+  const more = [
+    status !== 'REJECTED' && status !== 'REVISION_REQUESTED' ? `<button type="button" onclick="abstractReviewMore(false); toggleAbstractCompleteBox()" class="block w-full text-left px-3 py-2.5 text-sm hover:bg-slate-50">${a.complete_until ? 'Ask again to complete' : 'Ask to complete by a date'}</button>` : '',
+    status !== 'UNDER_REVIEW' ? '<button type="button" onclick="abstractReviewMore(false); decideAbstract(\'UNDER_REVIEW\')" class="block w-full text-left px-3 py-2.5 text-sm hover:bg-slate-50">Reset to under review</button>' : '',
+    status !== 'REJECTED' ? '<button type="button" onclick="abstractReviewMore(false); decideAbstract(\'REJECTED\')" class="block w-full text-left px-3 py-2.5 text-sm text-rose-700 hover:bg-rose-50 border-t border-slate-100">Reject… <span class="text-slate-500">(asks first)</span></button>' : '',
+  ].filter(Boolean).join('');
+  box.innerHTML = `
+    ${status !== 'ACCEPTED' && hasNext ? `<button type="button" onclick="decideAbstract('ACCEPTED', true)" class="${btn} bg-emerald-600 hover:bg-emerald-700 text-white font-bold">Approve &amp; next</button>` : ''}
+    ${status !== 'ACCEPTED' ? `<button type="button" onclick="decideAbstract('ACCEPTED')" class="${btn} ${hasNext ? 'border border-emerald-600 text-emerald-700 hover:bg-emerald-50' : 'bg-emerald-600 hover:bg-emerald-700 text-white font-bold'}">Approve</button>` : '<span class="text-sm font-semibold text-emerald-700">Approved</span>'}
+    ${status !== 'REJECTED' ? `<button type="button" onclick="toggleAbstractRevisionBox()" class="${btn} border border-slate-300 text-slate-800 hover:bg-slate-50">Send back for corrections</button>` : ''}
+    ${more ? `<div class="relative ml-auto">
+      <button type="button" id="abstract-review-more-btn" onclick="abstractReviewMore()" aria-haspopup="true" aria-expanded="false" class="${btn} border border-slate-200 text-slate-700 hover:bg-slate-50">More ▾</button>
+      <div id="abstract-review-more" class="hidden absolute right-0 bottom-12 w-60 bg-white rounded-xl border border-slate-200 shadow-card py-1 z-10">${more}</div>
+    </div>` : ''}`;
+}
+function abstractReviewMore(open) {
+  const menu = document.getElementById('abstract-review-more');
+  const btn = document.getElementById('abstract-review-more-btn');
+  if (!menu) return;
+  const show = open === undefined ? menu.classList.contains('hidden') : open;
+  menu.classList.toggle('hidden', !show);
+  if (btn) btn.setAttribute('aria-expanded', show ? 'true' : 'false');
+}
+
+// Previous / Next through the list it was opened from.
+function stepAbstractReview(by) {
+  const at = abstractReviewQueue.findIndex((x) => String(x) === String((document.getElementById('abstract-review-modal-actions') || {}).dataset.id));
+  const to = abstractReviewQueue[at + by];
+  if (to != null) openAbstractReview(to, abstractReviewQueue, abstractReviewQueueName);
+}
+
+// Approve, reject or reset this abstract. Rejecting asks first; "& next"
+// goes on to the next in the list, or closes after the last.
+async function decideAbstract(status, andNext) {
+  const actions = document.getElementById('abstract-review-modal-actions');
+  const id = actions && actions.dataset.id;
+  if (!id) return;
+  if (status === 'REJECTED' && !(await showConfirm('Reject this abstract? Its author will be told it has not been accepted (you can still send or cancel that email).', 'Reject'))) return;
+  const queue = abstractReviewQueue.slice();
+  const name = abstractReviewQueueName;
+  const at = queue.findIndex((x) => String(x) === String(id));
+  await updateAbstractStatus(id, status);
+  const next = andNext ? queue[at + 1] : null;
+  // The list as it is now -- the one decided has usually left it -- so the
+  // count is "1 of 2", not "2 of 3".
+  const fresh = abstractReviewQueueStep ? absListIds[abstractReviewQueueStep] : queue;
+  const nextQueue = fresh.some((x) => String(x) === String(next)) ? fresh : queue;
+  if (next != null && abstractsCache.some((x) => String(x.id) === String(next))) openAbstractReview(next, nextQueue, name);
+  else {
+    closeModal('modal-abstract-review');
+    if (andNext) showToast('That was the last one in the list.', 'success');
+  }
+}
+
+// ← and → step through the list while the window is open, unless typing.
+document.addEventListener('keydown', (e) => {
+  const modal = document.getElementById('modal-abstract-review');
+  if (!modal || modal.classList.contains('hidden')) return;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '')) return;
+  if (e.key === 'ArrowLeft') stepAbstractReview(-1);
+  if (e.key === 'ArrowRight') stepAbstractReview(1);
+});
 
 function downloadAbstractPdf() {
   const actions = document.getElementById('abstract-review-modal-actions');
@@ -11539,21 +11649,6 @@ function toggleAbstractsMissingAuthors() {
   renderBackendAbstracts();
 }
 
-// The authors, at the top of the review modal, with the way to change them.
-function abstractAuthorsReviewHtml(a) {
-  if (!a.authors) return '';
-  const many = a.authors.length > 1;
-  const note = !a.authors_given ? 'Only the submitter so far — co-authors not added yet.'
-    : many ? 'Presenting author underlined.' : 'Confirmed as the only author.';
-  return `<div class="mb-3 flex items-start gap-3">
-    <div class="flex-1 min-w-0">
-      <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Authors</p>
-      <p class="text-sm text-slate-800 mt-0.5">${abstractAuthorsLineHtml(a.authors)}</p>
-      <p class="text-[11px] ${a.authors_given ? 'text-slate-500' : 'text-gold-700 font-semibold'} mt-0.5">${note}</p>
-    </div>
-    ${can('abstracts.review') ? `<button type="button" onclick="openAbstractAuthors(${esc(a.id)})" class="shrink-0 px-3 py-1.5 bg-white border border-slate-300 text-navy hover:bg-slate-50 font-semibold rounded-lg text-xs">Edit authors</button>` : ''}
-  </div>`;
-}
 
 // --- ZENODO (Review Desk, Step 5) -------------------------------------------
 // Accepted abstracts with a DOI: settings, then per abstract Send as draft
@@ -11885,6 +11980,7 @@ async function renderBackendAbstracts(local) {
       class="h-8 px-3 rounded-full text-xs font-semibold border whitespace-nowrap ${abstractsStatusFilter === key ? 'bg-navy border-navy text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}">${label} <span class="tabular-nums ${abstractsStatusFilter === key ? 'text-white/80' : 'text-slate-400'}">${n}</span></button>`;
   const chips = [chip('', 'All', approvalOrder.length)].concat(ABSTRACT_FILTERS.filter(([key]) => counts[key]).map(([key, label]) => chip(key, label, counts[key])));
   const shown = abstractsStatusFilter ? approvalOrder.filter((a) => statusOf(a) === abstractsStatusFilter) : approvalOrder;
+  absListIds['1'] = shown.map((a) => a.id);
   approvalBox.innerHTML = !approvalOrder.length
     ? `<p class="text-sm text-slate-500 p-4 bg-white rounded-xl border border-slate-200">${absSearch ? 'No abstract here matches the search.' : 'Nothing waiting for a decision. The accepted abstracts are under Assignment.'}</p>`
     : `<div class="flex flex-wrap gap-1.5" role="group" aria-label="Show abstracts by status">${chips.join('')}</div>`
@@ -11901,6 +11997,7 @@ async function renderBackendAbstracts(local) {
   const accepted = abstracts.filter((a) => a.status === 'ACCEPTED');
   const approved = accepted.filter((a) => !a.decision_sent_at)
     .sort((a, b) => (a.allocation ? 1 : 0) - (b.allocation ? 1 : 0));
+  absListIds['2'] = approved.map((a) => a.id);
   const allocBtn = (a, key, label) => `<button type="button" class="abstract-alloc-btn h-9 px-4 text-xs font-semibold ${a.allocation === key ? 'bg-indigo-600 text-white' : 'bg-white text-indigo-700 hover:bg-indigo-50'}" aria-pressed="${a.allocation === key}" data-id="${esc(a.id)}" data-alloc="${key}">${label}</button>`;
   assignBox.innerHTML = approved.length ? approved.map(a => `
     <div class="bg-white rounded-xl px-4 py-3 border border-slate-200">
@@ -11937,7 +12034,7 @@ async function updateAbstractStatus(id, status) {
   if (!data.success) showToast(data.error || 'Could not update the abstract.');
   else if (data.provisional) showToast('Approved provisionally — pending the author\'s registration. No email is sent at this step.', 'success');
   else if (status === 'ACCEPTED' && can('abstracts.assign')) showToast('Approved. It has moved to Step 2 to assign its format.', 'success');
-  renderBackendAbstracts();
+  await renderBackendAbstracts();
 }
 
 // Assigning a format is what emails the author their decision, so it asks

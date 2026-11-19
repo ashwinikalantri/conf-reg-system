@@ -152,7 +152,8 @@ check('as text, * marks the presenting author', A.authorsText([{ name: 'B Shah' 
       /id="modal-abstract-authors"/.test(adminPage) && /id="abstracts-authors-summary"/.test(adminPage) && /id="gs-conf-authorsdeadline"/.test(adminPage));
     check('authors move with arrows and the presenting one cannot be removed',
       /function moveAuthor\(/.test(js) && /removeAuthor[\s\S]{0,200}presenting\) return/.test(js));
-    check('the review modal shows them, with Edit authors', /abstractAuthorsReviewHtml\(a\) \+ abstractSectionsHtml\(a\)/.test(js) && /openAbstractAuthors\(\$\{esc\(a\.id\)\}\)/.test(js));
+    // In the strip beside the text since the review window's redesign (19 Nov 2026).
+    check('the review modal shows them, with Edit authors', /side\.innerHTML = abstractReviewSideHtml\(a\)/.test(js) && /function abstractReviewSideHtml\(a\)[\s\S]*?label\('Authors'\)[\s\S]*?openAbstractAuthors\(\$\{esc\(a\.id\)\}\)/.test(js));
     check('a reminder template asks for them', /'abstract-add-authors'/.test(js) && /abstract_authors: 'abstract-add-authors'/.test(js));
   } finally {
     await setLast(original);
