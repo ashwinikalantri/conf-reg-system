@@ -1,10 +1,11 @@
 // The Guests tab as drawn: app.js run whole, fed a board computed by
 // guests.js from real-shaped rows, with just enough of a page to draw into.
 //
-// What a coordinator sees: the status colours (Cancelled struck through),
-// the orange/red row tints and the purple chip, sorting and filtering, the
-// editor enabling only the sections the role may edit, the schedules, rooms,
-// vehicles and dashboard, and the admin-only pieces staying hidden.
+// What a coordinator sees (redesigned 20 Nov 2026): the Day plan with the
+// one thing each person still needs, everyone one line a person with the
+// usual cuts as chips, a person's panel, the editor enabling only the
+// sections the role may edit, rooms, vehicles, and the admin-only pieces
+// staying hidden.
 const { check, report, appFile } = require('./harness');
 const fs = require('fs');
 const vm = require('vm');
@@ -46,8 +47,8 @@ function load(perms) {
   vm.runInContext(`${js}
     myPermissions = new Set(${JSON.stringify(perms)});
     globalThis.__set = (d) => { guestData = d; };
-    globalThis.__g = { renderGuestList, renderGuestDashboard, renderGuestSchedule, renderGuestVehicles, renderGuestRooms,
-      renderGuestSettings, openGuestEditor, fillGuestFilters, sortGuests, switchGuestView };`, sandbox);
+    globalThis.__g = { renderGuestList, renderGuestDay, renderGuestPanel, openGuestPanel, setGuestChip, setGuestSort, setGuestDay, guestNeeds,
+      openGuestCarPicker, toggleGuestSheets, renderGuestVehicles, renderGuestRooms, renderGuestSettings, openGuestEditor, fillGuestFilters, switchGuestView };`, sandbox);
   return { sb: sandbox, el };
 }
 
@@ -76,40 +77,74 @@ const { sb, el } = load(['guests.view', 'guests.edit', 'guests.travel']);
 sb.__set(data);
 sb.__g.fillGuestFilters();
 sb.__g.renderGuestList();
-const body = el('guests-tbody').innerHTML;
-const rowOf = (name) => (body.split('<tr').find((r) => r.includes(`>${name}<`)) || '');
-check('every guest is listed', ['Alpha Arriving', 'Bravo Homeless', 'Charlie Cancelled', 'Delta Roommate', 'Echo Typed'].every((n) => body.includes(`>${n}<`)));
-check('Invited yellow, Confirmed green, Arrived blue', /bg-amber-100[^"]*">Invited</.test(body) && /bg-emerald-100[^"]*">Confirmed</.test(body) && /bg-blue-100[^"]*">Arrived</.test(body));
-check('Cancelled red with strikethrough', /bg-rose-100 text-rose-800 border-rose-300 line-through">Cancelled</.test(body));
-check('orange row: arriving within the window, no vehicle', /class="bg-orange-50 /.test(rowOf('Alpha Arriving')));
-check('red row: no accommodation', /class="bg-rose-50 /.test(rowOf('Bravo Homeless')));
-check('the cancelled guest is neither, and struck through', !/bg-rose-50|bg-orange-50/.test(rowOf('Charlie Cancelled')) && /line-through">Charlie Cancelled/.test(rowOf('Charlie Cancelled')));
-check('purple chip on both roommates', /bg-violet-100[^>]*>Shares room/.test(rowOf('Alpha Arriving')) && /bg-violet-100[^>]*>Shares room/.test(rowOf('Delta Roommate')));
-check('not registered is flagged', />Not registered</.test(rowOf('Delta Roommate')) && !/>Not registered</.test(rowOf('Alpha Arriving')));
-check('arrival shows date and time together, 12-hour', />20 November 2026, 09:00 am</.test(rowOf('Alpha Arriving')));
-check('a coordinator gets Edit', />Edit</.test(rowOf('Alpha Arriving')));
-check('the Faculty column has a fixed width, and a long designation is cut to two lines with the rest on hover',
-  /<div class="w-56 break-words">/.test(rowOf('Alpha Arriving')) && /class="text-xs text-slate-500 line-clamp-2" title="Professor">Professor</.test(rowOf('Alpha Arriving')));
-check('a guest without an account says so, not "Not registered"', />Not signed up</.test(rowOf('Echo Typed')) && !/>Not registered</.test(rowOf('Echo Typed')));
+const body = el('guests-list').innerHTML;
+const rowOf = (name) => (body.split('role="button"').find((r) => r.includes(`>${name}<`)) || '');
+check('everyone not cancelled is listed, a line each', ['Alpha Arriving', 'Bravo Homeless', 'Delta Roommate', 'Echo Typed'].every((n) => body.includes(`>${n}<`))
+  && !body.includes('>Charlie Cancelled<') && (body.match(/role="button"/g) || []).length === 4);
+check('...each opening their panel', /onclick="openGuestPanel\(\d+\)"/.test(rowOf('Alpha Arriving')));
+check('arriving soon with no car: "No car", in orange', /text-orange-700 font-semibold">No car</.test(rowOf('Alpha Arriving')));
+check('...and the day and time, 12-hour', />Fri 20 Nov · 09:00 am</.test(rowOf('Alpha Arriving')));
+check('what is needed, as chips: a car, a room', />Car</.test(rowOf('Alpha Arriving')) && />Room</.test(rowOf('Bravo Homeless')));
+check('a car chosen shows the car', />Car A</.test(rowOf('Bravo Homeless')));
+check('travel not known says so, and is needed', />Not known</.test(rowOf('Echo Typed')) && />Travel details</.test(rowOf('Echo Typed')));
+check('the chips count: All, Needs something, Travel not known, Staying, Own stay, Cancelled',
+  ['All', 'Needs something', 'Travel not known', 'Staying', 'Own stay', 'Cancelled'].every((c) => el('guests-chips').innerHTML.includes(`${c} <b`))
+  && /All <b class="ml-1\.5 tabular-nums ">4<\/b>/.test(el('guests-chips').innerHTML.replace(/\s+/g, ' ').replace(/All\s+<b/, 'All <b')), el('guests-chips').innerHTML);
+sb.__g.setGuestChip('cancelled');
+check('Cancelled, apart, struck through', /line-through">Charlie Cancelled/.test(el('guests-list').innerHTML) && !el('guests-list').innerHTML.includes('>Alpha Arriving<'));
+sb.__g.setGuestChip('unknown');
+check('Travel not known', el('guests-list').innerHTML.includes('>Echo Typed<') && !el('guests-list').innerHTML.includes('>Alpha Arriving<'));
+sb.__g.setGuestChip('all');
+check('the old filters are under More filters', /<details id="guests-more-filters"[\s\S]*id="guests-filter-flag"[\s\S]*id="guests-filter-district"[\s\S]*<\/details>/.test(ejs));
 
 el('guests-filter-flag').value = 'noAccommodation';
 sb.__g.renderGuestList();
-check('filtering by a flag', el('guests-tbody').innerHTML.includes('>Bravo Homeless<') && !el('guests-tbody').innerHTML.includes('>Alpha Arriving<'));
+check('filtering by a flag', el('guests-list').innerHTML.includes('>Bravo Homeless<') && !el('guests-list').innerHTML.includes('>Alpha Arriving<'));
 el('guests-filter-flag').value = '';
-el('guests-filter-status').value = '__live';
+el('guests-filter-status').value = 'Cancelled';
 sb.__g.renderGuestList();
-check('"All but Cancelled" hides Cancelled', !el('guests-tbody').innerHTML.includes('>Charlie Cancelled<'));
+check('a status asked for shows, Cancelled too', el('guests-list').innerHTML.includes('>Charlie Cancelled<'));
 el('guests-filter-status').value = '';
 el('guests-search').value = 'delta';
 sb.__g.renderGuestList();
-check('search', el('guests-tbody').innerHTML.includes('>Delta Roommate<') && !el('guests-tbody').innerHTML.includes('>Bravo Homeless<'));
+check('search', el('guests-list').innerHTML.includes('>Delta Roommate<') && !el('guests-list').innerHTML.includes('>Bravo Homeless<'));
 el('guests-search').value = '';
-sb.__g.sortGuests('name');
-sb.__g.sortGuests('name');
-const order = [...el('guests-tbody').innerHTML.matchAll(/font-semibold[^>]*>([A-Z][a-z]+ [A-Za-z]+)</g)].map((m) => m[1]);
+sb.__g.setGuestSort('name');
+const order = [...el('guests-list').innerHTML.matchAll(/font-semibold text-navy [^>]*>([A-Z][a-z]+ [A-Za-z]+)</g)].map((m) => m[1]);
 check('sorting by stay puts room 2 before room 10', /accommodation: \(g\) => [^\n]*\.replace\(\/\\d\+\/g, \(d\) => d\.padStart\(10, '0'\)\)/.test(js));
-check('sorting by name, then reversed', order[0] === 'Echo Typed' && order[order.length - 1] === 'Alpha Arriving', order);
-check('the header shows the sort', /Faculty ▼/.test(el('guests-thead').innerHTML));
+check('sorted by name', order.join() === 'Alpha Arriving,Bravo Homeless,Delta Roommate,Echo Typed', order);
+
+console.log('\n== The Day plan ==');
+sb.__g.renderGuestDay();
+const dayHtml = el('guests-view-day').innerHTML;
+check('it opens on the first day from today with something on', /aria-pressed="true"[^>]*>\s*<span[^>]*>Fri 20 Nov</.test(dayHtml));
+check('each day says how many come and go', />1 in · 0 out</.test(dayHtml) && />0 in · 1 out</.test(dayHtml));
+check('"Waiting on you": arriving with no car, staying with no room', />1<\/b> arriving by Sat 21 Nov with no car →/.test(dayHtml) && /staying, no room →/.test(dayHtml));
+check('the arrival with no car has Assign car', /openGuestCarPicker\(\[1\], 'Pickup', 'day'\)[^>]*>Assign car</.test(dayHtml));
+check('checking in: their room -- no buttons for a transport coordinator', /Yatri Nivas · 1/.test(dayHtml) && !/>Mark checked in</.test(dayHtml));
+const adminDay = load(['guests.view', 'guests.edit', 'guests.travel', 'guests.stay', 'guests.manage']);
+adminDay.sb.__set(data);
+adminDay.sb.__g.renderGuestDay();
+check('...Mark checked in for whoever looks after the stay', />Mark checked in</.test(adminDay.el('guests-view-day').innerHTML));
+sb.__g.openGuestCarPicker([1], 'Pickup', 'day');
+const pickHtml = el('guests-view-day').innerHTML;
+check('the car picker: each car, free or busy, a driver, Assign, Not needed', /setGuestPick\('vehicle', &quot;Car A&quot;\)/.test(pickHtml) && /free</.test(pickHtml)
+  && />Assign</.test(pickHtml) && />Not needed</.test(pickHtml));
+sb.__g.setGuestDay('2026-11-22');
+check('another day: who leaves, with their car', /Delta Roommate/.test(el('guests-view-day').innerHTML) && /Car A/.test(el('guests-view-day').innerHTML));
+sb.__g.toggleGuestSheets();
+check('driver sheets: copy for WhatsApp, and their own link', /Driver sheets · Sun 22 Nov/.test(el('guests-view-day').innerHTML));
+sb.__g.toggleGuestSheets();
+check('the statuses follow on the server, not by hand here', /Object\.assign\(values, guestLib\.autoStatusValues\(current, values, lists\)\)/.test(fs.readFileSync(appFile('server.js'), 'utf8')));
+
+console.log('\n== A person, in the panel ==');
+sb.__g.openGuestPanel(2);
+const panel = el('guest-panel').innerHTML;
+check('their parts: Coming, Staying, Going, In the programme, Notes', ['Coming', 'Staying', 'Going', 'In the programme', 'Notes &amp; contacts'].every((t) => panel.includes(`>${t}</h4>`)));
+check('...each with Edit, opening the editor on that part', /openGuestEditor\(2, 'Arrival'\)/.test(panel) && /openGuestEditor\(2, 'Stay'\)/.test(panel) && /openGuestEditor\(2, 'Other'\)/.test(panel));
+check('...no room: says so; Give a room is for whoever looks after the stay', />No room</.test(panel) && !/>Give a room</.test(panel)
+  && (() => { adminDay.sb.__g.openGuestPanel(2); return /openGuestRoomPicker\(2, 'panel'\)[^>]*>Give a room</.test(adminDay.el('guest-panel').innerHTML); })());
+check('the panel is open', !el('guest-panel').classList.contains('hidden'));
 
 console.log('\n== The editor follows the role ==');
 sb.__g.openGuestEditor(rows[0].id);
@@ -126,7 +161,9 @@ check('time is picked, hour / minutes / am-pm, over a hidden 24-hour value', /<i
   && !/type="text" data-time12/.test(form));
 check('...12 hours, every minute, am and pm', (timeBox.match(/data-part="h"[\s\S]*?<\/select>/)[0].match(/<option value="\d\d"/g) || []).length === 12
   && (timeBox.match(/data-part="m"[\s\S]*?<\/select>/)[0].match(/<option value="\d\d"/g) || []).length === 60);
-check('the travel boxes keep to their column on a phone', /<fieldset class="min-w-0 /.test(form));
+check('the travel boxes keep to their column on a phone', /<fieldset data-group="Arrival" class="min-w-0 /.test(form));
+check('opened from a part of the panel, the editor shows that part alone', /function openGuestEditor\(id, only\)/.test(js)
+  && /c\.classList\.toggle\('hidden', c\.dataset\.group !== only\)/.test(js));
 check('...and from a tablet up the three pickers share two columns, so the time is never cut off', /<label class="block min-w-0 md:col-span-2"><span[^>]*>Time<\/span><input type="hidden" name="arrival_time"/.test(form));
 check('the vehicle field suggests vehicles but takes free text', /name="pickup_vehicle" type="text"[^>]*list="guest-vehicle-options"/.test(form) && /<option value="Car A">/.test(form));
 check('no Remove for a coordinator', el('guest-remove-btn').classList.contains('hidden'));
@@ -161,26 +198,12 @@ roView.sb.__g.openGuestEditor(rows[0].id);
 check('...nor does someone who may not link', !/unlinkGuest/.test(roView.el('guest-edit-body').innerHTML));
 
 console.log('\n== The other views ==');
-sb.__g.renderGuestSchedule('pickups');
-const pick = el('guests-view-pickups').innerHTML;
-check('pickups in arrival order, Cancelled out', pick.indexOf('Alpha Arriving') < pick.indexOf('Bravo Homeless') && !pick.includes('Charlie Cancelled'));
-check('...with the driver\'s phone from the vehicle list', pick.includes('>0712<'));
-sb.__g.renderGuestSchedule('drops');
-check('drops list departures, 12-hour', el('guests-view-drops').innerHTML.includes('22 November 2026, 06:30 pm'));
 sb.__g.renderGuestRooms();
 const roomsHtml = el('guests-view-rooms').innerHTML;
 check('rooms: occupied, Full, and who', /Full</.test(roomsHtml) && roomsHtml.includes('Alpha Arriving, Delta Roommate'));
 check('a transport coordinator gets no room form', !roomsHtml.includes('guest-room-form'));
 sb.__g.renderGuestVehicles();
 check('vehicles: the form for a transport coordinator, no Delete', el('guests-view-vehicles').innerHTML.includes('guest-vehicle-form') && !/>Delete</.test(el('guests-view-vehicles').innerHTML));
-sb.__g.renderGuestDashboard();
-const dash = el('guests-view-dashboard').innerHTML;
-check('dashboard: guests listed, cancelled left out', />4</.test(dash) && /1 cancelled not counted/.test(dash));
-check('...and how many are not signed up', /1 not signed up/.test(dash));
-check('...arrivals in the window, with how many lack a vehicle', /1 with no pickup vehicle/.test(dash));
-check('...counts include "Not set"', /Not set/.test(dash));
-check('...time slots by name, 12-hour', /Morning 6 AM–12 PM/.test(dash) && /Evening 6 PM–12 AM/.test(dash));
-check('...beds per accommodation', /Yatri Nivas/.test(dash));
 adminView.sb.__g.renderGuestSettings();
 const settingsHtml = adminView.el('guests-view-settings').innerHTML;
 check('lists: "Cancelled" cannot be switched off or removed', /Cancelled <span class="text-\[10px\] text-slate-400">\(required\)<\/span>/.test(settingsHtml));
@@ -239,7 +262,7 @@ check('the institute filter lists each institute once, with how many, case and s
 check('...and those with none recorded (not signed up)', /<option value="__none">Institute not recorded \(1\)<\/option>/.test(instOpts));
 check('the district filter keeps districts of the same name in different states apart', /value="aurangabad\|bihar">Aurangabad, Bihar \(1\)/.test(distOpts)
   && /value="aurangabad\|maharashtra">Aurangabad, Maharashtra \(1\)/.test(distOpts) && /Wardha, Maharashtra \(2\)/.test(distOpts), distOpts);
-const listed = () => ['Alpha Arriving', 'Bravo Homeless', 'Charlie Cancelled', 'Delta Roommate', 'Echo Typed'].filter((n) => el('guests-tbody').innerHTML.includes(`>${n}<`));
+const listed = () => ['Alpha Arriving', 'Bravo Homeless', 'Charlie Cancelled', 'Delta Roommate', 'Echo Typed'].filter((n) => el('guests-list').innerHTML.includes(`>${n}<`));
 el('guests-filter-institution').value = 'mgims, sevagram';
 sb.__g.renderGuestList();
 check('filtering by institute', listed().join() === 'Alpha Arriving,Bravo Homeless', listed());
@@ -294,12 +317,12 @@ check('...changing the status shows or hides them at once', /name="pickup_status
   && /name="drop_status"[^>]*onchange="syncGuestTransferFields\('departure'\)"/.test(lh));
 check('the drop is asked for in full while it is required', /id="guest-departure-details" class="col-span-full/.test(lh) && /id="guest-departure-note" class="hidden /.test(lh));
 sb.__g.renderGuestList();
-const lrow = (el('guests-tbody').innerHTML.split('<tr').find((r) => r.includes('>Alpha Arriving<')) || '');
-check('the list shows the arrival time and "Not required", not the set-aside details', />20 November 2026, 09:00 am</.test(lrow) && />Not required</.test(lrow)
+const lrow = (el('guests-list').innerHTML.split('role="button"').find((r) => r.includes('>Alpha Arriving<')) || '');
+check('the list shows the arrival time and "Own way", not the set-aside details', />Fri 20 Nov · 09:00 am</.test(lrow) && />Own way</.test(lrow)
   && !/Nagpur Airport|>Car A</.test(lrow));
 sb.__set({ ...data, pickups: [{ id: legRow.id, name: 'Alpha Arriving', at: '2026-11-20 09:00', status: 'Not required', clash: [], alert: false }] });
-sb.__g.renderGuestSchedule('pickups');
-check('the pickup schedule shows a dash, not "No vehicle"', !/No vehicle|>None</.test(el('guests-view-pickups').innerHTML));
+sb.__g.setGuestDay('2026-11-20');
+check('the Day plan says "Not needed", and asks for no car', />Not needed</.test(el('guests-view-day').innerHTML) && !/>Assign car</.test(el('guests-view-day').innerHTML));
 Object.assign(legRow, { pickup_status: null, arrival_mode: null, arrival_point: null, pickup_vehicle: null });
 sb.__set(data);
 
@@ -316,7 +339,7 @@ el('guests-filter-flag').value = 'mine';
 vm.runInContext("activeAdminUser = { phone_number: 'A1' };", sb);
 data.guests.forEach((x) => { x.accommodation_coordinator = x.name === 'Bravo Homeless' ? 'A1' : null; });
 sb.__g.renderGuestList();
-check('"Assigned to me" shows a volunteer their own faculty', el('guests-tbody').innerHTML.includes('>Bravo Homeless<') && !el('guests-tbody').innerHTML.includes('>Alpha Arriving<'));
+check('"Assigned to me" shows a volunteer their own faculty', el('guests-list').innerHTML.includes('>Bravo Homeless<') && !el('guests-list').innerHTML.includes('>Alpha Arriving<'));
 el('guests-filter-flag').value = mineBefore;
 const dsb = { String, Number, Date, Math };
 vm.createContext(dsb);
@@ -339,20 +362,14 @@ check('someone who may only look gets View record', /deskOpenFaculty\(5\)[^>]*>V
 console.log('\n== On a phone ==');
 el('guests-filter-flag').value = ''; el('guests-filter-status').value = ''; el('guests-search').value = '';
 sb.__g.renderGuestList();
-const cardsHtml = el('guests-cards').innerHTML;
-check('the list is also drawn as cards, one per person', ['Alpha Arriving', 'Bravo Homeless', 'Charlie Cancelled', 'Delta Roommate', 'Echo Typed'].every((n) => cardsHtml.includes(`>${n}<`))
-  && (cardsHtml.match(/<article /g) || []).length === 5);
-check('...red and orange as a coloured edge', /border-l-rose-400[^>]*>[\s\S]*?Bravo Homeless/.test(cardsHtml) && /border-l-orange-400[^>]*>[\s\S]*?Alpha Arriving/.test(cardsHtml));
-check('...with a phone to tap and call', /<a href="tel:\+919800000001"/.test(cardsHtml));
-check('...and a full-width Edit button', /class="mt-3 w-full h-10[^"]*"[^>]*>Edit</.test(cardsHtml) || /onclick="openGuestEditor\(\d+\)" class="mt-3 w-full h-10/.test(cardsHtml));
 const ejsAll = ejs;
-check('cards on a phone or tablet, the table from a laptop up', /id="guests-cards" class="lg:hidden/.test(ejsAll) && /class="hidden lg:block bg-white rounded-2xl[^"]*overflow-x-auto">\s*<table class="w-full text-sm min-w-\[56rem\]">/.test(ejsAll));
-check('a Sort select stands in for the column headers', /id="guests-sort-mobile" onchange="setGuestSort\(this\.value\)"/.test(ejsAll));
-check('the tabs wrap rather than swipe sideways', /id="guests-subnav" role="tablist" class="flex flex-wrap gap-1\.5/.test(ejsAll) && !/id="guests-subnav"[^>]*overflow-x-auto/.test(ejsAll) && /guest-subtab shrink-0 whitespace-nowrap/.test(ejsAll));
-check('the colour key folds away on a phone', /<details class="md:hidden mb-3">\s*<summary[^>]*>Colour key<\/summary>\s*<div id="guests-legend-mobile"/.test(ejsAll)
-  && el('guests-legend-mobile').innerHTML.includes('Red: no accommodation'));
-sb.__g.renderGuestSchedule('pickups');
-check('pickups as cards too, phones to tap', /<article [^>]*>[\s\S]*?Alpha Arriving/.test(el('guests-view-pickups').innerHTML) && /href="tel:\+919800000001"/.test(el('guests-view-pickups').innerHTML));
+check('the list stacks on a phone: name, then arrives / leaves / stay, then needs', /grid grid-cols-3 lg:grid-cols-\[/.test(el('guests-list').innerHTML)
+  && /lg:hidden block text-\[11px\][^>]*>Arrives</.test(el('guests-list').innerHTML));
+check('a Sort select', /id="guests-sort" onchange="setGuestSort\(this\.value\)"/.test(ejsAll));
+check('four tabs: Day plan, Faculty, Cars drivers & rooms, Settings', [...ejsAll.matchAll(/data-guest-view="(\w+)"/g)].map((m) => m[1]).join() === 'day,list,resources,settings');
+sb.__g.setGuestDay('2026-11-20');
+check('the Day plan on a phone: Arriving, Leaving, Rooms, one at a time', /setGuestDaySection\('in'\)/.test(el('guests-view-day').innerHTML) && /data-daysec="out" class="hidden lg:block/.test(el('guests-view-day').innerHTML));
+check('the panel is full screen on a phone', /id="guest-panel" class="hidden fixed inset-y-0 right-0 z-50 w-full sm:w-\[30rem\]/.test(ejsAll));
 sb.__g.renderGuestRooms();
 check('rooms as cards: beds used of beds', /Yatri Nivas · 1<\/p>/.test(el('guests-view-rooms').innerHTML) && /2 of 2 beds/.test(el('guests-view-rooms').innerHTML));
 sb.__g.renderGuestVehicles();
@@ -386,8 +403,6 @@ check('...and nothing about sharing when alone', !/Sharing/.test(psb.stayOf({ ac
 const partLeg = psb.leg(null, null, 'Flight', '6E 123', null, null, 'Pending');
 check('a flight number or status with no date yet is shown', /Flight · 6E 123/.test(partLeg) && /Pending/.test(partLeg) && !/No vehicle/.test(partLeg));
 check('"No vehicle" only once there is a date to meet', /No vehicle/.test(psb.leg('2026-11-20')));
-sb.__g.renderGuestList();
-check('the list uses the same, table and cards', /guestStayHtml\(g\) \|\| notSet/.test(js) && /\$\{guestStayHtml\(g\) \|\| '<p class="text-xs text-slate-400 pt-0\.5">Not set<\/p>'\}/.test(js));
 
 console.log('\n== Wiring ==');
 check('Lists & Settings is hidden until shown to an admin', /id="guests-settings-tab" class="guest-subtab hidden/.test(ejs));

@@ -360,6 +360,12 @@ const ROUTE_PERMISSIONS = {
   'POST /api/guests/drivers': 'guests.travel',
   'PUT /api/guests/drivers/:id': 'guests.travel',
   'DELETE /api/guests/drivers/:id': 'guests.manage',
+  // The Day plan (20 Nov 2026): a driver's own link to their trips, made or
+  // reset by whoever looks after transport; checking someone in at their
+  // accommodation, reached with guests.view and then checked as the stay
+  // field is -- a coordinator, or the volunteer assigned to them.
+  'POST /api/guests/drivers/:id/link': 'guests.travel',
+  'POST /api/guests/:id/checkin': 'guests.view',
   'POST /api/guests/rooms': 'guests.stay',
   'PUT /api/guests/rooms/:id': 'guests.stay',
   'DELETE /api/guests/rooms/:id': 'guests.manage',

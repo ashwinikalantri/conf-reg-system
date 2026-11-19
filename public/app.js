@@ -14195,8 +14195,9 @@ async function deskSaveEdit() {
 // (guests.travel), stay (guests.stay), the shared fields (guests.edit) -- and
 // the server enforces the same split.
 let guestData = null;
-let guestSort = { key: 'sr_no', dir: 1 };
-const GUEST_VIEWS = ['list', 'dashboard', 'pickups', 'drops', 'vehicles', 'rooms', 'settings'];
+let guestSort = { key: 'name', dir: 1 };
+// The four tabs (20 Nov 2026): Day plan, everyone, cars/drivers/rooms, settings.
+const GUEST_VIEWS = ['day', 'list', 'resources', 'settings'];
 
 const GUEST_STATUS_STYLES = {
   invited: 'bg-amber-100 text-amber-800 border-amber-300',
@@ -14241,15 +14242,6 @@ function guestFlagChips(g) {
   if (f.noProgramme) out.push(guestPill(GUEST_FLAG_STYLES.noProgramme, 'No programme', 'Not a speaker or chair in any session yet'));
   return out.join(' ');
 }
-// Red outranks orange on the row itself; purple is a chip only (sharing a
-// room can be intended).
-function guestRowTint(g) {
-  if (g.cancelled) return 'bg-slate-50 text-slate-400';
-  if (g.flags.noAccommodation) return 'bg-rose-50';
-  if (g.flags.pickupAlert) return 'bg-orange-50';
-  return '';
-}
-
 async function renderGuests() {
   const res = await fetch('/api/guests');
   if (!res.ok) return;
@@ -14263,26 +14255,30 @@ async function renderGuests() {
   const facultyCount = guestData.dashboard.listed;
   const badge = document.getElementById('badge-faculty-count');
   if (badge) { badge.textContent = String(facultyCount); badge.classList.toggle('hidden', !facultyCount); }
+  setText('guests-list-count', String(facultyCount));
   fillGuestFilters();
+  // From the Overview: a flag opens everyone, filtered; none, the Day plan.
   if (pendingGuestFlag !== null) {
-    const flagSel = document.getElementById('guests-filter-flag');
-    if (flagSel) flagSel.value = pendingGuestFlag;
+    const flag = pendingGuestFlag;
     pendingGuestFlag = null;
+    if (flag) return guestShowList(flag);
+    return switchGuestView('day');
   }
   switchGuestView(guestCurrentView());
+  if (guestPanelId != null) renderGuestPanel();
 }
 
 function guestCurrentView() {
   const v = storageGet('local', 'nqocn_guest_view');
-  return GUEST_VIEWS.includes(v) && (v !== 'settings' || can('guests.manage')) ? v : 'list';
+  return GUEST_VIEWS.includes(v) && (v !== 'settings' || can('guests.manage')) ? v : 'day';
 }
 
 function switchGuestView(view) {
-  if (!GUEST_VIEWS.includes(view) || (view === 'settings' && !can('guests.manage'))) view = 'list';
+  if (!GUEST_VIEWS.includes(view) || (view === 'settings' && !can('guests.manage'))) view = 'day';
   storageSet('local', 'nqocn_guest_view', view);
   document.querySelectorAll('.guest-subtab').forEach((b) => {
     const on = b.dataset.guestView === view;
-    b.classList.toggle('bg-indigo-600', on);
+    b.classList.toggle('bg-navy', on);
     b.classList.toggle('text-white', on);
     b.classList.toggle('text-slate-600', !on);
     b.classList.toggle('hover:bg-slate-100', !on);
@@ -14294,8 +14290,7 @@ function switchGuestView(view) {
   });
   if (!guestData) return;
   ({
-    list: renderGuestList, dashboard: renderGuestDashboard, pickups: () => renderGuestSchedule('pickups'),
-    drops: () => renderGuestSchedule('drops'), vehicles: renderGuestVehicles, rooms: renderGuestRooms, settings: renderGuestSettings,
+    day: renderGuestDay, list: renderGuestList, resources: () => { renderGuestVehicles(); renderGuestRooms(); }, settings: renderGuestSettings,
   })[view]();
 }
 
@@ -14341,19 +14336,6 @@ function fillGuestFilters() {
   };
   places('guests-filter-institution', 'Any institute', 'Institute not recorded', guestInstitutionKey, (g) => guestPlaceText(g.institution));
   places('guests-filter-district', 'Any district', 'District not recorded', guestDistrictKey, (g) => [g.district, g.state].map(guestPlaceText).filter(Boolean).join(', '));
-  const legendHtml = [
-    ...guestData.lists.overall_status.map((v) => guestStatusBadge(v)),
-    guestPill(GUEST_FLAG_STYLES.pickupAlert, `Orange: arriving within ${guestData.settings.alertDays} day(s), no pickup vehicle`),
-    guestPill(GUEST_FLAG_STYLES.noAccommodation, 'Red: no accommodation'),
-    guestPill(GUEST_FLAG_STYLES.sharedRoom, 'Purple: shares a room (check it is intended)'),
-    guestPill(GUEST_FLAG_STYLES.vehicleClash, `Vehicle used twice within ${guestData.settings.clashMinutes} min`),
-    guestPill(GUEST_FLAG_STYLES.noProgramme, 'Dashed: no session in the programme yet'),
-  ].join(' ');
-  // Shown on desktop; folded under "Colour key" on a phone.
-  for (const id of ['guests-legend', 'guests-legend-mobile']) {
-    const el = document.getElementById(id);
-    if (el) el.innerHTML = legendHtml;
-  }
 }
 
 const GUEST_SORTS = {
@@ -14362,13 +14344,9 @@ const GUEST_SORTS = {
   departure_at: (g) => g.departure_at || '￿', accommodation: (g) => `${(g.accommodation || '￿').toLowerCase()} ${(g.room_no || '').toLowerCase().replace(/\d+/g, (d) => d.padStart(10, '0'))}`,
   overall_status: (g) => (g.overall_status || '￿').toLowerCase(),
 };
-function sortGuests(key) {
-  guestSort = guestSort.key === key ? { key, dir: -guestSort.dir } : { key, dir: 1 };
-  renderGuestList();
-}
-// The phone's Sort select: always ascending, as a header's first tap is.
+// The Sort select: always ascending.
 function setGuestSort(key) {
-  guestSort = { key: GUEST_SORTS[key] ? key : 'sr_no', dir: 1 };
+  guestSort = { key: GUEST_SORTS[key] ? key : 'name', dir: 1 };
   renderGuestList();
 }
 // A phone number as a tap-to-call link (keeps the + and digits only).
@@ -14405,7 +14383,8 @@ function filteredGuests() {
     // A volunteer's own: the faculty they are assigned to, either side.
     const me = activeAdminUser && activeAdminUser.phone_number;
     if (flag === 'mine' && !(me && (g.transport_coordinator === me || g.accommodation_coordinator === me))) return false;
-    if (flag && flag !== 'attention' && flag !== 'mine') {
+    if (flag === 'overCapacity' && !((g.flags.sharedPickup && g.flags.sharedPickup.overCapacity) || (g.flags.sharedDrop && g.flags.sharedDrop.overCapacity))) return false;
+    if (flag && flag !== 'attention' && flag !== 'mine' && flag !== 'overCapacity') {
       const v = g.flags[flag];
       if (Array.isArray(v) ? !v.length : !v) return false;
     }
@@ -14413,90 +14392,79 @@ function filteredGuests() {
   });
 }
 
+// Everyone, one line a person (redesigned 20 Nov 2026): when they come
+// and with what car, when they go, where they stay, and what is still
+// needed. The chips are the usual cuts; More filters keeps the rest. A tap
+// opens their panel.
+let guestChip = 'all';
+const GUEST_CHIPS = [['all', 'All'], ['needs', 'Needs something'], ['unknown', 'Travel not known'], ['staying', 'Staying'], ['own', 'Own stay'], ['cancelled', 'Cancelled']];
+function guestChipMatch(g, chip) {
+  if (chip === 'cancelled') return g.cancelled;
+  // "All" leaves out Cancelled -- unless the status filter asks for it.
+  if (chip === 'all') return !g.cancelled || !!(document.getElementById('guests-filter-status') || {}).value;
+  if (g.cancelled) return false;
+  if (chip === 'needs') return guestNeeds(g).length > 0;
+  if (chip === 'unknown') return guestNeeds(g).some((n) => n.key === 'travel');
+  if (chip === 'staying') return guestNeedsStay(g);
+  if (chip === 'own') return !!Number(g.stay_not_needed);
+  return true;
+}
+function setGuestChip(chip) { guestChip = chip; renderGuestList(); }
+// One leg in a list cell: the day and time, then the car or what is missing.
+function guestLegCell(date, time, vehicle, driver, status, isPick, alert) {
+  const off = transferNotRequired(status);
+  if (!date) return `<span class="text-slate-400">${off ? 'Own way' : 'Not known'}</span>`;
+  const second = off ? '<span class="text-slate-500">Own way</span>'
+    : guestIsDone(status) ? `<span class="text-emerald-700">${isPick ? 'Picked up' : 'Dropped'} ✓</span>`
+      : vehicle ? `<span class="text-slate-500">${esc([vehicle, driver].filter(Boolean).join(' · '))}</span>`
+        : `<span class="${alert ? 'text-orange-700 font-semibold' : 'text-slate-500'}">${alert ? 'No car' : 'No car yet'}</span>`;
+  return `<span class="tabular-nums">${esc(guestDayLabel(date))}${time ? ` · ${esc(travelTime12(time))}` : ''}</span><span class="block">${second}</span>`;
+}
+function guestStayCell(g) {
+  if (Number(g.stay_not_needed)) return '<span class="text-slate-500">Own stay</span>';
+  if (g.accommodation) {
+    const n = nightsLabel(guestNights(guestStayFrom(g), guestStayTo(g)));
+    return `<span>${esc([g.accommodation, g.room_no].filter(Boolean).join(' · '))}</span><span class="block ${g.checked_in_at ? 'text-emerald-700' : 'text-slate-500'}">${g.checked_in_at ? 'Checked in ✓' : esc(n || 'Dates not set')}</span>`;
+  }
+  return g.flags.noAccommodation ? '<span class="text-rose-700 font-semibold">No room</span>' : '<span class="text-slate-400">—</span>';
+}
 function renderGuestList() {
-  const thead = document.getElementById('guests-thead');
-  const tbody = document.getElementById('guests-tbody');
-  if (!thead || !tbody || !guestData) return;
-  const th = (key, label) => {
-    const on = guestSort.key === key;
-    return `<button type="button" onclick="sortGuests('${key}')" class="font-bold uppercase tracking-wide hover:text-slate-800 ${on ? 'text-slate-800' : ''}">${esc(label)}${on ? (guestSort.dir > 0 ? ' ▲' : ' ▼') : ''}</button>`;
-  };
-  thead.innerHTML = `<tr>
-    <th class="p-3 text-left w-10 sticky left-0 z-20 bg-slate-50">${th('sr_no', 'Sr')}</th>
-    <th class="p-3 text-left sticky left-10 z-20 bg-slate-50 shadow-[1px_0_0_#e2e8f0]">${th('name', 'Faculty')}</th>
-    <th class="p-3 text-left">${th('arrival_at', 'Arrival · Pickup')}</th>
-    <th class="p-3 text-left">${th('departure_at', 'Departure · Drop')}</th>
-    <th class="p-3 text-left">${th('accommodation', 'Stay')}</th>
-    <th class="p-3 text-left">${th('overall_status', 'Status')}</th>
-    <th class="p-3"></th>
-  </tr>`;
-  const rows = filteredGuests();
-  const keyOf = GUEST_SORTS[guestSort.key] || GUEST_SORTS.sr_no;
+  const box = document.getElementById('guests-list');
+  if (!box || !guestData) return;
+  const base = filteredGuests();
+  const chipBox = document.getElementById('guests-chips');
+  if (chipBox) {
+    chipBox.innerHTML = GUEST_CHIPS.map(([k, label]) => {
+      const n = base.filter((g) => guestChipMatch(g, k)).length;
+      const on = guestChip === k;
+      return `<button type="button" onclick="setGuestChip('${k}')" aria-pressed="${on}" class="h-9 px-3 rounded-full text-sm font-semibold flex items-center ${on ? 'bg-navy text-white' : 'bg-white border border-slate-300 hover:bg-slate-50'} ${k === 'cancelled' && !on ? 'text-slate-500' : ''}">
+          ${esc(label)} <b class="ml-1.5 tabular-nums ${!on && k === 'needs' && n ? 'text-orange-700' : ''}">${n}</b></button>`;
+    }).join('');
+  }
+  const sortSel = document.getElementById('guests-sort');
+  if (sortSel && sortSel.value !== guestSort.key) sortSel.value = guestSort.key;
+  const rows = base.filter((g) => guestChipMatch(g, guestChip));
+  const keyOf = GUEST_SORTS[guestSort.key] || GUEST_SORTS.name;
   rows.sort((a, b) => {
     const x = keyOf(a); const y = keyOf(b);
     return (x < y ? -1 : x > y ? 1 : a.sr_no - b.sr_no) * guestSort.dir;
   });
-  // The Faculty column has a fixed width: a long designation (often a whole
-  // affiliation) wraps to two lines, the rest on hover, instead of widening
-  // the column at the expense of travel and stay.
-  const line = (parts) => parts.filter(Boolean).map(esc).join(' · ');
-  const notSet = '<span class="text-xs text-slate-400">Not set</span>';
-  const travel = (...leg) => guestLegHtml(...leg) || notSet;
-  tbody.innerHTML = rows.length ? rows.map((g) => `
-    <tr class="${guestRowTint(g) || 'bg-white'} align-top">
-      <td class="p-3 w-10 text-xs text-slate-400 font-mono sticky left-0 z-10 bg-inherit">${esc(g.sr_no)}</td>
-      <td class="p-3 sticky left-10 z-10 bg-inherit shadow-[1px_0_0_#e2e8f0]">
-        <div class="w-56 break-words">
-          <p class="font-semibold ${g.cancelled ? 'line-through' : 'text-slate-800'}">${esc(g.name)}</p>
-          ${g.designation ? `<p class="text-xs text-slate-500 line-clamp-2" title="${esc(g.designation)}">${esc(g.designation)}</p>` : ''}
-          <p class="text-xs text-slate-500 font-mono">${esc(g.phone || '')}</p>
-          <div class="flex flex-wrap gap-1 mt-1">${guestFlagChips(g)}</div>
-          ${g.special_needs ? `<p class="text-[11px] font-semibold text-rose-700 mt-1" title="${esc(g.special_needs)}">Special needs: see the editor</p>` : ''}
-          ${(g.sessions || []).length ? `<p class="text-[11px] font-semibold text-indigo-700 mt-1">${g.sessions.length} session${g.sessions.length === 1 ? '' : 's'} in the programme</p>` : ''}
+  const label = (t) => `<span class="lg:hidden block text-[11px] font-semibold uppercase tracking-wide text-slate-400">${t}</span>`;
+  box.innerHTML = rows.length ? rows.map((g) => {
+    const needs = guestNeeds(g);
+    return `<div role="button" tabindex="0" onclick="openGuestPanel(${esc(g.id)})" onkeydown="if (event.key === 'Enter') openGuestPanel(${esc(g.id)})"
+        class="grid grid-cols-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_12rem] gap-x-3 gap-y-1.5 px-4 py-2.5 items-center cursor-pointer hover:bg-slate-50 ${guestPanelId === g.id ? 'bg-indigo-50 ring-2 ring-inset ring-navy' : ''} ${g.cancelled ? 'opacity-60' : ''}">
+        <div class="col-span-3 lg:col-span-1 min-w-0">
+          <p class="font-semibold text-navy ${g.cancelled ? 'line-through' : ''}">${esc(g.name)}</p>
+          ${g.designation ? `<p class="text-slate-500 truncate" title="${esc(g.designation)}">${esc(g.designation)}</p>` : ''}
+          ${g.special_needs ? '<p class="text-[12px] font-semibold text-rose-700">Special needs: see their panel</p>' : ''}
         </div>
-      </td>
-      <td class="p-3">${travel(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status, g.pickup_driver)}</td>
-      <td class="p-3">${travel(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status, g.drop_driver)}</td>
-      <td class="p-3">${guestStayHtml(g) || notSet}</td>
-      <td class="p-3">${guestStatusBadge(g.overall_status)}</td>
-      <td class="p-3 text-right"><button type="button" onclick="openGuestEditor(${esc(g.id)})" class="px-3 py-1.5 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold rounded-lg">${can('guests.edit') || guestVolunteerOf(g).mineT || guestVolunteerOf(g).mineS ? 'Edit' : 'View'}</button></td>
-    </tr>`).join('')
-    : `<tr><td colspan="7" class="p-8 text-center text-slate-400 text-sm">${guestData.guests.length ? 'No one matches these filters.' : 'No faculty yet. Mark a delegate as faculty to start.'}</td></tr>`;
-  // A card per person, for a phone (the table is hidden there).
-  const cards = document.getElementById('guests-cards');
-  if (cards) {
-    const sortSel = document.getElementById('guests-sort-mobile');
-    if (sortSel && sortSel.value !== guestSort.key && Array.from(sortSel.options || []).some((o) => o.value === guestSort.key)) sortSel.value = guestSort.key;
-    const edge = (g) => (g.cancelled ? 'border-l-slate-300' : g.flags.noAccommodation ? 'border-l-rose-400' : g.flags.pickupAlert ? 'border-l-orange-400' : 'border-l-slate-200');
-    const legLine = (label, date, time, mode, number, point, vehicle, status, driver) => `<div class="flex gap-2 text-sm">
-        <span class="w-16 shrink-0 text-[11px] font-semibold text-slate-400 uppercase pt-0.5">${label}</span>
-        <div class="min-w-0">${guestLegHtml(date, time, mode, number, point, vehicle, status, driver) || '<p class="text-xs text-slate-400 pt-0.5">Not set</p>'}</div>
+        <div class="min-w-0">${label('Arrives')}${guestLegCell(g.arrival_date, g.arrival_time, g.pickup_vehicle, g.pickup_driver, g.pickup_status, true, g.flags.pickupAlert)}</div>
+        <div class="min-w-0">${label('Leaves')}${guestLegCell(g.departure_date, g.departure_time, g.drop_vehicle, g.drop_driver, g.drop_status, false, false)}</div>
+        <div class="min-w-0">${label('Stay')}${guestStayCell(g)}</div>
+        <div class="col-span-3 lg:col-span-1 flex flex-wrap gap-1">${g.cancelled ? guestStatusBadge(g.overall_status) : needs.length ? needs.map(guestNeedChip).join('') : '<span class="text-emerald-700 font-semibold">All set ✓</span>'}</div>
       </div>`;
-    cards.innerHTML = rows.length ? rows.map((g) => `
-      <article class="bg-white rounded-2xl border border-slate-200 border-l-4 ${edge(g)} shadow-sm p-4 ${g.cancelled ? 'opacity-70' : ''}">
-        <div class="flex items-start justify-between gap-3">
-          <div class="min-w-0">
-            <p class="font-bold ${g.cancelled ? 'line-through text-slate-500' : 'text-slate-800'}">${esc(g.name)}</p>
-            ${g.designation ? `<p class="text-xs text-slate-500 line-clamp-2">${esc(g.designation)}</p>` : ''}
-            ${g.phone ? `<p class="text-xs font-mono mt-0.5">${telLink(g.phone)}</p>` : ''}
-          </div>
-          <div class="shrink-0">${guestStatusBadge(g.overall_status)}</div>
-        </div>
-        ${guestFlagChips(g) ? `<div class="flex flex-wrap gap-1 mt-2">${guestFlagChips(g)}</div>` : ''}
-        <div class="mt-3 space-y-2 border-t border-slate-100 pt-3">
-          ${legLine('Arrival', g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, g.pickup_vehicle, g.pickup_status, g.pickup_driver)}
-          ${legLine('Departure', g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, g.drop_vehicle, g.drop_status, g.drop_driver)}
-          <div class="flex gap-2 text-sm">
-            <span class="w-16 shrink-0 text-[11px] font-semibold text-slate-400 uppercase pt-0.5">Stay</span>
-            <div class="min-w-0">${guestStayHtml(g) || '<p class="text-xs text-slate-400 pt-0.5">Not set</p>'}</div>
-          </div>
-          ${g.transport_coordinator_name || g.accommodation_coordinator_name ? `<p class="text-xs text-slate-500">Volunteers: ${esc([g.transport_coordinator_name && `Transport ${g.transport_coordinator_name}`, g.accommodation_coordinator_name && `Stay ${g.accommodation_coordinator_name}`].filter(Boolean).join(' · '))}</p>` : ''}
-          ${g.special_needs ? `<p class="text-xs text-slate-600"><b>Needs:</b> ${esc(g.special_needs)}</p>` : ''}
-        </div>
-        <button type="button" onclick="openGuestEditor(${esc(g.id)})" class="mt-3 w-full h-10 bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50 text-sm font-semibold rounded-xl">${can('guests.edit') || guestVolunteerOf(g).mineT || guestVolunteerOf(g).mineS ? 'Edit' : 'View'}</button>
-      </article>`).join('')
-      : `<p class="p-8 text-center text-slate-400 text-sm bg-white rounded-2xl border border-slate-200">${guestData.guests.length ? 'No one matches these filters.' : 'No faculty yet. Mark a delegate as faculty to start.'}</p>`;
-  }
+  }).join('') : `<p class="p-8 text-center text-slate-400">${guestData.guests.length ? 'No one matches.' : 'No faculty yet. Mark a delegate as faculty to start.'}</p>`;
   const live = guestData.guests.filter((g) => !g.cancelled).length;
   setText('guests-count', `Showing ${rows.length} of ${guestData.guests.length} faculty (${live} not cancelled).`);
 }
@@ -14706,7 +14674,9 @@ function guestVolunteerOf(g) {
 }
 
 // --- the editor ---
-function openGuestEditor(id) {
+// only: a part's title ('Arrival', 'Departure', 'Stay', 'Other') -- the
+// editor opened from that part of the panel shows that part alone.
+function openGuestEditor(id, only) {
   const g = guestData && guestData.guests.find((x) => x.id === id);
   if (!g) return;
   const travel = can('guests.travel');
@@ -14757,7 +14727,7 @@ function openGuestEditor(id) {
   const legOff = (leg) => transferNotRequired(g[leg === 'arrival' ? 'pickup_status' : 'drop_status']);
   const legNote = (leg, what, hadDetails) => `<p id="guest-${leg}-note" class="${legOff(leg) ? '' : 'hidden '}col-span-full text-[11px] text-slate-500 -mt-1">${what} not required: only the date and time are needed.${hadDetails ? ' Details entered earlier are kept, unused, and return if you change the status.' : ''}</p>`;
   const legDetails = (leg, body) => `<div id="guest-${leg}-details" class="${legOff(leg) ? 'hidden ' : ''}col-span-full grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">${body}</div>`;
-  const group = (title, enabled, note, body) => `<fieldset class="min-w-0 border border-slate-200 rounded-xl p-4">
+  const group = (title, enabled, note, body) => `<fieldset data-group="${esc(title)}" class="min-w-0 border border-slate-200 rounded-xl p-4">
       <legend class="px-1.5 text-xs font-bold text-slate-700 uppercase tracking-wide">${esc(title)}</legend>
       ${enabled ? '' : `<p class="text-[11px] text-slate-400 -mt-1 mb-2">${esc(note)}</p>`}
       <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">${body}</div></fieldset>`;
@@ -14849,6 +14819,9 @@ function openGuestEditor(id) {
       + field('remarks', 'Remarks', `<textarea name="remarks" rows="2" ${shared ? '' : 'disabled'} class="${cls} h-auto py-2">${esc(g.remarks || '')}</textarea>`)
       + '</div>'),
   ].join('<div class="h-4"></div>');
+  if (only) {
+    [...document.getElementById('guest-edit-body').children].forEach((c) => c.classList.toggle('hidden', c.dataset.group !== only));
+  }
   const form = document.getElementById('guest-edit-form');
   form.dataset.id = g.id;
   syncGuestModeFields('arrival');
@@ -15013,65 +14986,69 @@ async function unlinkGuest(id) {
   openGuestEditor(id);
 }
 
-// --- dashboard ---
-function renderGuestDashboard() {
-  const box = document.getElementById('guests-view-dashboard');
-  const d = guestData.dashboard;
-  const card = (title, body, tone = '') => `<div class="bg-white rounded-2xl border ${tone || 'border-slate-200'} p-4 shadow-sm">
-      <h4 class="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">${esc(title)}</h4>${body}</div>`;
-  const big = (n, label, cls = 'text-slate-800') => `<p class="text-2xl font-extrabold tabular-nums ${cls}">${esc(n)}</p><p class="text-xs text-slate-500">${esc(label)}</p>`;
-  const counts = (rows, notSet = 'Not set') => `<dl class="space-y-1 text-sm">${rows.map((r) => `<div class="flex justify-between gap-3">
-      <dt class="${r.value == null ? 'text-slate-400 italic' : 'text-slate-600'}">${esc(r.value == null ? notSet : r.value)}</dt>
-      <dd class="font-bold tabular-nums ${r.value == null && r.count ? 'text-amber-700' : 'text-slate-800'}">${esc(r.count)}</dd></div>`).join('')}</dl>`;
-  const table = (cols, rows) => rows.length ? `<table class="w-full text-sm"><thead><tr>${cols.map((c, i) => `<th class="text-[11px] text-slate-400 font-semibold pb-1 ${i ? 'text-right' : 'text-left'}">${esc(c)}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map((r) => `<tr>${r.map((c, i) => `<td class="py-0.5 ${i ? 'text-right tabular-nums font-semibold' : 'text-slate-600'}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`
-    : '<p class="text-xs text-slate-400">None yet.</p>';
-  const movement = (m) => `<div class="grid sm:grid-cols-3 gap-4">
-      <div><p class="text-[11px] text-slate-400 font-semibold mb-1">By date</p>${table(['Date', 'Faculty'], m.byDate.map((r) => [esc(formatFullDate(r.value)), esc(r.count)]))}</div>
-      <div><p class="text-[11px] text-slate-400 font-semibold mb-1">By point</p>${table(['Point', 'Faculty'], m.byPoint.map((r) => [esc(r.value == null ? 'Not set' : r.value), esc(r.count)]))}</div>
-      <div><p class="text-[11px] text-slate-400 font-semibold mb-1">By time</p>${table(['Slot', 'Faculty'], m.bySlot.map((r) => [esc(r.value == null ? 'Time not set' : r.value), esc(r.count)]))}</div>
-    </div>`;
-  const a = d.alert;
-  box.innerHTML = `<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-      ${card('Faculty', big(d.listed, `listed${d.cancelled ? ` · ${d.cancelled} cancelled not counted` : ''}`))}
-      ${card(`Arriving in ${a.days} day(s)`, `${big(a.arriving, shortDateRange(a.from, a.to))}
-        <p class="mt-1 text-xs font-semibold ${a.noVehicle ? 'text-orange-700' : 'text-emerald-700'}">${a.noVehicle ? `${a.noVehicle} with no pickup vehicle` : 'All have a pickup vehicle'}</p>`, a.noVehicle ? 'border-orange-300' : '')}
-      ${card('No accommodation', big(d.noAccommodation, `faculty with nowhere to stay${d.ownStay ? ` · ${d.ownStay} arranging their own` : ''}`, d.noAccommodation ? 'text-rose-700' : 'text-slate-800'), d.noAccommodation ? 'border-rose-300' : '')}
-      ${card('Not registered', big(d.notRegistered, `faculty who still have to register${d.notSignedUp ? ` · ${d.notSignedUp} not signed up` : ''}`, d.notRegistered ? 'text-sky-700' : 'text-slate-800'))}
-    </div>
-    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-      ${card('Overall status (everyone)', counts(d.byOverallStatus))}
-      ${card('Pickup status', counts(d.byPickupStatus))}
-      ${card('Drop status', counts(d.byDropStatus))}
-      ${card('Warnings', `<dl class="space-y-1 text-sm">
-          <div class="flex justify-between"><dt class="text-slate-600">Rooms shared</dt><dd class="font-bold tabular-nums ${d.sharedRooms ? 'text-violet-700' : ''}">${esc(d.sharedRooms)}</dd></div>
-          <div class="flex justify-between"><dt class="text-slate-600">Vehicle clashes</dt><dd class="font-bold tabular-nums ${d.vehicleClashes ? 'text-amber-700' : ''}">${esc(d.vehicleClashes)}</dd></div></dl>`)}
-    </div>
-    <div class="grid gap-3">
-      ${card(`Arrivals · ${d.arrivals.total} with a date`, movement(d.arrivals))}
-      ${card(`Departures · ${d.departures.total} with a date`, movement(d.departures))}
-      ${card('Accommodation', table(['Accommodation', 'Faculty', 'Beds listed', 'Beds free'],
-        d.perAccommodation.map((r) => [esc(r.accommodation), esc(r.assigned), esc(r.beds), `<span class="${r.free < 0 ? 'text-rose-700' : ''}">${esc(r.free < 0 ? `${-r.free} over` : r.free)}</span>`])))}
-    </div>`;
+// --- the Day plan (redesigned 20 Nov 2026) ---
+// One day at a time: who arrives (and who meets them), who leaves, who
+// checks in, and on each the one thing still missing, with its button --
+// Assign car, Mark picked up, Give a room, Mark checked in. The statuses
+// follow on the server (guests.js autoStatusValues).
+let guestDay = null;            // 'YYYY-MM-DD'
+let guestDaySection = 'in';     // on a phone: 'in' | 'out' | 'stay'
+let guestPick = null;           // an open picker: { what: 'car' | 'room', kind, ids, host, vehicle, driver, acc }
+let guestSheetsOpen = false;
+let guestPanelId = null;
+
+const GUEST_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// "Fri 21 Nov"
+function guestDayLabel(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+  if (!m) return iso || '';
+  return `${GUEST_WEEKDAYS[new Date(`${iso}T00:00:00Z`).getUTCDay()]} ${Number(m[3])} ${SHORT_MONTHS[Number(m[2]) - 1]}`;
+}
+const guestMinutes = (hhmm) => { const m = /^(\d{2}):(\d{2})$/.exec(hhmm || ''); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+const guestNorm = (s) => String(s == null ? '' : s).trim().toLowerCase();
+const guestById = (id) => guestData.guests.find((g) => g.id === id);
+const guestIsDone = (status) => guestNorm(status) === 'done';
+// May the signed-in person set this person's car, or their room?
+function guestMayTravel(g) { return can('guests.travel') || guestVolunteerOf(g).mineT; }
+function guestMayStay(g) { return can('guests.stay') || guestVolunteerOf(g).mineS; }
+// When they check in, and out: the stay dates, or else their travel.
+const guestStayFrom = (g) => g.checkin_date || g.arrival_date || null;
+const guestStayTo = (g) => g.checkout_date || g.departure_date || null;
+const guestNeedsStay = (g) => !g.cancelled && !Number(g.stay_not_needed);
+
+// The days there is something on: arrivals, departures, check-ins.
+function guestDays() {
+  const set = new Set();
+  for (const g of guestData.guests) {
+    if (g.cancelled) continue;
+    [g.arrival_date, g.departure_date, guestNeedsStay(g) ? guestStayFrom(g) : null].forEach((d) => { if (d) set.add(d); });
+  }
+  return [...set].sort();
+}
+function guestDefaultDay(days) {
+  const today = guestData.today;
+  if (days.includes(today)) return today;
+  return days.find((d) => d >= today) || days[days.length - 1] || today;
 }
 
-// --- pickup and drop schedules ---
-// In time order; a shared trip (one car and driver, one place, within the
-// sharing window -- see buildBoard) is one block: its time span, how many,
-// the car, the driver, and each person in it (owner, 20 Nov 2026).
-function renderGuestSchedule(kind) {
-  const box = document.getElementById(`guests-view-${kind}`);
-  const rows = guestData[kind];
-  const isPickup = kind === 'pickups';
-  const leg = isPickup ? 'pickup' : 'drop';
-  const clashes = rows.filter((r) => r.clash.length).length;
-  // "Not required": no vehicle is wanted, so none is missing.
-  const noVehicle = (r, word) => (transferNotRequired(r.status) ? '<span class="text-slate-400">—</span>'
-    : `<span class="${r.alert ? 'text-orange-700 font-semibold' : 'text-slate-400'}">${word}</span>`);
-  // The car, then who drives it and their phone.
-  const driverLine = (r) => [r.vehicle ? esc(r.vehicle) : noVehicle(r, 'No vehicle'), r.driver ? `Driver: ${esc(r.driver)}` : '', r.driverPhone ? telLink(r.driverPhone) : ''].filter(Boolean).join(' · ');
-  const when = (r) => esc(r.at ? travelWhen(r.at.slice(0, 10), r.at.slice(11)) : 'Not set');
-  // Each shared trip once, where its first person comes; the others with it.
+// One PUT of some fields; false (and a toast) if it failed.
+async function guestPut(id, fields) {
+  const data = await (await fetch(`/api/guests/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }),
+  })).json().catch(() => ({}));
+  if (!data.success) { showToast(data.error || 'Could not save.'); return false; }
+  return true;
+}
+async function guestPutAll(ids, fields, done) {
+  for (const id of ids) if (!(await guestPut(id, fields))) { await renderGuests(); return; }
+  guestPick = null;
+  if (done) showToast(done, 'success');
+  await renderGuests();
+}
+
+// Items of one day's pickups or drops: a shared trip once, with its people.
+function guestDayItems(kind, day) {
+  const rows = (kind === 'Pickup' ? guestData.pickups : guestData.drops).filter((r) => r.at && r.at.slice(0, 10) === day);
   const items = [];
   const seen = new Set();
   for (const r of rows) {
@@ -15081,56 +15058,473 @@ function renderGuestSchedule(kind) {
       items.push({ trip: r.trip, rows: rows.filter((x) => x.trip && x.trip.id === r.trip.id) });
     } else items.push({ rows: [r] });
   }
-  const shared = items.filter((it) => it.trip).length;
-  const tripHead = (t, r) => `<span class="font-bold text-indigo-900">Shared ${leg} · ${esc(t.size)} people</span>
-    <span class="text-slate-700"> · ${esc(t.from === t.to ? t.from : `${t.from}–${t.to}`)} · ${esc(r.point || '')}</span>
-    ${t.overCapacity ? `<span class="ml-1 inline-flex text-[11px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300">Over capacity: ${esc(t.seats)} seats</span>` : ''}`;
-  const card = (r, inTrip) => `<div class="${inTrip ? 'pl-3 border-l-2 border-indigo-200 mt-2' : ''}">
-        <div class="flex items-baseline justify-between gap-2">
-          <p class="font-bold ${r.at ? 'text-slate-800' : 'text-slate-400'}">${when(r)}</p>
-          ${r.status ? guestPill('bg-white text-slate-600 border-slate-300', r.status) : ''}
+  return items;
+}
+// Checking in on the day: staying with us, from that day.
+function guestDayCheckins(day) {
+  return guestData.guests.filter((g) => guestNeedsStay(g) && guestStayFrom(g) === day).sort((a, b) => guestNorm(a.name).localeCompare(guestNorm(b.name)));
+}
+// Beds taken on the night of `day`, by accommodation, against beds listed.
+function guestBedsTonight(day) {
+  const out = [];
+  const accs = [...new Set((guestData.rooms || []).map((r) => r.accommodation))];
+  for (const acc of accs) {
+    const beds = guestData.rooms.filter((r) => guestNorm(r.accommodation) === guestNorm(acc)).reduce((s, r) => s + (Number(r.beds) || 0), 0);
+    const taken = guestData.guests.filter((g) => guestNeedsStay(g) && guestNorm(g.accommodation) === guestNorm(acc)
+      && (!guestStayFrom(g) || guestStayFrom(g) <= day) && (!guestStayTo(g) || guestStayTo(g) > day)).length;
+    out.push({ acc, beds, taken });
+  }
+  return out;
+}
+
+// What each person still needs, most urgent first: { key, label, tone }.
+function guestNeeds(g) {
+  if (g.cancelled) return [];
+  const out = [];
+  const f = g.flags || {};
+  const pickOff = transferNotRequired(g.pickup_status);
+  const dropOff = transferNotRequired(g.drop_status);
+  if (!g.arrival_date && !pickOff) out.push({ key: 'travel', label: 'Travel details', tone: 'slate' });
+  if (g.arrival_date && !pickOff && !g.pickup_vehicle && !guestIsDone(g.pickup_status)) out.push({ key: 'car', label: 'Car', tone: f.pickupAlert ? 'orange' : 'amber' });
+  if (f.noAccommodation) out.push({ key: 'room', label: 'Room', tone: 'rose' });
+  if (g.departure_date && !dropOff && !g.drop_vehicle && !guestIsDone(g.drop_status)) out.push({ key: 'drop', label: 'Drop car', tone: 'slate' });
+  if ((f.vehicleClash || []).length) out.push({ key: 'clash', label: 'Clash', tone: 'amber' });
+  if ((f.sharedPickup && f.sharedPickup.overCapacity) || (f.sharedDrop && f.sharedDrop.overCapacity)) out.push({ key: 'over', label: 'Over capacity', tone: 'rose' });
+  return out;
+}
+const GUEST_TONES = {
+  orange: 'bg-orange-50 text-orange-800 border-orange-200', amber: 'bg-amber-50 text-amber-800 border-amber-200',
+  rose: 'bg-rose-50 text-rose-800 border-rose-200', slate: 'bg-slate-100 text-slate-700 border-slate-200',
+};
+const guestNeedChip = (n) => `<span class="inline-flex text-[12px] font-semibold px-2 py-0.5 rounded-full border ${GUEST_TONES[n.tone]}">${esc(n.label)}</span>`;
+
+const guestBtn = {
+  urgent: 'h-9 px-3 rounded-lg bg-orange-600 hover:bg-orange-700 text-white font-semibold text-[13px] shrink-0',
+  room: 'h-9 px-3 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold text-[13px] shrink-0',
+  done: 'h-9 px-3 rounded-lg border border-emerald-600 text-emerald-700 hover:bg-emerald-50 font-semibold text-[13px] shrink-0',
+  plain: 'h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 font-semibold text-[13px] shrink-0',
+  quiet: 'h-9 px-2 text-[13px] font-semibold text-slate-500 hover:text-slate-800 shrink-0',
+};
+
+function renderGuestDay() {
+  const box = document.getElementById('guests-view-day');
+  if (!box || !guestData) return;
+  const days = guestDays();
+  if (!guestDay || !days.includes(guestDay)) guestDay = guestDefaultDay(days);
+  const day = guestDay;
+  const d = guestData.dashboard;
+  const live = guestData.guests.filter((g) => !g.cancelled);
+  // Waiting on you: each a way into the list, filtered.
+  const unknown = live.filter((g) => guestNeeds(g).some((n) => n.key === 'travel')).length;
+  const waits = [
+    [d.alert.noVehicle, 'text-orange-700', `arriving by ${guestDayLabel(d.alert.to)} with no car`, "guestShowList('pickupAlert')"],
+    [d.noAccommodation, 'text-rose-700', 'staying, no room', "guestShowList('noAccommodation')"],
+    [d.vehicleClashes, 'text-amber-700', `car or driver clash${d.vehicleClashes === 1 ? '' : 'es'}`, "guestShowList('vehicleClash')"],
+    [d.overCapacity, 'text-rose-700', `shared trip${d.overCapacity === 1 ? '' : 's'} over capacity`, "guestShowList('overCapacity')"],
+    [unknown, 'text-slate-900', 'travel not known', "guestShowList('', 'unknown')"],
+  ].filter(([n]) => n);
+  const waiting = `<div class="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+      <span class="font-bold text-slate-900">Waiting on you</span>
+      ${waits.length ? waits.map(([n, tone, label, go]) => `<button type="button" onclick="${go}" class="text-slate-700 hover:text-slate-900 text-left"><b class="${tone} tabular-nums">${esc(n)}</b> ${esc(label)} →</button>`).join('')
+        : '<span class="text-emerald-700 font-semibold">Nothing: every pickup has a car and everyone staying has a room.</span>'}
+    </div>`;
+  const count = (date) => ({ in: live.filter((g) => g.arrival_date === date).length, out: live.filter((g) => g.departure_date === date).length });
+  const chips = days.map((x) => {
+    const c = count(x);
+    const on = x === day;
+    return `<button type="button" onclick="setGuestDay('${x}')" aria-pressed="${on}" class="shrink-0 h-12 px-3.5 rounded-xl text-left leading-tight ${on ? 'bg-navy text-white ring-2 ring-gold-300' : 'border border-slate-300 bg-white hover:bg-slate-50'}">
+        <span class="block text-[12px] ${on ? 'text-indigo-200' : 'text-slate-500'}">${esc(guestDayLabel(x))}${x === guestData.today ? ' · Today' : ''}</span>
+        <span class="text-sm font-semibold tabular-nums">${c.in} in · ${c.out} out</span></button>`;
+  }).join('');
+  const ins = guestDayItems('Pickup', day);
+  const outs = guestDayItems('Drop', day);
+  const checkins = guestDayCheckins(day);
+  const needCar = (items) => items.reduce((s, it) => s + it.rows.filter((r) => !r.vehicle && !transferNotRequired(r.status) && !guestIsDone(r.status)).length, 0);
+  const noRoom = checkins.filter((g) => !g.accommodation).length;
+  const segs = [['in', 'Arriving', ins.reduce((s, it) => s + it.rows.length, 0), needCar(ins)], ['out', 'Leaving', outs.reduce((s, it) => s + it.rows.length, 0), needCar(outs)], ['stay', 'Rooms', checkins.length, noRoom]];
+  const seg = `<div class="lg:hidden flex rounded-lg bg-slate-200 p-1 text-sm font-semibold">${segs.map(([k, label, n, bad]) => `<button type="button" onclick="setGuestDaySection('${k}')"
+      class="flex-1 h-9 rounded-md ${guestDaySection === k ? 'bg-white shadow' : 'text-slate-600'}">${esc(label)} <b class="${bad ? 'text-orange-700' : ''}">${bad || n}</b></button>`).join('')}</div>`;
+  const section = (key, title, summary, body) => `<section data-daysec="${key}" class="${guestDaySection === key ? '' : 'hidden lg:block'} bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div class="px-4 py-3 border-b border-slate-100 flex items-baseline justify-between gap-3"><h3 class="font-bold text-slate-900">${esc(title)}</h3><span class="text-sm text-slate-500 text-right">${summary}</span></div>
+      ${body}</section>`;
+  const list = (items, kind) => (items.length ? `<ol class="divide-y divide-slate-100 text-sm">${items.map((it) => guestTripItemHtml(it, kind, 'day')).join('')}</ol>`
+    : `<p class="px-4 py-6 text-sm text-slate-400">No one ${kind === 'Pickup' ? 'arriving' : 'leaving'} on ${esc(guestDayLabel(day))}.</p>`);
+  const beds = guestBedsTonight(day);
+  const stayBody = (checkins.length ? `<ol class="divide-y divide-slate-100 text-sm">${checkins.map((g) => guestCheckinItemHtml(g, 'day')).join('')}</ol>`
+    : `<p class="px-4 py-6 text-sm text-slate-400">No one checking in on ${esc(guestDayLabel(day))}.</p>`)
+    + (beds.length ? `<div class="px-4 py-2.5 border-t border-slate-100 text-[13px] text-slate-600 flex flex-wrap gap-x-4 gap-y-1"><span>Beds taken that night:</span>${beds.map((b) => `<span>${esc(b.acc)} <b class="tabular-nums ${b.taken > b.beds ? 'text-rose-700' : b.taken < b.beds ? 'text-emerald-700' : ''}">${b.taken}/${b.beds}</b></span>`).join('')}</div>` : '');
+  const summary = (items, verb) => { const n = needCar(items); return n ? `<b class="text-orange-700">${n}</b> need${n === 1 ? 's' : ''} a car` : items.length ? `${verb}` : ''; };
+  box.innerHTML = `<div class="space-y-4">
+      ${waiting}
+      <div class="flex items-center gap-2">
+        <div class="flex gap-2 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 pb-1">${chips || '<span class="text-sm text-slate-500">No travel dates entered yet.</span>'}</div>
+        ${can('guests.travel') || can('guests.view') ? `<button type="button" onclick="toggleGuestSheets()" class="hidden sm:inline-flex items-center ml-auto ${guestBtn.plain} h-10">${guestSheetsOpen ? 'Close driver sheets' : 'Driver sheets'}</button>` : ''}
+      </div>
+      <button type="button" onclick="toggleGuestSheets()" class="sm:hidden w-full ${guestBtn.plain} h-10">${guestSheetsOpen ? 'Close driver sheets' : 'Driver sheets'}</button>
+      ${guestSheetsOpen ? guestSheetsHtml(day) : `${seg}
+      <div class="grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-4 items-start">
+        ${section('in', `Arriving · ${guestDayLabel(day)}`, summary(ins, 'Every pickup has a car'), list(ins, 'Pickup'))}
+        <div class="space-y-4">
+          ${section('out', `Leaving · ${guestDayLabel(day)}`, summary(outs, 'Every drop has a car'), list(outs, 'Drop'))}
+          ${section('stay', `Checking in · ${guestDayLabel(day)}`, noRoom ? `<b class="text-rose-700">${noRoom}</b> without a room` : checkins.length ? 'Everyone has a room' : '', stayBody)}
         </div>
-        <button type="button" onclick="openGuestEditor(${esc(r.id)})" class="mt-1 font-semibold text-indigo-700 text-left">${esc(r.name)}</button>
-        ${r.phone ? `<p class="text-xs font-mono">${telLink(r.phone)}</p>` : ''}
-        <p class="text-xs text-slate-600 mt-1">${[esc(r.mode || ''), esc(r.number || ''), inTrip ? '' : esc(r.point || '')].filter(Boolean).join(' · ') || '—'}</p>
-        ${inTrip ? '' : `<p class="text-xs mt-1">${driverLine(r)}</p>`}
-        ${r.clash.map((c) => `<p class="text-[11px] text-amber-800 mt-1">${esc(c)}</p>`).join('')}
-      </div>`;
-  const row = (r, inTrip) => `
-          <tr class="${r.alert ? 'bg-orange-50' : inTrip ? 'bg-indigo-50/30' : ''} align-top">
-            <td class="p-3 whitespace-nowrap font-semibold ${r.at ? 'text-slate-800' : 'text-slate-400'} ${inTrip ? 'pl-6' : ''}">${when(r)}</td>
-            <td class="p-3"><button type="button" onclick="openGuestEditor(${esc(r.id)})" class="font-semibold text-indigo-700 hover:underline text-left">${esc(r.name)}</button></td>
-            <td class="p-3 font-mono text-xs">${telLink(r.phone)}</td>
-            <td class="p-3">${esc(r.mode || '—')}</td><td class="p-3">${esc(r.number || '—')}</td><td class="p-3">${esc(r.point || '—')}</td>
-            <td class="p-3">${inTrip ? '<span class="text-xs text-slate-500">In the shared trip</span>' : `${r.vehicle ? `<p>${esc(r.vehicle)}</p>` : noVehicle(r, 'None')}${r.driver ? `<p class="text-xs text-slate-700">Driver: ${esc(r.driver)}</p>` : ''}${r.driverPhone ? `<p class="text-xs text-slate-500 font-mono">${telLink(r.driverPhone, 'text-slate-500 hover:underline')}</p>` : ''}`}
-              ${r.clash.map((c) => `<p class="text-[11px] text-amber-800 mt-1">${esc(c)}</p>`).join('')}</td>
-            <td class="p-3">${r.status ? guestPill('bg-white text-slate-600 border-slate-300', r.status) : '<span class="text-xs text-slate-400">Not set</span>'}</td>
-          </tr>`;
-  box.innerHTML = `${shared ? `<p class="mb-2 text-xs text-indigo-900 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2"><b>${shared}</b> shared ${leg}${shared === 1 ? '' : 's'}: one car and driver for several people at one place, within ${esc(isPickup ? guestData.settings.pickupShareMinutes : guestData.settings.dropShareMinutes)} minutes (Settings). Each is one trip below.</p>` : ''}
-    ${clashes ? `<p class="mb-3 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">${clashes} ${leg}(s) need a vehicle or driver within ${esc(guestData.settings.clashMinutes)} minutes of another trip. Check each one.</p>` : ''}
-    <div class="lg:hidden space-y-2">${items.length ? items.map((it) => it.trip ? `
-      <article class="bg-white rounded-2xl border border-indigo-200 shadow-sm p-3.5">
-        <p class="text-sm">${tripHead(it.trip, it.rows[0])}</p>
-        <p class="text-xs mt-1">${driverLine(it.rows[0])}</p>
-        ${it.rows.map((r) => card(r, true)).join('')}
-      </article>` : `
-      <article class="bg-white rounded-2xl border border-slate-200 ${it.rows[0].alert ? 'border-l-4 border-l-orange-400' : ''} shadow-sm p-3.5">${card(it.rows[0], false)}</article>`).join('')
-    : '<p class="p-8 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">No one to schedule yet.</p>'}</div>
-    <div class="hidden lg:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-      <table class="w-full text-sm min-w-[56rem]">
-        <thead class="bg-slate-50 text-[11px] text-slate-500 uppercase tracking-wide"><tr>
-          <th class="p-3 text-left">${isPickup ? 'Arrival' : 'Departure'}</th><th class="p-3 text-left">Name</th><th class="p-3 text-left">Phone</th>
-          <th class="p-3 text-left">Mode</th><th class="p-3 text-left">Flight/Train No</th><th class="p-3 text-left">Point</th>
-          <th class="p-3 text-left">Vehicle · Driver</th><th class="p-3 text-left">${isPickup ? 'Pickup' : 'Drop'} Status</th>
-        </tr></thead>
-        <tbody class="divide-y divide-slate-100">${items.length ? items.map((it) => (it.trip ? `
-          <tr class="bg-indigo-50 align-top"><td colspan="6" class="p-3 text-sm">${tripHead(it.trip, it.rows[0])}</td>
-            <td colspan="2" class="p-3 text-sm">${driverLine(it.rows[0])}</td></tr>${it.rows.map((r) => row(r, true)).join('')}`
-    : row(it.rows[0], false))).join('') : '<tr><td colspan="8" class="p-8 text-center text-slate-400">No one to schedule yet.</td></tr>'}
-        </tbody>
-      </table>
+      </div>`}
+    </div>`;
+}
+function setGuestDay(day) { guestDay = day; guestPick = null; renderGuestDay(); }
+function setGuestDaySection(k) { guestDaySection = k; renderGuestDay(); }
+function toggleGuestSheets() { guestSheetsOpen = !guestSheetsOpen; guestPick = null; renderGuestDay(); }
+// From "Waiting on you": everyone, filtered.
+function guestShowList(flag, chip) {
+  guestChip = chip || 'all';
+  const sel = document.getElementById('guests-filter-flag');
+  if (sel) sel.value = flag || '';
+  const more = document.getElementById('guests-more-filters');
+  if (more && flag) more.open = true;
+  switchGuestView('list');
+}
+
+// One pickup or drop on the Day plan (or in a person's panel): the time,
+// who, from where, the car -- and the one thing to do next.
+function guestTripItemHtml(it, kind, host) {
+  const r0 = it.rows[0];
+  const ids = it.rows.map((r) => r.id);
+  const time = (r) => (r.at && r.at.length > 10 ? travelTime12(r.at.slice(11)) : '—');
+  const isPick = kind === 'Pickup';
+  const off = it.rows.every((r) => transferNotRequired(r.status));
+  const done = it.rows.every((r) => guestIsDone(r.status));
+  const may = it.rows.every((r) => { const g = guestById(r.id); return g && guestMayTravel(g); });
+  const who = (r) => `<button type="button" onclick="openGuestPanel(${esc(r.id)})" class="font-semibold text-navy hover:underline text-left">${esc(r.name)}</button>`;
+  const route = (r) => [r.mode, r.number].filter(Boolean).map(esc).join(' ');
+  const car = r0.vehicle ? `<span class="font-semibold">${esc(r0.vehicle)}</span>${r0.driver ? ` · ${esc(r0.driver)}` : ''}${r0.driverPhone ? ` · ${telLink(r0.driverPhone)}` : ''}` : '';
+  const idsJs = JSON.stringify(ids);
+  let action = '';
+  if (off) action = '<span class="text-[13px] text-slate-500 shrink-0">Not needed</span>';
+  else if (!r0.vehicle) action = may ? `<button type="button" onclick="openGuestCarPicker(${idsJs}, '${kind}', '${host}')" class="${guestBtn.urgent}">Assign car</button>` : '<span class="text-[13px] font-semibold text-orange-700 shrink-0">No car</span>';
+  else if (done) action = `<span class="text-[13px] font-semibold text-emerald-700 shrink-0">${isPick ? 'Picked up' : 'Dropped'} ✓</span>${may ? `<button type="button" onclick="guestMarkLeg(${idsJs}, '${kind}', false)" class="${guestBtn.quiet}">Undo</button>` : ''}`;
+  else if (may) action = `<button type="button" onclick="guestMarkLeg(${idsJs}, '${kind}', true)" class="${guestBtn.done}">Mark ${isPick ? 'picked up' : 'dropped'}</button>`;
+  const picking = guestPick && guestPick.what === 'car' && guestPick.host === host && guestPick.kind === kind && guestPick.ids.join() === ids.join();
+  const clashes = [...new Set(it.rows.flatMap((r) => r.clash || []))];
+  const tint = picking ? 'ring-2 ring-inset ring-navy' : '';
+  const bg = !off && !r0.vehicle ? 'bg-orange-50/70' : it.trip ? 'bg-indigo-50/60' : '';
+  const head = it.trip ? `<p class="text-[11px] font-bold uppercase tracking-wide ${it.trip.overCapacity ? 'text-rose-700' : 'text-indigo-700'}">Shared ${isPick ? 'pickup' : 'drop'} · ${esc(it.trip.size)}${it.trip.seats ? ` of ${esc(it.trip.seats)} seats` : ' people'}${it.trip.overCapacity ? ' · over capacity' : ''}</p>` : '';
+  const actions = `<div class="w-full sm:w-auto flex flex-wrap items-center justify-end gap-1">${picking ? '<span class="text-[13px] text-slate-500">choosing…</span>' : action}</div>`;
+  const notes = clashes.map((c) => `<p class="text-[12px] text-amber-800 mt-1">${esc(c)}</p>`).join('');
+  // In a person's panel, their own name and time are already above: the
+  // car, who else rides along, and what to do.
+  if (host === 'panel') {
+    const others = it.rows.filter((r) => r.id !== guestPanelId).map((r) => r.name);
+    return `<li class="px-5 py-3 ${bg} ${tint}">
+      <div class="flex flex-wrap sm:flex-nowrap items-start gap-x-3 gap-y-2">
+        <div class="flex-1 min-w-0">${head}${others.length ? `<p class="text-slate-600">With ${esc(others.join(', '))}</p>` : ''}
+          ${car ? `<p class="text-slate-700">${car}</p>` : off ? '<p class="text-slate-500">They make their own way.</p>' : `<p class="font-semibold text-orange-800">No car ${isPick ? 'to meet them' : 'to take them'} yet</p>`}${notes}</div>
+        ${actions}
+      </div>
+      ${picking ? guestCarPickerHtml(r0) : ''}
+    </li>`;
+  }
+  return `<li class="px-4 py-3 ${bg} ${tint}">
+      <div class="flex flex-wrap sm:flex-nowrap items-start gap-x-3 gap-y-2">
+        <span class="w-16 sm:w-[4.5rem] shrink-0 font-bold tabular-nums text-slate-900">${esc(time(r0))}</span>
+        <div class="flex-1 min-w-0">
+          ${head}
+          ${it.rows.map((r) => `<div class="${it.trip ? 'mt-1' : ''}">${who(r)} <span class="text-slate-500">${[route(r), it.trip && it.rows.length > 1 ? esc(time(r)) : ''].filter(Boolean).join(' · ')}</span></div>`).join('')}
+          <p class="text-slate-500">${isPick ? 'at' : 'to'} ${esc(r0.point || 'place not set')}</p>
+          ${car ? `<p class="mt-0.5 text-slate-700">${car}</p>` : ''}
+          ${notes}
+        </div>
+        ${actions}
+      </div>
+      ${picking ? guestCarPickerHtml(r0) : ''}
+    </li>`;
+}
+
+// --- choosing a car ---
+function openGuestCarPicker(ids, kind, host) {
+  guestPick = { what: 'car', kind, ids, host, vehicle: '', driver: '' };
+  guestRerender(host);
+}
+function openGuestRoomPicker(id, host) {
+  guestPick = { what: 'room', ids: [id], host, acc: '' };
+  guestRerender(host);
+}
+function closeGuestPicker() { const host = guestPick && guestPick.host; guestPick = null; guestRerender(host); }
+function guestRerender(host) { if (host === 'panel') renderGuestPanel(); else renderGuestDay(); }
+function setGuestPick(k, v) { if (!guestPick) return; guestPick[k] = v; guestRerender(guestPick.host); }
+
+// Trips already going near this time: { vehicle: [trip], driver: [trip] }
+// busy within the clash window, and the trips this one could join (same
+// kind, day and place, within the sharing window, with a seat).
+function guestNearbyTrips(row) {
+  const p = guestPick;
+  const t = guestMinutes(row.at && row.at.slice(11));
+  const day = row.at && row.at.slice(0, 10);
+  const trips = (guestData.trips || []).filter((x) => x.date === day && x.vehicle && !x.people.some((q) => p.ids.includes(q.id)));
+  const clashMin = Number(guestData.settings.clashMinutes) || 0;
+  const share = Number(p.kind === 'Pickup' ? guestData.settings.pickupShareMinutes : guestData.settings.dropShareMinutes) || 0;
+  const near = (x) => t != null && x.from && guestMinutes(x.from) - clashMin <= t && t <= guestMinutes(x.to || x.from) + clashMin;
+  const joinable = trips.filter((x) => x.kind === p.kind && guestNorm(x.point) === guestNorm(row.point) && t != null && x.from && share
+    && Math.max(guestMinutes(x.to || x.from), t) - Math.min(guestMinutes(x.from), t) <= share
+    && (!x.seats || x.people.length + p.ids.length <= x.seats));
+  return { busy: trips.filter(near), joinable };
+}
+function guestCarPickerHtml(row) {
+  const p = guestPick;
+  const { busy, joinable } = guestNearbyTrips(row);
+  const span = (x) => (x.from === x.to || !x.to ? travelTime12(x.from) : `${travelTime12(x.from)}–${travelTime12(x.to)}`);
+  const join = joinable.slice(0, 3).map((x) => `<div class="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+      <span><b>Join a trip?</b> ${esc(x.vehicle)}${x.drivers.length ? ` · ${esc(x.drivers.join(', '))}` : ''}, ${esc(span(x))} at ${esc(x.point || '')}, with ${esc(x.people.map((q) => q.name).join(', '))}${x.seats ? ` — ${x.people.length} of ${x.seats} seats taken` : ''}.</span>
+      <button type="button" onclick="guestJoinTrip(${esc(JSON.stringify(x.vehicle))}, ${esc(JSON.stringify(x.drivers[0] || ''))})" class="h-8 px-3 rounded-lg bg-navy hover:bg-indigo-700 text-white font-semibold text-[13px] shrink-0">Join this trip</button></div>`).join('');
+  const busyOf = (field, name) => busy.filter((x) => (field === 'vehicle' ? guestNorm(x.vehicle) === guestNorm(name) : x.drivers.some((dn) => guestNorm(dn) === guestNorm(name))));
+  const cars = guestData.vehicles.map((v) => {
+    const b = busyOf('vehicle', v.label);
+    const on = guestNorm(p.vehicle) === guestNorm(v.label);
+    return `<button type="button" onclick="setGuestPick('vehicle', ${esc(JSON.stringify(v.label))})" aria-pressed="${on}" class="h-9 px-3 rounded-lg text-[13px] ${on ? 'border-2 border-navy bg-indigo-50 font-semibold' : 'border border-slate-300 bg-white'} ${b.length && !on ? 'text-slate-400' : ''}">
+        ${esc(v.label)}${v.seats ? ` · ${esc(v.seats)} seats` : ''} ${b.length ? `<span class="${on ? 'text-amber-700' : ''}">· busy ${esc(b.map(span).join(', '))}</span>` : '<span class="text-emerald-700">free</span>'}</button>`;
+  }).join('');
+  const drivers = (guestData.drivers || []).map((dr) => {
+    const b = busyOf('driver', dr.name);
+    return `<option value="${esc(dr.name)}" ${guestNorm(p.driver) === guestNorm(dr.name) ? 'selected' : ''}>${esc(dr.name)} · ${b.length ? `busy ${esc(b.map(span).join(', '))}` : 'free'}</option>`;
+  }).join('');
+  return `<div class="mt-3 ${guestPick.host === 'panel' ? '' : 'sm:ml-[5.25rem]'} rounded-lg border border-slate-200 bg-white p-3 space-y-3 text-sm">
+      ${join}
+      <div>
+        <p class="text-[12px] font-semibold text-slate-500 mb-1.5">${join ? 'Or choose a car' : 'Choose a car'}</p>
+        <div class="flex flex-wrap gap-1.5">${cars || '<span class="text-slate-500">No cars listed yet: add them under Cars, drivers &amp; rooms.</span>'}</div>
+      </div>
+      <div class="flex flex-wrap items-end gap-2">
+        <label class="text-[12px] font-semibold text-slate-500">Driver
+          <select onchange="setGuestPick('driver', this.value)" class="mt-1 block h-9 w-56 max-w-full px-2 rounded-lg border border-slate-300 text-sm text-slate-800 bg-white"><option value="">—</option>${drivers}</select></label>
+        <button type="button" onclick="guestAssignCar()" ${p.vehicle ? '' : 'disabled'} class="h-9 px-4 rounded-lg bg-navy hover:bg-indigo-700 text-white font-semibold disabled:opacity-40">Assign</button>
+        <button type="button" onclick="guestLegNotNeeded()" class="${guestBtn.plain}">Not needed</button>
+        <button type="button" onclick="closeGuestPicker()" class="${guestBtn.quiet}">Cancel</button>
+      </div>
+    </div>`;
+}
+const guestLegFields = (kind) => (kind === 'Pickup'
+  ? { vehicle: 'pickup_vehicle', driver: 'pickup_driver', status: 'pickup_status' }
+  : { vehicle: 'drop_vehicle', driver: 'drop_driver', status: 'drop_status' });
+function guestAssignCar() {
+  const p = guestPick;
+  if (!p || !p.vehicle) return;
+  const f = guestLegFields(p.kind);
+  return guestPutAll(p.ids, { [f.vehicle]: p.vehicle, [f.driver]: p.driver || '' }, `${p.vehicle} assigned.`);
+}
+function guestJoinTrip(vehicle, driver) {
+  const p = guestPick;
+  if (!p) return;
+  const f = guestLegFields(p.kind);
+  return guestPutAll(p.ids, { [f.vehicle]: vehicle, [f.driver]: driver || '' }, 'Added to the trip.');
+}
+async function guestLegNotNeeded() {
+  const p = guestPick;
+  if (!p) return;
+  if (!(await showConfirm(`Mark this ${p.kind === 'Pickup' ? 'pickup' : 'drop'} as not needed? They make their own way.`))) return;
+  return guestPutAll(p.ids, { [guestLegFields(p.kind).status]: 'Not required' }, 'Marked not needed.');
+}
+// Picked up or dropped, for everyone in the trip -- or undone.
+function guestMarkLeg(ids, kind, on) {
+  const what = kind === 'Pickup' ? 'Picked up' : 'Dropped';
+  return guestPutAll(ids, { [guestLegFields(kind).status]: on ? 'Done' : 'Assigned' }, on ? `${what}.` : `${what}: undone.`);
+}
+
+// --- rooms on the day ---
+function guestCheckinItemHtml(g, host) {
+  const may = guestMayStay(g);
+  const nights = nightsLabel(guestNights(guestStayFrom(g), guestStayTo(g)));
+  const picking = guestPick && guestPick.what === 'room' && guestPick.host === host && guestPick.ids[0] === g.id;
+  let action = '';
+  if (!g.accommodation) action = may ? `<button type="button" onclick="openGuestRoomPicker(${esc(g.id)}, '${host}')" class="${guestBtn.room}">Give a room</button>` : '<span class="text-[13px] font-semibold text-rose-700">No room</span>';
+  else if (g.checked_in_at) action = `<span class="text-[13px] font-semibold text-emerald-700">Checked in ✓</span>${may ? `<button type="button" onclick="guestCheckIn(${esc(g.id)}, false)" class="${guestBtn.quiet}">Undo</button>` : ''}`;
+  else if (may) action = `<button type="button" onclick="guestCheckIn(${esc(g.id)}, true)" class="${guestBtn.done}">Mark checked in</button>`;
+  const where = g.accommodation ? [g.accommodation, g.room_no].filter(Boolean).join(' · ') : '';
+  const who = host === 'panel'
+    ? `<span class="${g.accommodation ? 'font-semibold' : 'font-semibold text-rose-800'}">${esc(where || 'No room yet')}</span>`
+    : `<button type="button" onclick="openGuestPanel(${esc(g.id)})" class="font-semibold text-navy hover:underline text-left">${esc(g.name)}</button>
+          <span class="block text-slate-500">${esc([where, shortDateRange(guestStayFrom(g), guestStayTo(g)), nights, g.room_type].filter(Boolean).join(' · '))}</span>`;
+  return `<li class="${host === 'panel' ? 'px-5' : 'px-4'} py-2.5 ${!g.accommodation ? 'bg-rose-50/60' : ''} ${picking ? 'ring-2 ring-inset ring-navy' : ''}">
+      <div class="flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-2">
+        <span class="flex-1 min-w-0">${who}</span>
+        <div class="w-full sm:w-auto flex flex-wrap items-center justify-end gap-1">${picking ? '<span class="text-[13px] text-slate-500">choosing…</span>' : action}</div>
+      </div>
+      ${picking ? guestRoomPickerHtml(g) : ''}
+    </li>`;
+}
+// Accommodation first, then a room with a bed free there.
+function guestRoomPickerHtml(g) {
+  const p = guestPick;
+  const rooms = guestData.rooms || [];
+  const accs = [...(guestData.lists.accommodation || [])];
+  const free = (acc) => rooms.filter((r) => guestNorm(r.accommodation) === guestNorm(acc)).reduce((s, r) => s + Math.max(0, (Number(r.beds) || 0) - r.occupied), 0);
+  const listed = (acc) => rooms.some((r) => guestNorm(r.accommodation) === guestNorm(acc));
+  const accBtns = accs.map((a) => {
+    const on = guestNorm(p.acc) === guestNorm(a);
+    const n = free(a);
+    return `<button type="button" onclick="setGuestPick('acc', ${esc(JSON.stringify(a))})" aria-pressed="${on}" class="h-9 px-3 rounded-lg text-[13px] ${on ? 'border-2 border-navy bg-indigo-50 font-semibold' : 'border border-slate-300 bg-white'} ${listed(a) && !n && !on ? 'text-slate-400' : ''}">
+        ${esc(a)} ${listed(a) ? `<span class="${n ? 'text-emerald-700' : ''}">· ${n ? `${n} free` : 'full'}</span>` : ''}</button>`;
+  }).join('');
+  let roomBtns = '';
+  if (p.acc) {
+    const here = rooms.filter((r) => guestNorm(r.accommodation) === guestNorm(p.acc));
+    roomBtns = here.length ? `<div><p class="text-[12px] font-semibold text-slate-500 mb-1.5">Room</p><div class="flex flex-wrap gap-1.5">${here.map((r) => {
+      const left = (Number(r.beds) || 0) - r.occupied;
+      return `<button type="button" onclick="guestGiveRoom(${esc(g.id)}, ${esc(JSON.stringify(p.acc))}, ${esc(JSON.stringify(r.room_no))})" class="h-9 px-3 rounded-lg border text-[13px] ${left > 0 ? 'border-slate-300 bg-white hover:border-navy' : 'border-slate-200 bg-white text-slate-400'}">
+          ${esc(r.room_no)}${r.room_type ? ` · ${esc(r.room_type)}` : ''} · ${left > 0 ? `${left} of ${esc(r.beds)} free` : 'full'}${r.guests.length ? ` (${esc(r.guests.join(', '))})` : ''}</button>`;
+    }).join('')}</div></div>`
+      : `<button type="button" onclick="guestGiveRoom(${esc(g.id)}, ${esc(JSON.stringify(p.acc))}, '')" class="h-9 px-4 rounded-lg bg-navy hover:bg-indigo-700 text-white font-semibold">Put them in ${esc(p.acc)}</button>
+        <span class="text-[12px] text-slate-500">No rooms listed there yet: the room number can be added later.</span>`;
+  }
+  return `<div class="mt-3 rounded-lg border border-slate-200 bg-white p-3 space-y-3 text-sm">
+      <div><p class="text-[12px] font-semibold text-slate-500 mb-1.5">Accommodation</p><div class="flex flex-wrap gap-1.5">${accBtns}</div></div>
+      ${roomBtns}
+      <div><button type="button" onclick="closeGuestPicker()" class="${guestBtn.quiet}">Cancel</button></div>
+    </div>`;
+}
+async function guestGiveRoom(id, acc, roomNo) {
+  const g = guestById(id);
+  const room = (guestData.rooms || []).find((r) => guestNorm(r.accommodation) === guestNorm(acc) && guestNorm(r.room_no) === guestNorm(roomNo));
+  if (room && room.occupied >= room.beds && !(await showConfirm(`${acc} ${roomNo} is full (${room.guests.join(', ')}). Put ${g ? g.name : 'them'} in it anyway?`))) return;
+  return guestPutAll([id], { accommodation: acc, room_no: roomNo || '' }, `Room given: ${[acc, roomNo].filter(Boolean).join(' · ')}.`);
+}
+async function guestCheckIn(id, on) {
+  const data = await (await fetch(`/api/guests/${encodeURIComponent(id)}/checkin`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(on ? {} : { undo: true }),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not save.');
+  showToast(on ? 'Checked in.' : 'Check-in taken back.', 'success');
+  await renderGuests();
+}
+
+// --- driver sheets ---
+// Each driver's trips on the day, in time order, as WhatsApp text and as
+// their own link (/driver/<token>, made on first use).
+function guestSheetTrips(day) {
+  const trips = (guestData.trips || []).filter((t) => t.date === day).sort((a, b) => String(a.from || '99').localeCompare(String(b.from || '99')));
+  const byDriver = (guestData.drivers || []).map((d) => ({ driver: d, trips: trips.filter((t) => t.drivers.some((n) => guestNorm(n) === guestNorm(d.name))) }));
+  const none = trips.filter((t) => !t.drivers.length);
+  return { byDriver, none };
+}
+function guestSheetText(name, day, trips) {
+  const span = (t) => (!t.from ? 'Time not set' : t.from === t.to ? travelTime12(t.from) : `${travelTime12(t.from)} – ${travelTime12(t.to)}`);
+  return [`*NQOCN 2026 · ${name} · ${guestDayLabel(day)}*`, '',
+    ...trips.map((t) => [`*${span(t)} · ${t.kind === 'Pickup' ? 'Pick up from' : 'Drop at'} ${t.point || '—'}*${t.vehicle ? ` (${t.vehicle})` : ''}`,
+      ...t.people.map((p) => `• ${p.name}${t.people.length > 1 && p.time ? ` · ${travelTime12(p.time)}` : ''}${p.mode || p.number ? ` · ${[p.mode, p.number].filter(Boolean).join(' ')}` : ''}${p.phone ? ` · ${p.phone}` : ''}`), ''].join('\n')),
+  ].join('\n').trim();
+}
+function guestSheetsHtml(day) {
+  const { byDriver, none } = guestSheetTrips(day);
+  const line = (t) => `<li class="px-4 py-2.5"><b class="tabular-nums">${esc(t.from ? travelTime12(t.from) : '—')}</b> ${t.kind === 'Pickup' ? 'Pick up from' : 'Drop at'} ${esc(t.point || '—')}${t.vehicle ? ` · <span class="text-slate-500">${esc(t.vehicle)}</span>` : ''}
+      <span class="block text-slate-600">${t.people.map((p) => `${esc(p.name)}${p.number ? ` (${esc(p.number)})` : ''}`).join(', ')}</span></li>`;
+  const mayLink = can('guests.travel');
+  const cards = byDriver.filter((x) => x.trips.length).map(({ driver, trips }) => `<section class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div class="px-4 py-2.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+        <span><b>${esc(driver.name)}</b>${driver.phone ? ` · ${telLink(driver.phone)}` : ''}</span><span class="text-sm text-slate-500">${trips.length} trip${trips.length === 1 ? '' : 's'}</span></div>
+      <ol class="divide-y divide-slate-100 text-sm">${trips.map(line).join('')}</ol>
+      <div class="px-4 py-2.5 border-t border-slate-100 flex flex-wrap gap-2">
+        <button type="button" onclick="copyGuestSheet(${esc(driver.id)})" class="h-10 px-3 rounded-lg bg-navy hover:bg-indigo-700 text-white font-semibold text-sm">Copy for WhatsApp</button>
+        ${mayLink ? `<button type="button" onclick="sendGuestDriverLink(${esc(driver.id)})" class="${guestBtn.plain} h-10">${driver.phone ? 'Send their link on WhatsApp' : 'Copy their link'}</button>
+        <button type="button" onclick="resetGuestDriverLink(${esc(driver.id)})" class="${guestBtn.quiet} h-10">Reset link</button>` : ''}
+      </div></section>`).join('');
+  const idle = byDriver.filter((x) => !x.trips.length).map((x) => x.driver.name);
+  return `<div class="space-y-3">
+      <h3 class="font-bold text-slate-900">Driver sheets · ${esc(guestDayLabel(day))}</h3>
+      <p class="text-sm text-slate-600">Each driver's trips that day, in time order. Copy the sheet into WhatsApp, or send the driver their own link: it always shows their trips from today on, so a change here reaches them without sending again.</p>
+      <div class="grid lg:grid-cols-2 gap-3 items-start">${cards || '<p class="text-sm text-slate-500">No trips with a driver on this day.</p>'}</div>
+      ${none.length ? `<section class="bg-white rounded-xl border border-amber-200 overflow-hidden"><div class="px-4 py-2.5 border-b border-amber-100 font-semibold text-amber-800">A car but no driver chosen</div><ol class="divide-y divide-slate-100 text-sm">${none.map(line).join('')}</ol></section>` : ''}
+      ${idle.length ? `<p class="text-sm text-slate-500">No trips: ${esc(idle.join(', '))}.</p>` : ''}
+    </div>`;
+}
+async function guestCopy(text, done) {
+  try { await navigator.clipboard.writeText(text); showToast(done, 'success'); } catch (e) { window.prompt('Copy this:', text); }
+}
+function copyGuestSheet(driverId) {
+  const d = (guestData.drivers || []).find((x) => x.id === driverId);
+  if (!d) return;
+  const trips = guestSheetTrips(guestDay).byDriver.find((x) => x.driver.id === driverId).trips;
+  return guestCopy(guestSheetText(d.name, guestDay, trips), 'Copied. Paste it into WhatsApp.');
+}
+async function guestDriverLink(driverId, reset) {
+  const data = await (await fetch(`/api/guests/drivers/${encodeURIComponent(driverId)}/link`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reset ? { reset: true } : {}),
+  })).json().catch(() => ({}));
+  if (!data.success) { showToast(data.error || 'Could not make the link.'); return null; }
+  return data;
+}
+async function sendGuestDriverLink(driverId) {
+  const data = await guestDriverLink(driverId, false);
+  if (!data) return;
+  const text = `NQOCN 2026: your trips, ${data.name}. Open this before each trip; it updates by itself: ${data.url}`;
+  const digits = String(data.phone || '').replace(/\D/g, '');
+  if (!digits) return guestCopy(data.url, 'Link copied. Send it to the driver.');
+  const to = digits.length === 10 ? `91${digits}` : digits;
+  window.open(`https://wa.me/${to}?text=${encodeURIComponent(text)}`, '_blank', 'noopener');
+}
+async function resetGuestDriverLink(driverId) {
+  if (!(await showConfirm('Make a new link for this driver? The old link stops working at once; send them the new one.'))) return;
+  const data = await guestDriverLink(driverId, true);
+  if (data) guestCopy(data.url, 'New link made and copied. The old one no longer works.');
+}
+
+// --- one person, in the side panel ---
+function openGuestPanel(id) {
+  guestPanelId = id;
+  guestPick = null;
+  renderGuestPanel();
+}
+function closeGuestPanel() {
+  guestPanelId = null;
+  if (guestPick && guestPick.host === 'panel') guestPick = null;
+  document.getElementById('guest-panel').classList.add('hidden');
+  document.getElementById('guest-panel-backdrop').classList.add('hidden');
+}
+function renderGuestPanel() {
+  const box = document.getElementById('guest-panel');
+  const g = guestPanelId != null && guestData && guestById(guestPanelId);
+  if (!box) return;
+  if (!g) { closeGuestPanel(); return; }
+  const may = can('guests.edit') || can('guests.travel') || can('guests.stay') || guestVolunteerOf(g).mineT || guestVolunteerOf(g).mineS;
+  const editBtn = (only) => (may && only ? `<button type="button" onclick="openGuestEditor(${esc(g.id)}, '${only}')" class="text-indigo-700 font-semibold hover:underline">Edit</button>` : '');
+  const part = (title, only, body) => `<div class="px-5 py-4">
+      <div class="flex items-center justify-between"><h4 class="text-[12px] font-bold uppercase tracking-wide text-slate-500">${esc(title)}</h4>${editBtn(only)}</div>${body}</div>`;
+  const legItem = (kind) => {
+    const rows = kind === 'Pickup' ? guestData.pickups : guestData.drops;
+    const r = rows.find((x) => x.id === g.id);
+    if (!r) return '';
+    const it = r.trip ? { trip: r.trip, rows: rows.filter((x) => x.trip && x.trip.id === r.trip.id) } : { rows: [r] };
+    return `<ol class="mt-2 -mx-5 border-y border-slate-100 text-sm">${guestTripItemHtml(it, kind, 'panel')}</ol>`;
+  };
+  const leg = (date, time, mode, number, point, kind) => (date
+    ? `<p class="mt-1 font-semibold tabular-nums">${esc(guestDayLabel(date))}${time ? ` · ${esc(travelTime12(time))}` : ''}</p>
+       <p class="text-slate-600">${esc([mode, number].filter(Boolean).join(' ') || '')}${point ? `${mode || number ? ' · ' : ''}${kind === 'Pickup' ? 'at' : 'to'} ${esc(point)}` : ''}</p>${legItem(kind)}`
+    : `<p class="mt-1 text-slate-500">Not known yet.${may ? ` <button type="button" onclick="openGuestEditor(${esc(g.id)}, '${kind === 'Pickup' ? 'Arrival' : 'Departure'}')" class="text-indigo-700 font-semibold">Add it</button>` : ''}</p>`);
+  const stay = Number(g.stay_not_needed) ? '<p class="mt-1 text-slate-600">Arranging their own stay.</p>'
+    : `<p class="mt-1 tabular-nums">${esc([shortDateRange(guestStayFrom(g), guestStayTo(g)), nightsLabel(guestNights(guestStayFrom(g), guestStayTo(g))), g.room_type].filter(Boolean).join(' · ') || 'Dates not set')}</p>
+       <ol class="mt-2 -mx-5 border-y border-slate-100 text-sm">${guestCheckinItemHtml(g, 'panel')}</ol>
+       ${(g.flags.sharedRoom || []).length ? `<p class="mt-1 text-[13px] font-semibold text-violet-700">Sharing with ${esc(g.flags.sharedRoom.join(', '))}</p>` : ''}`;
+  const sessions = (g.sessions || []).map((s) => `${s.role}, ${s.title}`);
+  box.innerHTML = `<div class="px-5 py-4 border-b border-slate-100 sticky top-0 bg-white z-10">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0"><h3 class="text-xl font-bold text-navy leading-tight break-words">${esc(g.name)}</h3>
+          <p class="text-sm text-slate-500">${esc([g.designation, g.institution].filter(Boolean).join(' · '))}</p></div>
+        <button type="button" onclick="closeGuestPanel()" aria-label="Close" class="w-10 h-10 rounded-lg text-slate-500 hover:bg-slate-100 text-lg shrink-0">✕</button>
+      </div>
+      <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">${guestStatusBadge(g.overall_status)} ${g.phone ? telLink(g.phone, 'text-indigo-700 font-semibold') : ''}
+        ${guestNeeds(g).map(guestNeedChip).join(' ')}</div>
     </div>
-    <p class="text-xs text-slate-500 mt-2">Cancelled faculty are left out. Anyone with no ${isPickup ? 'arrival' : 'departure'} date is at the end.</p>`;
+    <div class="divide-y divide-slate-100 text-sm">
+      ${!g.registered && !g.cancelled && can('payments.complimentary') ? `<div class="px-5 py-3"><div class="rounded-lg bg-gold-50 border border-gold-100 px-3 py-2 flex items-center justify-between gap-2"><span>Not registered yet.</span>
+        <button type="button" onclick="registerFacultyFree(${esc(g.id)})" class="h-8 px-3 rounded-lg bg-navy hover:bg-indigo-700 text-white text-[13px] font-semibold shrink-0">Register free</button></div></div>` : ''}
+      ${part('Coming', 'Arrival', leg(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, 'Pickup'))}
+      ${part('Staying', 'Stay', stay)}
+      ${part('Going', 'Departure', leg(g.departure_date, g.departure_time, g.departure_mode, g.departure_number, g.departure_point, 'Drop'))}
+      ${part('In the programme', '', sessions.length ? `<ul class="mt-1 space-y-1">${sessions.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>` : '<p class="mt-1 text-slate-500">No session yet.</p>')}
+      ${part('Notes & contacts', 'Other', `${g.special_needs ? `<p class="mt-1"><b>Needs:</b> ${esc(g.special_needs)}</p>` : ''}${g.remarks ? `<p class="mt-1 text-slate-600">${esc(g.remarks)}</p>` : ''}
+        <p class="mt-1 text-slate-500">Transport volunteer: ${esc(g.transport_coordinator_name || '—')} · Stay volunteer: ${esc(g.accommodation_coordinator_name || '—')}</p>
+        ${g.linked ? '' : '<p class="mt-1 text-sky-800">Not signed up yet: link them to their account in the editor.</p>'}`)}
+      ${may ? `<div class="px-5 py-4"><button type="button" onclick="openGuestEditor(${esc(g.id)})" class="${guestBtn.plain} h-10 w-full">Edit all details</button></div>` : ''}
+    </div>`;
+  box.classList.remove('hidden');
+  document.getElementById('guest-panel-backdrop').classList.remove('hidden');
 }
 
 // --- vehicles and drivers ---

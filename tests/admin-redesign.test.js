@@ -92,7 +92,8 @@ console.log('\n== Overview ==');
 check('faculty cards, each opening the Faculty tab filtered', /id="ov-q-rooms" onclick="openFacultyFlag\('noAccommodation'\)"/.test(overview)
   && /id="ov-q-pickups"/.test(overview) && /id="ov-q-signup" onclick="openFacultyFlag\('notSignedUp'\)"/.test(overview)
   && /const seesFaculty = can\('guests\.view'\);/.test(js) && /seesFaculty \? getJson\('\/api\/guests'\)/.test(js));
-check('...the filter is applied when the Faculty tab draws', /if \(pendingGuestFlag !== null\) \{\s*const flagSel = document\.getElementById\('guests-filter-flag'\);/.test(js));
+check('...the filter is applied when the Faculty tab draws', /if \(pendingGuestFlag !== null\) \{\s*const flag = pendingGuestFlag;[\s\S]{0,120}if \(flag\) return guestShowList\(flag\);/.test(js)
+  && /function guestShowList\(flag, chip\) \{[\s\S]{0,160}document\.getElementById\('guests-filter-flag'\)/.test(js));
 {
   const { sb } = load(['guests.view']);
   sb.__f.openFacultyFlag('noAccommodation');

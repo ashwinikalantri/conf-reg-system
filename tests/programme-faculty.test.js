@@ -157,6 +157,6 @@ check('...the same person once; blank words dropped', JSON.stringify(P.cleanPeop
   vm.runInContext("removeSessionPerson('speakers', 0)", sb);
   check('removing', sb.st().speakers[0].guestId === 7);
   check('saving sends the lists, faculty by id', /people: Object\.fromEntries\(\['speakers', 'chairs'\]\.map\(\(role\) => \[role,\s*psPeople\[role\]\.map\(\(p\) => \(p\.guestId != null \? \{ guestId: p\.guestId \} : \{ text: p\.text \}\)\)\]\)\)/.test(js));
-  check('the Faculty tab: their sessions in the editor and a count on the list', /In the programme<\/p>/.test(js) && /session\$\{g\.sessions\.length === 1 \? '' : 's'\} in the programme/.test(js));
+  check('the Faculty tab: their sessions in the editor and in their panel', /In the programme<\/p>/.test(js) && /part\('In the programme', '', sessions\.length/.test(js));
   report();
 })();

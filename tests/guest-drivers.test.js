@@ -65,7 +65,7 @@ const G = require('../guests');
   check('the editor has a Driver beside each Vehicle, chosen from the list or typed', /field\('pickup_driver', 'Pickup Driver', input\('pickup_driver', 'text', pickupOk, 'list="guest-driver-options"/.test(js)
     && /field\('drop_driver', 'Drop Driver'/.test(js) && /<datalist id="guest-driver-options">/.test(js));
   check('the Vehicles & drivers tab lists both, each with add, edit and delete', /<form id="guest-driver-form" onsubmit="saveGuestDriver\(event\)"/.test(js) && /function deleteGuestDriver\(id\)/.test(js)
-    && /Vehicles &amp; drivers<\/button>/.test(fs.readFileSync(appFile('views', 'admin', 'sections', 'guests.ejs'), 'utf8')));
-  check('trips show the driver after the car', /driver \? `Driver: \$\{esc\(driver\)\}` : ''/.test(js) && /r\.driver \? `Driver: \$\{esc\(r\.driver\)\}` : ''/.test(js));
+    && /Cars, drivers &amp; rooms<\/button>/.test(fs.readFileSync(appFile('views', 'admin', 'sections', 'guests.ejs'), 'utf8')));
+  check('trips show the driver after the car', /esc\(\[vehicle, driver\]\.filter\(Boolean\)\.join\(' · '\)\)/.test(js) && /r0\.driver \? ` · \$\{esc\(r0\.driver\)\}` : ''/.test(js));
   report();
 })();

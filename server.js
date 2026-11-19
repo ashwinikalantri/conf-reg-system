@@ -16899,6 +16899,10 @@ app.put('/api/guests/:id', requirePermission('guests.view'), async (req, res, ne
     if (current.phone_number) identity.forEach((f) => { delete values[f]; });
     if (!current.phone_number && 'guest_name' in values && !values.guest_name) errors.unshift('Enter their name.');
     if (errors.length) return res.status(400).json({ success: false, error: errors.join(' ') });
+    // The statuses that follow from what was asked (a car chosen: Assigned;
+    // a pickup Done: Arrived), after the permission check -- they follow
+    // from a change the person may make, whoever they are.
+    Object.assign(values, guestLib.autoStatusValues(current, values, lists));
     const changes = guestLib.changedFields(current, values);
     if (!changes.length) return res.json({ success: true, changed: 0, notified: [] });
 
@@ -16937,6 +16941,133 @@ app.put('/api/guests/:id', requirePermission('guests.view'), async (req, res, ne
     next(err);
   }
 });
+
+// Checked in at their accommodation, from the Day plan (owner, 20 Nov
+// 2026): when and by whom. Whoever may set their stay may mark it; it also
+// makes them Arrived (guests.js autoStatusValues says why). { undo: true }
+// takes the mark back, leaving the overall status as it is.
+app.post('/api/guests/:id/checkin', requirePermission('guests.view'), async (req, res, next) => {
+  try {
+    const current = await dbGet('SELECT * FROM guests WHERE id = ?', [req.params.id]);
+    if (!current) return res.status(404).json({ success: false, error: 'Faculty member not found.' });
+    if (!guestLib.mayEditField('accommodation', current, (p) => sessionCan(req, p), req.session.phone)) {
+      return res.status(403).json({ success: false, error: 'Only whoever looks after their stay can mark them checked in.' });
+    }
+    const [g] = await guestRowsJoined('WHERE g.id = ?', [current.id]);
+    const by = req.session.name || req.session.phone;
+    if (req.body && req.body.undo) {
+      if (!current.checked_in_at) return res.json({ success: true, changed: 0 });
+      await dbRun('UPDATE guests SET checked_in_at = NULL, checked_in_by = NULL, updated_at = ?, updated_by = ? WHERE id = ?', [Date.now(), by, current.id]);
+      await recordAudit({ req, entityType: 'guest', entityId: String(current.id), action: 'GUEST_CHECKIN_UNDONE', oldValue: g.name, newValue: 'Check-in taken back' });
+      return res.json({ success: true, changed: 1 });
+    }
+    if (current.checked_in_at) return res.json({ success: true, changed: 0 });
+    if (Number(current.stay_not_needed) || !current.accommodation) {
+      return res.status(400).json({ success: false, error: 'Give them a room first.' });
+    }
+    const lists = activeGuestLists(await guestListRows());
+    const arrived = (lists.overall_status || []).find((v) => v.toLowerCase() === guestLib.ARRIVED.toLowerCase());
+    const overall = arrived && guestLib.arrivedMayFollow(current.overall_status) ? arrived : current.overall_status;
+    await dbRun('UPDATE guests SET checked_in_at = ?, checked_in_by = ?, overall_status = ?, updated_at = ?, updated_by = ? WHERE id = ?',
+      [Date.now(), by, overall, Date.now(), by, current.id]);
+    await recordAudit({ req, entityType: 'guest', entityId: String(current.id), action: 'GUEST_CHECKED_IN', oldValue: g.name,
+      newValue: `Checked in: ${[current.accommodation, current.room_no].filter(Boolean).join(' · ')}${overall !== current.overall_status ? `; Overall Status: ${current.overall_status || '—'} → ${overall}` : ''}` });
+    res.json({ success: true, changed: 1 });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- driver sheets ---
+// Each driver may have a private link to their own trips (owner, 20 Nov
+// 2026): /driver/<token>, no sign-in, nothing but their trips -- times,
+// places, the people with their phones and flights. Made the first time
+// someone asks for it; Reset makes a new one and the old stops working.
+async function guestDriverLinksOnBoot() {
+  const cols = await dbAll('PRAGMA table_info(guest_drivers)');
+  if (cols.length && !cols.some((c) => c.name === 'link_token')) await dbRun('ALTER TABLE guest_drivers ADD COLUMN link_token TEXT');
+}
+const driverLinkUrl = (token) => `${portalBase()}/driver/${token}`;
+app.post('/api/guests/drivers/:id/link', requirePermission('guests.travel'), async (req, res, next) => {
+  try {
+    const d = await dbGet('SELECT * FROM guest_drivers WHERE id = ?', [req.params.id]);
+    if (!d) return res.status(404).json({ success: false, error: 'Driver not found.' });
+    const reset = !!(req.body && req.body.reset);
+    let token = d.link_token;
+    if (!token || reset) {
+      token = crypto.randomBytes(18).toString('base64url');
+      await dbRun('UPDATE guest_drivers SET link_token = ? WHERE id = ?', [token, d.id]);
+      await recordAudit({ req, entityType: 'guest_vehicle', entityId: `driver-${d.id}`, action: reset ? 'GUEST_DRIVER_LINK_RESET' : 'GUEST_DRIVER_LINK_MADE', oldValue: d.name, newValue: reset ? 'New link; the old one no longer works' : 'Link made' });
+    }
+    res.json({ success: true, url: driverLinkUrl(token), phone: d.phone || null, name: d.name });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A driver's trips from today on, as guestLib.buildBoard counts them, day
+// by day: the page their link opens. Plain HTML, phone first.
+app.get('/driver/:token', async (req, res, next) => {
+  try {
+    const token = String(req.params.token || '');
+    const d = /^[A-Za-z0-9_-]{16,64}$/.test(token) ? await dbGet('SELECT * FROM guest_drivers WHERE link_token = ?', [token]) : null;
+    res.set('Cache-Control', 'private, no-store');
+    res.set('X-Robots-Tag', 'noindex, nofollow');
+    res.set('Referrer-Policy', 'no-referrer');
+    if (!d) return res.status(404).type('html').send(driverPageHtml('Link not found', '<p class="muted">This link does not work any more. Ask the transport desk for a new one.</p>'));
+    const { board } = await guestBoard();
+    const today = istDateString();
+    const n = (s) => String(s || '').trim().toLowerCase();
+    const trips = board.trips.filter((t) => t.date && t.date >= today && t.drivers.some((x) => n(x) === n(d.name)))
+      .sort((a, b) => `${a.date} ${a.from || '99'}`.localeCompare(`${b.date} ${b.from || '99'}`));
+    const t12 = (hhmm) => guestLib.to12h(hhmm) || '';
+    const days = [...new Set(trips.map((t) => t.date))];
+    const body = days.length ? days.map((day) => `<h2>${escapeHtml(formatFullDateServer(day))}${day === today ? ' · Today' : ''}</h2>
+      ${trips.filter((t) => t.date === day).map((t) => `<section class="trip">
+        <p class="when">${escapeHtml(t.from ? (t.from === t.to ? t12(t.from) : `${t12(t.from)} – ${t12(t.to)}`) : 'Time not set')}
+          <span class="kind">${t.kind === 'Pickup' ? 'Pick up from' : 'Drop at'} ${escapeHtml(t.point || '—')}</span></p>
+        <p class="car">${escapeHtml(t.vehicle || 'Car not set')}${t.people.length > 1 ? ` · ${t.people.length} people` : ''}</p>
+        <ul>${t.people.map((p) => `<li${/^done$/i.test(p.status || '') ? ' class="done"' : ''}><b>${escapeHtml(p.name)}</b>
+          ${p.time && t.people.length > 1 ? ` · ${escapeHtml(t12(p.time))}` : ''}${p.number || p.mode ? ` · ${escapeHtml([p.mode, p.number].filter(Boolean).join(' '))}` : ''}
+          ${p.phone ? `<br><a href="tel:${escapeHtml(String(p.phone).replace(/[^\d+]/g, ''))}">${escapeHtml(p.phone)}</a>` : ''}${/^done$/i.test(p.status || '') ? ' <span class="tick">Done</span>' : ''}</li>`).join('')}</ul>
+      </section>`).join('')}`).join('')
+      : '<p class="muted">No trips for you from today on. If you expected some, call the transport desk.</p>';
+    res.type('html').send(driverPageHtml(`${d.name}'s trips`, body));
+  } catch (err) {
+    next(err);
+  }
+});
+function formatFullDateServer(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+  if (!m) return iso || '';
+  const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(`${iso}T00:00:00Z`).getUTCDay()];
+  return `${wd} ${Number(m[3])} ${SHORT_MONTHS[Number(m[2]) - 1]}`;
+}
+function driverPageHtml(title, body) {
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow"><title>${escapeHtml(title)} · NQOCN 2026</title>
+<style>
+  body { margin: 0; font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: #f1f5f9; color: #1e293b; }
+  header { background: #1c3549; color: #fff; padding: 14px 16px; }
+  header small { display: block; color: #d6b46a; font-weight: 700; letter-spacing: .12em; font-size: 11px; }
+  header h1 { margin: 2px 0 0; font-size: 20px; }
+  main { padding: 12px 16px 32px; max-width: 640px; margin: 0 auto; }
+  h2 { font-size: 15px; margin: 20px 0 8px; color: #1c3549; }
+  .trip { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
+  .when { margin: 0; font-weight: 800; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .kind { display: block; font-weight: 600; font-size: 15px; color: #334155; }
+  .car { margin: 4px 0 0; color: #64748b; font-size: 14px; }
+  ul { list-style: none; padding: 0; margin: 8px 0 0; border-top: 1px solid #f1f5f9; }
+  li { padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
+  li:last-child { border-bottom: 0; }
+  li.done { color: #64748b; }
+  a { color: #244560; font-weight: 700; font-size: 17px; text-decoration: none; display: inline-block; padding: 4px 0; }
+  .tick { color: #047857; font-weight: 700; font-size: 13px; }
+  .muted { color: #64748b; }
+  .foot { margin-top: 20px; font-size: 13px; color: #64748b; }
+</style></head><body><header><small>NQOCN 2026 · TRANSPORT</small><h1>${escapeHtml(title)}</h1></header>
+<main>${body}<p class="foot">Times change: open this link again before each trip. Questions: call the transport desk.</p></main></body></html>`;
+}
 
 // Remove a guest -- they are no longer faculty to coordinate. Admin only and
 // permanent; the activity log keeps what was removed. A guest who has
@@ -16998,6 +17129,7 @@ registrationsMigrationReady.then(retitleNamesOnBoot)
       if (r === 'extended') console.log('Guests table: added the transport/accommodation not-needed columns.');
     })
     .catch((err) => console.error('Guests table migration failed (continuing to start):', err.message)))
+  .then(() => guestDriverLinksOnBoot().catch((err) => console.error('Driver link column failed (continuing to start):', err.message)))
   .then(() => seedGuestListsOnBoot().catch((err) => console.error('Guest list seed failed (continuing to start):', err.message)))
   .then(() => autoLinkTransactions().catch((err) => console.error('Bank-transaction auto-link failed (continuing to start):', err.message)))
   .then(() => loadNotificationToggles().catch((err) => console.error('Notification-toggle load failed (continuing to start):', err.message)))

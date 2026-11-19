@@ -225,10 +225,13 @@ const P = { tc: `81${N}`, ac: `82${N}`, reg: `83${N}`, unreg: `84${N}`, other: `
     check('a coordinator assigns the volunteers', (await put(ids.reg, { transport_coordinator: P.tv }, tc)).body.success === true
       && (await put(ids.reg, { accommodation_coordinator: P.av }, ac)).body.success === true);
     const tvSet = await put(ids.reg, { pickup_vehicle: 'Volunteer Car', pickup_status: 'Done', drop_status: 'Assigned' }, tv);
-    check('the transport volunteer updates the pickup and drop of their faculty', tvSet.body.success === true && tvSet.body.changed === 3, tvSet.body);
+    // The pickup Done makes them Arrived (guests.js autoStatusValues), a
+    // fourth change the volunteer did not ask for and may not make by hand.
+    check('the transport volunteer updates the pickup and drop of their faculty', tvSet.body.success === true && tvSet.body.changed === 4, tvSet.body);
+    check('...and their pickup done makes them Arrived', (await guestRow(ids.reg)).overall_status === 'Arrived');
     check('...not the itinerary', (await put(ids.reg, { arrival_date: '2026-11-21' }, tv)).status === 403);
     check('...not the stay', (await put(ids.reg, { room_no: '999' }, tv)).status === 403);
-    check('...not the overall status', (await put(ids.reg, { overall_status: 'Arrived' }, tv)).status === 403);
+    check('...not the overall status', (await put(ids.reg, { overall_status: 'Cancelled' }, tv)).status === 403);
     check('...not who is assigned', (await put(ids.reg, { transport_coordinator: null }, tv)).status === 403);
     check('...and nothing for faculty not assigned to them', (await put(ids.unreg, { pickup_status: 'Done' }, tv)).status === 403);
     const avSet = await put(ids.reg, { room_type: 'Single', checkout_date: '2026-11-23' }, av);

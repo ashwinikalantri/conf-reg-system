@@ -14,72 +14,77 @@
         </div>
       </div>
 
-      <!-- Wraps onto a second line on a phone rather than swiping sideways. -->
+      <!-- Four tabs (redesigned 20 Nov 2026): the Day plan first -- who
+           comes, leaves and checks in on a day, and what each still needs --
+           then everyone, then the cars, drivers and rooms, then settings. -->
       <div id="guests-subnav" role="tablist" class="flex flex-wrap gap-1.5 border-b border-slate-200 pb-2">
-        <button type="button" data-guest-view="list" onclick="switchGuestView('list')" class="guest-subtab shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Faculty</button>
-        <button type="button" data-guest-view="dashboard" onclick="switchGuestView('dashboard')" class="guest-subtab shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Dashboard</button>
-        <button type="button" data-guest-view="pickups" onclick="switchGuestView('pickups')" class="guest-subtab shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Pickups</button>
-        <button type="button" data-guest-view="drops" onclick="switchGuestView('drops')" class="guest-subtab shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Drops</button>
-        <button type="button" data-guest-view="vehicles" onclick="switchGuestView('vehicles')" class="guest-subtab shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Vehicles &amp; drivers</button>
-        <button type="button" data-guest-view="rooms" onclick="switchGuestView('rooms')" class="guest-subtab shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Rooms</button>
-        <button type="button" data-guest-view="settings" onclick="switchGuestView('settings')" id="guests-settings-tab" class="guest-subtab hidden shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-semibold rounded-lg">Lists &amp; Settings</button>
+        <button type="button" data-guest-view="day" onclick="switchGuestView('day')" class="guest-subtab shrink-0 whitespace-nowrap h-10 px-3.5 text-sm font-semibold rounded-lg">Day plan</button>
+        <button type="button" data-guest-view="list" onclick="switchGuestView('list')" class="guest-subtab shrink-0 whitespace-nowrap h-10 px-3.5 text-sm font-semibold rounded-lg">Faculty <span id="guests-list-count" class="ml-1 text-[12px] px-1.5 rounded-full bg-slate-200 text-slate-700"></span></button>
+        <button type="button" data-guest-view="resources" onclick="switchGuestView('resources')" class="guest-subtab shrink-0 whitespace-nowrap h-10 px-3.5 text-sm font-semibold rounded-lg">Cars, drivers &amp; rooms</button>
+        <button type="button" data-guest-view="settings" onclick="switchGuestView('settings')" id="guests-settings-tab" class="guest-subtab hidden shrink-0 whitespace-nowrap h-10 px-3.5 text-sm font-semibold rounded-lg">Settings</button>
       </div>
 
-      <div id="guests-view-list" class="guest-view">
-        <!-- Filters: search full width and the selects two to a row on a
-             phone; one line from tablet up. -->
-        <div class="grid grid-cols-2 gap-2 mb-3 md:flex md:flex-wrap md:items-end">
-          <input id="guests-search" type="search" oninput="renderGuestList()" placeholder="Search name, phone, flight/train, vehicle, room…" class="col-span-2 md:flex-1 md:min-w-[12rem] h-10 md:h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
-          <select id="guests-filter-status" onchange="renderGuestList()" class="min-w-0 h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
-          <select id="guests-filter-flag" onchange="renderGuestList()" class="min-w-0 h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white">
-            <option value="">Any flag</option>
-            <option value="mine">Assigned to me</option>
-            <option value="attention">Needs attention (orange or red)</option>
-            <option value="pickupAlert">Arriving soon, no pickup vehicle</option>
-            <option value="noAccommodation">No accommodation</option>
-            <option value="sharedRoom">Sharing a room</option>
-            <option value="vehicleClash">Vehicle clash</option>
-            <option value="notRegistered">Not registered</option>
-            <option value="notSignedUp">Not signed up (no account linked)</option>
-            <option value="noProgramme">No programme (no session as speaker or chair)</option>
-            <option value="ownStay">Arranging their own stay</option>
-          </select>
-          <select id="guests-filter-acc" onchange="renderGuestList()" class="min-w-0 h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
-          <!-- Where they are from, as their account says (fillGuestFilters). -->
-          <select id="guests-filter-institution" onchange="renderGuestList()" aria-label="Institute" class="min-w-0 md:max-w-[16rem] h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
-          <select id="guests-filter-district" onchange="renderGuestList()" aria-label="District" class="min-w-0 md:max-w-[14rem] h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
-          <!-- Without the table there are no column headers to sort by. -->
-          <select id="guests-sort-mobile" onchange="setGuestSort(this.value)" aria-label="Sort" class="lg:hidden min-w-0 h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white">
-            <option value="sr_no">Sort: Sr No</option>
+      <!-- The Day plan: renderGuestDay(). -->
+      <div id="guests-view-day" class="guest-view hidden"></div>
+
+      <div id="guests-view-list" class="guest-view hidden">
+        <!-- One search, the chips that matter, and the rest under More
+             filters (their selects keep their ids: filteredGuests reads them). -->
+        <div class="flex flex-wrap items-center gap-2 mb-3">
+          <input id="guests-search" type="search" oninput="renderGuestList()" placeholder="Find: name, phone, flight, car, room" class="w-full lg:w-80 h-10 px-3 border border-slate-300 rounded-lg text-[15px] bg-white outline-none">
+          <div id="guests-chips" class="flex flex-wrap gap-1.5" role="group" aria-label="Show faculty"></div>
+          <select id="guests-sort" onchange="setGuestSort(this.value)" aria-label="Sort" class="h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white lg:ml-auto">
             <option value="name">Sort: Name</option>
             <option value="arrival_at">Sort: Arrival</option>
             <option value="departure_at">Sort: Departure</option>
             <option value="accommodation">Sort: Stay</option>
-            <option value="overall_status">Sort: Status</option>
+            <option value="sr_no">Sort: Order added</option>
           </select>
         </div>
-        <!-- The colour key: always shown from tablet up, folded on a phone. -->
-        <div id="guests-legend" class="hidden md:flex flex-wrap gap-1.5 mb-3 text-[11px]"></div>
-        <details class="md:hidden mb-3">
-          <summary class="text-xs font-semibold text-slate-500 cursor-pointer select-none">Colour key</summary>
-          <div id="guests-legend-mobile" class="flex flex-wrap gap-1.5 mt-2 text-[11px]"></div>
+        <details id="guests-more-filters" class="mb-3">
+          <summary class="inline-flex items-center h-9 text-sm font-semibold text-indigo-700 cursor-pointer select-none">More filters</summary>
+          <div class="grid grid-cols-2 gap-2 mt-2 md:flex md:flex-wrap">
+            <select id="guests-filter-status" onchange="renderGuestList()" class="min-w-0 h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
+            <select id="guests-filter-flag" onchange="renderGuestList()" class="min-w-0 h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white">
+              <option value="">Any flag</option>
+              <option value="mine">Assigned to me</option>
+              <option value="attention">Needs attention (orange or red)</option>
+              <option value="pickupAlert">Arriving soon, no car</option>
+              <option value="noAccommodation">No room</option>
+              <option value="sharedRoom">Sharing a room</option>
+              <option value="vehicleClash">Car or driver clash</option>
+              <option value="overCapacity">Shared trip over capacity</option>
+              <option value="notRegistered">Not registered</option>
+              <option value="notSignedUp">Not signed up (no account linked)</option>
+              <option value="noProgramme">No programme (no session as speaker or chair)</option>
+              <option value="ownStay">Arranging their own stay</option>
+            </select>
+            <select id="guests-filter-acc" onchange="renderGuestList()" class="min-w-0 h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
+            <select id="guests-filter-institution" onchange="renderGuestList()" aria-label="Institute" class="min-w-0 md:max-w-[16rem] h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
+            <select id="guests-filter-district" onchange="renderGuestList()" aria-label="District" class="min-w-0 md:max-w-[14rem] h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
+          </div>
         </details>
-        <!-- A card per person on a phone or tablet; the table from a laptop up,
-             where its columns fit without scrolling sideways. -->
-        <div id="guests-cards" class="lg:hidden space-y-3"></div>
-        <div class="hidden lg:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-          <table class="w-full text-sm min-w-[56rem]">
-            <thead id="guests-thead" class="bg-slate-50 text-[11px] text-slate-500 uppercase tracking-wide"></thead>
-            <tbody id="guests-tbody" class="divide-y divide-slate-100"></tbody>
-          </table>
+        <!-- One line a person on a laptop, stacked on a phone; a tap opens
+             their panel (openGuestPanel). -->
+        <div class="bg-white rounded-xl border border-slate-200 overflow-hidden text-sm">
+          <div class="hidden lg:grid grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_12rem] gap-3 px-4 py-2 bg-slate-50 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+            <span>Faculty</span><span>Arrives</span><span>Leaves</span><span>Stay</span><span>Needs</span>
+          </div>
+          <div id="guests-list" class="divide-y divide-slate-100"></div>
         </div>
         <p id="guests-count" class="text-xs text-slate-500 mt-2"></p>
       </div>
 
-      <div id="guests-view-dashboard" class="guest-view hidden"></div>
-      <div id="guests-view-pickups" class="guest-view hidden"></div>
-      <div id="guests-view-drops" class="guest-view hidden"></div>
-      <div id="guests-view-vehicles" class="guest-view hidden"></div>
-      <div id="guests-view-rooms" class="guest-view hidden"></div>
+      <!-- Cars, drivers and rooms, one tab. -->
+      <div id="guests-view-resources" class="guest-view hidden space-y-8">
+        <div id="guests-view-vehicles"></div>
+        <div id="guests-view-rooms"></div>
+      </div>
       <div id="guests-view-settings" class="guest-view hidden"></div>
+
+      <!-- One person, in a panel at the side (full screen on a phone): what
+           is set and what is missing, each part with its own Edit, which
+           opens the editor on that part. renderGuestPanel(). -->
+      <div id="guest-panel-backdrop" onclick="closeGuestPanel()" class="hidden fixed inset-0 bg-slate-900/30 z-50"></div>
+      <aside id="guest-panel" class="hidden fixed inset-y-0 right-0 z-50 w-full sm:w-[30rem] bg-white shadow-card border-l border-slate-200 overflow-y-auto" aria-label="Faculty member"></aside>
     </section>

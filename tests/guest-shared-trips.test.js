@@ -47,8 +47,8 @@ const G = require('../guests');
 
   console.log('\n== The screens ==');
   const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
-  check('the schedule shows a shared trip once, its people under it', /items\.push\(\{ trip: r\.trip, rows: rows\.filter\(\(x\) => x\.trip && x\.trip\.id === r\.trip\.id\) \}\)/.test(js)
-    && /Shared \$\{leg\} · \$\{esc\(t\.size\)\} people/.test(js) && /Over capacity: \$\{esc\(t\.seats\)\} seats/.test(js));
+  check('the Day plan shows a shared trip once, its people under it', /items\.push\(\{ trip: r\.trip, rows: rows\.filter\(\(x\) => x\.trip && x\.trip\.id === r\.trip\.id\) \}\)/.test(js)
+    && /Shared \$\{isPick \? 'pickup' : 'drop'\} · \$\{esc\(it\.trip\.size\)\}/.test(js) && /' · over capacity' : ''\}<\/p>/.test(js));
   check('a person shows "Shared pickup · 3"', /`Shared \$\{what\} · \$\{t\.size\}\$\{t\.overCapacity \? ' · over capacity' : ''\}`/.test(js));
   check('the windows are in Settings', /name="pickupShareMinutes"/.test(js) && /name="dropShareMinutes"/.test(js));
   report();

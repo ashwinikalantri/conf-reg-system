@@ -139,8 +139,10 @@ check('...each part a page of its own: the menu shows one, marks it, and keeps i
   sb.show('halls');
   check('...a part this role may not open falls back to the first it may', !cards[0].classList.contains('gs-off') && cards[1].classList.contains('gs-off') && hashes.pop() === 'push #general/conference');
 }
-const listFn = js.slice(js.indexOf('function renderGuestList()'), js.indexOf('// A card per person, for a phone'));
-check('the faculty table: no Volunteers or Needs columns (both in the editor)', !/>Volunteers</.test(listFn) && !/Needs · Remarks/.test(listFn) && /colspan="7"/.test(listFn));
-check('...Sr and Faculty stay in place while it scrolls', /sticky left-0 z-20 bg-slate-50/.test(listFn) && /sticky left-10 z-10 bg-inherit/.test(listFn) && /guestRowTint\(g\) \|\| 'bg-white'/.test(listFn));
-check('...special needs noted under the name', /Special needs: see the editor/.test(listFn));
+// The faculty list, one line a person since 20 Nov 2026: five columns that
+// fit a laptop without scrolling, no Volunteers (in the panel).
+const listFn = js.slice(js.indexOf('function renderGuestList()'), js.indexOf('// --- 12-hour times ---'));
+check('the faculty list: Faculty, Arrives, Leaves, Stay, Needs -- no Volunteers', !/>Volunteers</.test(listFn)
+  && /lg:grid-cols-\[minmax\(0,1\.5fr\)_minmax\(0,1fr\)_minmax\(0,1fr\)_minmax\(0,1fr\)_12rem\]/.test(listFn));
+check('...special needs noted under the name', /Special needs: see their panel/.test(listFn));
 report();

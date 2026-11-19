@@ -144,6 +144,9 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/guests/drivers': 'Adds a driver. guests.travel.',
     'PUT /api/guests/drivers/:id': 'Edits a driver; a new name follows onto their trips. guests.travel.',
     'DELETE /api/guests/drivers/:id': 'Deletes a driver. guests.manage.',
+    // The Day plan (20 Nov 2026).
+    'POST /api/guests/drivers/:id/link': 'Makes, or with reset makes anew, a driver\'s own link to their trips (/driver/<token>, no sign-in). guests.travel, like editing the driver.',
+    'POST /api/guests/:id/checkin': 'Marks a faculty member checked in at their accommodation, or takes it back. guests.view to reach it; then whoever may set their stay -- guests.stay, or their accommodation volunteer -- as PUT /api/guests/:id checks the field.',
     'POST /api/guests/rooms': 'Adds a room. guests.stay.',
     'PUT /api/guests/rooms/:id': 'Edits a room. guests.stay.',
     'DELETE /api/guests/rooms/:id': 'Deletes a room. guests.manage.',

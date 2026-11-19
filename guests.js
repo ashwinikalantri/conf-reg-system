@@ -251,6 +251,50 @@ function validateGuestFields(input, current = {}, lists = {}, coordinators = {})
   return { values, errors };
 }
 
+// Statuses that follow from what was done (owner, 20 Nov 2026), so nobody
+// has to keep them by hand: a car chosen makes the pickup or drop
+// "Assigned", the car taken away makes it "Pending" again; a pickup Done
+// means they have arrived, a drop Done that they have left. Only when the
+// request does not set that status itself, and only to a value still on
+// its list. Returned as extra values; the caller has already checked the
+// request's own fields against the person's permissions -- these follow.
+const DONE = 'Done';
+const ASSIGNED = 'Assigned';
+const PENDING = 'Pending';
+const ARRIVED = 'Arrived';
+const DEPARTED = 'Departed';
+function autoStatusValues(current, values, lists = {}) {
+  const out = {};
+  const onList = (key, v) => (lists[key] || []).find((x) => norm(x) === norm(v)) || null;
+  const merged = { ...current, ...values };
+  const changed = (f) => f in values && norm(values[f]) !== norm(current[f]);
+  for (const [vehicleF, statusF] of [['pickup_vehicle', 'pickup_status'], ['drop_vehicle', 'drop_status']]) {
+    if (!changed(vehicleF) || changed(statusF)) continue;
+    const status = norm(merged[statusF]);
+    if (!blank(merged[vehicleF]) && (status === '' || status === norm(PENDING))) {
+      const v = onList('transfer_status', ASSIGNED);
+      if (v) out[statusF] = v;
+    } else if (blank(merged[vehicleF]) && status === norm(ASSIGNED)) {
+      const v = onList('transfer_status', PENDING);
+      if (v) out[statusF] = v;
+    }
+  }
+  if (!changed('overall_status')) {
+    const overall = norm(merged.overall_status);
+    const status = { ...merged, ...out };
+    if (changed('drop_status') && norm(status.drop_status) === norm(DONE) && overall !== norm(CANCELLED) && overall !== norm(DEPARTED)) {
+      const v = onList('overall_status', DEPARTED);
+      if (v) out.overall_status = v;
+    } else if (changed('pickup_status') && norm(status.pickup_status) === norm(DONE) && arrivedMayFollow(overall)) {
+      const v = onList('overall_status', ARRIVED);
+      if (v) out.overall_status = v;
+    }
+  }
+  return out;
+}
+// Arrived follows only from before it: never over Cancelled or Departed.
+const arrivedMayFollow = (overall) => ![norm(CANCELLED), norm(DEPARTED), norm(ARRIVED)].includes(norm(overall));
+
 // The fields a role may not change, among those a request would change.
 // mayEdit(permission, field) -- the field is passed too, for volunteers,
 // whose say depends on which faculty member it is.
@@ -429,8 +473,11 @@ function buildBoard({ guests = [], vehicles = [], drivers = [], rooms = [], list
     for (const [kind, vF, dF, dateF, timeF, pointF] of [['Pickup', 'pickup_vehicle', 'pickup_driver', 'arrival_date', 'arrival_time', 'arrival_point'],
       ['Drop', 'drop_vehicle', 'drop_driver', 'departure_date', 'departure_time', 'departure_point']]) {
       if (blank(g[vF]) && blank(g[dF])) continue;
+      const leg = kind === 'Pickup' ? 'arrival' : 'departure';
       trips.push({ vehicle: blank(g[vF]) ? null : g[vF], driver: blank(g[dF]) ? null : g[dF], kind, guestId: g.id, name: g.name,
-        date: g[dateF], time: g[timeF], point: g[pointF], at: minutesAt(g[dateF], g[timeF]) });
+        date: g[dateF], time: g[timeF], point: g[pointF], at: minutesAt(g[dateF], g[timeF]),
+        phone: g.phone || g.guest_phone || null, mode: g[`${leg}_mode`] || null, number: g[`${leg}_number`] || null,
+        status: g[kind === 'Pickup' ? 'pickup_status' : 'drop_status'] || null });
     }
   }
   // Shared trips: one vehicle with one driver meeting, or seeing off,
@@ -672,7 +719,17 @@ function buildBoard({ guests = [], vehicles = [], drivers = [], rooms = [], list
     perAccommodation,
   };
 
-  return { guests: rows, vehicles: vehicleRows, drivers: driverRows, rooms: roomRows, unlistedRooms, pickups, drops, clashes, dashboard, slotLabels: labels };
+  // Every trip with a car or a driver, as the Day plan and the driver
+  // sheets read them: plain data, no links back (a trip that pointed at
+  // its people and they at it could not be sent as JSON).
+  const tripRows = jobInfo.map((j) => ({
+    id: j.id, kind: j.kind, date: j.date, point: j.point, vehicle: j.vehicle, drivers: j.drivers,
+    from: j.from == null ? null : minutesClock(j.from), to: j.to == null ? null : minutesClock(j.to),
+    seats: j.seats, shared: j.shared, overCapacity: j.overCapacity,
+    people: j.trips.map((t) => ({ id: t.guestId, name: t.name, phone: t.phone, time: t.time || null, mode: t.mode, number: t.number, status: t.status })),
+  }));
+
+  return { guests: rows, vehicles: vehicleRows, drivers: driverRows, rooms: roomRows, unlistedRooms, pickups, drops, clashes, trips: tripRows, dashboard, slotLabels: labels };
 }
 
 // The guest list as CSV, in the order of the record, then the derived
@@ -728,7 +785,8 @@ const GUEST_TABLE_SQL = (name) => `
     special_needs TEXT, transport_coordinator TEXT, accommodation_coordinator TEXT, overall_status TEXT, remarks TEXT,
     created_at INTEGER NOT NULL, created_by TEXT, updated_at INTEGER, updated_by TEXT,
     linked_at INTEGER, linked_by TEXT,
-    transport_not_needed INTEGER NOT NULL DEFAULT 0, stay_not_needed INTEGER NOT NULL DEFAULT 0
+    transport_not_needed INTEGER NOT NULL DEFAULT 0, stay_not_needed INTEGER NOT NULL DEFAULT 0,
+    checked_in_at INTEGER, checked_in_by TEXT
   )`;
 // Columns added after the table first shipped, for a table already in the
 // newer (nullable phone_number) shape.
@@ -741,6 +799,9 @@ const LATER_COLUMNS = [
   // Who drives each pickup and drop, chosen apart from the car (19 Nov 2026).
   ['pickup_driver', 'TEXT'],
   ['drop_driver', 'TEXT'],
+  // Checked in at their accommodation, from the Day plan (20 Nov 2026).
+  ['checked_in_at', 'INTEGER'],
+  ['checked_in_by', 'TEXT'],
 ];
 
 // The first version of the table made phone_number NOT NULL -- every guest
@@ -782,7 +843,7 @@ module.exports = {
   NOT_REQUIRED, LEG_DETAILS, transferNotRequired, travelInUse, isLocalFaculty,
   naturalCompare,
   validDate, validTime, addDays, joinDateTime, to12h, dateTime12, slotOf, slotLabels, validateDriver,
-  validateGuestFields, forbiddenChanges, changedFields, validateVehicle, validateRoom, validateSettings,
+  validateGuestFields, forbiddenChanges, changedFields, autoStatusValues, arrivedMayFollow, ARRIVED, validateVehicle, validateRoom, validateSettings,
   nightsBetween, parseRoomNumbers, MAX_BULK_ROOMS,
   buildBoard, guestsCsv,
 };
