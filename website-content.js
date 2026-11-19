@@ -199,7 +199,7 @@ module.exports = {
         ] },
         { title: 'Design and readability', items: [
           "Use the template's fonts and colours; if you change the font, use a clear sans-serif such as Arial or Calibri.",
-          'Keep text at 10 pt or larger, as the template sets it, so it can be read on the screen.',
+          'Keep text at 10 pt or larger so it can be read on the screen.',
           'Images of at least 150 dpi. Rebuild tables in PowerPoint rather than pasting blurry screenshots.',
           'Strong contrast between text and background.',
           'No animations, transitions, audio, video or hyperlinks.',
