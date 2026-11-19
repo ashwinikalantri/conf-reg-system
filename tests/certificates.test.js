@@ -236,7 +236,7 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     check('Certificates are a page under Settings › Conference, their settings a card in Conference setup (1 Nov)',
       /<section id="section-certificates"/.test(certView) && /id="cert-list"/.test(certView) && /id="gs-card-certificates" class="hidden space-y-5"/.test(setView) && /id="cs-templates"/.test(setView)
       && !navTabs.includes('certificates')
-      && /id="settings-item-attendance"[\s\S]*?id="settings-item-certificates" onclick="selectSettingsTab\('certificates'\)"[\s\S]*?id="settings-group-fees"/.test(adminHeader)
+      && /id="settings-group-conference"[\s\S]*?id="settings-item-certificates" onclick="selectSettingsTab\('certificates'\)"[\s\S]*?id="settings-group-fees"/.test(adminHeader)
       && !adminHeader.includes('certsettings')
       && /id="gs-jump-certificates" data-target="gs-card-certificates"/.test(setup) && /include\('\.\.\/partials\/certificate-settings'\)/.test(setup)
       && /certsettings: 'general'/.test(js)

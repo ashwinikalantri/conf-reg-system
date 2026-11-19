@@ -14,7 +14,10 @@ const js = read('public', 'app.js');
 
 console.log('\n== Registration and its sub-menu ==');
 check('the tab bar has one Registration tab', /id="nav-tab-payments"[\s\S]*?Registration/.test(tabs));
-check('...and no separate Bank Statement or Attendance tab', !/nav-tab-statement|nav-tab-attendance/.test(tabs));
+// Attendance is no longer a tab of its own but a Front Desk screen, in its
+// drop-down (19 Nov 2026).
+check('...and no separate Bank Statement tab; Attendance only inside the Front Desk menu', !/nav-tab-statement/.test(tabs)
+  && /<div id="desk-menu">[\s\S]*?id="nav-tab-attendance"[\s\S]*?<\/div>/.test(tabs) && (tabs.match(/nav-tab-attendance/g) || []).length === 1);
 // 2026-11-02: Registration, Review Desk and Faculty moved under Front Desk.
 const deskMenu = (tabs.match(/<div id="desk-menu">([\s\S]*?)<\/div>\n          <\/div>/) || [])[1] || '';
 check('Front Desk is a drop-down holding the desk, Registration, Review Desk and Faculty, in that order',
@@ -29,11 +32,14 @@ check('the Registration tab stays lit on the statement', /t === 'payments' && ta
 check('old #statement links still open it', js.includes("'payments', 'statement'"));
 
 console.log('\n== Settings ==');
-check('Attendance and Programme are in the Settings menu',
-  /id="settings-item-attendance"/.test(header) && /id="settings-item-programme"/.test(header));
-check('both are Settings tabs, not main tabs', /SETTINGS_TABS = \['attendance', 'certificates', 'programme'/.test(js) && !/MAIN_TABS = \[[^\]]*'attendance'/.test(js));
+// Attendance moved to the Front Desk menu, beside Meals (owner, 19 Nov 2026).
+check('Programme is in the Settings menu; Attendance is not', /id="settings-item-programme"/.test(header) && !/id="settings-item-attendance"/.test(header));
+check('Programme is a Settings tab; Attendance a Front Desk screen', /SETTINGS_TABS = \['certificates', 'programme'/.test(js)
+  && /MAIN_TABS = \['overview', 'desk', 'attendance', 'meals'/.test(js) && /DESK_SUB_TABS = \['desk', 'attendance', 'meals'\]/.test(js)
+  && /id="nav-tab-attendance" onclick="switchBackendTab\('attendance'\)"/.test(read('views', 'admin', 'partials', 'nav-tabs.ejs'))
+  && /id="desk-subtab-attendance" onclick="switchBackendTab\('attendance'\)"/.test(read('views', 'admin', 'partials', 'desk-subtabs.ejs')));
 // Meals moved to the Front Desk's menu (owner, 19 Nov 2026).
-check('Meals is a Front Desk screen, not a Settings one', /MAIN_TABS = \['overview', 'desk', 'meals'/.test(js) && /DESK_MENU_TABS = \['desk', 'meals'/.test(js) && !/SETTINGS_TABS = \[[^\]]*'meals'/.test(js));
+check('Meals is a Front Desk screen, not a Settings one', /MAIN_TABS = \[[^\]]*'meals'/.test(js) && /DESK_MENU_TABS = \['desk', 'attendance', 'meals'/.test(js) && !/SETTINGS_TABS = \[[^\]]*'meals'/.test(js));
 check('the Programme page has the halls and sessions', /id="section-programme"/.test(read('views', 'admin', 'sections', 'programme.ejs')));
 check('Attendance no longer has a Programme view', !/data-att-view="programme"|att-view-programme/.test(attendance));
 report();

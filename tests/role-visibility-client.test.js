@@ -27,9 +27,9 @@ const STAFF = {
 // Every element applyRoleVisibility()/allowedBackendTabs() touch, so a role's
 // full visible surface can be read back after driving the real code.
 const ELEMENT_IDS = [
-  'nav-tab-desk', 'nav-tab-meals', 'nav-tab-payments', 'reg-subtab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
+  'nav-tab-desk', 'nav-tab-attendance', 'nav-tab-meals', 'nav-tab-payments', 'reg-subtab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
   'settings-group-conference', 'settings-group-fees', 'settings-group-messages', 'settings-group-system',
-  'settings-item-attendance', 'settings-item-programme',
+  'settings-item-programme',
   'settings-item-programs', 'settings-item-fees', 'settings-item-general',
   'settings-item-discount', 'settings-item-activity',
   'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
@@ -51,8 +51,8 @@ const ELEMENT_IDS = [
 // bugfix for the ID-verification/category-picker screens they already use,
 // with this tab-visibility grant as its accepted, read-only side effect.
 const EXPECTED_VISIBLE = {
-  SUPER_ADMIN: ['nav-tab-desk', 'nav-tab-meals', 'nav-tab-payments', 'reg-subtab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
-    'settings-group-conference', 'settings-group-fees', 'settings-group-messages', 'settings-group-system', 'settings-item-attendance', 'settings-item-programme', 'settings-item-programs', 'settings-item-fees',
+  SUPER_ADMIN: ['nav-tab-desk', 'nav-tab-attendance', 'nav-tab-meals', 'nav-tab-payments', 'reg-subtab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
+    'settings-group-conference', 'settings-group-fees', 'settings-group-messages', 'settings-group-system', 'settings-item-programme', 'settings-item-programs', 'settings-item-fees',
     'settings-item-general', 'settings-item-discount', 'settings-item-activity',
     'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',
     'report-summary', 'report-delegates', 'report-delegate-programs', 'report-payments', 'report-workshops', 'report-abstracts', 'report-users',
@@ -71,7 +71,8 @@ const EXPECTED_VISIBLE = {
   // the Fee Master read-only because masters.fees_view is what tells it which
   // categories need a student ID.
   // Meals moved from Settings to the Front Desk menu (19 Nov 2026).
-  FRONT_DESK: ['nav-tab-desk', 'nav-tab-meals', 'settings-group-conference', 'settings-group-fees', 'settings-item-attendance', 'settings-item-fees'],
+  // ...and Attendance, also under the Front Desk menu since 19 Nov 2026.
+  FRONT_DESK: ['nav-tab-desk', 'nav-tab-attendance', 'nav-tab-meals', 'settings-group-fees', 'settings-item-fees'],
   // ...and, since 6 Nov 2026, meal counts (meals.view): under the Front Desk
   // menu since 19 Nov 2026, so nothing of theirs is left under Conference.
   OPERATIONS: ['nav-tab-reports', 'nav-tab-meals', 'settings-group-system', 'settings-item-users',

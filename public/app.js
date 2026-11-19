@@ -4446,13 +4446,15 @@ function applyRoleVisibility() {
   if (tabFaculty) tabFaculty.classList.toggle('hidden', !canSee('faculty'));
   const tabMeals = document.getElementById('nav-tab-meals');
   if (tabMeals) tabMeals.classList.toggle('hidden', !canSee('meals'));
-  ['desk', 'meals'].forEach((t) => {
+  const tabAttendance = document.getElementById('nav-tab-attendance');
+  if (tabAttendance) tabAttendance.classList.toggle('hidden', !canSee('attendance'));
+  DESK_SUB_TABS.forEach((t) => {
     const b = document.getElementById(`desk-subtab-${t}`);
     if (b) b.classList.toggle('hidden', !canSee(t));
   });
-  // Front Desk's drop-down shows when the role may open any of its five.
+  // Front Desk's drop-down shows when the role may open any of its six.
   const deskWrap = document.getElementById('desk-menu-wrap');
-  if (deskWrap) deskWrap.classList.toggle('hidden', ![tabDesk, tabMeals, tabPayments, tabAbstracts, tabFaculty].some((t) => t && !t.classList.contains('hidden')));
+  if (deskWrap) deskWrap.classList.toggle('hidden', ![tabDesk, tabAttendance, tabMeals, tabPayments, tabAbstracts, tabFaculty].some((t) => t && !t.classList.contains('hidden')));
   updateDeskMenuBadge();
 
   // The walk-in registration button now lives on the Front Desk tab
@@ -4476,7 +4478,7 @@ function applyRoleVisibility() {
   // own tab, from the same source that gated it above -- no separate list of
   // roles kept in step by hand.
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
-  const settingsItems = ['attendance', 'certificates', 'programme', 'programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount', 'roles'];
+  const settingsItems = ['certificates', 'programme', 'programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount', 'roles'];
   settingsItems.forEach((key) => {
     const el = document.getElementById(`settings-item-${key}`);
     if (el) el.classList.toggle('hidden', !canSee(key));
@@ -4488,7 +4490,7 @@ function applyRoleVisibility() {
   // under it.
   if (settingsMenuBtn) settingsMenuBtn.classList.remove('hidden');
   const SETTINGS_GROUPS = {
-    conference: ['programme', 'programs', 'attendance', 'certificates'],
+    conference: ['programme', 'programs', 'certificates'],
     fees: ['fees', 'discount', 'groupdiscount'],
     messages: ['reminders'],
     system: ['general', 'users', 'roles', 'activity'],
@@ -12461,8 +12463,11 @@ function toggleSettingsMenu(forceHide) {
 function toggleAdminMeMenu() { toggleAdminMenuById('admin-me-menu'); }
 function toggleDeskMenu() { toggleAdminMenuById('desk-menu'); }
 // Front Desk's screens, under its drop-down (nav-tabs.ejs); 'statement' is
-// Registration's second screen. Meals moved here from Settings (19 Nov 2026).
-const DESK_MENU_TABS = ['desk', 'meals', 'payments', 'statement', 'abstracts', 'faculty'];
+// Registration's second screen. Meals and Attendance moved here from
+// Settings (19 Nov 2026).
+const DESK_MENU_TABS = ['desk', 'attendance', 'meals', 'payments', 'statement', 'abstracts', 'faculty'];
+// The Front Desk's own screens, under its Check-in / Attendance / Meals strip.
+const DESK_SUB_TABS = ['desk', 'attendance', 'meals'];
 // The drop-down's own badge: what waits on a decision inside it -- payments
 // to approve and abstracts to review -- since its items are out of sight.
 function updateDeskMenuBadge() {
@@ -14951,9 +14956,9 @@ async function deleteGuestListValue(id) {
   renderGuests();
 }
 
-const SETTINGS_TABS = ['attendance', 'certificates', 'programme', 'programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
+const SETTINGS_TABS = ['certificates', 'programme', 'programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
 // 'payments' and 'statement' are two screens of the Registration tab.
-const MAIN_TABS = ['overview', 'desk', 'meals', 'payments', 'statement', 'abstracts', 'faculty', 'reports'];
+const MAIN_TABS = ['overview', 'desk', 'attendance', 'meals', 'payments', 'statement', 'abstracts', 'faculty', 'reports'];
 
 // Which tabs each role may open -- the single source of truth used both to
 // pick the landing tab and to validate a tab restored from the URL, so a
@@ -15053,9 +15058,9 @@ function switchBackendTab(tab, opts) {
     b.classList.toggle('hover:bg-slate-100', !on);
     b.setAttribute('aria-selected', on ? 'true' : 'false');
   });
-  // Front Desk's: the delegate at the counter, and the meal counter.
+  // Front Desk's: the delegate at the counter, attendance, the meal counter.
   const deskStrip = document.getElementById('desk-subtabs');
-  if (deskStrip) deskStrip.classList.toggle('hidden', !((tab === 'desk' || tab === 'meals') && canSee('desk') && canSee('meals')));
+  if (deskStrip) deskStrip.classList.toggle('hidden', !(DESK_SUB_TABS.includes(tab) && DESK_SUB_TABS.filter(canSee).length > 1));
   document.querySelectorAll('.desk-subtab').forEach((b) => {
     const on = b.id === `desk-subtab-${tab}`;
     b.classList.toggle('bg-navy', on);

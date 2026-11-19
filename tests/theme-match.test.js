@@ -37,7 +37,8 @@ const js = read('public', 'app.js');
 check('the open desk: pale gold, no underline (aria-current)', /btn\.setAttribute\('aria-current', active \? 'page' : 'false'\)/.test(js) && !/btn\.classList\.toggle\('border-gold-500'/.test(js)
   && /\.cbar-link\[aria-expanded="true"\], \.cbar-link\[aria-current="page"\] \{ background: #faf5e8; \}/.test(read('public', 'styles.css')));
 const menu = header.split('id="settings-menu"')[1] || '';
-const order = ['settings-group-conference', 'settings-item-programme', 'settings-item-programs', 'settings-item-attendance',
+// Attendance moved to the Front Desk menu (19 Nov 2026).
+const order = ['settings-group-conference', 'settings-item-programme', 'settings-item-programs',
   'settings-group-fees', 'settings-item-fees', 'settings-item-discount', 'settings-item-groupdiscount',
   'settings-group-messages', 'settings-item-reminders',
   'settings-group-system', 'settings-item-general', 'settings-item-users', 'settings-item-roles', 'settings-item-activity', 'admin-logout-item'];
