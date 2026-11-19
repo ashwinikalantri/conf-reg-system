@@ -31,7 +31,9 @@ check('old #statement links still open it', js.includes("'payments', 'statement'
 console.log('\n== Settings ==');
 check('Attendance and Programme are in the Settings menu',
   /id="settings-item-attendance"/.test(header) && /id="settings-item-programme"/.test(header));
-check('both are Settings tabs, not main tabs', /SETTINGS_TABS = \['attendance', 'certificates', 'meals', 'programme'/.test(js) && !/MAIN_TABS = \[[^\]]*'attendance'/.test(js));
+check('both are Settings tabs, not main tabs', /SETTINGS_TABS = \['attendance', 'certificates', 'programme'/.test(js) && !/MAIN_TABS = \[[^\]]*'attendance'/.test(js));
+// Meals moved to the Front Desk's menu (owner, 19 Nov 2026).
+check('Meals is a Front Desk screen, not a Settings one', /MAIN_TABS = \['overview', 'desk', 'meals'/.test(js) && /DESK_MENU_TABS = \['desk', 'meals'/.test(js) && !/SETTINGS_TABS = \[[^\]]*'meals'/.test(js));
 check('the Programme page has the halls and sessions', /id="section-programme"/.test(read('views', 'admin', 'sections', 'programme.ejs')));
 check('Attendance no longer has a Programme view', !/data-att-view="programme"|att-view-programme/.test(attendance));
 report();

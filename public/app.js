@@ -4444,9 +4444,15 @@ function applyRoleVisibility() {
   if (tabReports) tabReports.classList.toggle('hidden', !canSee('reports'));
   const tabFaculty = document.getElementById('nav-tab-faculty');
   if (tabFaculty) tabFaculty.classList.toggle('hidden', !canSee('faculty'));
-  // Front Desk's drop-down shows when the role may open any of its four.
+  const tabMeals = document.getElementById('nav-tab-meals');
+  if (tabMeals) tabMeals.classList.toggle('hidden', !canSee('meals'));
+  ['desk', 'meals'].forEach((t) => {
+    const b = document.getElementById(`desk-subtab-${t}`);
+    if (b) b.classList.toggle('hidden', !canSee(t));
+  });
+  // Front Desk's drop-down shows when the role may open any of its five.
   const deskWrap = document.getElementById('desk-menu-wrap');
-  if (deskWrap) deskWrap.classList.toggle('hidden', ![tabDesk, tabPayments, tabAbstracts, tabFaculty].some((t) => t && !t.classList.contains('hidden')));
+  if (deskWrap) deskWrap.classList.toggle('hidden', ![tabDesk, tabMeals, tabPayments, tabAbstracts, tabFaculty].some((t) => t && !t.classList.contains('hidden')));
   updateDeskMenuBadge();
 
   // The walk-in registration button now lives on the Front Desk tab
@@ -4470,7 +4476,7 @@ function applyRoleVisibility() {
   // own tab, from the same source that gated it above -- no separate list of
   // roles kept in step by hand.
   const settingsMenuBtn = document.getElementById('settings-menu-btn');
-  const settingsItems = ['attendance', 'certificates', 'meals', 'programme', 'programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount', 'roles'];
+  const settingsItems = ['attendance', 'certificates', 'programme', 'programs', 'fees', 'general', 'discount', 'activity', 'reminders', 'groupdiscount', 'roles'];
   settingsItems.forEach((key) => {
     const el = document.getElementById(`settings-item-${key}`);
     if (el) el.classList.toggle('hidden', !canSee(key));
@@ -4482,7 +4488,7 @@ function applyRoleVisibility() {
   // under it.
   if (settingsMenuBtn) settingsMenuBtn.classList.remove('hidden');
   const SETTINGS_GROUPS = {
-    conference: ['programme', 'programs', 'attendance', 'certificates', 'meals'],
+    conference: ['programme', 'programs', 'attendance', 'certificates'],
     fees: ['fees', 'discount', 'groupdiscount'],
     messages: ['reminders'],
     system: ['general', 'users', 'roles', 'activity'],
@@ -4948,6 +4954,7 @@ function renderOverviewNow(summary, onDay) {
     setText('ov-day-present', summary.presentToday || 0);
     setText('ov-day-present-sub', `marked at a session, of ${summary.registered || 0} registered`);
     setText('ov-day-badges', summary.badgesCollected || 0);
+    setText('ov-day-kits', `at the registration counter · ${Number(summary.kitsGiven) || 0} ${Number(summary.kitsGiven) === 1 ? 'kit' : 'kits'} given`);
     setText('ov-day-now', open.reduce((n, s) => n + (Number(s.present) || 0), 0));
     setText('ov-day-done', summary.completed || 0);
   }
@@ -12400,8 +12407,8 @@ function toggleSettingsMenu(forceHide) {
 function toggleAdminMeMenu() { toggleAdminMenuById('admin-me-menu'); }
 function toggleDeskMenu() { toggleAdminMenuById('desk-menu'); }
 // Front Desk's screens, under its drop-down (nav-tabs.ejs); 'statement' is
-// Registration's second screen.
-const DESK_MENU_TABS = ['desk', 'payments', 'statement', 'abstracts', 'faculty'];
+// Registration's second screen. Meals moved here from Settings (19 Nov 2026).
+const DESK_MENU_TABS = ['desk', 'meals', 'payments', 'statement', 'abstracts', 'faculty'];
 // The drop-down's own badge: what waits on a decision inside it -- payments
 // to approve and abstracts to review -- since its items are out of sight.
 function updateDeskMenuBadge() {
@@ -12800,7 +12807,7 @@ const deskBalance = (reg, payment) => (payment ? Number(payment.remaining) || 0 
 // that do it: register them, take the money and see the student ID, check
 // them in -- or, once arrived, when and by whom.
 function deskNextStep(d) {
-  const { registration: reg, payment, checkedIn } = d;
+  const { registration: reg, payment, checkedIn, kit } = d;
   const big = (label, onclick, tone) => `<button type="button" onclick="${onclick}" class="h-12 px-5 w-full sm:w-auto ${{
     go: 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm',
     navy: 'bg-navy hover:bg-indigo-700 text-white shadow-sm',
@@ -12829,16 +12836,26 @@ function deskNextStep(d) {
       buttons: [
         balance > 0.5 && can('payments.add_payment') ? big(`Collect ₹${inr(balance)} cash`, 'deskOpenCollect()', 'navy') : '',
         idDue && can('payments.verify_id') ? big('Verify student ID', 'deskVerifyId()') : '',
-        !checkedIn && can('desk.checkin') ? big('Check in anyway', 'deskCheckIn()') : '',
+        !checkedIn && can('desk.checkin') ? big('Check in anyway', 'deskAskKit()') : '',
+        checkedIn && !kit && can('desk.checkin') ? big('Kit given', 'deskKitGiven(true)') : '',
       ].filter(Boolean),
     };
   }
-  if (checkedIn) return { tone: 'done', title: `Arrived ${deskWhen(checkedIn.at)}`, note: by, buttons: [] };
+  // Arrived, but the kit is still to be handed over (owner, 19 Nov 2026).
+  if (checkedIn && !kit) {
+    return { tone: 'stop', title: `Arrived ${deskWhen(checkedIn.at)}. Kit not given yet.`, note: by,
+      buttons: can('desk.checkin') ? [big('Kit given', 'deskKitGiven(true)', 'go')] : [] };
+  }
+  if (checkedIn) {
+    return { tone: 'done', title: `Arrived ${deskWhen(checkedIn.at)}`,
+      note: [by, `Kit given ${deskWhen(kit.at)}${kit.by ? ` by ${kit.by}` : ''}.`].filter(Boolean).join(' '),
+      buttons: can('desk.checkin') ? [deskBtn('Kit not given? Undo', 'deskKitGiven(false)', 'link')] : [] };
+  }
   return {
     tone: 'go',
     title: (Number(reg.expected_amount) || 0) > 0 ? 'Paid in full. Ready to check in.' : 'Nothing to pay. Ready to check in.',
-    note: 'Hand over the badge and kit once they are checked in.',
-    buttons: can('desk.checkin') ? [big('Check in', 'deskCheckIn()', 'go')] : [],
+    note: 'Hand over the badge and kit as you check them in.',
+    buttons: can('desk.checkin') ? [big('Check in', 'deskAskKit()', 'go')] : [],
   };
 }
 
@@ -12887,7 +12904,7 @@ function deskWhoCard(d) {
 // Payment, student ID, arrival and the certificate, each done, wanting, or
 // not yet.
 function deskChecksRow(d) {
-  const { registration: reg, payment, checkedIn, conferenceDays: cd } = d;
+  const { registration: reg, payment, checkedIn, kit, conferenceDays: cd } = d;
   const balance = deskBalance(reg, payment);
   const paid = payment ? Number(payment.netVerifiedTotal) || 0 : 0;
   const needsId = isStudentCategory(reg.category_key);
@@ -12895,11 +12912,14 @@ function deskChecksRow(d) {
     ['Payment', balance > 0.5 ? ['bad', `₹${inr(balance)} due`] : (Number(reg.expected_amount) || 0) > 0 ? ['ok', `₹${inr(paid)} paid`] : ['na', 'Nothing to pay']],
     ['Student ID', !needsId ? ['na', 'Not needed'] : reg.id_verified ? ['ok', 'Verified'] : ['bad', 'Not seen']],
     ['Arrival', checkedIn ? ['ok', deskWhen(checkedIn.at)] : ['todo', 'Not yet']],
+    ['Kit', kit ? ['ok', `Given ${deskWhen(kit.at)}`] : checkedIn ? ['bad', 'Not given'] : ['todo', 'Not yet']],
     ['Certificate', deskCertificateCheck(cd)],
   ];
   const look = { ok: ['text-emerald-700', DESK_TICK], bad: ['text-amber-700', DESK_ALERT], todo: ['text-slate-500', DESK_OPEN], na: ['text-slate-500', '<span class="w-4 text-center" aria-hidden="true">–</span>'] };
-  return `<dl class="grid grid-cols-2 sm:grid-cols-4 border-t border-slate-200">
-    ${items.map(([label, [k, value]], i) => `<div class="px-4 sm:px-6 py-3 min-w-0 ${i % 2 ? 'border-l border-slate-200' : ''} ${i === 2 ? 'sm:border-l' : ''} ${i > 1 ? 'border-t sm:border-t-0 border-slate-200' : ''}">
+  // Hairlines between the cells from the gap over a grey ground, so they
+  // stay right however the five wrap.
+  return `<dl class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-px bg-slate-200 border-t border-slate-200">
+    ${items.map(([label, [k, value]], i) => `<div class="bg-white px-4 sm:px-6 py-3 min-w-0 ${i === items.length - 1 ? 'col-span-2 sm:col-span-1' : ''}">
       <dt class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">${label}</dt>
       <dd class="flex items-center gap-1.5 mt-0.5 text-sm ${k === 'ok' || k === 'bad' ? 'font-semibold' : ''} ${look[k][0]}">${look[k][1]}<span class="min-w-0">${esc(value)}</span></dd>
     </div>`).join('')}
@@ -13399,14 +13419,47 @@ function renderDeskRecent(currentId) {
   el.classList.toggle('hidden', !list.length);
 }
 
-async function deskCheckIn() {
+// Checking in asks one question first: was the kit handed over with the
+// badge? Either answer checks them in; "Not yet" leaves Kit given for later.
+function deskAskKit() {
+  const box = document.getElementById('desk-collect-form');
+  if (!box) return deskCheckIn(false);
+  box.innerHTML = `<p class="text-base font-bold text-slate-900">Was the delegate kit given?</p>
+    <p class="text-sm text-slate-600 mt-0.5">Either way they are checked in. If not now, record the kit when it is handed over.</p>
+    <div class="flex flex-col sm:flex-row gap-2 mt-3">
+      <button type="button" onclick="deskCheckIn(true)" class="h-12 px-5 bg-emerald-600 hover:bg-emerald-700 text-white text-base font-bold rounded-xl">Yes, kit given</button>
+      <button type="button" onclick="deskCheckIn(false)" class="h-12 px-5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 text-base font-bold rounded-xl">Not yet, check in only</button>
+      <button type="button" onclick="deskCloseKitAsk()" class="h-12 px-4 text-slate-600 font-semibold">Cancel</button>
+    </div>`;
+  box.classList.remove('hidden');
+  box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+function deskCloseKitAsk() {
+  const box = document.getElementById('desk-collect-form');
+  if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+}
+
+async function deskCheckIn(kit) {
   const res = await fetch('/api/desk/checkin', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ identifier: deskDelegate.user.phone_number }),
+    body: JSON.stringify({ identifier: deskDelegate.user.phone_number, kit: kit === true }),
   });
   const data = await res.json();
   if (!data.success) return showToast(data.error || 'Could not check in.');
-  showToast(data.alreadyCheckedIn ? 'Already checked in.' : 'Checked in.', 'success');
+  showToast(`${data.alreadyCheckedIn ? 'Already checked in' : 'Checked in'}${data.kit ? ', kit given' : kit === true ? '' : '. Kit not given yet'}.`, 'success');
+  await deskReload();
+}
+
+// The kit, handed over after check-in -- or taken off the record when it
+// was marked by mistake.
+async function deskKitGiven(given) {
+  if (!given && !(await showConfirm('Take the kit off their record? Do this only if it was marked by mistake.', 'Kit not given'))) return;
+  const data = await (await fetch('/api/desk/kit', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier: deskDelegate.user.phone_number, given }),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'That did not go through. Try again.');
+  showToast(given ? (data.already ? 'The kit was already recorded.' : 'Kit given.') : 'Kit taken off the record.', 'success');
   await deskReload();
 }
 
@@ -14844,9 +14897,9 @@ async function deleteGuestListValue(id) {
   renderGuests();
 }
 
-const SETTINGS_TABS = ['attendance', 'certificates', 'meals', 'programme', 'programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
+const SETTINGS_TABS = ['attendance', 'certificates', 'programme', 'programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
 // 'payments' and 'statement' are two screens of the Registration tab.
-const MAIN_TABS = ['overview', 'desk', 'payments', 'statement', 'abstracts', 'faculty', 'reports'];
+const MAIN_TABS = ['overview', 'desk', 'meals', 'payments', 'statement', 'abstracts', 'faculty', 'reports'];
 
 // Which tabs each role may open -- the single source of truth used both to
 // pick the landing tab and to validate a tab restored from the URL, so a
@@ -14940,6 +14993,17 @@ function switchBackendTab(tab, opts) {
   if (regStrip) regStrip.classList.toggle('hidden', !(regScreen && canSee('payments') && canSee('statement')));
   document.querySelectorAll('.reg-subtab').forEach((b) => {
     const on = b.id === `reg-subtab-${tab}`;
+    b.classList.toggle('bg-navy', on);
+    b.classList.toggle('text-white', on);
+    b.classList.toggle('text-slate-600', !on);
+    b.classList.toggle('hover:bg-slate-100', !on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  // Front Desk's: the delegate at the counter, and the meal counter.
+  const deskStrip = document.getElementById('desk-subtabs');
+  if (deskStrip) deskStrip.classList.toggle('hidden', !((tab === 'desk' || tab === 'meals') && canSee('desk') && canSee('meals')));
+  document.querySelectorAll('.desk-subtab').forEach((b) => {
+    const on = b.id === `desk-subtab-${tab}`;
     b.classList.toggle('bg-navy', on);
     b.classList.toggle('text-white', on);
     b.classList.toggle('text-slate-600', !on);

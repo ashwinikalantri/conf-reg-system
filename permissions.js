@@ -224,6 +224,7 @@ const ROUTE_PERMISSIONS = {
   'GET /api/desk/cash-in-hand': 'desk.view',
   'POST /api/desk/enroll': 'desk.enroll',
   'POST /api/desk/checkin': 'desk.checkin',
+  'POST /api/desk/kit': 'desk.checkin',
   'GET /api/attendance/halls': 'attendance.mark',
   'POST /api/attendance/scan': 'attendance.mark',
   'GET /api/meals': 'meals.scan',

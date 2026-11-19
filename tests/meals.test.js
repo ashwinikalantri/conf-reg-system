@@ -129,7 +129,12 @@ check('the Meals report needs the counts', perms.REPORT_PERMISSIONS.meals === 'm
     console.log('\n== The screens ==');
     const view = fs.readFileSync(appFile('views', 'admin', 'sections', 'meals.ejs'), 'utf8');
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
-    check('Settings › Conference › Meals, the counter volunteers\' landing page', /id="settings-item-meals" onclick="selectSettingsTab\('meals'\)"/.test(fs.readFileSync(appFile('views', 'admin', 'partials', 'header.ejs'), 'utf8'))
+    // Moved from Settings › Conference to the Front Desk (owner, 19 Nov 2026).
+    const nav = fs.readFileSync(appFile('views', 'admin', 'partials', 'nav-tabs.ejs'), 'utf8');
+    check('Front Desk › Meals, with a Check-in / Meals strip; still the counter volunteers\' landing page',
+      /id="nav-tab-meals" onclick="switchBackendTab\('meals'\)"/.test(nav)
+      && !/settings-item-meals/.test(fs.readFileSync(appFile('views', 'admin', 'partials', 'header.ejs'), 'utf8'))
+      && /id="desk-subtab-meals" onclick="switchBackendTab\('meals'\)"/.test(fs.readFileSync(appFile('views', 'admin', 'partials', 'desk-subtabs.ejs'), 'utf8'))
       && /: canSee\('meals'\) \? 'meals'/.test(js));
     check('the counter: meal, counter, scan, find by name; passes and report for the counts', ['id="meal-select"', 'id="meal-counter"', 'onclick="openMealScanner()"', 'id="meal-search"', 'href="/api/admin/meals/passes.pdf"'].every((x) => view.includes(x)));
     check('the answer fills the screen: green, amber, red', /bg-emerald-600 text-white[\s\S]*?Served anyway' : 'Serve'/.test(js) && /bg-amber-400 text-amber-950[\s\S]*?Already served/.test(js) && /bg-rose-700 text-white[\s\S]*?Not on the list/.test(js));

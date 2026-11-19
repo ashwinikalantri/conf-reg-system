@@ -2861,6 +2861,10 @@ db.serialize(() => {
     if (!names.includes('fee_adjustment_at')) pending.push(alter('ALTER TABLE registrations ADD COLUMN fee_adjustment_at INTEGER'));
     if (!names.includes('checked_in_at')) pending.push(alter('ALTER TABLE registrations ADD COLUMN checked_in_at INTEGER'));
     if (!names.includes('checked_in_by')) pending.push(alter('ALTER TABLE registrations ADD COLUMN checked_in_by TEXT'));
+    // The delegate kit, handed over at check-in or later (owner, 19 Nov
+    // 2026): when, and by whom. Null until it is given.
+    if (!names.includes('kit_given_at')) pending.push(alter('ALTER TABLE registrations ADD COLUMN kit_given_at INTEGER'));
+    if (!names.includes('kit_given_by')) pending.push(alter('ALTER TABLE registrations ADD COLUMN kit_given_by TEXT'));
     // Applied promo/discount code and the rupee amount it took off the fee.
     if (!names.includes('discount_code')) pending.push(alter('ALTER TABLE registrations ADD COLUMN discount_code TEXT'));
     if (!names.includes('discount_amount')) pending.push(alter('ALTER TABLE registrations ADD COLUMN discount_amount REAL DEFAULT 0'));
@@ -10304,11 +10308,12 @@ app.get('/api/attendance/summary', requirePermission('attendance.view'), async (
     let presentToday = 0;
     for (const ids of byPerson.values()) if ([...ids].some((id) => todayIds.has(id))) presentToday++;
     const badgesCollected = (await dbGet("SELECT COUNT(*) AS n FROM registrations WHERE checked_in_at IS NOT NULL AND COALESCE(bank_status, '') != 'REJECTED'")).n;
+    const kitsGiven = (await dbGet("SELECT COUNT(*) AS n FROM registrations WHERE kit_given_at IS NOT NULL AND COALESCE(bank_status, '') != 'REJECTED'")).n;
     const enrolled = new Map((await dbAll(
       `SELECT ro.option_id, COUNT(*) AS n FROM registration_options ro JOIN registrations r ON r.id = ro.registration_id
         WHERE COALESCE(r.bank_status, '') != 'REJECTED' GROUP BY ro.option_id`)).map((r) => [Number(r.option_id), r.n]));
     res.json({
-      registered, completed, presentToday, badgesCollected, settings: settings.attendance,
+      registered, completed, presentToday, badgesCollected, kitsGiven, settings: settings.attendance,
       sessions: sessions.filter(attendanceLib.takesAttendance).map((s) => ({
         ...publicSession(s), present: counts.get(s.id) || 0, enrolled: isWorkshopSession(s) ? (enrolled.get(Number(s.option_id)) || 0) : null,
         window: attendanceLib.sessionWindow(s, now, settings.attendance.earlyMinutes),
@@ -11575,6 +11580,8 @@ app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async 
       checkedIn: reg && reg.checked_in_at
         ? { at: reg.checked_in_at, by: reg.checked_in_by }
         : null,
+      // The delegate kit: given (when, by whom), or not yet.
+      kit: reg && reg.kit_given_at ? { at: reg.kit_given_at, by: reg.kit_given_by } : null,
     });
   } catch (err) {
     next(err);
@@ -11800,19 +11807,59 @@ app.post('/api/desk/checkin', requirePermission('desk.checkin'), async (req, res
       return res.status(409).json({ success: false, error: 'That name matches more than one delegate. Look them up first.' });
     }
     const reg = await dbGet(
-      'SELECT id, checked_in_at, checked_in_by FROM registrations WHERE phone_number = ?',
+      'SELECT id, checked_in_at, checked_in_by, kit_given_at FROM registrations WHERE phone_number = ?',
       [found.user.phone_number]);
     if (!reg) return res.status(404).json({ success: false, error: 'This delegate has no registration to check in.' });
-    if (reg.checked_in_at) {
-      return res.json({ success: true, alreadyCheckedIn: true, at: reg.checked_in_at, by: reg.checked_in_by });
-    }
     const now = Date.now();
     const by = req.session.name || req.session.phone;
+    // The desk is asked whether the kit was given as it checks them in; if
+    // so, it is recorded once the check-in is (owner: a kit only after
+    // check-in), or with a repeat of the check-in.
+    const kit = req.body.kit === true && !reg.kit_given_at;
+    if (reg.checked_in_at) {
+      if (kit) await giveKit(req, reg.id, now, by);
+      return res.json({ success: true, alreadyCheckedIn: true, at: reg.checked_in_at, by: reg.checked_in_by, kit });
+    }
     await dbRun('UPDATE registrations SET checked_in_at = ?, checked_in_by = ? WHERE id = ?', [now, by, reg.id]);
     await recordAudit({
       req, entityType: 'registration', entityId: reg.id,
       action: 'DESK_CHECKIN', oldValue: null, newValue: new Date(now).toISOString(),
     });
+    if (kit) await giveKit(req, reg.id, now, by);
+    res.json({ success: true, at: now, by, kit });
+  } catch (err) {
+    next(err);
+  }
+});
+
+async function giveKit(req, regId, now, by) {
+  await dbRun('UPDATE registrations SET kit_given_at = ?, kit_given_by = ? WHERE id = ?', [now, by, regId]);
+  await recordAudit({ req, entityType: 'registration', entityId: regId, action: 'DESK_KIT_GIVEN', oldValue: null, newValue: new Date(now).toISOString() });
+}
+
+// The delegate kit, given after check-in (they had none to take, or the
+// desk forgot to say), or taken back off the record when it was marked by
+// mistake. Only for someone checked in: the kit is handed over at the
+// counter, after the badge.
+app.post('/api/desk/kit', requirePermission('desk.checkin'), async (req, res, next) => {
+  try {
+    const found = await deskFindDelegate(req.body.identifier);
+    if (found.error) return res.status(404).json({ success: false, error: found.error });
+    if (found.candidates) return res.status(409).json({ success: false, error: 'That name matches more than one delegate. Look them up first.' });
+    const reg = await dbGet('SELECT id, checked_in_at, kit_given_at, kit_given_by FROM registrations WHERE phone_number = ?', [found.user.phone_number]);
+    if (!reg) return res.status(404).json({ success: false, error: 'This delegate has no registration.' });
+    if (req.body.given === false) {
+      if (!reg.kit_given_at) return res.json({ success: true });
+      await dbRun('UPDATE registrations SET kit_given_at = NULL, kit_given_by = NULL WHERE id = ?', [reg.id]);
+      await recordAudit({ req, entityType: 'registration', entityId: reg.id, action: 'DESK_KIT_UNDONE',
+        oldValue: `${new Date(reg.kit_given_at).toISOString()} by ${reg.kit_given_by || ''}`, newValue: null });
+      return res.json({ success: true });
+    }
+    if (!reg.checked_in_at) return res.status(409).json({ success: false, error: 'Check them in first: the kit goes with the badge.' });
+    if (reg.kit_given_at) return res.json({ success: true, already: true, at: reg.kit_given_at, by: reg.kit_given_by });
+    const now = Date.now();
+    const by = req.session.name || req.session.phone;
+    await giveKit(req, reg.id, now, by);
     res.json({ success: true, at: now, by });
   } catch (err) {
     next(err);

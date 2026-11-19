@@ -259,6 +259,9 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/admin/presentations/drive': 'Asks for the presenters\' files to be copied to Google Drive now. abstracts.assign.',
     'POST /api/admin/presentations/:id': 'Uploads a file a presenter emailed, on their behalf. abstracts.assign.',
     'PUT /api/admin/presentations/due': 'Moves the last date for presenters\' files. abstracts.assign.',
+    // --- The delegate kit (19 Nov 2026) -----------------------------------
+    'POST /api/desk/kit': 'Records the delegate kit as given after check-in, or takes it off the record. desk.checkin, '
+      + 'the same as checking in, since the kit is handed over with the badge.',
     // --- Poster screens (19 Nov 2026) --------------------------------------
     // Step 4 of the abstracts desk: e-posters on display screens. The same
     // split as Step 3: seeing the board, the running orders and a screen's
