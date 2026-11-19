@@ -11687,7 +11687,27 @@ async function zenodoBulk(kind) {
   showToast(`${kind === 'draft' ? 'Drafts sent' : 'Published'}: ${ok}${failed.length ? `. Failed: ${failed.join(', ')}. See the reason on each.` : '.'}`, failed.length ? undefined : 'success');
 }
 
+// The steps folded away on this browser (each a <details class="abs-step">
+// in abstracts.ejs), kept so the desk opens as it was left.
+const ABSTRACT_STEPS_KEY = 'nqocn_abstract_steps_folded';
+const foldedAbstractSteps = () => { try { return JSON.parse(storageGet('local', ABSTRACT_STEPS_KEY) || '[]'); } catch (e) { return []; } };
+function rememberAbstractStep(el) {
+  const folded = new Set(foldedAbstractSteps());
+  if (el.open) folded.delete(el.dataset.step); else folded.add(el.dataset.step);
+  storageSet('local', ABSTRACT_STEPS_KEY, JSON.stringify([...folded]));
+}
+// Bound here, not in the markup: a <details> open from the start fires its
+// toggle as the page is read, before this script has loaded.
+function restoreAbstractSteps() {
+  const folded = new Set(foldedAbstractSteps());
+  document.querySelectorAll('#section-abstracts .abs-step').forEach((d) => {
+    d.open = !folded.has(d.dataset.step);
+    d.ontoggle = () => rememberAbstractStep(d);
+  });
+}
+
 async function renderBackendAbstracts() {
+  restoreAbstractSteps();
   renderZenodo();
   renderPresentations();
   renderPosterScreens();
