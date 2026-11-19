@@ -467,7 +467,6 @@ function buildBoard({ guests = [], vehicles = [], drivers = [], rooms = [], list
   for (const j of jobInfo) {
     j.shared = j.trips.length > 1;
     j.overCapacity = !!(j.seats && j.trips.length > j.seats);
-    for (const t of j.trips) t.job = j;
   }
   // A clash: one vehicle, or one driver, wanted for two trips within the
   // clash window of each other -- the same trip shared is not one.

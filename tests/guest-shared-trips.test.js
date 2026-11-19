@@ -23,6 +23,9 @@ const G = require('../guests');
   console.log('\n== Not one trip ==');
   b = board([g(1, 'A', '10:00'), g(2, 'B', '10:20', { pickup_driver: 'Nikhil' })]);
   check('the same car with another driver is another trip -- and a clash for the car', !p(b, 'A').trip && p(b, 'A').clash.length === 1 && /overlaps|min from/.test(p(b, 'A').clash[0]));
+  let sent = null;
+  try { sent = JSON.parse(JSON.stringify(b)); } catch (e) { sent = null; }
+  check('the board, clashes and shared trips with it, can be sent to the page', !!sent && sent.clashes.length === b.clashes.length);
   b = board([g(1, 'A', '10:00'), g(2, 'B', '10:20', { arrival_point: 'Wardha Railway Station' })]);
   check('...so is another place', !p(b, 'A').trip && p(b, 'B').clash.length === 1);
   b = board([g(1, 'A', '10:00'), g(2, 'B', '10:50')]);
