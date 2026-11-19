@@ -235,6 +235,10 @@ const N = String(Date.now() % 100000000).padStart(8, '0');
     check('meals and registration are lines between talks, Breakfast too',
       ['Breakfast', 'Lunch', 'Lunch Break', 'Tea Break', 'Conference Dinner', 'Registration'].every((title) => isBreak({ title }))
       && !['Breaking the silence on harm', 'Plenary: patient safety', 'Teamwork in the ICU'].some((title) => isBreak({ title })));
+    // Day 1's breakfast had a label, "Breakfast" (19 Nov 2026): a session
+    // ticked as a meal is a meal whatever it is labelled.
+    check('a session ticked as a meal is a line, label or not',
+      isBreak({ title: 'Breakfast', label: 'Breakfast', meal: 1 }) && !isBreak({ title: 'Breakfast', label: 'Breakfast', meal: 0 }));
   }
   db.close();
   report();

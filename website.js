@@ -58,8 +58,10 @@ const rupees = (n) => (n == null ? '—' : `₹${Number(n).toLocaleString('en-IN
 const nameOrder = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
 
 // A breakfast, tea, lunch or dinner, or registration: a line between talks,
-// not a card. "Breakfast" is named: \bbreak\b does not match it.
-const isBreak = (s) => !s.label && /\b(break|breakfast|lunch|tea|registration|dinner)\b/i.test(s.title || '');
+// not a card. "Breakfast" is named: \bbreak\b does not match it. A session
+// ticked as a meal is one whatever its label (the 21 Nov breakfast was
+// labelled "Breakfast").
+const isBreak = (s) => Number(s.meal) === 1 || (!s.label && /\b(break|breakfast|lunch|tea|registration|dinner)\b/i.test(s.title || ''));
 // The same session in several halls (an award session), as one item.
 function mergeHalls(sessions) {
   const byKey = new Map();
