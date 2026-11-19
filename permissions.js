@@ -84,6 +84,11 @@ const PERMISSIONS = [
   // held only by Super Admin until a role is given it: registering a walk-in
   // (payments.desk_register) is desk work, deciding who pays nothing is not.
   ['payments.complimentary', 'payments', 'Register faculty free', 'Register someone on the Faculty list with the whole fee waived — complimentary, confirmed at once, no payment.'],
+  // Waiving part or all of what a delegate owes, at the Front Desk, with a
+  // reason; and deciding the desk's requests for one (owner, 19 Nov 2026).
+  // Held by the Fee Waiver role, added to whoever the owner chooses; anyone
+  // at the desk may ask (desk.view).
+  ['payments.waive_fee', 'payments', 'Waive fees', 'Waive part or all of what a delegate still owes, at the Front Desk, with a reason; and approve or decline the desk\'s requests for a waiver.'],
   ['payments.rescan', 'payments', 'Re-run slip checks', 'Re-judge stored screenshots against the current OCR logic.'],
   // Conference-wide money, as opposed to one delegate's. Separate from
   // payments.view because they are different disclosures: working the
@@ -276,6 +281,11 @@ const ROUTE_PERMISSIONS = {
   'PUT /api/registrations/:id/lock-category': 'payments.revise',
   'POST /api/registrations/:id/revise-payment': 'payments.revise',
   'POST /api/registrations/:id/fee-adjustment': 'payments.adjust_fee',
+  'GET /api/desk/waivers': 'payments.waive_fee',
+  'POST /api/desk/waivers': 'desk.view',
+  'POST /api/desk/waive': 'payments.waive_fee',
+  'POST /api/desk/waivers/:id/approve': 'payments.waive_fee',
+  'POST /api/desk/waivers/:id/decline': 'payments.waive_fee',
   'DELETE /api/registrations/:id/lock-category': 'payments.unlock_category',
   'GET /api/registrations/:id/candidate-transactions': 'payments.link',
   'PUT /api/registrations/:id/link-transaction': 'payments.link',
@@ -487,8 +497,10 @@ const SECTION_PERMISSIONS = {
   // Conference). Their wording, signatories and design are in Conference
   // setup, below.
   certificates: { permission: 'certificates.view' },
-  // The meal counter (Settings › Conference › Meals).
+  // The meal counter (Front Desk › Meals).
   meals: { anyOf: ['meals.scan', 'meals.view'] },
+  // Fee waivers asked for at the desk, to approve (Front Desk › Waivers).
+  waivers: { permission: 'payments.waive_fee' },
   // The halls and sessions, in the Settings menu.
   programme: { permission: 'programme.manage' },
   // Conference setup. Certificate settings alone opens it too, showing only
@@ -619,6 +631,15 @@ const SYSTEM_ROLES = [
   // volunteers are who a faculty member's Transport and Accommodation
   // dropdowns list; they see the Faculty tab and update only their own
   // area, for the faculty assigned to them.
+  // Waiving fees at the Front Desk (owner, 19 Nov 2026): an additional role
+  // for whoever the owner chooses, on top of their own. It opens the desk,
+  // to find the delegate and see the requests.
+  {
+    key: 'FEE_WAIVER',
+    label: 'Fee Waiver',
+    description: 'Waives part or all of a delegate\'s fee at the Front Desk, with a reason, and approves or declines the desk\'s requests for a waiver.',
+    permissions: ['desk.view', 'payments.waive_fee'],
+  },
   {
     key: 'VOLUNTEER_REGISTRATION',
     label: 'Volunteer – Registration',

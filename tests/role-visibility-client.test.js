@@ -27,7 +27,7 @@ const STAFF = {
 // Every element applyRoleVisibility()/allowedBackendTabs() touch, so a role's
 // full visible surface can be read back after driving the real code.
 const ELEMENT_IDS = [
-  'nav-tab-desk', 'nav-tab-attendance', 'nav-tab-meals', 'nav-tab-payments', 'reg-subtab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
+  'nav-tab-desk', 'nav-tab-attendance', 'nav-tab-meals', 'nav-tab-waivers', 'nav-tab-payments', 'reg-subtab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
   'settings-group-conference', 'settings-group-fees', 'settings-group-messages', 'settings-group-system',
   'settings-item-programme',
   'settings-item-programs', 'settings-item-fees', 'settings-item-general',
@@ -51,7 +51,7 @@ const ELEMENT_IDS = [
 // bugfix for the ID-verification/category-picker screens they already use,
 // with this tab-visibility grant as its accepted, read-only side effect.
 const EXPECTED_VISIBLE = {
-  SUPER_ADMIN: ['nav-tab-desk', 'nav-tab-attendance', 'nav-tab-meals', 'nav-tab-payments', 'reg-subtab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
+  SUPER_ADMIN: ['nav-tab-desk', 'nav-tab-attendance', 'nav-tab-meals', 'nav-tab-waivers', 'nav-tab-payments', 'reg-subtab-statement', 'nav-tab-abstracts', 'nav-tab-reports',
     'settings-group-conference', 'settings-group-fees', 'settings-group-messages', 'settings-group-system', 'settings-item-programme', 'settings-item-programs', 'settings-item-fees',
     'settings-item-general', 'settings-item-discount', 'settings-item-activity',
     'settings-item-reminders', 'settings-item-groupdiscount', 'settings-item-users', 'settings-item-roles',

@@ -2087,6 +2087,26 @@ db.serialize(() => {
   `);
   // E-poster display screens and each poster's place on one (Step 4 of the
   // abstracts desk; see POSTER SCREENS and poster-screens.js).
+  // Fee waivers asked for at the desk, and what became of them (see FEE
+  // WAIVERS). Status PENDING, APPROVED, DECLINED, or CLOSED when the fee was
+  // waived directly instead.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS fee_waiver_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      registration_id INTEGER NOT NULL,
+      amount REAL NOT NULL,
+      reason TEXT NOT NULL,
+      status TEXT NOT NULL,
+      requested_by_phone TEXT,
+      requested_by_name TEXT,
+      requested_at INTEGER NOT NULL,
+      decided_by_phone TEXT,
+      decided_by_name TEXT,
+      decided_at INTEGER,
+      decision_note TEXT,
+      waived_amount REAL
+    )
+  `);
   db.run(`
     CREATE TABLE IF NOT EXISTS poster_screens (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -11584,6 +11604,8 @@ app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async 
         : null,
       // The delegate kit: given (when, by whom), or not yet.
       kit: reg && reg.kit_given_at ? { at: reg.kit_given_at, by: reg.kit_given_by } : null,
+      // A fee waiver waiting for approval, or the latest one decided.
+      waiver: reg ? waiverView(await dbGet(`${WAIVER_VIEW_SQL} WHERE w.registration_id = ? ORDER BY (w.status = 'PENDING') DESC, w.requested_at DESC LIMIT 1`, [reg.id])) : null,
     });
   } catch (err) {
     next(err);
@@ -11863,6 +11885,175 @@ app.post('/api/desk/kit', requirePermission('desk.checkin'), async (req, res, ne
     const by = req.session.name || req.session.phone;
     await giveKit(req, reg.id, now, by);
     res.json({ success: true, at: now, by });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- FEE WAIVERS (Front Desk; owner, 19 Nov 2026) --------------------------
+// A fee waived, in part or in whole, with a reason: directly by someone with
+// payments.waive_fee (the Fee Waiver role), or asked for by anyone else at
+// the desk and approved -- or declined -- by them. A waiver lowers what the
+// delegate owes through the fee adjustment (fee_adjustment and its reason,
+// by, at; basis WAIVER), so the receipt, the payment review and the reports
+// all show it. A registration left owing nothing and with nothing waiting to
+// be verified is confirmed at once (owner); one with an online payment still
+// waiting can be waived only up to what that payment leaves.
+
+const WAIVER_VIEW_SQL = `SELECT w.*, r.registration_number, r.phone_number, r.expected_amount, r.bank_status,
+         COALESCE(NULLIF(TRIM(COALESCE(u.salutation, '') || ' ' || COALESCE(u.full_name, '')), ''), r.delegate_name) AS delegate
+    FROM fee_waiver_requests w
+    JOIN registrations r ON r.id = w.registration_id
+    LEFT JOIN users u ON u.phone_number = r.phone_number`;
+const waiverView = (w) => (w ? {
+  id: w.id, registrationId: w.registration_id, regNo: w.registration_number || null, delegate: w.delegate || '', phone: w.phone_number,
+  amount: w.amount, reason: w.reason, status: w.status,
+  requestedBy: w.requested_by_name, requestedAt: w.requested_at,
+  decidedBy: w.decided_by_name || null, decidedAt: w.decided_at || null, note: w.decision_note || null, waived: w.waived_amount || null,
+} : null);
+
+// What may still be waived: the balance, less any online payment still
+// waiting to be verified (which may yet pay it).
+async function waivable(reg) {
+  const summary = await getPaymentSummary(reg.id, reg.expected_amount);
+  const pendingOnline = (summary.txns || []).filter((t) => t.txn_status === 'PENDING').reduce((n, t) => n + (Number(t.amount) || 0), 0);
+  return { summary, pendingOnline, max: Math.max(0, Math.floor((Number(summary.remaining) || 0) - pendingOnline)) };
+}
+
+// Checks an amount and reason against the registration: { amount, reason }
+// or { error }.
+async function checkWaiver(reg, body) {
+  if (!reg) return { status: 404, error: 'Registration not found.' };
+  if (reg.bank_status === 'REJECTED') return { status: 409, error: 'This registration was not accepted. Sort that out in Payment review first.' };
+  const amount = Math.round(Number(body.amount));
+  const reason = String(body.reason || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+  const { max, pendingOnline } = await waivable(reg);
+  if (!max) {
+    return { status: 409, error: pendingOnline > 0
+      ? `Nothing to waive until the ₹${inr(pendingOnline)} paid online is verified.` : 'They owe nothing: there is nothing to waive.' };
+  }
+  if (!Number.isFinite(amount) || amount < 1) return { status: 400, error: 'Enter the amount to waive.' };
+  if (amount > max) {
+    return { status: 400, error: `At most ₹${inr(max)} can be waived${pendingOnline > 0 ? `: ₹${inr(pendingOnline)} paid online is still waiting to be verified` : ', what they still owe'}.` };
+  }
+  if (reason.length < 10) return { status: 400, error: 'Give the reason for the waiver, in a short sentence.' };
+  return { amount, reason };
+}
+
+// Lower what they owe by the amount, and confirm them if that settles it.
+async function applyWaiver(req, reg, amount, reason, requestId) {
+  const now = Date.now();
+  const by = req.session.name || req.session.phone;
+  const before = Number(reg.expected_amount) || 0;
+  const after = Math.max(0, before - amount);
+  const line = `Fee waived ₹${inr(amount)}: ${reason}`;
+  await dbRun(
+    `UPDATE registrations
+        SET expected_amount = ?, fee_adjustment = COALESCE(fee_adjustment, 0) + ?,
+            fee_adjustment_reason = CASE WHEN COALESCE(fee_adjustment, 0) > 0 AND COALESCE(fee_adjustment_reason, '') != ''
+                                         THEN fee_adjustment_reason || ' · ' || ? ELSE ? END,
+            fee_adjustment_basis = 'WAIVER', fee_adjustment_by = ?, fee_adjustment_at = ?
+      WHERE id = ?`,
+    [after, amount, line, line, by, now, reg.id]);
+  const { summary, pendingOnline } = await waivable({ ...reg, expected_amount: after });
+  const settled = (Number(summary.remaining) || 0) < 0.5 && pendingOnline < 0.5;
+  const confirmed = settled && reg.bank_status !== 'BANK_VERIFIED';
+  if (confirmed) await dbRun("UPDATE registrations SET bank_status = 'BANK_VERIFIED' WHERE id = ?", [reg.id]);
+  await recordAudit({
+    req, entityType: 'registration', entityId: reg.id, action: 'FEE_WAIVED',
+    oldValue: `₹${inr(before)}`,
+    newValue: `₹${inr(after)} (−₹${inr(amount)}) — ${reason}${requestId ? ` (request #${requestId})` : ''}${confirmed ? '; confirmed' : ''}`,
+  });
+  return { expectedAmount: after, waived: amount, confirmed, payment: summary };
+}
+
+const regForWaiver = (id) => dbGet('SELECT id, phone_number, expected_amount, bank_status FROM registrations WHERE id = ?', [Number(id)]);
+
+// Every request waiting, then the latest decided, for the Waivers screen.
+app.get('/api/desk/waivers', requirePermission('payments.waive_fee'), async (req, res, next) => {
+  try {
+    const pending = await dbAll(`${WAIVER_VIEW_SQL} WHERE w.status = 'PENDING' ORDER BY w.requested_at`);
+    const decided = await dbAll(`${WAIVER_VIEW_SQL} WHERE w.status != 'PENDING' ORDER BY COALESCE(w.decided_at, w.requested_at) DESC LIMIT 100`);
+    const direct = await dbAll(
+      `SELECT a.entity_id, a.new_value, a.actor_name, a.created_at, r.registration_number,
+              COALESCE(NULLIF(TRIM(COALESCE(u.salutation, '') || ' ' || COALESCE(u.full_name, '')), ''), r.delegate_name) AS delegate
+         FROM audit_log a JOIN registrations r ON CAST(r.id AS TEXT) = a.entity_id LEFT JOIN users u ON u.phone_number = r.phone_number
+        WHERE a.action = 'FEE_WAIVED' ORDER BY a.created_at DESC LIMIT 100`);
+    res.json({
+      success: true, pending: pending.map(waiverView), decided: decided.map(waiverView),
+      waived: direct.map((a) => ({ registrationId: Number(a.entity_id), regNo: a.registration_number, delegate: a.delegate, by: a.actor_name, at: a.created_at, what: a.new_value })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Ask for a waiver: anyone at the desk. One waiting at a time per person.
+app.post('/api/desk/waivers', requirePermission('desk.view'), async (req, res, next) => {
+  try {
+    const reg = await regForWaiver(req.body.registrationId);
+    const ok = await checkWaiver(reg, req.body);
+    if (ok.error) return res.status(ok.status).json({ success: false, error: ok.error });
+    if (await dbGet("SELECT 1 FROM fee_waiver_requests WHERE registration_id = ? AND status = 'PENDING'", [reg.id])) {
+      return res.status(409).json({ success: false, error: 'A waiver for them is already waiting for approval.' });
+    }
+    const r = await dbRun(
+      `INSERT INTO fee_waiver_requests (registration_id, amount, reason, status, requested_by_phone, requested_by_name, requested_at)
+       VALUES (?, ?, ?, 'PENDING', ?, ?, ?)`,
+      [reg.id, ok.amount, ok.reason, req.session.phone, req.session.name || req.session.phone, Date.now()]);
+    await recordAudit({ req, entityType: 'registration', entityId: reg.id, action: 'FEE_WAIVER_REQUESTED', oldValue: null, newValue: `₹${inr(ok.amount)} — ${ok.reason} (request #${r.lastID})` });
+    res.json({ success: true, id: r.lastID });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Waive it now: the Fee Waiver role. A request waiting for the same person
+// is closed by it.
+app.post('/api/desk/waive', requirePermission('payments.waive_fee'), async (req, res, next) => {
+  try {
+    const reg = await regForWaiver(req.body.registrationId);
+    const ok = await checkWaiver(reg, req.body);
+    if (ok.error) return res.status(ok.status).json({ success: false, error: ok.error });
+    const done = await applyWaiver(req, reg, ok.amount, ok.reason, null);
+    await dbRun(`UPDATE fee_waiver_requests SET status = 'CLOSED', decided_by_phone = ?, decided_by_name = ?, decided_at = ?, decision_note = 'Waived directly instead'
+      WHERE registration_id = ? AND status = 'PENDING'`, [req.session.phone, req.session.name || req.session.phone, Date.now(), reg.id]);
+    res.json({ success: true, ...done });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Approve a request -- as asked, or for a smaller amount -- or decline it.
+async function waiverRequest(id) {
+  return dbGet("SELECT * FROM fee_waiver_requests WHERE id = ?", [Number(id)]);
+}
+app.post('/api/desk/waivers/:id/approve', requirePermission('payments.waive_fee'), async (req, res, next) => {
+  try {
+    const w = await waiverRequest(req.params.id);
+    if (!w) return res.status(404).json({ success: false, error: 'No such request.' });
+    if (w.status !== 'PENDING') return res.status(409).json({ success: false, error: 'This request has already been decided.' });
+    const reg = await regForWaiver(w.registration_id);
+    const ok = await checkWaiver(reg, { amount: req.body.amount != null ? req.body.amount : w.amount, reason: w.reason });
+    if (ok.error) return res.status(ok.status).json({ success: false, error: ok.error });
+    const done = await applyWaiver(req, reg, ok.amount, w.reason, w.id);
+    await dbRun(`UPDATE fee_waiver_requests SET status = 'APPROVED', waived_amount = ?, decided_by_phone = ?, decided_by_name = ?, decided_at = ?, decision_note = ? WHERE id = ?`,
+      [ok.amount, req.session.phone, req.session.name || req.session.phone, Date.now(), ok.amount !== w.amount ? `Approved for ₹${inr(ok.amount)} of the ₹${inr(w.amount)} asked` : null, w.id]);
+    res.json({ success: true, ...done });
+  } catch (err) {
+    next(err);
+  }
+});
+app.post('/api/desk/waivers/:id/decline', requirePermission('payments.waive_fee'), async (req, res, next) => {
+  try {
+    const w = await waiverRequest(req.params.id);
+    if (!w) return res.status(404).json({ success: false, error: 'No such request.' });
+    if (w.status !== 'PENDING') return res.status(409).json({ success: false, error: 'This request has already been decided.' });
+    const note = String(req.body.note || '').replace(/\s+/g, ' ').trim().slice(0, 300) || null;
+    await dbRun(`UPDATE fee_waiver_requests SET status = 'DECLINED', decided_by_phone = ?, decided_by_name = ?, decided_at = ?, decision_note = ? WHERE id = ?`,
+      [req.session.phone, req.session.name || req.session.phone, Date.now(), note, w.id]);
+    await recordAudit({ req, entityType: 'registration', entityId: w.registration_id, action: 'FEE_WAIVER_DECLINED', oldValue: `₹${inr(w.amount)} (request #${w.id})`, newValue: note });
+    res.json({ success: true });
   } catch (err) {
     next(err);
   }

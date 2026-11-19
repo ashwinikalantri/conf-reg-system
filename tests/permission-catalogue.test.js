@@ -259,6 +259,16 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/admin/presentations/drive': 'Asks for the presenters\' files to be copied to Google Drive now. abstracts.assign.',
     'POST /api/admin/presentations/:id': 'Uploads a file a presenter emailed, on their behalf. abstracts.assign.',
     'PUT /api/admin/presentations/due': 'Moves the last date for presenters\' files. abstracts.assign.',
+    // --- Fee waivers (19 Nov 2026) ----------------------------------------
+    // Anyone at the desk may ask (desk.view); the new payments.waive_fee --
+    // held by the new Fee Waiver role, which the owner adds to people, and by
+    // Super Admin -- waives directly and decides the requests. No existing
+    // role gains a waiver of its own.
+    'GET /api/desk/waivers': 'The waivers waiting, decided and given, for the Waivers screen. payments.waive_fee.',
+    'POST /api/desk/waivers': 'Asks for a fee waiver for the delegate at the desk. desk.view.',
+    'POST /api/desk/waive': 'Waives part or all of a delegate\'s fee, with a reason. payments.waive_fee.',
+    'POST /api/desk/waivers/:id/approve': 'Approves a waiver the desk asked for. payments.waive_fee.',
+    'POST /api/desk/waivers/:id/decline': 'Declines a waiver the desk asked for. payments.waive_fee.',
     // --- The delegate kit (19 Nov 2026) -----------------------------------
     'POST /api/desk/kit': 'Records the delegate kit as given after check-in, or takes it off the record. desk.checkin, '
       + 'the same as checking in, since the kit is handed over with the badge.',
@@ -460,7 +470,8 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // Super Admin; the two coordinator roles that open it are new, so they are
   // not in the baseline this table is held against.
   const CLIENT_TODAY = {
-    SUPER_ADMIN: ['overview', 'desk', 'payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'faculty', 'attendance', 'certificates', 'meals', 'programme', 'general', 'activity'],
+    // 19 Nov 2026: Front Desk › Waivers, for the Fee Waiver role (and Super Admin).
+    SUPER_ADMIN: ['overview', 'desk', 'payments', 'statement', 'abstracts', 'reports', 'users', 'roles', 'fees', 'programs', 'discount', 'groupdiscount', 'reminders', 'faculty', 'attendance', 'certificates', 'meals', 'waivers', 'programme', 'general', 'activity'],
     FINANCE_ADMIN: ['overview', 'payments', 'statement', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],
     ACADEMIC_REVIEWER: ['overview', 'abstracts', 'reports'],
     FINANCE_ACADEMIC: ['overview', 'payments', 'statement', 'abstracts', 'reports', 'fees', 'discount', 'groupdiscount', 'reminders'],

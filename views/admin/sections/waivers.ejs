@@ -1,0 +1,22 @@
+    <!-- FRONT DESK › WAIVERS (owner, 19 Nov 2026). The fee waivers the desk
+         has asked for, to approve or decline, and those already decided or
+         waived directly. For the Fee Waiver role (payments.waive_fee);
+         renderWaivers(). -->
+    <section id="section-waivers" class="hidden max-w-4xl space-y-5">
+      <div>
+        <h2 class="text-lg font-bold text-slate-800">Fee waivers</h2>
+        <p class="text-xs text-slate-500">Asked for at the Front Desk, with the amount and the reason. Approving lowers what they owe; a registration left owing nothing is confirmed at once.</p>
+      </div>
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm">
+        <h3 class="px-4 sm:px-5 pt-4 pb-2 text-sm font-bold text-slate-800 uppercase tracking-wide">Waiting for approval <span id="waivers-pending-n" class="text-slate-500"></span></h3>
+        <div id="waivers-pending" class="divide-y divide-slate-100"></div>
+      </div>
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm">
+        <h3 class="px-4 sm:px-5 pt-4 pb-2 text-sm font-bold text-slate-800 uppercase tracking-wide">Waived</h3>
+        <div id="waivers-done" class="divide-y divide-slate-100"></div>
+      </div>
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm">
+        <h3 class="px-4 sm:px-5 pt-4 pb-2 text-sm font-bold text-slate-800 uppercase tracking-wide">Declined</h3>
+        <div id="waivers-declined" class="divide-y divide-slate-100"></div>
+      </div>
+    </section>

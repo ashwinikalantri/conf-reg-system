@@ -35,11 +35,11 @@ console.log('\n== Settings ==');
 // Attendance moved to the Front Desk menu, beside Meals (owner, 19 Nov 2026).
 check('Programme is in the Settings menu; Attendance is not', /id="settings-item-programme"/.test(header) && !/id="settings-item-attendance"/.test(header));
 check('Programme is a Settings tab; Attendance a Front Desk screen', /SETTINGS_TABS = \['certificates', 'programme'/.test(js)
-  && /MAIN_TABS = \['overview', 'desk', 'attendance', 'meals'/.test(js) && /DESK_SUB_TABS = \['desk', 'attendance', 'meals'\]/.test(js)
+  && /MAIN_TABS = \['overview', 'desk', 'attendance', 'meals'/.test(js) && /DESK_SUB_TABS = \['desk', 'attendance', 'meals', 'waivers'\]/.test(js)
   && /id="nav-tab-attendance" onclick="switchBackendTab\('attendance'\)"/.test(read('views', 'admin', 'partials', 'nav-tabs.ejs'))
   && /id="desk-subtab-attendance" onclick="switchBackendTab\('attendance'\)"/.test(read('views', 'admin', 'partials', 'desk-subtabs.ejs')));
 // Meals moved to the Front Desk's menu (owner, 19 Nov 2026).
-check('Meals is a Front Desk screen, not a Settings one', /MAIN_TABS = \[[^\]]*'meals'/.test(js) && /DESK_MENU_TABS = \['desk', 'attendance', 'meals'/.test(js) && !/SETTINGS_TABS = \[[^\]]*'meals'/.test(js));
+check('Meals is a Front Desk screen, not a Settings one', /MAIN_TABS = \[[^\]]*'meals'/.test(js) && /DESK_MENU_TABS = \['desk', 'attendance', 'meals', 'waivers'/.test(js) && !/SETTINGS_TABS = \[[^\]]*'meals'/.test(js));
 check('the Programme page has the halls and sessions', /id="section-programme"/.test(read('views', 'admin', 'sections', 'programme.ejs')));
 check('Attendance no longer has a Programme view', !/data-att-view="programme"|att-view-programme/.test(attendance));
 report();

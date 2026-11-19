@@ -4448,13 +4448,15 @@ function applyRoleVisibility() {
   if (tabMeals) tabMeals.classList.toggle('hidden', !canSee('meals'));
   const tabAttendance = document.getElementById('nav-tab-attendance');
   if (tabAttendance) tabAttendance.classList.toggle('hidden', !canSee('attendance'));
+  const tabWaivers = document.getElementById('nav-tab-waivers');
+  if (tabWaivers) tabWaivers.classList.toggle('hidden', !canSee('waivers'));
   DESK_SUB_TABS.forEach((t) => {
     const b = document.getElementById(`desk-subtab-${t}`);
     if (b) b.classList.toggle('hidden', !canSee(t));
   });
-  // Front Desk's drop-down shows when the role may open any of its six.
+  // Front Desk's drop-down shows when the role may open any of its seven.
   const deskWrap = document.getElementById('desk-menu-wrap');
-  if (deskWrap) deskWrap.classList.toggle('hidden', ![tabDesk, tabAttendance, tabMeals, tabPayments, tabAbstracts, tabFaculty].some((t) => t && !t.classList.contains('hidden')));
+  if (deskWrap) deskWrap.classList.toggle('hidden', ![tabDesk, tabAttendance, tabMeals, tabWaivers, tabPayments, tabAbstracts, tabFaculty].some((t) => t && !t.classList.contains('hidden')));
   updateDeskMenuBadge();
 
   // The walk-in registration button now lives on the Front Desk tab
@@ -4658,6 +4660,8 @@ async function initBackendPortal() {
   if (canSee('abstracts')) await renderBackendAbstracts();
   // Fills the Faculty tab badge (arrivals without a vehicle, faculty without a room).
   if (canSee('faculty')) renderGuests();
+  // The Waivers badge: fee waivers waiting for the Fee Waiver role.
+  if (canSee('waivers')) loadWaivers();
   loadMedicalCouncils();
   if (canSee('users')) await loadBackendUsers();
   // The role picker used in Users & Roles and the Create Staff User modal --
@@ -5357,11 +5361,15 @@ async function renderBackendOverview() {
   show('ov-q-balance', seesPayments && balanceCount > 0);
   show('ov-q-statement', seesStatement && unmatched > 0);
   show('ov-q-abstracts', seesAbstracts && underReview > 0);
+  const seesWaivers = canSee('waivers');
+  const waiversWaiting = seesWaivers ? ((await loadWaivers()) || { pending: [] }).pending.length : 0;
+  setText('ov-waivers', waiversWaiting);
+  show('ov-q-waivers', seesWaivers && waiversWaiting > 0);
   // The list belongs to whoever can open at least one of the sections it
   // summarises. Without this its all-clear line would claim nothing was
   // waiting ANYWHERE -- said to someone who can see only abstracts while a
   // payments queue was piling up behind a tab they cannot open.
-  const anySection = seesPayments || seesStatement || seesAbstracts || seesFaculty;
+  const anySection = seesPayments || seesStatement || seesAbstracts || seesFaculty || seesWaivers;
   show('overview-attention', anySection);
 
   const waiting = {
@@ -5369,9 +5377,10 @@ async function renderBackendOverview() {
     'the bank statement': seesStatement && unmatched > 0,
     abstracts: seesAbstracts && underReview > 0,
     faculty: seesFaculty && noRoom + undecided + notSignedUp + noProgramme > 0,
+    'fee waivers': seesWaivers && waiversWaiting > 0,
   };
   const mine = [seesPayments && 'registrations', seesStatement && 'the bank statement',
-    seesAbstracts && 'abstracts', seesFaculty && 'faculty'].filter(Boolean);
+    seesAbstracts && 'abstracts', seesFaculty && 'faculty', seesWaivers && 'fee waivers'].filter(Boolean);
   const anyQueue = mine.some((k) => waiting[k]);
   const joinList = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} or ${xs[xs.length - 1]}` : xs[0]);
   show('overview-all-clear', anySection && !anyQueue);
@@ -12465,13 +12474,15 @@ function toggleDeskMenu() { toggleAdminMenuById('desk-menu'); }
 // Front Desk's screens, under its drop-down (nav-tabs.ejs); 'statement' is
 // Registration's second screen. Meals and Attendance moved here from
 // Settings (19 Nov 2026).
-const DESK_MENU_TABS = ['desk', 'attendance', 'meals', 'payments', 'statement', 'abstracts', 'faculty'];
-// The Front Desk's own screens, under its Check-in / Attendance / Meals strip.
-const DESK_SUB_TABS = ['desk', 'attendance', 'meals'];
+const DESK_MENU_TABS = ['desk', 'attendance', 'meals', 'waivers', 'payments', 'statement', 'abstracts', 'faculty'];
+// The Front Desk's own screens, under its Check-in / Attendance / Meals /
+// Waivers strip.
+const DESK_SUB_TABS = ['desk', 'attendance', 'meals', 'waivers'];
 // The drop-down's own badge: what waits on a decision inside it -- payments
-// to approve and abstracts to review -- since its items are out of sight.
+// to approve, abstracts to review, fee waivers to decide -- since its items
+// are out of sight.
 function updateDeskMenuBadge() {
-  const n = ['payments', 'abstracts'].reduce((sum, t) => {
+  const n = ['payments', 'abstracts', 'waivers'].reduce((sum, t) => {
     const item = document.getElementById(`nav-tab-${t}`);
     const badge = document.getElementById(`badge-pending-${t}`);
     return sum + (item && !item.classList.contains('hidden') && badge ? Number(badge.textContent) || 0 : 0);
@@ -12779,14 +12790,14 @@ function renderDeskRecord() {
   const empty = document.getElementById('desk-empty');
   if (!deskDelegate) return;
   const d = deskDelegate;
-  const { user, registration: reg, payment, selections, abstracts, abstractWindow, abstractExtension, guest, conferenceDays, presentationDue } = d;
+  const { user, registration: reg, payment, selections, abstracts, abstractWindow, abstractExtension, guest, conferenceDays, presentationDue, waiver } = d;
   deskRememberRecent(user, reg);
 
   // What the counter acts on goes across the top (deskWhoCard). Below it, on
   // a laptop: where they have been beside what they paid, presented and gave
   // as their details; on a phone, the same in that order.
   const left = [deskDaysCard(conferenceDays, reg), reg ? deskProgrammeCard(selections, conferenceDays) : '', deskFacultyCard(guest)].filter(Boolean);
-  const right = [reg ? deskMoneyCard(reg, payment) : '', deskAbstractCard(abstracts, abstractWindow, abstractExtension, presentationDue),
+  const right = [reg ? deskMoneyCard(reg, payment, waiver) : '', deskAbstractCard(abstracts, abstractWindow, abstractExtension, presentationDue),
     deskContactCard(user), deskMoreActions(guest)].filter(Boolean);
   box.innerHTML = `${deskWhoCard(d)}
     ${left.length
@@ -13037,7 +13048,7 @@ function registerDeskDelegate() {
   });
 }
 
-function deskMoneyCard(reg, payment) {
+function deskMoneyCard(reg, payment, waiver) {
   const fee = Number(reg.expected_amount) || 0;
   // netVerifiedTotal, not verifiedTotal: a recorded refund reduces what the
   // delegate has actually paid, and `remaining` is the summary's own name for
@@ -13072,7 +13083,136 @@ function deskMoneyCard(reg, payment) {
           <p class="text-xl font-bold tabular-nums ${c}">₹${inr(n)}</p></div>`).join('')}
     </div>
     <p class="text-sm text-slate-500 mt-2">${esc(reg.category_label || '')}${pending > 0.5 ? ` · ₹${inr(pending)} paid online, not yet verified` : ''}</p>
+    ${reg.fee_adjustment > 0 && reg.fee_adjustment_basis === 'WAIVER' ? `<p class="text-sm text-slate-700 mt-2">₹${inr(reg.fee_adjustment)} waived · ${esc(reg.fee_adjustment_by || 'staff')}</p>` : ''}
+    ${deskWaiverBlock(reg, balance - pending, waiver)}
     ${refundNote}`, actions);
+}
+
+// Fee waivers (owner, 19 Nov 2026): the Fee Waiver role waives here, or
+// approves or declines what the desk asked for; anyone else at the desk asks.
+// waivable: the balance less any online payment still to be verified.
+function deskWaiverBlock(reg, waivable, w) {
+  const canWaive = can('payments.waive_fee');
+  const pendingReq = w && w.status === 'PENDING' ? w : null;
+  const max = Math.max(0, Math.floor(waivable));
+  let out = '';
+  if (pendingReq) {
+    out += `<div class="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm">
+        <p class="font-semibold text-amber-900">Waiver of ₹${inr(pendingReq.amount)} asked for${canWaive ? '' : ', waiting for approval'}</p>
+        <p class="text-slate-700">${esc(pendingReq.reason)}</p>
+        <p class="text-xs text-slate-500 mt-0.5">By ${esc(pendingReq.requestedBy || 'the desk')}, ${esc(deskWhen(pendingReq.requestedAt))}</p>
+        ${canWaive ? `<div class="flex flex-wrap gap-2 mt-2">
+          ${deskBtn(`Approve ₹${inr(Math.min(pendingReq.amount, max))}`, `deskDecideWaiver(${esc(pendingReq.id)}, true)`, 'good')}
+          ${deskBtn('Decline', `deskDecideWaiver(${esc(pendingReq.id)}, false)`, 'plain')}</div>` : ''}
+      </div>`;
+  } else if (w && w.status === 'DECLINED') {
+    out += `<p class="mt-3 text-[13px] text-slate-600">A waiver of ₹${inr(w.amount)} was declined by ${esc(w.decidedBy || 'staff')}${w.note ? `: ${esc(w.note)}` : '.'}</p>`;
+  }
+  if (max >= 1 && reg.bank_status !== 'REJECTED' && !pendingReq && (canWaive || can('desk.view'))) {
+    out += `<div class="mt-3">${deskBtn(canWaive ? 'Waive fee' : 'Request a waiver', 'deskOpenWaiver()', 'plain')}</div>
+      <form id="desk-waiver-form" onsubmit="event.preventDefault(); deskSubmitWaiver(${canWaive})" class="hidden mt-3 p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2">
+        <p class="text-sm font-semibold text-slate-900">${canWaive ? 'Waive' : 'Ask to waive'} part or all of the ₹${inr(max)} they owe</p>
+        <label class="block text-xs text-slate-500">Amount to waive (₹)
+          <input id="desk-waiver-amount" type="number" min="1" max="${esc(max)}" step="1" value="${esc(max)}" required class="mt-1 block w-40 h-10 px-3 border border-slate-300 rounded-lg text-base bg-white tabular-nums"></label>
+        <label class="block text-xs text-slate-500">Reason
+          <textarea id="desk-waiver-reason" rows="2" minlength="10" maxlength="500" required placeholder="Why the fee is waived, in a short sentence" class="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"></textarea></label>
+        <div class="flex flex-wrap gap-2">
+          <button type="submit" class="h-10 px-4 ${canWaive ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-navy hover:bg-indigo-700'} text-white font-semibold text-sm rounded-lg">${canWaive ? 'Waive now' : 'Send for approval'}</button>
+          <button type="button" onclick="document.getElementById('desk-waiver-form').classList.add('hidden')" class="h-10 px-3 text-slate-600 font-semibold text-sm">Cancel</button>
+        </div>
+        ${canWaive ? '<p class="text-xs text-slate-500">If nothing is left to pay, the registration is confirmed at once.</p>' : '<p class="text-xs text-slate-500">Someone with the Fee Waiver role approves or declines it, here or under Front Desk › Waivers.</p>'}
+      </form>`;
+  }
+  return out;
+}
+function deskOpenWaiver() {
+  const form = document.getElementById('desk-waiver-form');
+  if (!form) return;
+  form.classList.remove('hidden');
+  document.getElementById('desk-waiver-reason').focus();
+}
+async function deskSubmitWaiver(direct) {
+  const body = { registrationId: deskDelegate.registration.id, amount: Number(document.getElementById('desk-waiver-amount').value), reason: document.getElementById('desk-waiver-reason').value };
+  const data = await (await fetch(direct ? '/api/desk/waive' : '/api/desk/waivers', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'That did not go through. Try again.');
+  showToast(direct ? `₹${inr(data.waived)} waived.${data.confirmed ? ' Registration confirmed.' : ''}` : 'Waiver asked for. It waits for approval.', 'success');
+  await deskReload();
+}
+async function deskDecideWaiver(id, approve) {
+  let note = '';
+  if (!approve) {
+    if (!(await showConfirm('Decline this waiver? They will still owe the full balance.', 'Decline'))) return;
+  }
+  const data = await (await fetch(`/api/desk/waivers/${encodeURIComponent(id)}/${approve ? 'approve' : 'decline'}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(approve ? {} : { note }),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'That did not go through. Try again.');
+  showToast(approve ? `₹${inr(data.waived)} waived.${data.confirmed ? ' Registration confirmed.' : ''}` : 'Waiver declined.', 'success');
+  if (currentBackendTab === 'waivers') renderWaivers(); else await deskReload();
+}
+
+// --- FRONT DESK › WAIVERS --------------------------------------------------
+// The requests waiting (with Approve and Decline), and those decided or
+// waived directly. loadWaivers() also sets the badges on the Front Desk
+// menu, its strip, and resolves to the list for the Overview.
+async function loadWaivers() {
+  const data = await (await fetch('/api/desk/waivers')).json().catch(() => ({}));
+  if (!data.success) return null;
+  const n = data.pending.length;
+  ['badge-pending-waivers', 'badge-subtab-waivers'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) { el.textContent = String(n); el.classList.toggle('hidden', !n); }
+  });
+  updateDeskMenuBadge();
+  return data;
+}
+
+// A name in the list opens that delegate on the Front Desk.
+async function waiverOpenDelegate(identifier) {
+  if (!identifier) return;
+  switchBackendTab('desk');
+  await deskPick(identifier);
+}
+
+async function renderWaivers() {
+  const box = document.getElementById('waivers-pending');
+  if (!box) return;
+  const d = await loadWaivers();
+  if (!d) { box.innerHTML = '<p class="px-4 sm:px-5 py-4 text-sm text-slate-500">Unable to load the waivers.</p>'; return; }
+  const who = (w) => `<button type="button" onclick="waiverOpenDelegate('${esc(String(w.regNo || w.phone || '').replace(/[^A-Za-z0-9+@._-]/g, ''))}')" class="font-semibold text-slate-900 hover:underline text-left">${esc(w.delegate || 'Delegate')}</button>
+      <span class="text-xs text-slate-500 tabular-nums">${esc(w.regNo || '')}</span>`;
+  setText('waivers-pending-n', d.pending.length ? `(${d.pending.length})` : '');
+  box.innerHTML = d.pending.map((w) => `<div class="px-4 sm:px-5 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+      <div class="min-w-0 flex-1">
+        <p>${who(w)}</p>
+        <p class="text-sm text-slate-800"><b class="tabular-nums">₹${inr(w.amount)}</b> · ${esc(w.reason)}</p>
+        <p class="text-xs text-slate-500">Asked by ${esc(w.requestedBy || 'the desk')}, ${esc(fmtAuditTime(w.requestedAt))}</p>
+      </div>
+      <div class="flex gap-2 shrink-0">
+        ${deskBtn('Approve', `deskDecideWaiver(${esc(w.id)}, true)`, 'good')}
+        ${deskBtn('Decline', `deskDecideWaiver(${esc(w.id)}, false)`, 'plain')}
+      </div>
+    </div>`).join('') || '<p class="px-4 sm:px-5 py-4 text-sm text-slate-500">Nothing waiting.</p>';
+  const done = document.getElementById('waivers-done');
+  if (done) {
+    done.innerHTML = d.waived.map((a) => `<div class="px-4 sm:px-5 py-3">
+        <p><button type="button" onclick="waiverOpenDelegate('${esc(String(a.regNo || '').replace(/[^A-Za-z0-9+@._-]/g, ''))}')" class="font-semibold text-slate-900 hover:underline text-left">${esc(a.delegate || 'Delegate')}</button>
+          <span class="text-xs text-slate-500 tabular-nums">${esc(a.regNo || '')}</span></p>
+        <p class="text-sm text-slate-700 break-words">${esc(a.what)}</p>
+        <p class="text-xs text-slate-500">By ${esc(a.by || 'staff')}, ${esc(fmtAuditTime(a.at))}</p>
+      </div>`).join('') || '<p class="px-4 sm:px-5 py-4 text-sm text-slate-500">None yet.</p>';
+  }
+  const declined = document.getElementById('waivers-declined');
+  if (declined) {
+    const list = d.decided.filter((w) => w.status === 'DECLINED');
+    declined.innerHTML = list.map((w) => `<div class="px-4 sm:px-5 py-3">
+        <p>${who(w)}</p>
+        <p class="text-sm text-slate-700">₹${inr(w.amount)} · ${esc(w.reason)}</p>
+        <p class="text-xs text-slate-500">Asked by ${esc(w.requestedBy || 'the desk')}; declined by ${esc(w.decidedBy || 'staff')}, ${esc(fmtAuditTime(w.decidedAt))}${w.note ? ` — ${esc(w.note)}` : ''}</p>
+      </div>`).join('') || '<p class="px-4 sm:px-5 py-4 text-sm text-slate-500">None.</p>';
+  }
 }
 
 // Their choices, one per programme group, each changeable here; a workshop
@@ -14958,7 +15098,7 @@ async function deleteGuestListValue(id) {
 
 const SETTINGS_TABS = ['certificates', 'programme', 'programs', 'fees', 'general', 'reminders', 'groupdiscount', 'discount', 'users', 'roles', 'activity'];
 // 'payments' and 'statement' are two screens of the Registration tab.
-const MAIN_TABS = ['overview', 'desk', 'attendance', 'meals', 'payments', 'statement', 'abstracts', 'faculty', 'reports'];
+const MAIN_TABS = ['overview', 'desk', 'attendance', 'meals', 'waivers', 'payments', 'statement', 'abstracts', 'faculty', 'reports'];
 
 // Which tabs each role may open -- the single source of truth used both to
 // pick the landing tab and to validate a tab restored from the URL, so a
@@ -15012,6 +15152,7 @@ function switchBackendTab(tab, opts) {
   if (tab === 'attendance') renderAttendance();
   if (tab === 'certificates') renderCertificates();
   if (tab === 'meals') renderMeals();
+  if (tab === 'waivers') renderWaivers();
   if (tab === 'programme') renderProgramme();
   if (tab === 'programs') renderBackendPrograms();
   if (tab === 'fees') renderBackendFees();
