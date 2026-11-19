@@ -46,7 +46,8 @@ const timesCan = (s) => !/[^\u0000-ÿ–—‘’“”]/.test(String(s || ''));
 // Paragraph text with **bold** spans, centred. Laid out here word by word:
 // pdfkit's own centring goes wrong when a line mixes fonts. A line break in
 // the text starts a new paragraph.
-function richText(doc, text, x, y, width, size, lineGap, color = C.ink) {
+// dry: measure only -- where it would end -- drawing nothing.
+function richText(doc, text, x, y, width, size, lineGap, color = C.ink, dry = false) {
   doc.fontSize(size);
   const lineHeight = size * 1.25 + lineGap;
   let cy = y;
@@ -78,7 +79,7 @@ function richText(doc, text, x, y, width, size, lineGap, color = C.ink) {
       let cx = x + (width - l.w) / 2;
       l.words.forEach((word, i) => {
         if (i && !word.glued) cx += space(word.font);
-        doc.font(word.font).fillColor(color).text(word.w, cx, cy, { lineBreak: false });
+        if (!dry) doc.font(word.font).fillColor(color).text(word.w, cx, cy, { lineBreak: false });
         cx += word.ww;
       });
       cy += lineHeight;
@@ -86,6 +87,15 @@ function richText(doc, text, x, y, width, size, lineGap, color = C.ink) {
     cy += lineGap * 1.5;
   }
   return cy;
+}
+
+// The wording's type size: as set, or a half point smaller at a time, down
+// to 8pt, until it ends by `limit` -- so a long wording leaves the
+// signatures their room rather than running into them.
+function wordingSize(doc, text, x, y, width, size, lineGap, limit) {
+  let s = size;
+  while (s > 8 && richText(doc, text, x, y, width, s, lineGap, C.ink, true) > limit) s -= 0.5;
+  return s;
 }
 
 // The sponsors' logos, one row centred between left and right: all the same
@@ -215,6 +225,20 @@ function fitSignature(image) {
   }
 }
 
+// Where the signing line goes, and how tall each signature may be, so the
+// ink never touches the wording above it (owner, 19 Nov 2026): at least
+// `gap` clear under the last line of text. When the wording runs long the
+// line first moves down, as far as `latest` (what is below it -- the names,
+// the logos, the border -- still has room), and only then does a signature
+// get smaller than `minH`; it never rises into the text.
+//   textBottom: where the wording ends; line: the line's usual place.
+function signatureBand(textBottom, line, latest, maxH, minH = 28, gap = 8) {
+  const room = (at) => at - 3 - (textBottom + gap);
+  let lineY = line;
+  if (room(lineY) < minH) lineY = Math.max(line, Math.min(latest, textBottom + gap + minH + 3));
+  return { lineY, sigH: Math.max(0, Math.min(maxH, room(lineY))) };
+}
+
 function drawSignatures(doc, sigs, left, right, lineY, ink, muted, sigH = 52) {
   if (!sigs.length) return;
   const slot = (right - left) / sigs.length;
@@ -225,7 +249,8 @@ function drawSignatures(doc, sigs, left, right, lineY, ink, muted, sigH = 52) {
   const imgW = Math.min(140, slot - 10);
   sigs.forEach((s, i) => {
     const cx = left + slot * i + slot / 2;
-    if (s.image) {
+    // Too little room to be legible: the name and designation still sign.
+    if (s.image && sigH >= 6) {
       try { doc.image(fitSignature(s.image), cx - imgW / 2, lineY - sigH - 3, { fit: [imgW, sigH], align: 'center', valign: 'bottom' }); } catch (e) { /* not an image pdfkit reads */ }
     }
     doc.lineWidth(0.6).strokeColor(muted).moveTo(cx - lineHalf, lineY).lineTo(cx + lineHalf, lineY).stroke();
@@ -260,12 +285,20 @@ function onArtwork(doc, opts, PH) {
     .moveTo(mid - 200, y(0.562)).lineTo(mid + 200, y(0.562)).stroke().strokeOpacity(1);
 
   const bodyW = field.right - field.left - 20;
-  richText(doc, opts.body, mid - bodyW / 2, y(0.575), bodyW, 11, 3, C.linenInk);
+  // Where the wording ends: richText draws word by word, so doc.y does not
+  // follow it -- its own answer does.
+  // Room under it for the signatures: the line no lower than `latest`, a
+  // signature at least 28pt tall, 8pt clear of the text (signatureBand).
+  const sigLatest = (opts.logos && opts.logos.length ? y(0.857) - 5 : y(0.906)) - 40;
+  const bodySize = wordingSize(doc, opts.body, mid - bodyW / 2, y(0.575), bodyW, 11, 3, sigLatest - 3 - 28 - 8);
+  const textBottom = richText(doc, opts.body, mid - bodyW / 2, y(0.575), bodyW, bodySize, 3, C.linenInk);
 
   // The signatures run wider than the text: from beside the QR to the
-  // motif's edge. Each as tall as the room left under the wording allows.
-  const sigRoom = y(0.775) - doc.y - 9;
-  drawSignatures(doc, (opts.signatories || []).slice(0, 6), 118, W * 0.87, y(0.775), C.linenInk, C.linenMuted, Math.max(28, Math.min(48, sigRoom)));
+  // motif's edge. Each as tall as the room under the wording allows, up to
+  // 48pt, never touching it; the names and designations need about 40pt
+  // under the line, above the logos' band or the border.
+  const band = signatureBand(textBottom, y(0.775), sigLatest, 48);
+  drawSignatures(doc, (opts.signatories || []).slice(0, 6), 118, W * 0.87, band.lineY, C.linenInk, C.linenMuted, band.sigH);
 
   // The sponsors, on a soft white band so every logo reads on linen.
   if (opts.logos && opts.logos.length) {
@@ -311,12 +344,15 @@ function generated(doc, opts) {
   drawName(doc, String(opts.name || ''), 234, 32, C.navy, W - 220);
   doc.lineWidth(0.8).strokeColor(C.gold).moveTo(W / 2 - 220, 276).lineTo(W / 2 + 220, 276).stroke();
 
-  richText(doc, opts.body, 110, 291, W - 220, 12.5, 4);
+  const hasLogos = !!(opts.logos && opts.logos.length);
+  const sigLatest = hasLogos ? 458 : 492;
+  const textBottom = richText(doc, opts.body, 110, 291, W - 220, wordingSize(doc, opts.body, 110, 291, W - 220, 12.5, 4, sigLatest - 3 - 28 - 8), 4);
 
   // Signatures across the foot -- raised a little when the sponsors' logos
   // take the row beneath them. The QR has the right-hand corner.
-  const hasLogos = !!(opts.logos && opts.logos.length);
-  drawSignatures(doc, (opts.signatories || []).slice(0, 6), 70, W - 160, hasLogos ? 452 : 486, C.ink, C.muted);
+  // Never touching the wording: see signatureBand.
+  const band = signatureBand(textBottom, hasLogos ? 452 : 486, sigLatest, 52);
+  drawSignatures(doc, (opts.signatories || []).slice(0, 6), 70, W - 160, band.lineY, C.ink, C.muted, band.sigH);
   if (hasLogos) drawLogos(doc, opts.logos, 498, 70, W - 150, 28);
 
   // Verify: the QR, and the certificate number under it.
@@ -550,4 +586,4 @@ function renderMealPasses(passes, conference = {}) {
   });
 }
 
-module.exports = { renderCertificatePdf, renderHallPosters, renderMealPasses, certificateCopy, cmykToRgb, fitSignature, PAGE: { W, H } };
+module.exports = { renderCertificatePdf, renderHallPosters, renderMealPasses, certificateCopy, cmykToRgb, fitSignature, signatureBand, PAGE: { W, H } };

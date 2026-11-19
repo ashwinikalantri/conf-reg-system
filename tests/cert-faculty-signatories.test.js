@@ -54,7 +54,26 @@ const images = (pdf) => (pdf.toString('latin1').match(/\/Subtype \/Image/g) || [
       const whole = PNG.sync.write(full);
       check('...one with no margin is drawn as uploaded, and a JPEG', fitSignature(whole) === whole && fitSignature(Buffer.from([0xff, 0xd8, 0xff])).length === 3);
       check('...an empty one does not stop the certificate', Buffer.isBuffer(fitSignature(PNG.sync.write(new PNG({ width: 2, height: 2 })))));
-      check('the signature has room: up to 48pt on the artwork as the wording allows, wider than the line', /Math\.max\(28, Math\.min\(48, sigRoom\)\)/.test(fs.readFileSync(appFile('certificate-pdf.js'), 'utf8')) && /const imgW = Math\.min\(140, slot - 10\);/.test(fs.readFileSync(appFile('certificate-pdf.js'), 'utf8')));
+      // Never touching the wording (owner, 19 Nov 2026): up to 48pt on the
+      // artwork, 52 on the plain design, 8pt clear of the last line; the line
+      // moves down before a signature shrinks, and a long wording gets smaller
+      // type rather than run into them.
+      const src = fs.readFileSync(appFile('certificate-pdf.js'), 'utf8');
+      check('the signature has room: up to 48pt on the artwork as the wording allows, wider than the line',
+        /signatureBand\(textBottom, y\(0\.775\), sigLatest, 48\)/.test(src) && /const imgW = Math\.min\(140, slot - 10\);/.test(src));
+      const { signatureBand } = require(appFile('certificate-pdf.js'));
+      let clear = true;
+      for (let textBottom = 300; textBottom <= 470; textBottom += 1) {
+        for (const [line, latest, maxH] of [[461, 465, 48], [486, 492, 52], [452, 458, 52]]) {
+          const b = signatureBand(textBottom, line, latest, maxH);
+          if (b.sigH > 0 && b.lineY - 3 - b.sigH < textBottom + 8) clear = false;
+          if (b.sigH > maxH || b.lineY < line || b.lineY > Math.max(line, latest)) clear = false;
+        }
+      }
+      check('...a signature never reaches within 8pt of the wording, wherever it ends', clear);
+      check('...the line moves down first, then the signature shrinks', signatureBand(400, 461, 465, 48).sigH === 48
+        && signatureBand(430, 461, 465, 48).lineY === 465 && signatureBand(430, 461, 465, 48).sigH === 24);
+      check('...and a long wording steps its type down to make the room', /function wordingSize\(/.test(src) && /wordingSize\(doc, opts\.body, mid - bodyW \/ 2, y\(0\.575\), bodyW, 11, 3, sigLatest - 3 - 28 - 8\)/.test(src));
       const pdfOf = async (image) => (await renderCertificatePdf({ kind: 'MMC', title: 'C', name: 'N', body: 'x', conference: { name: 'C', acronym: 'C' }, certNo: 'X', signatories: [{ name: 'S', designation: 'D', image }], logos: [] })).toString('latin1');
       check('...both reach the certificate with a transparency mask, no ground behind', /\/SMask/.test(await pdfOf(keyed)) && /\/SMask/.test(await pdfOf(plain)));
       check('the file is kept byte for byte: no re-encoding on the way in or out', /return \{ buffer, ext: \/png\/i\.test\(m\[1\]\) \? 'png' : 'jpg' \};/.test(fs.readFileSync(appFile('server.js'), 'utf8'))
