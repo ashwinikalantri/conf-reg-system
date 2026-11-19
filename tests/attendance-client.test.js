@@ -116,10 +116,11 @@ function page(cookie, perms) {
       && /Showing \d+ of \d+/.test(C.el('cert-count').textContent) && /Issue conference certificates \(\d+ due\)/.test(C.el('cert-issue-conf').textContent)
       && /Issue faculty certificates \(\d+ due\)/.test(C.el('cert-issue-fac').textContent));
     await C.f.renderCertificateSettings();
+    // Eleven kinds since 20 Nov 2026: Nursing, workshop faculty and the five programme roles.
     check('the settings view: MMC details, categories, signatories and each kind\'s wording (faculty too)', /X/.test(C.el('cs-mmc-no').value)
       && /class="cs-category" value="faculty_mo" checked/.test(C.el('cs-categories').innerHTML)
-      && /MMC Observer/.test(C.el('cs-signatories').innerHTML) && (C.el('cs-templates').innerHTML.match(/data-kind="/g) || []).length === 4
-      && /data-kind="FACULTY"/.test(C.el('cs-templates').innerHTML));
+      && /MMC Observer/.test(C.el('cs-signatories').innerHTML) && (C.el('cs-templates').innerHTML.match(/data-kind="/g) || []).length === 11
+      && /data-kind="FACULTY"/.test(C.el('cs-templates').innerHTML) && /data-kind="MODERATOR"/.test(C.el('cs-templates').innerHTML));
     check('...and when lunch starts and marking opens', C.el('cs-lunch').value === '13:00' && Number(C.el('cs-early').value) === 15);
 
     console.log('\n== Programs ==');

@@ -2169,6 +2169,10 @@ db.serialize(() => {
       revoked_reason TEXT
     )
   `);
+  // What a role certificate names: the session(s) the person spoke at,
+  // judged, chaired, moderated or sat on the panel of (owner, 20 Nov 2026),
+  // as it read when issued.
+  db.run('ALTER TABLE certificates ADD COLUMN detail TEXT', () => {});
   db.run(`
     CREATE TABLE IF NOT EXISTS certificate_overrides (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -9488,6 +9492,10 @@ const CERT_SETTINGS_DEFAULTS = {
   // before the conference starts).
   attendance: { ...attendanceLib.DEFAULTS, showFrom: '' },
   mmc: { accreditationNo: 'MMC/MAC/2026/XXXXX', points: 'X', councilLabel: 'Maharashtra Medical Council' },
+  // Nursing credit points (owner, 20 Nov 2026): for the nursing categories.
+  // The council's accreditation number and the points are to come; until
+  // both are set, nobody is given the Nursing certificate -- they wait.
+  nursing: { councilLabel: 'Maharashtra Nursing Council', accreditationNo: '', points: '', categories: ['nurse_cho', 'nursing_pg'] },
   // Doctors and Medical PGs, and of them only those who give a Medical
   // Council registration number, receive the certificate with MMC points.
   eligibleCategories: ['faculty_mo', 'pg_doctor'],
@@ -9500,6 +9508,7 @@ async function certificateSettings() {
     ...CERT_SETTINGS_DEFAULTS, ...saved,
     attendance: { ...CERT_SETTINGS_DEFAULTS.attendance, ...(saved.attendance || {}) },
     mmc: { ...CERT_SETTINGS_DEFAULTS.mmc, ...(saved.mmc || {}) },
+    nursing: { ...CERT_SETTINGS_DEFAULTS.nursing, ...(saved.nursing || {}) },
   };
 }
 
@@ -10441,9 +10450,33 @@ app.delete('/api/attendance/:id', requirePermission('attendance.manage'), async 
 // current wording, signatories and design (see certificate-pdf.js) -- so a
 // correction to the wording reaches certificates already issued.
 
-const CERT_KINDS = ['MMC', 'CONF', 'WORKSHOP', 'FACULTY'];
-const CERT_KIND_CODE = { MMC: 'MMC', CONF: 'P', WORKSHOP: 'W', FACULTY: 'F' };
-const CERT_KIND_LABEL = { MMC: 'Conference, with MMC points', CONF: 'Conference, participation', WORKSHOP: 'Workshop', FACULTY: 'Faculty' };
+// The certificates (owner, 20 Nov 2026): delegates' (MMC points, Nursing
+// points, or participation), workshops' (participants, and their faculty),
+// the Faculty list's, and one for each role in the programme -- speaker,
+// judge, chairperson, moderator, panelist -- naming the sessions.
+const CERT_KINDS = ['MMC', 'NURSING', 'CONF', 'WORKSHOP', 'WORKSHOP_FACULTY', 'FACULTY', 'SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST'];
+const CERT_ROLE_KINDS = ['SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST'];
+const CERT_KIND_CODE = { MMC: 'MMC', NURSING: 'N', CONF: 'P', WORKSHOP: 'W', WORKSHOP_FACULTY: 'WF', FACULTY: 'F',
+  SPEAKER: 'S', JUDGE: 'J', CHAIR: 'C', MODERATOR: 'MO', PANELIST: 'PN' };
+const CERT_KIND_LABEL = { MMC: 'Conference, with MMC points', NURSING: 'Conference, with Nursing points', CONF: 'Conference, participation',
+  WORKSHOP: 'Workshop', WORKSHOP_FACULTY: 'Workshop faculty', FACULTY: 'Faculty',
+  SPEAKER: 'Speaker', JUDGE: 'Judge', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist' };
+const certKindLabel = (c) => (c.kind === 'WORKSHOP' ? `Workshop: ${c.workshop_name}` : c.kind === 'WORKSHOP_FACULTY' ? `Workshop faculty: ${c.workshop_name}` : CERT_KIND_LABEL[c.kind]);
+// A programme role's certificate, from the session it is in: a panel's
+// speakers are panelists and its chairs moderators; the chairs of a judged
+// session (award, oral or poster presentations) are judges; elsewhere,
+// speakers and chairpersons. Workshops have their own (Workshop faculty).
+function certRoleKind(session, role) {
+  const panel = /panel/i.test(session.label || '');
+  const judged = /award|presentation/i.test(`${session.label || ''} ${session.title || ''}`);
+  if (role === 'chair') return panel ? 'MODERATOR' : judged ? 'JUDGE' : 'CHAIR';
+  return panel ? 'PANELIST' : 'SPEAKER';
+}
+// "“A”", "“A” and “B”", "“A”, “B” and “C”" -- each bold.
+const certSessionList = (titles) => {
+  const q = titles.map((t) => `**“${String(t).replace(/\*/g, '')}”**`);
+  return q.length > 1 ? `${q.slice(0, -1).join(', ')} and ${q[q.length - 1]}` : (q[0] || '');
+};
 const MAX_SIGNATORIES = 6;
 const CERT_TEMPLATE_DEFAULTS = {
   MMC: {
@@ -10463,12 +10496,43 @@ const CERT_TEMPLATE_DEFAULTS = {
     title: 'Certificate', subtitle: 'of Appreciation', lead: 'This is to certify that',
     body: 'has contributed as **Faculty** to the **{{conference}}** held at {{venue}} on {{dates}}.',
   },
+  NURSING: {
+    title: 'Certificate', subtitle: 'of Participation', lead: 'This is to certify that',
+    body: 'has attended the **{{conference}}** held at {{venue}} on {{dates}}.\n'
+      + 'The conference is accredited by the {{nursing_council}} (accreditation no. **{{nursing_accreditation_no}}**) for **{{nursing_points}} credit points**.',
+  },
+  WORKSHOP_FACULTY: {
+    title: 'Certificate', subtitle: 'of Appreciation', lead: 'This is to certify that',
+    body: 'has served as **Faculty** for the workshop **{{workshop}}**, held on {{workshop_date}} as part of the **{{conference}}**, {{venue}}.',
+  },
+  SPEAKER: {
+    title: 'Certificate', subtitle: 'of Appreciation', lead: 'This is to certify that',
+    body: 'has spoken on {{sessions}} as a **Speaker** at the **{{conference}}** held at {{venue}} on {{dates}}.',
+  },
+  JUDGE: {
+    title: 'Certificate', subtitle: 'of Appreciation', lead: 'This is to certify that',
+    body: 'has served as a **Judge** for {{sessions}} at the **{{conference}}** held at {{venue}} on {{dates}}.',
+  },
+  CHAIR: {
+    title: 'Certificate', subtitle: 'of Appreciation', lead: 'This is to certify that',
+    body: 'has chaired {{sessions}} at the **{{conference}}** held at {{venue}} on {{dates}}.',
+  },
+  MODERATOR: {
+    title: 'Certificate', subtitle: 'of Appreciation', lead: 'This is to certify that',
+    body: 'has moderated the panel discussion {{sessions}} at the **{{conference}}** held at {{venue}} on {{dates}}.',
+  },
+  PANELIST: {
+    title: 'Certificate', subtitle: 'of Appreciation', lead: 'This is to certify that',
+    body: 'has taken part as a **Panelist** in the panel discussion {{sessions}} at the **{{conference}}** held at {{venue}} on {{dates}}.',
+  },
 };
 const CERT_PLACEHOLDERS = {
   name: 'The name on the certificate', council: 'Their Medical Council', council_reg_no: 'Their registration number',
   category: 'Their category', conference: 'The conference\'s name', acronym: 'Its short name', venue: 'The venue',
   dates: 'The conference dates', workshop: 'The workshop', workshop_date: 'The workshop\'s date',
   mmc_accreditation_no: 'The MMC accreditation number', mmc_points: 'The MMC credit points', cert_no: 'The certificate number',
+  nursing_council: 'The Nursing Council', nursing_accreditation_no: 'Its accreditation number', nursing_points: 'The Nursing credit points',
+  sessions: 'The session(s) of a speaker, judge, chairperson, moderator or panelist',
 };
 
 // A signatory marked mmc_only (the MMC Observer) signs only the
@@ -10589,6 +10653,60 @@ async function certificateCandidates() {
   const facultyByPhone = new Map(faculty.filter((f) => f.linked).map((f) => [f.phone, f.entry]));
   const registered = new Set(regs.map((r) => r.phone_number));
 
+  // Each faculty member's roles in the programme, workshops aside: one
+  // certificate per role, naming every session they had it in, in order.
+  const liveGuests = new Map(faculty.map((f) => [f.entry.guestId, f]));
+  const sessionById = new Map(sessions.map((x) => [x.id, x]));
+  const rolesByGuest = new Map();
+  const wsFacilitators = new Map();   // option id -> Set of person keys
+  const keyOfGuest = (gid) => { const f = liveGuests.get(gid); return f ? f.phone : null; };
+  const wsOfSession = new Map();
+  for (const w of workshops.values()) for (const id of w.sessionIds) wsOfSession.set(id, w.optionId);
+  for (const pf of await dbAll('SELECT session_id, role, guest_id FROM programme_session_faculty WHERE guest_id IS NOT NULL ORDER BY session_id, role, position')) {
+    const ses = sessionById.get(pf.session_id);
+    if (!ses || !liveGuests.has(pf.guest_id)) continue;
+    if (wsOfSession.has(ses.id)) {
+      const opt = wsOfSession.get(ses.id);
+      if (!wsFacilitators.has(opt)) wsFacilitators.set(opt, new Set());
+      wsFacilitators.get(opt).add(keyOfGuest(pf.guest_id));
+      continue;
+    }
+    const kind = certRoleKind(ses, pf.role);
+    if (!rolesByGuest.has(pf.guest_id)) rolesByGuest.set(pf.guest_id, new Map());
+    const byKind = rolesByGuest.get(pf.guest_id);
+    if (!byKind.has(kind)) byKind.set(kind, []);
+    if (!byKind.get(kind).some((x) => x.id === ses.id)) byKind.get(kind).push(ses);
+  }
+  const ordered = (list) => [...list].sort((a, b) => `${a.session_date} ${a.start_time}`.localeCompare(`${b.session_date} ${b.start_time}`));
+  const rolesFor = (guestId) => {
+    const byKind = rolesByGuest.get(guestId);
+    if (!byKind) return [];
+    const key = `faculty-${guestId}`;
+    return CERT_ROLE_KINDS.filter((k) => byKind.has(k)).map((kind) => {
+      const ov = overrides.get(`${key}|role:${kind}`) || null;
+      const excluded = !!(ov && ov.decision === 'EXCLUDE');
+      const titles = [...new Set(ordered(byKind.get(kind)).map((x) => x.title))];
+      return { kind, key, sessions: titles, eligible: !excluded, whyNot: excluded ? `Excluded: ${ov.reason}` : null, override: ov,
+        issued: issued.find((c) => c.kind === kind && Number(c.guest_id) === guestId) || null };
+    });
+  };
+  // A workshop's faculty: on its roster as faculty, or named in its
+  // sessions in the programme. No attendance needed.
+  for (const r of await dbAll(`SELECT ro.option_id, r.phone_number FROM registration_options ro JOIN registrations r ON r.id = ro.registration_id
+      WHERE ro.is_faculty = 1 AND COALESCE(r.bank_status, '') != 'REJECTED'`)) {
+    if (!workshops.has(Number(r.option_id))) continue;
+    if (!wsFacilitators.has(Number(r.option_id))) wsFacilitators.set(Number(r.option_id), new Set());
+    wsFacilitators.get(Number(r.option_id)).add(r.phone_number);
+  }
+  const workshopFacultyFor = (personKey) => [...workshops.values()].filter((w) => (wsFacilitators.get(w.optionId) || new Set()).has(personKey)).map((w) => {
+    const ov = overrides.get(`${personKey}|wf:${w.optionId}`) || null;
+    const excluded = !!(ov && ov.decision === 'EXCLUDE');
+    return { optionId: w.optionId, scope: `wf:${w.optionId}`, name: w.name, date: w.date, eligible: !excluded, whyNot: excluded ? `Excluded: ${ov.reason}` : null, override: ov,
+      issued: issued.find((c) => c.kind === 'WORKSHOP_FACULTY' && c.phone_number === personKey && Number(c.option_id) === w.optionId) || null };
+  });
+  const nursing = settings.nursing || {};
+  const nursingReady = !!(String(nursing.accreditationNo || '').trim() && String(nursing.points || '').trim());
+
   const people = regs.map((r) => {
     const ids = att.get(r.phone_number) || new Set();
     const done = attendanceLib.completion(sessions.filter((s) => ids.has(s.id)), conf, settings.attendance.lunchSplit);
@@ -10602,7 +10720,12 @@ async function certificateCandidates() {
     if (ov && ov.decision === 'EXCLUDE') confWhyNot = `Excluded: ${ov.reason}`;
     else if (!included && !done.complete) confWhyNot = done.missing.length ? `Not present: ${done.missing.join('; ')}` : 'No sessions take attendance yet';
     else if (!included && !paid) confWhyNot = 'Payment not complete';
-    else confKind = mmcCategory && r.council_reg_no ? 'MMC' : 'CONF';
+    else if (mmcCategory && r.council_reg_no) confKind = 'MMC';
+    else if ((nursing.categories || []).includes(r.category_key)) {
+      // Nursing points: held until the council's details are set.
+      if (nursingReady) confKind = 'NURSING';
+      else confWhyNot = 'Waiting for the Nursing points details (Certificate settings)';
+    } else confKind = 'CONF';
     const myIssued = issued.filter((c) => c.phone_number === r.phone_number);
     const ws = [...workshops.values()].map((w) => {
       const wov = overrides.get(`${r.phone_number}|${w.e}`) || null;
@@ -10625,8 +10748,11 @@ async function certificateCandidates() {
       phone: r.phone_number, registrationNumber: r.registration_number, name, category: r.category_label, categoryKey: r.category_key,
       councilName: r.council_name || null, councilRegNo: r.council_reg_no || null, mmcCategory, paid,
       attended: [...ids], parts: done.parts.map((p) => ({ label: p.label, done: p.done })), missing: done.missing, complete: done.complete,
-      conference: { kind: confKind, whyNot: confWhyNot, override: ov, issued: myIssued.find((c) => c.kind === 'MMC' || c.kind === 'CONF') || null },
+      conference: { kind: confKind, whyNot: confWhyNot, override: ov, issued: myIssued.find((c) => ['MMC', 'NURSING', 'CONF'].includes(c.kind)) || null },
+      nursingCategory: (nursing.categories || []).includes(r.category_key),
       workshops: ws, faculty: facultyByPhone.get(r.phone_number) || null,
+      roles: facultyByPhone.has(r.phone_number) ? rolesFor(facultyByPhone.get(r.phone_number).guestId) : [],
+      workshopFaculty: workshopFacultyFor(r.phone_number),
     };
   });
   // Faculty who have not registered: here for their Faculty certificate only.
@@ -10637,7 +10763,7 @@ async function certificateCandidates() {
       councilName: null, councilRegNo: null, mmcCategory: false, paid: false, attended: [], parts: [], missing: [], complete: false,
       notRegistered: true,
       conference: { kind: null, whyNot: f.linked ? 'Not registered' : 'Not signed up', override: null, issued: null },
-      workshops: [], faculty: f.entry,
+      workshops: [], faculty: f.entry, roles: rolesFor(f.entry.guestId), workshopFaculty: workshopFacultyFor(f.phone),
     });
   }
   return people.sort((a, b) => String(a.name).localeCompare(String(b.name)));
@@ -10645,8 +10771,9 @@ async function certificateCandidates() {
 
 // Issues the next certificate of a kind to one person. Numbered per kind,
 // in order: NQOCN2026/MMC/0001, NQOCN2026/P/0001, NQOCN2026/W/0001.
-async function issueCertificate(req, person, kind, workshop = null) {
-  const guestId = kind === 'FACULTY' && person.faculty ? person.faculty.guestId : null;
+// detail: what a role certificate names (its sessions).
+async function issueCertificate(req, person, kind, workshop = null, detail = null) {
+  const guestId = (kind === 'FACULTY' || CERT_ROLE_KINDS.includes(kind)) && person.faculty ? person.faculty.guestId : null;
   const code = CERT_KIND_CODE[kind];
   const like = `${certPrefix()}/${code}/%`;
   const last = await dbGet('SELECT cert_no FROM certificates WHERE cert_no LIKE ? ORDER BY id DESC LIMIT 1', [like]);
@@ -10654,10 +10781,10 @@ async function issueCertificate(req, person, kind, workshop = null) {
   const certNo = `${certPrefix()}/${code}/${String(next).padStart(4, '0')}`;
   const r = await dbRun(
     `INSERT INTO certificates (cert_no, verify_code, phone_number, kind, option_id, name, council_name, council_reg_no, category_label,
-       workshop_name, workshop_date, issued_at, issued_by, guest_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       workshop_name, workshop_date, issued_at, issued_by, guest_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [certNo, newVerifyCode(), person.phone, kind, workshop ? workshop.optionId : null, person.name,
       kind === 'MMC' ? person.councilName : null, kind === 'MMC' ? person.councilRegNo : null, person.category,
-      workshop ? workshop.name : null, workshop ? workshop.date : null, Date.now(), req.session.name || req.session.phone, guestId]);
+      workshop ? workshop.name : null, workshop ? workshop.date : null, Date.now(), req.session.name || req.session.phone, guestId, detail]);
   await recordAudit({ req, entityType: 'certificate', entityId: r.lastID, action: 'CERTIFICATE_ISSUED', oldValue: null,
     newValue: `${certNo} · ${CERT_KIND_LABEL[kind]}${workshop ? ` (${workshop.name})` : ''} · ${person.name}` });
   return certNo;
@@ -10706,6 +10833,8 @@ async function certificatePdf(cert, { specimen = false } = {}) {
     dates: attendanceLib.dateRange(CONFERENCE.startDate, CONFERENCE.endDate),
     workshop: cert.workshop_name || '', workshop_date: cert.workshop_date ? attendanceLib.dateRange(cert.workshop_date, cert.workshop_date) : '',
     mmc_accreditation_no: settings.mmc.accreditationNo, mmc_points: settings.mmc.points, cert_no: cert.cert_no,
+    nursing_council: settings.nursing.councilLabel, nursing_accreditation_no: settings.nursing.accreditationNo || '—', nursing_points: settings.nursing.points || '—',
+    sessions: cert.detail || '',
   };
   const fill = (t) => String(t || '').replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (w, k) => (values[k] == null ? w : String(values[k])));
   const readUpload = async (file) => (file ? fs.promises.readFile(path.join(UPLOAD_DIR, path.basename(file))).catch(() => null) : null);
@@ -10746,7 +10875,7 @@ app.get('/api/admin/certificates/settings', requirePermission('certificates.mana
     const settings = await certificateSettings();
     const signatories = await dbAll('SELECT id, name, designation, signature_file IS NOT NULL AS has_signature, sort_order, active, mmc_only FROM certificate_signatories ORDER BY sort_order, id');
     res.json({
-      settings: { mmc: settings.mmc, attendance: { ...settings.attendance, showFromEffective: attendanceShownFrom(settings) }, eligibleCategories: settings.eligibleCategories, hasBackground: !!settings.background },
+      settings: { mmc: settings.mmc, nursing: settings.nursing, attendance: { ...settings.attendance, showFromEffective: attendanceShownFrom(settings) }, eligibleCategories: settings.eligibleCategories, hasBackground: !!settings.background },
       templates: certTemplates(settings, signatories), signatories, placeholders: CERT_PLACEHOLDERS, kinds: CERT_KIND_LABEL,
       maxSignatories: MAX_SIGNATORIES,
       workshops: [...(await certificateWorkshops()).values()].map((w) => ({ optionId: w.optionId, name: w.name, date: w.date })),
@@ -10770,6 +10899,15 @@ app.put('/api/admin/certificates/settings', requirePermission('certificates.mana
       };
     }
     if (Array.isArray(b.eligibleCategories)) next.eligibleCategories = b.eligibleCategories.map(String).filter(Boolean);
+    if (b.nursing) {
+      next.nursing = {
+        ...current.nursing,
+        councilLabel: String(b.nursing.councilLabel ?? current.nursing.councilLabel).trim().slice(0, 80) || CERT_SETTINGS_DEFAULTS.nursing.councilLabel,
+        accreditationNo: String(b.nursing.accreditationNo ?? current.nursing.accreditationNo).trim().slice(0, 80),
+        points: String(b.nursing.points ?? current.nursing.points).trim().slice(0, 20),
+        categories: Array.isArray(b.nursing.categories) ? b.nursing.categories.map(String).filter(Boolean) : current.nursing.categories,
+      };
+    }
     if (b.attendance) {
       const a = { ...current.attendance };
       if (b.attendance.lunchSplit !== undefined) {
@@ -10920,9 +11058,10 @@ app.get('/api/admin/certificates/preview.pdf', requirePermission('certificates.v
   try {
     const kind = CERT_KINDS.includes(req.query.kind) ? req.query.kind : 'MMC';
     // ?option=<id>: one workshop's, with its name, date and signatories.
-    const ws = kind === 'WORKSHOP' && /^\d+$/.test(String(req.query.option || '')) ? (await certificateWorkshops()).get(Number(req.query.option)) : null;
+    const ws = (kind === 'WORKSHOP' || kind === 'WORKSHOP_FACULTY') && /^\d+$/.test(String(req.query.option || '')) ? (await certificateWorkshops()).get(Number(req.query.option)) : null;
+    const facultyKind = ['FACULTY', 'WORKSHOP_FACULTY', ...CERT_ROLE_KINDS].includes(kind);
     const pdf = await certificatePdf({
-      kind, name: kind === 'FACULTY' ? 'Dr Example Faculty' : 'Dr Example Delegate', council_name: 'Maharashtra Medical Council', council_reg_no: '2012/03/1234', category_label: 'Doctor',
+      kind, name: facultyKind ? 'Dr Example Faculty' : 'Dr Example Delegate', detail: certSessionList(kind === 'JUDGE' ? ['Award Paper Presentations'] : ['An Example Session']), council_name: 'Maharashtra Medical Council', council_reg_no: '2012/03/1234', category_label: 'Doctor',
       workshop_name: ws ? ws.name : 'Example Workshop', workshop_date: ws ? ws.date : CONFERENCE.startDate, option_id: ws ? ws.optionId : null,
       cert_no: `${certPrefix()}/${CERT_KIND_CODE[kind]}/0000`, verify_code: 'SPECIMEN00',
     }, { specimen: true });
@@ -10952,9 +11091,19 @@ app.post('/api/admin/certificates/override', requirePermission('certificates.iss
     const phone = String(req.body.phone || '');
     const scope = String(req.body.scope || '');
     const decision = req.body.decision ? String(req.body.decision) : null;
-    if (!(scope === 'CONF' || scope === 'FAC' || /^ws:\d+$/.test(scope))) return res.status(400).json({ success: false, error: 'Unknown certificate.' });
+    const roleScope = /^role:([A-Z]+)$/.exec(scope);
+    const wfScope = /^wf:\d+$/.test(scope);
+    if (!(scope === 'CONF' || scope === 'FAC' || /^ws:\d+$/.test(scope) || (roleScope && CERT_ROLE_KINDS.includes(roleScope[1])) || wfScope)) {
+      return res.status(400).json({ success: false, error: 'Unknown certificate.' });
+    }
     if (decision && !['INCLUDE', 'EXCLUDE'].includes(decision)) return res.status(400).json({ success: false, error: 'Include or exclude.' });
-    if (scope === 'FAC') {
+    // A role or a workshop's faculty is earned by being in the programme or
+    // on the roster: it can only be withheld.
+    if ((roleScope || wfScope) && decision === 'INCLUDE') return res.status(400).json({ success: false, error: 'They receive it already, from the programme.' });
+    if (roleScope || (wfScope && /^faculty-\d+$/.test(phone))) {
+      const m = /^faculty-(\d+)$/.exec(phone);
+      if (!m || !(await dbGet('SELECT id FROM guests WHERE id = ?', [m[1]]))) return res.status(404).json({ success: false, error: 'Not on the Faculty list.' });
+    } else if (scope === 'FAC') {
       // Faculty earn it by being on the list: it can only be withheld, and
       // the decision is kept under "faculty-<id>".
       const m = /^faculty-(\d+)$/.exec(phone);
@@ -10982,10 +11131,10 @@ app.post('/api/admin/certificates/override', requirePermission('certificates.iss
 // ('faculty'), or all of them ('all').
 app.post('/api/admin/certificates/issue', requirePermission('certificates.issue'), async (req, res, next) => {
   try {
-    const scope = ['conference', 'workshops', 'faculty', 'all'].includes(req.body.scope) ? req.body.scope : null;
+    const scope = ['conference', 'workshops', 'workshop_faculty', 'faculty', 'roles', 'all'].includes(req.body.scope) ? req.body.scope : null;
     if (!scope) return res.status(400).json({ success: false, error: 'Choose what to issue.' });
     const only = Array.isArray(req.body.phones) && req.body.phones.length ? new Set(req.body.phones.map(String)) : null;
-    const counts = { MMC: 0, CONF: 0, WORKSHOP: 0, FACULTY: 0 };
+    const counts = Object.fromEntries(CERT_KINDS.map((k) => [k, 0]));
     const doing = (s) => scope === 'all' || scope === s;
     for (const p of await certificateCandidates()) {
       if (only && !only.has(p.phone)) continue;
@@ -11004,8 +11153,22 @@ app.post('/api/admin/certificates/issue', requirePermission('certificates.issue'
         await issueCertificate(req, p, 'FACULTY');
         counts.FACULTY++;
       }
+      if (doing('workshop_faculty')) {
+        for (const w of p.workshopFaculty || []) {
+          if (!w.eligible || w.issued) continue;
+          await issueCertificate(req, p, 'WORKSHOP_FACULTY', { optionId: w.optionId, name: w.name, date: w.date });
+          counts.WORKSHOP_FACULTY++;
+        }
+      }
+      if (doing('roles')) {
+        for (const r of p.roles || []) {
+          if (!r.eligible || r.issued) continue;
+          await issueCertificate(req, p, r.kind, null, certSessionList(r.sessions));
+          counts[r.kind]++;
+        }
+      }
     }
-    res.json({ success: true, issued: counts, total: counts.MMC + counts.CONF + counts.WORKSHOP + counts.FACULTY });
+    res.json({ success: true, issued: counts, total: Object.values(counts).reduce((a, b) => a + b, 0) });
   } catch (err) {
     next(err);
   }
@@ -11070,7 +11233,7 @@ app.post('/api/admin/certificates/:id/revoke', requirePermission('certificates.i
 app.get('/api/certificates/mine', requireAuth, async (req, res, next) => {
   try {
     const rows = await dbAll('SELECT id, cert_no, kind, workshop_name, issued_at FROM certificates WHERE phone_number = ? AND revoked_at IS NULL ORDER BY id', [req.session.phone]);
-    res.json({ certificates: rows.map((c) => ({ ...c, label: c.kind === 'WORKSHOP' ? `Workshop: ${c.workshop_name}` : CERT_KIND_LABEL[c.kind] })) });
+    res.json({ certificates: rows.map((c) => ({ ...c, label: certKindLabel(c) })) });
   } catch (err) {
     next(err);
   }
@@ -11094,7 +11257,7 @@ app.get('/verify/:code', async (req, res, next) => {
     const code = String(req.params.code || '').toUpperCase();
     const c = /^[A-Z0-9]{6,16}$/.test(code) ? await dbGet('SELECT * FROM certificates WHERE verify_code = ?', [code]) : null;
     const esc = escapeHtml;
-    const what = c ? (c.kind === 'WORKSHOP' ? `Workshop: ${c.workshop_name}` : CERT_KIND_LABEL[c.kind]) : '';
+    const what = c ? certKindLabel(c) : '';
     const state = !c ? { tone: '#b91c1c', bg: '#fef2f2', head: 'Not found', text: 'No certificate has this code. Check it against the one printed under the QR code.' }
       : c.revoked_at ? { tone: '#b45309', bg: '#fffbeb', head: 'Withdrawn', text: `This certificate was withdrawn on ${esc(new Date(c.revoked_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' }))}.` }
         : { tone: '#047857', bg: '#ecfdf5', head: 'Valid certificate', text: 'This certificate was issued by the organisers and stands.' };

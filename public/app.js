@@ -16364,9 +16364,13 @@ function mealSearch() {
 // --- CERTIFICATES (admin) ---
 const certState = { people: [], issued: {}, kinds: {}, settings: null };
 const CERT_BADGE = {
-  MMC: 'bg-indigo-100 text-indigo-800 border-indigo-300', CONF: 'bg-emerald-100 text-emerald-800 border-emerald-300',
-  WORKSHOP: 'bg-sky-100 text-sky-800 border-sky-300', FACULTY: 'bg-amber-100 text-amber-800 border-amber-300',
+  MMC: 'bg-indigo-100 text-indigo-800 border-indigo-300', NURSING: 'bg-teal-100 text-teal-800 border-teal-300', CONF: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+  WORKSHOP: 'bg-sky-100 text-sky-800 border-sky-300', WORKSHOP_FACULTY: 'bg-sky-100 text-sky-900 border-sky-400', FACULTY: 'bg-amber-100 text-amber-800 border-amber-300',
+  SPEAKER: 'bg-violet-100 text-violet-800 border-violet-300', JUDGE: 'bg-violet-100 text-violet-800 border-violet-300', CHAIR: 'bg-violet-100 text-violet-800 border-violet-300',
+  MODERATOR: 'bg-violet-100 text-violet-800 border-violet-300', PANELIST: 'bg-violet-100 text-violet-800 border-violet-300',
 };
+const CERT_CONF_WORD = { MMC: 'MMC points', NURSING: 'Nursing points', CONF: 'Participation' };
+const CERT_ROLE_WORD = { SPEAKER: 'Speaker', JUDGE: 'Judge', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist' };
 
 async function renderCertificates() {
   const res = await fetch('/api/admin/certificates/candidates');
@@ -16379,12 +16383,18 @@ async function renderCertificates() {
   const dueConf = p.filter((x) => x.conference.kind && !x.conference.issued).length;
   const dueWs = p.reduce((n, x) => n + x.workshops.filter((w) => w.eligible && !w.issued).length, 0);
   const dueFac = p.filter((x) => x.faculty && x.faculty.eligible && !x.faculty.issued).length;
+  const dueWf = p.reduce((n, x) => n + (x.workshopFaculty || []).filter((w) => w.eligible && !w.issued).length, 0);
+  const dueRoles = p.reduce((n, x) => n + (x.roles || []).filter((r) => r.eligible && !r.issued).length, 0);
+  const issuedRoles = ['SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST'].reduce((n, k) => n + (certState.issued[k] || 0), 0);
   const stat = (label, value, note) => `<div class="bg-white rounded-xl border border-slate-200 p-3"><p class="text-[11px] font-bold text-slate-500 uppercase tracking-wide">${esc(label)}</p>
     <p class="text-2xl font-extrabold text-slate-800 tabular-nums">${value}</p><p class="text-[11px] text-slate-500">${esc(note)}</p></div>`;
   document.getElementById('cert-stats').innerHTML = [
     stat('MMC points', p.filter((x) => x.conference.kind === 'MMC').length, `${certState.issued.MMC || 0} issued`),
+    stat('Nursing points', p.filter((x) => x.conference.kind === 'NURSING').length, `${certState.issued.NURSING || 0} issued`),
     stat('Participation', p.filter((x) => x.conference.kind === 'CONF').length, `${certState.issued.CONF || 0} issued`),
     stat('Workshops', p.reduce((n, x) => n + x.workshops.filter((w) => w.eligible).length, 0), `${certState.issued.WORKSHOP || 0} issued`),
+    stat('Workshop faculty', p.reduce((n, x) => n + (x.workshopFaculty || []).filter((w) => w.eligible).length, 0), `${certState.issued.WORKSHOP_FACULTY || 0} issued`),
+    stat('Roles', p.reduce((n, x) => n + (x.roles || []).filter((r) => r.eligible).length, 0), `speaker, judge, chair… · ${issuedRoles} issued`),
     stat('Faculty', p.filter((x) => x.faculty && x.faculty.eligible).length, `${certState.issued.FACULTY || 0} issued`),
     stat('Not yet', p.filter((x) => !x.conference.kind && !x.notRegistered).length, 'for the conference'),
   ].join('');
@@ -16399,6 +16409,10 @@ async function renderCertificates() {
   const facBtn = document.getElementById('cert-issue-fac');
   facBtn.textContent = `Issue faculty certificates (${dueFac} due)`;
   facBtn.disabled = !dueFac;
+  const wfBtn = document.getElementById('cert-issue-wf');
+  if (wfBtn) { wfBtn.textContent = `Issue workshop faculty certificates (${dueWf} due)`; wfBtn.disabled = !dueWf; }
+  const rolesBtn = document.getElementById('cert-issue-roles');
+  if (rolesBtn) { rolesBtn.textContent = `Issue speaker, judge, chair, moderator and panelist certificates (${dueRoles} due)`; rolesBtn.disabled = !dueRoles; }
   renderCertificateList();
 }
 
@@ -16408,15 +16422,20 @@ function renderCertificateList() {
   const mayIssue = can('certificates.issue');
   const shown = certState.people.filter((x) => {
     if (term && ![x.name, x.registrationNumber].some((v) => String(v || '').toLowerCase().includes(term))) return false;
-    if (filter === 'due') return (x.conference.kind && !x.conference.issued) || x.workshops.some((w) => w.eligible && !w.issued) || !!(x.faculty && x.faculty.eligible && !x.faculty.issued);
+    if (filter === 'due') return (x.conference.kind && !x.conference.issued) || x.workshops.some((w) => w.eligible && !w.issued) || !!(x.faculty && x.faculty.eligible && !x.faculty.issued)
+      || (x.workshopFaculty || []).some((w) => w.eligible && !w.issued) || (x.roles || []).some((r) => r.eligible && !r.issued);
+    if (filter === 'roles') return (x.roles || []).length > 0;
+    if (filter === 'wf') return (x.workshopFaculty || []).length > 0;
+    if (filter === 'nursingwait') return !!x.nursingCategory && /Nursing points details/.test(x.conference.whyNot || '');
     if (filter === 'faculty') return !!x.faculty;
     // Everyone by default: faculty who have not registered too, as they have
     // a Faculty certificate due.
     if (filter === 'registered') return !x.notRegistered;
-    if (filter === 'MMC' || filter === 'CONF') return x.conference.kind === filter;
+    if (filter === 'MMC' || filter === 'NURSING' || filter === 'CONF') return x.conference.kind === filter;
     if (filter === 'nocouncil') return x.mmcCategory && !x.councilRegNo;
     if (filter === 'not') return !x.conference.kind && !x.notRegistered;
-    if (filter === 'issued') return !!x.conference.issued || x.workshops.some((w) => w.issued) || !!(x.faculty && x.faculty.issued);
+    if (filter === 'issued') return !!x.conference.issued || x.workshops.some((w) => w.issued) || !!(x.faculty && x.faculty.issued)
+      || (x.workshopFaculty || []).some((w) => w.issued) || (x.roles || []).some((r) => r.issued);
     return true;
   });
   setText('cert-count', `Showing ${shown.length} of ${certState.people.length}`);
@@ -16426,8 +16445,8 @@ function renderCertificateList() {
       + ` <button type="button" onclick="revokeCertificate(${Number(c.id)})" class="text-xs text-rose-600 hover:underline">Withdraw</button>` : '');
   document.getElementById('cert-list').innerHTML = shown.map((x) => {
     const c = x.conference;
-    const conf = c.issued ? `${badge(c.issued.kind, c.issued.kind === 'MMC' ? 'MMC points' : 'Participation')} ${issuedLink(c.issued)}`
-      : c.kind ? `${badge(c.kind, c.kind === 'MMC' ? 'MMC points · due' : 'Participation · due')}`
+    const conf = c.issued ? `${badge(c.issued.kind, CERT_CONF_WORD[c.issued.kind] || 'Participation')} ${issuedLink(c.issued)}`
+      : c.kind ? `${badge(c.kind, `${CERT_CONF_WORD[c.kind] || 'Participation'} · due`)}`
         : `<span class="text-xs text-slate-500">${esc(c.whyNot || '')}</span>`;
     const confOv = mayIssue && !c.issued && !x.notRegistered ? (c.override
       ? ` <button type="button" onclick="setCertificateOverride('${esc(x.phone)}', 'CONF', null)" class="text-xs text-amber-700 hover:underline">${c.override.decision === 'INCLUDE' ? 'Included' : 'Excluded'} by hand — undo</button>`
@@ -16446,13 +16465,23 @@ function renderCertificateList() {
           ? ` <button type="button" onclick="setCertificateOverride('${esc(f.key)}', 'FAC', null)" class="text-amber-700 hover:underline">Excluded by hand — undo</button>`
           : ` <button type="button" onclick="setCertificateOverride('${esc(f.key)}', 'FAC', 'EXCLUDE')" class="text-slate-500 hover:underline">Exclude</button>`) : ''}
       </div>`;
+    // A workshop's faculty, and each programme role: withheld by hand only.
+    const exclusion = (key, scope, ov) => (!mayIssue ? '' : ov
+      ? ` <button type="button" onclick="setCertificateOverride('${esc(key)}', '${esc(scope)}', null)" class="text-amber-700 hover:underline">Excluded by hand — undo</button>`
+      : ` <button type="button" onclick="setCertificateOverride('${esc(key)}', '${esc(scope)}', 'EXCLUDE')" class="text-slate-500 hover:underline">Exclude</button>`);
+    const wf = (x.workshopFaculty || []).map((w) => `<div class="text-xs mt-1">Workshop faculty, <span class="font-semibold text-slate-700">${esc(w.name)}</span>:
+        ${w.issued ? `${badge('WORKSHOP_FACULTY', 'Issued')} ${issuedLink(w.issued)}` : w.eligible ? badge('WORKSHOP_FACULTY', 'Due') : `<span class="text-slate-500">${esc(w.whyNot || '')}</span>`}
+        ${w.issued ? '' : exclusion(x.phone, w.scope, w.override)}</div>`).join('');
+    const roles = (x.roles || []).map((r) => `<div class="text-xs mt-1">${esc(CERT_ROLE_WORD[r.kind])}: <span class="text-slate-600">${esc(r.sessions.join('; '))}</span>
+        ${r.issued ? `${badge(r.kind, 'Issued')} ${issuedLink(r.issued)}` : r.eligible ? badge(r.kind, 'Due') : `<span class="text-slate-500">${esc(r.whyNot || '')}</span>`}
+        ${r.issued ? '' : exclusion(r.key, `role:${r.kind}`, r.override)}</div>`).join('');
     return `<div class="px-3 py-2.5">
       <div class="flex flex-wrap items-baseline gap-x-2">
         <span class="font-semibold text-slate-800">${esc(x.name)}</span>
         <span class="text-xs text-slate-400">${esc([x.registrationNumber, x.category, x.councilRegNo ? `${x.councilName || 'Council'} ${x.councilRegNo}` : (x.mmcCategory ? 'no council number' : '')].filter(Boolean).join(' · '))}</span>
       </div>
       <div class="text-xs mt-1">Conference: ${conf}${confOv}</div>
-      ${ws}${fac}
+      ${ws}${wf}${roles}${fac}
     </div>`;
   }).join('') || '<p class="px-3 py-6 text-center text-sm text-slate-400">Nobody to show.</p>';
 }
@@ -16473,8 +16502,9 @@ async function setCertificateOverride(phone, scope, decision) {
 }
 
 function issueCertificatesQuestion(scope) {
-  const what = { conference: 'conference certificate', workshops: 'workshop certificate', faculty: 'faculty certificate' }[scope];
-  const who = scope === 'faculty' ? 'Faculty with an account can download theirs from the portal; for the rest, download it here.' : 'The delegate can download it from the portal.';
+  const what = { conference: 'conference certificate', workshops: 'workshop certificate', faculty: 'faculty certificate',
+    workshop_faculty: 'workshop faculty certificate', roles: 'speaker, judge, chairperson, moderator and panelist certificate' }[scope];
+  const who = ['faculty', 'roles', 'workshop_faculty'].includes(scope) ? 'Faculty with an account can download theirs from the portal; for the rest, download it here.' : 'The delegate can download it from the portal.';
   return `Issue every ${what} now due? Each gets its number. ${who}`;
 }
 
@@ -16485,8 +16515,11 @@ async function issueCertificates(scope) {
   })).json();
   if (!data.success) return showToast(data.error || 'Could not issue.');
   const i = data.issued;
-  showToast(scope === 'conference' ? `Issued ${i.MMC} with MMC points and ${i.CONF} participation certificates.`
-    : scope === 'faculty' ? `Issued ${i.FACULTY} faculty certificates.` : `Issued ${i.WORKSHOP} workshop certificates.`, 'success');
+  showToast(scope === 'conference' ? `Issued ${i.MMC} with MMC points, ${i.NURSING} with Nursing points and ${i.CONF} participation certificates.`
+    : scope === 'faculty' ? `Issued ${i.FACULTY} faculty certificates.`
+      : scope === 'workshop_faculty' ? `Issued ${i.WORKSHOP_FACULTY} workshop faculty certificates.`
+        : scope === 'roles' ? `Issued ${i.SPEAKER} speaker, ${i.JUDGE} judge, ${i.CHAIR} chairperson, ${i.MODERATOR} moderator and ${i.PANELIST} panelist certificates.`
+          : `Issued ${i.WORKSHOP} workshop certificates.`, 'success');
   renderCertificates();
 }
 
@@ -16497,6 +16530,8 @@ function issuedCertificate(id) {
     const w = x.workshops.find((y) => y.issued && y.issued.id === id);
     if (w) return w.issued;
     if (x.faculty && x.faculty.issued && x.faculty.issued.id === id) return x.faculty.issued;
+    const other = [...(x.workshopFaculty || []), ...(x.roles || [])].find((y) => y.issued && y.issued.id === id);
+    if (other) return other.issued;
   }
   return null;
 }
@@ -16547,6 +16582,16 @@ async function renderCertificateSettings() {
   document.getElementById('cs-mmc-points').value = d.settings.mmc.points || '';
   document.getElementById('cs-categories').innerHTML = d.categories.map((c) => `<label class="flex items-center gap-1.5">
     <input type="checkbox" class="cs-category" value="${esc(c.value)}" ${d.settings.eligibleCategories.includes(c.value) ? 'checked' : ''}> ${esc(c.label)}</label>`).join('');
+  const n = d.settings.nursing || {};
+  if (document.getElementById('cs-nursing-council')) {
+    document.getElementById('cs-nursing-council').value = n.councilLabel || '';
+    document.getElementById('cs-nursing-no').value = n.accreditationNo || '';
+    document.getElementById('cs-nursing-points').value = n.points || '';
+    document.getElementById('cs-nursing-categories').innerHTML = d.categories.map((c) => `<label class="flex items-center gap-1.5">
+      <input type="checkbox" class="cs-nursing-category" value="${esc(c.value)}" ${(n.categories || []).includes(c.value) ? 'checked' : ''}> ${esc(c.label)}</label>`).join('');
+    setText('cs-nursing-state', n.accreditationNo && n.points ? 'Set: nurses in these categories receive the Nursing certificate.'
+      : 'Not set yet: nurses in these categories wait for it, and are not given the participation certificate meanwhile.');
+  }
   document.getElementById('cs-lunch').value = d.settings.attendance.lunchSplit;
   document.getElementById('cs-show-from').value = d.settings.attendance.showFrom || '';
   setText('cs-show-from-note', d.settings.attendance.showFrom ? '' : `Blank: the day before the conference${d.settings.attendance.showFromEffective ? ` (${formatFullDate(d.settings.attendance.showFromEffective)})` : ''}.`);
@@ -16639,6 +16684,12 @@ async function saveCertificateSettings() {
   const ok = await putCertificateSettings({
     mmc: { accreditationNo: document.getElementById('cs-mmc-no').value, points: document.getElementById('cs-mmc-points').value },
     eligibleCategories: Array.from(document.querySelectorAll('.cs-category')).filter((b) => b.checked).map((b) => b.value),
+    nursing: document.getElementById('cs-nursing-no') ? {
+      councilLabel: document.getElementById('cs-nursing-council').value,
+      accreditationNo: document.getElementById('cs-nursing-no').value,
+      points: document.getElementById('cs-nursing-points').value,
+      categories: Array.from(document.querySelectorAll('.cs-nursing-category')).filter((b) => b.checked).map((b) => b.value),
+    } : undefined,
     attendance: { lunchSplit: document.getElementById('cs-lunch').value, earlyMinutes: Number(document.getElementById('cs-early').value), showFrom: document.getElementById('cs-show-from').value },
   });
   if (ok) renderCertificateSettings();

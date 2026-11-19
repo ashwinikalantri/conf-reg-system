@@ -7,15 +7,17 @@
       <div class="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 class="text-lg font-bold text-slate-800">Certificates</h2>
-          <p class="text-xs text-slate-500">The conference: present at a session before lunch and one after, and paid. With MMC points for doctors and medical postgraduates who have given a council number. A workshop: present at it. Faculty: everyone on the Faculty list who is not cancelled.</p>
+          <p class="text-xs text-slate-500">The conference: present at a session before lunch and one after, and paid; with MMC points for doctors and medical postgraduates who have given a council number, with Nursing points for the nursing categories. A workshop: present at it, and its feedback given; its faculty: on its roster or in its sessions. Speaker, judge, chairperson, moderator and panelist: from the programme, one per role naming the sessions. Faculty: everyone on the Faculty list who is not cancelled.</p>
         </div>
         <div id="cert-issue-btns" class="hidden flex flex-wrap gap-2 w-full sm:w-auto">
           <button type="button" onclick="issueCertificates('conference')" id="cert-issue-conf" class="flex-1 sm:flex-none px-4 py-2 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Issue conference certificates</button>
           <button type="button" onclick="issueCertificates('workshops')" id="cert-issue-ws" class="flex-1 sm:flex-none px-4 py-2 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Issue workshop certificates</button>
           <button type="button" onclick="issueCertificates('faculty')" id="cert-issue-fac" class="flex-1 sm:flex-none px-4 py-2 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Issue faculty certificates</button>
+          <button type="button" onclick="issueCertificates('workshop_faculty')" id="cert-issue-wf" class="flex-1 sm:flex-none px-4 py-2 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Issue workshop faculty certificates</button>
+          <button type="button" onclick="issueCertificates('roles')" id="cert-issue-roles" class="flex-1 sm:flex-none px-4 py-2 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Issue role certificates</button>
         </div>
       </div>
-      <div id="cert-stats" class="grid grid-cols-2 sm:grid-cols-5 gap-3"></div>
+      <div id="cert-stats" class="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3"></div>
       <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
           <select id="cert-filter" onchange="renderCertificateList()" aria-label="Show" class="h-10 px-2 border border-slate-300 rounded-lg text-sm bg-white">
@@ -23,7 +25,11 @@
             <option value="registered">Registered delegates</option>
             <option value="due">Due, not yet issued</option>
             <option value="MMC">Qualifies: MMC points</option>
+            <option value="NURSING">Qualifies: Nursing points</option>
             <option value="CONF">Qualifies: participation</option>
+            <option value="nursingwait">Nursing: waiting for the points details</option>
+            <option value="wf">Workshop faculty</option>
+            <option value="roles">Speakers, judges, chairs, moderators, panelists</option>
             <option value="not">Does not qualify yet</option>
             <option value="nocouncil">Doctor or PG without a council number</option>
             <option value="faculty">Faculty</option>
