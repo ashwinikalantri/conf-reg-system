@@ -1,7 +1,7 @@
 // The scientific programme as a printable A4 PDF (owner, 20 Nov 2026):
-// day by day, time by time -- each session with its hall, speakers and
-// chairs; breaks and meals as a thin band. Drawn from the same rows as the
-// website's programme page (website.js programmeDay), so the two agree.
+// day by day, then hall by hall ("show programme by Hall and time"), each
+// hall's sessions in time order with speakers and chairs; the day's breaks
+// and meals first, as bands. Shaped in website.js (programmeByHall).
 // Served at /programme.pdf on the website's address and /website/programme.pdf.
 const path = require('path');
 const { ensureTextDecoders } = require('./report-pdf');
@@ -20,8 +20,8 @@ function loadPdfKit() {
   return PDFDocument;
 }
 
-// days: [{ label, rows: [{ kind: 'talks', time, items: [{ when, label, title,
-// hall, speakers, chairs, chairLabel }] } | { kind: 'break', text }] }]
+// days: [{ label, breaks: [text], halls: [{ name, items: [{ time, when, label,
+// title, speakers, chairs, chairLabel }] }] }]
 // meta: { conference, acronym, dates, venue, url }
 function renderProgrammePdf(days, meta) {
   const PDF = loadPdfKit();
@@ -52,7 +52,7 @@ function renderProgrammePdf(days, meta) {
     doc.font('bold').fontSize(11);
     h += doc.heightOfString(it.title, { width: BODY_W }) + 1;
     doc.font('body').fontSize(9);
-    h += doc.heightOfString(`${it.when} · ${it.hall}`, { width: BODY_W }) + 2;
+    h += doc.heightOfString(it.when, { width: BODY_W }) + 2;
     if (it.speakers) h += doc.heightOfString(`Speakers: ${it.speakers}`, { width: BODY_W }) + 1;
     if (it.chairs) h += doc.heightOfString(`${it.chairLabel}: ${it.chairs}`, { width: BODY_W }) + 1;
     return h + 12;
@@ -65,26 +65,39 @@ function renderProgrammePdf(days, meta) {
     const ly = doc.y + 4;
     doc.moveTo(M.left, ly).lineTo(M.left + W, ly).lineWidth(1.2).strokeColor('#d6b46a').stroke();
     doc.y = ly + 10;
-    for (const row of day.rows) {
-      if (row.kind === 'break') {
-        doc.font('body').fontSize(9);
-        const h = doc.heightOfString(row.text, { width: W - 20 }) + 10;
-        ensure(h + 6);
-        const y = doc.y;
-        doc.rect(M.left, y, W, h).fill(BAND);
-        doc.fillColor(MUTED).font('body').fontSize(9).text(row.text, M.left + 10, y + 5, { width: W - 20 });
-        doc.y = y + h + 6;
-        continue;
-      }
-      row.items.forEach((it, i) => {
+    // The day's breaks and meals, together, before the halls.
+    for (const text of day.breaks || []) {
+      doc.font('body').fontSize(9);
+      const h = doc.heightOfString(text, { width: W - 20 }) + 10;
+      ensure(h + 4);
+      const y = doc.y;
+      doc.rect(M.left, y, W, h).fill(BAND);
+      doc.fillColor(MUTED).font('body').fontSize(9).text(text, M.left + 10, y + 5, { width: W - 20 });
+      doc.y = y + h + 4;
+    }
+    if ((day.breaks || []).length) doc.y += 6;
+    for (const hall of day.halls) {
+      // A hall's heading stays with its first session.
+      const first = hall.items[0] ? measure(hall.items[0]) : 0;
+      ensure(30 + first);
+      const hy = doc.y;
+      doc.rect(M.left, hy, W, 22).fill(NAVY);
+      doc.fillColor('#ffffff').font('bold').fontSize(11).text(hall.name, M.left + 10, hy + 4, { width: W - 20, lineBreak: false });
+      doc.y = hy + 30;
+      hall.items.forEach((it) => {
         const h = measure(it);
-        ensure(h);
+        if (doc.y + h > bottom()) {
+          doc.addPage(); doc.y = M.top;
+          // Carried over: say which hall this is.
+          doc.fillColor(NAVY).font('bold').fontSize(10).text(`${hall.name} (continued)`, M.left, doc.y, { width: W });
+          doc.y += 6;
+        }
         const y = doc.y;
-        if (i === 0) doc.fillColor(NAVY).font('bold').fontSize(10.5).text(row.time, M.left, y + 1, { width: TIME_W - 10 });
+        doc.fillColor(NAVY).font('bold').fontSize(10.5).text(it.time, M.left, y + 1, { width: TIME_W - 10 });
         doc.y = y;
         if (it.label) doc.fillColor(GOLD).font('bold').fontSize(8).text(it.label.toUpperCase(), BODY_X, doc.y, { width: BODY_W, characterSpacing: 0.6 });
         doc.fillColor(INK).font('bold').fontSize(11).text(it.title, BODY_X, doc.y + 1, { width: BODY_W });
-        doc.fillColor(MUTED).font('body').fontSize(9).text(`${it.when} · ${it.hall}`, BODY_X, doc.y + 1, { width: BODY_W });
+        doc.fillColor(MUTED).font('body').fontSize(9).text(it.when, BODY_X, doc.y + 1, { width: BODY_W });
         if (it.speakers) {
           doc.fillColor(INK).font('bold').fontSize(9).text('Speakers: ', BODY_X, doc.y + 2, { width: BODY_W, continued: true })
             .font('body').text(it.speakers);
@@ -97,6 +110,7 @@ function renderProgrammePdf(days, meta) {
         doc.moveTo(BODY_X, end).lineTo(M.left + W, end).lineWidth(0.5).strokeColor(RULE).stroke();
         doc.y = end + 6;
       });
+      doc.y += 8;
     }
   });
 

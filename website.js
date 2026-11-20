@@ -191,6 +191,35 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
     return rows;
   }
 
+  // One day by hall (owner, 20 Nov 2026: "show programme by Hall and
+  // time"): the breaks and meals first, then each hall, in the halls' own
+  // order, with its sessions in time order.
+  function programmeByHall(ofDay, label) {
+    const breaks = ofDay.filter(isBreak).sort((a, b) => a.start_time.localeCompare(b.start_time));
+    const seen = new Set();
+    const breakLines = [];
+    for (const b of breaks) {
+      const key = `${b.start_time}|${b.end_time}|${b.title}`;
+      const same = breaks.filter((x) => `${x.start_time}|${x.end_time}|${x.title}` === key);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      breakLines.push(`${timeRange(b)} · ${b.title}, ${[...new Set(same.map((x) => x.hall))].join(', ')}`);
+    }
+    const talks = ofDay.filter((s) => !isBreak(s));
+    const halls = [...new Map(talks.map((s) => [s.hall, s.hall_sort == null ? 999 : Number(s.hall_sort)])).entries()]
+      .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0])).map(([name]) => name);
+    return {
+      label, breaks: breakLines,
+      halls: halls.map((name) => ({
+        name,
+        items: talks.filter((s) => s.hall === name).sort((a, b) => a.start_time.localeCompare(b.start_time)).map((s) => ({
+          time: time12(s.start_time), when: timeRange(s), label: s.label || '', title: s.title,
+          speakers: s.speakers || '', chairs: s.chairs || '', chairLabel: chairLabel(s),
+        })),
+      })),
+    };
+  }
+
   // The whole programme as a printable A4 PDF (owner, 20 Nov 2026).
   async function programmePdf(req, res, next) {
     try {
@@ -198,8 +227,7 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
       const dates = [...new Set(all.map((s) => s.session_date))].sort();
       const C = d.CONFERENCE;
       const pdf = await require('./programme-pdf').renderProgrammePdf(
-        // The page shows a time as parts (t12); the PDF prints it as text.
-        dates.map((day) => ({ label: dayLong(day), rows: programmeRows(all.filter((s) => s.session_date === day)).map((r) => (r.kind === 'talks' ? { ...r, time: `${r.time.t} ${r.time.ap}` } : r)) })),
+        dates.map((day) => programmeByHall(all.filter((s) => s.session_date === day), dayLong(day))),
         { conference: C.name, acronym: C.acronym, venue: C.location, dates: d.formatConferenceDates ? d.formatConferenceDates() : '', url: host ? `${host}/programme` : '' });
       res.set('Content-Type', 'application/pdf');
       res.set('Content-Disposition', `inline; filename="${String(C.acronym || 'Conference').replace(/[^A-Za-z0-9]+/g, '-')}-Scientific-Programme.pdf"`);
