@@ -36,7 +36,7 @@ const { call, adminLogin, appFile, check, report, openDb } = require('./harness'
     check('with mail off here, Send fails', d.body.failed === 1 && d.body.sent === 0, d.body);
     check('...and the abstract is not marked told', !(await row()).decision_sent_at);
     check('a successful send marks it, for the format the email names, if it still has that one',
-      /sent\+\+;\n\s*await noteHeldEmailSent\(row\);/.test(src)
+      /sent\+\+;\n\s*await noteHeldEmailSent\(row, req\);/.test(src)
       && /UPDATE abstracts SET decision_sent_at = \? WHERE id = \? AND status = 'ACCEPTED' AND allocation = \? AND decision_sent_at IS NULL/.test(src));
     check('each decision email names its abstract and format, and drops an earlier one still waiting',
       (src.match(/<\/p>`\), ref\);/g) || []).length === 2

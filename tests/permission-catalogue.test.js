@@ -146,6 +146,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'DELETE /api/guests/drivers/:id': 'Deletes a driver. guests.manage.',
     // The Day plan (20 Nov 2026).
     'POST /api/guests/drivers/:id/link': 'Makes, or with reset makes anew, a driver\'s own link to their trips (/driver/<token>, no sign-in). guests.travel, like editing the driver.',
+    'POST /api/guests/:id/arrangements-email': 'Holds an email to one faculty member saying what has been arranged for their travel and stay; the Send / Cancel popup decides whether it goes. guests.edit -- the coordinators who already mark faculty and edit their status.',
     'POST /api/guests/:id/checkin': 'Marks a faculty member checked in at their accommodation, or takes it back. guests.view to reach it; then whoever may set their stay -- guests.stay, or their accommodation volunteer -- as PUT /api/guests/:id checks the field.',
     'POST /api/guests/rooms': 'Adds a room. guests.stay.',
     'PUT /api/guests/rooms/:id': 'Edits a room. guests.stay.',

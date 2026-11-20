@@ -142,7 +142,7 @@ check('...each part a page of its own: the menu shows one, marks it, and keeps i
 // The faculty list, one line a person since 20 Nov 2026: five columns that
 // fit a laptop without scrolling, no Volunteers (in the panel).
 const listFn = js.slice(js.indexOf('function renderGuestList()'), js.indexOf('// --- 12-hour times ---'));
-check('the faculty list: Faculty, Arrives, Leaves, Stay, Needs -- no Volunteers', !/>Volunteers</.test(listFn)
-  && /lg:grid-cols-\[minmax\(0,1\.5fr\)_minmax\(0,1fr\)_minmax\(0,1fr\)_minmax\(0,1fr\)_12rem\]/.test(listFn));
+check('the faculty list: Faculty, Arrives, Leaves, Stay, Needs, Travel & stay email -- no Volunteers', !/>Volunteers</.test(listFn)
+  && /lg:grid-cols-\[minmax\(0,1\.5fr\)_minmax\(0,1fr\)_minmax\(0,1fr\)_minmax\(0,1fr\)_12rem_10rem\]/.test(listFn));
 check('...special needs noted under the name', /Special needs: see their panel/.test(listFn));
 report();

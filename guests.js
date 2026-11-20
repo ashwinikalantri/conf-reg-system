@@ -594,6 +594,10 @@ function buildBoard({ guests = [], vehicles = [], drivers = [], rooms = [], list
         // Not a speaker, facilitator, chair or moderator in any session yet.
         noProgramme: !cancelled && !(g.sessions || []).length,
       },
+      // The arrangements email: sent when and by whom, and whether travel or
+      // stay has changed since.
+      arrangementsEmail: g.arrangements_sent_at ? { at: Number(g.arrangements_sent_at), by: g.arrangements_sent_by || null,
+        changed: !!g.arrangements_sent_print && g.arrangements_sent_print !== arrangementsPrint(g) } : null,
     };
   });
 
@@ -772,6 +776,98 @@ function guestsCsv(rows) {
 
 // The guests table. phone_number is the linked account, NULL until linked
 // (SQLite lets UNIQUE hold any number of NULLs).
+// --- The arrangements email (owner, 20 Nov 2026) ---
+// What has been arranged for one faculty member -- arrival and pickup,
+// stay, departure and drop, and whom to call -- sent only when someone
+// presses Email on their row, and only after the Send / Cancel popup. The
+// print is a short fingerprint of what the email said: kept when it is
+// sent, so the list can say the details changed since. Statuses moving on
+// (Assigned, Done) are not a change; a leg becoming "Not required" is.
+const ARRANGEMENT_FIELDS = ['arrival_date', 'arrival_time', 'arrival_mode', 'arrival_number', 'arrival_point', 'pickup_vehicle', 'pickup_driver',
+  'departure_date', 'departure_time', 'departure_mode', 'departure_number', 'departure_point', 'drop_vehicle', 'drop_driver',
+  'accommodation', 'room_no', 'checkin_date', 'checkout_date', 'stay_not_needed', 'transport_coordinator', 'accommodation_coordinator'];
+function arrangementsPrint(g) {
+  const u = travelInUse(g);
+  const text = [...ARRANGEMENT_FIELDS.map((f) => norm(u[f])), transferNotRequired(g.pickup_status), transferNotRequired(g.drop_status)].join('|');
+  // FNV-1a, 32 bits: enough to notice a change, nothing to keep secret.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193) >>> 0;
+  return h.toString(16).padStart(8, '0');
+}
+
+const LONG_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const LONG_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+// "Friday, 20 November"; "Friday, 20 November, 2:30 PM".
+function longDate(iso) {
+  if (!validDate(iso)) return iso || '';
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${LONG_DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]}, ${d} ${LONG_MONTHS[m - 1]}`;
+}
+function clock12(hhmm) {
+  const m = /^(\d{2}):(\d{2})$/.exec(String(hhmm || ''));
+  if (!m) return '';
+  const h = Number(m[1]);
+  return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
+}
+const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+// The email's subject and body (the server wraps it in the usual chrome).
+// drivers/vehicles give the driver's phone, as the driver sheets do: the
+// driver's own, else the car's. contacts: [{ role, name, phone }], role
+// as in "who looks after your travel".
+function arrangementsEmail(g, { drivers = [], vehicles = [], contacts = [], conference = '' } = {}) {
+  const u = travelInUse(g);
+  const when = (date, time) => [longDate(date), clock12(time)].filter(Boolean).join(', ');
+  const how = (mode, number) => [mode, number].filter((v) => !blank(v)).join(' ');
+  const phoneOf = (driver, vehicle) => {
+    const d = !blank(driver) && drivers.find((x) => norm(x.name) === norm(driver));
+    if (d && d.phone) return d.phone;
+    const v = !blank(vehicle) && vehicles.find((x) => norm(x.label) === norm(vehicle));
+    return (v && v.driver_phone) || null;
+  };
+  const tel = (p) => `<a href="tel:${escHtml(String(p).replace(/[^\d+]/g, ''))}" style="color:#244560;font-weight:700;text-decoration:none">${escHtml(p)}</a>`;
+  const muted = (t) => `<span style="color:#64748b">${t}</span>`;
+  const leg = (isArrival) => {
+    const [p, date, time, mode, number, point, vehicle, driver, status] = isArrival
+      ? ['arrival', u.arrival_date, u.arrival_time, u.arrival_mode, u.arrival_number, u.arrival_point, u.pickup_vehicle, u.pickup_driver, g.pickup_status]
+      : ['departure', u.departure_date, u.departure_time, u.departure_mode, u.departure_number, u.departure_point, u.drop_vehicle, u.drop_driver, g.drop_status];
+    if (blank(date)) return [[isArrival ? 'Arriving' : 'Leaving', muted(`We do not have your ${p} details yet. Please send them to us.`)]];
+    const rows = [[isArrival ? 'Arriving' : 'Leaving',
+      `<b>${escHtml(when(date, time))}</b>${how(mode, number) || !blank(point) ? `<br>${escHtml([how(mode, number), blank(point) ? '' : `${isArrival ? 'at' : 'from'} ${point}`].filter(Boolean).join(' · '))}` : ''}`]];
+    const label = isArrival ? 'Pickup' : 'Drop';
+    if (transferNotRequired(status)) rows.push([label, muted('Not needed: you are making your own way.')]);
+    else if (!blank(vehicle) || !blank(driver)) {
+      const phone = phoneOf(driver, vehicle);
+      rows.push([label, `${escHtml(isArrival ? `We will meet you${blank(point) ? '' : ` at ${point}`}.` : `We will take you${blank(point) ? '' : ` to ${point}`}.`)}`
+        + `${blank(vehicle) ? '' : `<br>Car: <b>${escHtml(vehicle)}</b>`}${blank(driver) ? '' : `<br>Driver: <b>${escHtml(driver)}</b>`}${phone ? `${blank(driver) ? '<br>Driver: ' : ', '}${tel(phone)}` : ''}`]);
+    } else rows.push([label, muted("Being arranged. We will send you the car and driver's details.")]);
+    return rows;
+  };
+  const stay = () => {
+    if (Number(g.stay_not_needed)) return [['Staying', muted('You are arranging your own stay.')]];
+    if (blank(g.accommodation)) return [['Staying', muted('Being arranged. We will tell you where you are staying.')]];
+    const from = g.checkin_date || g.arrival_date;
+    const to = g.checkout_date || g.departure_date;
+    const n = nightsBetween(from, to);
+    const dates = [from ? `Check in ${longDate(from)}` : '', to ? `check out ${longDate(to)}` : ''].filter(Boolean).join(', ');
+    return [['Staying', `<b>${escHtml(g.accommodation)}</b>${blank(g.room_no) ? '' : `, Room ${escHtml(g.room_no)}`}`
+      + `${dates ? `<br>${escHtml(dates)}${n ? ` (${n} night${n === 1 ? '' : 's'})` : ''}` : ''}`]];
+  };
+  const rows = [...leg(true), ...stay(), ...leg(false)];
+  const table = `<table style="width:100%;border-collapse:collapse;font-size:.9rem;margin:.75rem 0 1rem">${rows.map(([k, v]) => `<tr>
+      <td style="padding:.6rem .75rem .6rem 0;border-bottom:1px solid #eef3f6;color:#46708c;font-weight:700;vertical-align:top;width:6.5rem">${escHtml(k)}</td>
+      <td style="padding:.6rem 0;border-bottom:1px solid #eef3f6;color:#1e293b;vertical-align:top;line-height:1.45">${v}</td></tr>`).join('')}</table>`;
+  const people = contacts.filter((c) => c && !blank(c.name));
+  const whom = people.length
+    ? `<p style="margin:0 0 .4rem">If anything here is not right, or your plans change, please call:</p>
+       <ul style="margin:0 0 .5rem;padding-left:1.1rem">${people.map((c) => `<li style="margin:.2rem 0"><b>${escHtml(c.name)}</b>${c.role ? `, who looks after your ${escHtml(c.role)}` : ''}${c.phone ? `: ${tel(c.phone)}` : ''}</li>`).join('')}</ul>`
+    : '<p>If anything here is not right, or your plans change, please let the conference team know.</p>';
+  const body = `<p>Dear ${escHtml(g.name || 'Sir/Madam')},</p>
+    <p>Thank you for joining us as faculty${conference ? ` at ${escHtml(conference)}` : ''}. Here is what we have arranged for you.</p>
+    ${table}${whom}<p style="margin-top:1rem">We look forward to welcoming you.</p>`;
+  return { subject: `Your travel and stay${conference ? ` for ${conference}` : ''}`, title: 'Your travel and stay', body };
+}
+
 const GUEST_TABLE_SQL = (name) => `
   CREATE TABLE IF NOT EXISTS ${name} (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -786,7 +882,8 @@ const GUEST_TABLE_SQL = (name) => `
     created_at INTEGER NOT NULL, created_by TEXT, updated_at INTEGER, updated_by TEXT,
     linked_at INTEGER, linked_by TEXT,
     transport_not_needed INTEGER NOT NULL DEFAULT 0, stay_not_needed INTEGER NOT NULL DEFAULT 0,
-    checked_in_at INTEGER, checked_in_by TEXT
+    checked_in_at INTEGER, checked_in_by TEXT,
+    arrangements_sent_at INTEGER, arrangements_sent_by TEXT, arrangements_sent_print TEXT
   )`;
 // Columns added after the table first shipped, for a table already in the
 // newer (nullable phone_number) shape.
@@ -802,6 +899,11 @@ const LATER_COLUMNS = [
   // Checked in at their accommodation, from the Day plan (20 Nov 2026).
   ['checked_in_at', 'INTEGER'],
   ['checked_in_by', 'TEXT'],
+  // The arrangements email: when it was last sent, by whom, and its print
+  // (20 Nov 2026).
+  ['arrangements_sent_at', 'INTEGER'],
+  ['arrangements_sent_by', 'TEXT'],
+  ['arrangements_sent_print', 'TEXT'],
 ];
 
 // The first version of the table made phone_number NOT NULL -- every guest
@@ -845,5 +947,5 @@ module.exports = {
   validDate, validTime, addDays, joinDateTime, to12h, dateTime12, slotOf, slotLabels, validateDriver,
   validateGuestFields, forbiddenChanges, changedFields, autoStatusValues, arrivedMayFollow, ARRIVED, validateVehicle, validateRoom, validateSettings,
   nightsBetween, parseRoomNumbers, MAX_BULK_ROOMS,
-  buildBoard, guestsCsv,
+  buildBoard, guestsCsv, arrangementsPrint, arrangementsEmail,
 };

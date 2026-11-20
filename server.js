@@ -649,8 +649,14 @@ async function holdEmail(req, phone, subject, html, ref = null) {
   if (!emailEnabled() || !notifyToggle.email) return false;
   const u = await dbGet('SELECT email, full_name FROM users WHERE phone_number = ?', [phone]).catch(() => null);
   if (!u || !u.email) return false;
+  return holdEmailTo(req, u.email, u.full_name || null, subject, html, ref);
+}
+// The same, to an address in hand -- someone without an account, such as
+// faculty added by name.
+async function holdEmailTo(req, address, name, subject, html, ref = null) {
+  if (!emailEnabled() || !notifyToggle.email || !address) return false;
   const r = await dbRun(`INSERT INTO held_emails (to_address, to_name, subject, html, by_phone, status, created_at, ref)
-    VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)`, [u.email, u.full_name || null, subject, html, req.session.phone, Date.now(), ref]);
+    VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)`, [address, name, subject, html, req.session.phone, Date.now(), ref]);
   req.res.append('X-Held-Emails', String(r.lastID));
   return true;
 }
@@ -16162,10 +16168,18 @@ app.delete('/api/admin/poster-screens/:id', requirePermission('abstracts.assign'
 // --- HELD EMAILS ----------------------------------------------------------
 // What sending a held email changes. An abstract's decision marks it told --
 // only if it is still accepted for the format the email names.
-async function noteHeldEmailSent(row) {
+// A faculty member's arrangements email marks them emailed, with what it
+// said (its print), so the Faculty list can say when the details change.
+async function noteHeldEmailSent(row, req) {
   const m = /^abstract:(\d+):(ORAL|POSTER|AWARD)$/.exec(row.ref || '');
   if (m) {
     await dbRun("UPDATE abstracts SET decision_sent_at = ? WHERE id = ? AND status = 'ACCEPTED' AND allocation = ? AND decision_sent_at IS NULL", [Date.now(), Number(m[1]), m[2]]);
+  }
+  const a = /^guest:(\d+):arrangements:([0-9a-f]{8})$/.exec(row.ref || '');
+  if (a) {
+    await dbRun('UPDATE guests SET arrangements_sent_at = ?, arrangements_sent_by = ?, arrangements_sent_print = ? WHERE id = ?',
+      [Date.now(), req.session.name || req.session.phone, a[2], Number(a[1])]);
+    await recordAudit({ req, entityType: 'guest', entityId: a[1], action: 'GUEST_ARRANGEMENTS_EMAILED', oldValue: row.to_name || null, newValue: `Travel and stay email sent to ${row.to_address}` });
   }
 }
 
@@ -16199,7 +16213,7 @@ app.post('/api/admin/held-emails/decide', requireAuth, async (req, res, next) =>
         await recordAudit({ req, entityType: 'email', entityId: row.to_address, action: 'EMAIL_CANCELLED', oldValue: null, newValue: row.subject });
       } else if (await sendEmail(row.to_address, row.subject, row.html)) {
         sent++;
-        await noteHeldEmailSent(row);
+        await noteHeldEmailSent(row, req);
       } else {
         failed++;
         await dbRun("UPDATE held_emails SET status = 'FAILED' WHERE id = ?", [id]);
@@ -16973,6 +16987,44 @@ app.post('/api/guests/:id/checkin', requirePermission('guests.view'), async (req
     await recordAudit({ req, entityType: 'guest', entityId: String(current.id), action: 'GUEST_CHECKED_IN', oldValue: g.name,
       newValue: `Checked in: ${[current.accommodation, current.room_no].filter(Boolean).join(' · ')}${overall !== current.overall_status ? `; Overall Status: ${current.overall_status || '—'} → ${overall}` : ''}` });
     res.json({ success: true, changed: 1 });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The arrangements email (owner, 20 Nov 2026): what has been arranged for
+// one faculty member, sent only when someone presses Email on their row --
+// never by itself -- and, like every staff email, held for Send or Cancel.
+// An earlier one still waiting is dropped, so only the latest can go.
+app.post('/api/guests/:id/arrangements-email', requirePermission('guests.edit'), async (req, res, next) => {
+  try {
+    const [g] = await guestRowsJoined('WHERE g.id = ?', [req.params.id]);
+    if (!g) return res.status(404).json({ success: false, error: 'Faculty member not found.' });
+    if (String(g.overall_status || '').trim().toLowerCase() === guestLib.CANCELLED.toLowerCase()) {
+      return res.status(400).json({ success: false, error: 'They are Cancelled. Change their status first.' });
+    }
+    const to = String(g.email || '').trim();
+    if (!to) {
+      return res.status(400).json({ success: false, error: g.linked ? 'Their account has no email address.' : 'No email address for them. Add one with Edit.' });
+    }
+    if (!emailEnabled() || !notifyToggle.email) return res.status(400).json({ success: false, error: 'Email is switched off, so nothing can be sent.' });
+    const [drivers, vehicles, coords] = await Promise.all([
+      dbAll('SELECT name, phone FROM guest_drivers'),
+      dbAll('SELECT label, driver_phone FROM guest_vehicles'),
+      dbAll('SELECT phone_number, phone, salutation, full_name FROM users WHERE phone_number IN (?, ?)', [g.transport_coordinator || '', g.accommodation_coordinator || '']),
+    ]);
+    const contact = (role, phone) => {
+      const u = phone && coords.find((c) => c.phone_number === phone);
+      return u ? { role, name: [u.salutation, u.full_name].filter(Boolean).join(' ') || null, phone: displayPhone(u) } : null;
+    };
+    const contacts = [contact('travel', g.transport_coordinator), contact('stay', g.accommodation_coordinator)].filter(Boolean);
+    // One person looking after both: named once.
+    if (contacts.length === 2 && g.transport_coordinator === g.accommodation_coordinator) contacts.splice(0, 2, { ...contacts[0], role: 'travel and stay' });
+    const mail = guestLib.arrangementsEmail(g, { drivers, vehicles, contacts, conference: CONFERENCE.acronym || CONFERENCE.name });
+    await dbRun("UPDATE held_emails SET status = 'CANCELLED', decided_at = ? WHERE status = 'PENDING' AND ref LIKE ?", [Date.now(), `guest:${g.id}:arrangements:%`]);
+    const held = await holdEmailTo(req, to, g.name || null, mail.subject, emailWrap(mail.title, mail.body), `guest:${g.id}:arrangements:${guestLib.arrangementsPrint(g)}`);
+    if (!held) return res.status(400).json({ success: false, error: 'Email is switched off, so nothing can be sent.' });
+    res.json({ success: true });
   } catch (err) {
     next(err);
   }

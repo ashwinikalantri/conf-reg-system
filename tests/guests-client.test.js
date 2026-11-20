@@ -87,8 +87,8 @@ check('...and the day and time, 12-hour', />Fri 20 Nov · 09:00 am</.test(rowOf(
 check('what is needed, as chips: a car, a room', />Car</.test(rowOf('Alpha Arriving')) && />Room</.test(rowOf('Bravo Homeless')));
 check('a car chosen shows the car', />Car A</.test(rowOf('Bravo Homeless')));
 check('travel not known says so, and is needed', />Not known</.test(rowOf('Echo Typed')) && />Travel details</.test(rowOf('Echo Typed')));
-check('the chips count: All, Needs something, Travel not known, Staying, Own stay, Cancelled',
-  ['All', 'Needs something', 'Travel not known', 'Staying', 'Own stay', 'Cancelled'].every((c) => el('guests-chips').innerHTML.includes(`${c} <b`))
+check('the chips count: All, Needs something, Travel not known, Staying, Own stay, To email, Cancelled',
+  ['All', 'Needs something', 'Travel not known', 'Staying', 'Own stay', 'To email', 'Cancelled'].every((c) => el('guests-chips').innerHTML.includes(`${c} <b`))
   && /All <b class="ml-1\.5 tabular-nums ">4<\/b>/.test(el('guests-chips').innerHTML.replace(/\s+/g, ' ').replace(/All\s+<b/, 'All <b')), el('guests-chips').innerHTML);
 sb.__g.setGuestChip('cancelled');
 check('Cancelled, apart, struck through', /line-through">Charlie Cancelled/.test(el('guests-list').innerHTML) && !el('guests-list').innerHTML.includes('>Alpha Arriving<'));
@@ -403,6 +403,47 @@ check('...and nothing about sharing when alone', !/Sharing/.test(psb.stayOf({ ac
 const partLeg = psb.leg(null, null, 'Flight', '6E 123', null, null, 'Pending');
 check('a flight number or status with no date yet is shown', /Flight · 6E 123/.test(partLeg) && /Pending/.test(partLeg) && !/No vehicle/.test(partLeg));
 check('"No vehicle" only once there is a date to meet', /No vehicle/.test(psb.leg('2026-11-20')));
+
+console.log('\n== The travel & stay email ==');
+{
+  const mk = (extra) => G.buildBoard({ guests: [
+    { id: 1, name: 'Sent Same', email: 'a@x.org', arrival_date: '2026-11-21', arrangements_sent_at: Date.UTC(2026, 10, 20, 10), arrangements_sent_by: 'Tara', ...extra },
+    { id: 2, name: 'Never Sent', email: 'b@x.org' },
+    { id: 3, name: 'No Address' },
+    { id: 4, name: 'Gone Away', email: 'd@x.org', overall_status: 'Cancelled' },
+  ], lists, settings, today: '2026-11-19' });
+  const same = mk({});
+  same.guests[0].arrangements_sent_print = G.arrangementsPrint(same.guests[0]);
+  const fresh = G.buildBoard({ guests: same.guests, lists, settings, today: '2026-11-19' });
+  const e = load(['guests.view', 'guests.edit']);
+  e.sb.__set({ ...data, ...fresh });
+  e.sb.__g.setGuestChip('all');
+  e.sb.__g.renderGuestList();
+  const html = e.el('guests-list').innerHTML;
+  const rowOf2 = (n) => html.split('role="button"').find((r) => r.includes(n)) || '';
+  check('sent: a badge with the day, and Email again', /Emailed 20 Nov ✓/.test(rowOf2('Sent Same')) && />Email again</.test(rowOf2('Sent Same')), rowOf2('Sent Same'));
+  check('...who sent it, on hover', /title="Sent 20 Nov[^"]*by Tara"/.test(rowOf2('Sent Same')));
+  check('never sent: an Email button, no badge', />Email</.test(rowOf2('Never Sent')) && !/Emailed/.test(rowOf2('Never Sent')));
+  check('the button does not open the panel too', /onclick="event\.stopPropagation\(\); emailGuestArrangements\(2, this\)"/.test(rowOf2('Never Sent')));
+  check('no address: says so, no button', /No email address/.test(rowOf2('No Address')) && !/emailGuestArrangements/.test(rowOf2('No Address')));
+  e.sb.__g.setGuestChip('toemail');
+  const due = e.el('guests-list').innerHTML;
+  check('"To email": the ones not sent yet', /Never Sent/.test(due) && /No Address/.test(due) && !/Sent Same/.test(due) && !/Gone Away/.test(due));
+  const moved = G.buildBoard({ guests: [{ ...same.guests[0], arrival_time: '11:00' }], lists, settings, today: '2026-11-19' });
+  e.sb.__set({ ...data, ...moved });
+  e.sb.__g.setGuestChip('toemail');
+  const m = e.el('guests-list').innerHTML;
+  check('changed since: amber, and back on "To email"', /Emailed 20 Nov · changed since/.test(m) && /bg-amber-50/.test(m));
+  e.sb.__g.openGuestPanel(1);
+  check('the panel: when, by whom, what changed, and the button', /Sent 20 Nov[^<]*by Tara\. Their travel or stay has changed since\./.test(e.el('guest-panel').innerHTML)
+    && /emailGuestArrangements\(1, this\)/.test(e.el('guest-panel').innerHTML));
+  const v = load(['guests.view']);
+  v.sb.__set({ ...data, ...fresh });
+  v.sb.__g.setGuestChip('all');
+  v.sb.__g.renderGuestList();
+  check('without guests.edit: the badge, no button', /Emailed 20 Nov/.test(v.el('guests-list').innerHTML) && !/emailGuestArrangements/.test(v.el('guests-list').innerHTML));
+  check('sending a faculty email redraws the page', /if \(send && data\.sent && guestData && document\.getElementById\('guests-list'\)\) renderGuests\(\);/.test(js));
+}
 
 console.log('\n== Wiring ==');
 check('Lists & Settings is hidden until shown to an admin', /id="guests-settings-tab" class="guest-subtab hidden/.test(ejs));

@@ -366,6 +366,7 @@ const ROUTE_PERMISSIONS = {
   // field is -- a coordinator, or the volunteer assigned to them.
   'POST /api/guests/drivers/:id/link': 'guests.travel',
   'POST /api/guests/:id/checkin': 'guests.view',
+  'POST /api/guests/:id/arrangements-email': 'guests.edit',
   'POST /api/guests/rooms': 'guests.stay',
   'PUT /api/guests/rooms/:id': 'guests.stay',
   'DELETE /api/guests/rooms/:id': 'guests.manage',

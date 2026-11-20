@@ -4576,6 +4576,8 @@ async function decideHeldEmails(send) {
   if (!data.success) return showToast(data.error || 'Could not do that. Check the connection and try again.');
   if (data.failed) showToast(`${data.failed} could not be sent${data.sent ? `, ${data.sent} sent` : ''}. Check the Logs.`);
   else if (send) showToast(data.sent === 1 ? 'Email sent.' : `${data.sent} emails sent.`, 'success');
+  // A faculty email sent shows on the Faculty page at once.
+  if (send && data.sent && guestData && document.getElementById('guests-list')) renderGuests();
   else showToast(data.cancelled === 1 ? 'Email cancelled. Nothing was sent.' : `${data.cancelled} emails cancelled. Nothing was sent.`, 'success');
   showHeldEmails();
 }
@@ -14397,7 +14399,7 @@ function filteredGuests() {
 // needed. The chips are the usual cuts; More filters keeps the rest. A tap
 // opens their panel.
 let guestChip = 'all';
-const GUEST_CHIPS = [['all', 'All'], ['needs', 'Needs something'], ['unknown', 'Travel not known'], ['staying', 'Staying'], ['own', 'Own stay'], ['cancelled', 'Cancelled']];
+const GUEST_CHIPS = [['all', 'All'], ['needs', 'Needs something'], ['unknown', 'Travel not known'], ['staying', 'Staying'], ['own', 'Own stay'], ['toemail', 'To email'], ['cancelled', 'Cancelled']];
 function guestChipMatch(g, chip) {
   if (chip === 'cancelled') return g.cancelled;
   // "All" leaves out Cancelled -- unless the status filter asks for it.
@@ -14407,6 +14409,8 @@ function guestChipMatch(g, chip) {
   if (chip === 'unknown') return guestNeeds(g).some((n) => n.key === 'travel');
   if (chip === 'staying') return guestNeedsStay(g);
   if (chip === 'own') return !!Number(g.stay_not_needed);
+  // Not emailed yet, or their travel or stay changed after it.
+  if (chip === 'toemail') return !g.arrangementsEmail || g.arrangementsEmail.changed;
   return true;
 }
 function setGuestChip(chip) { guestChip = chip; renderGuestList(); }
@@ -14428,6 +14432,43 @@ function guestStayCell(g) {
   }
   return g.flags.noAccommodation ? '<span class="text-rose-700 font-semibold">No room</span>' : '<span class="text-slate-400">—</span>';
 }
+// The arrangements email (owner, 20 Nov 2026): a button on each person,
+// pressed by hand -- it never goes by itself -- that brings up the usual
+// Send / Cancel popup; then a badge saying when it went, amber once their
+// travel or stay has changed since.
+// "20 Nov", and "20 Nov, 3:30 PM", in IST whatever the browser's zone.
+function guestEmailedDay(ms) {
+  const d = new Date(ms + 330 * 60000);
+  return `${d.getUTCDate()} ${MONTHS_SHORT[d.getUTCMonth()]}`;
+}
+function guestEmailedAt(ms) {
+  const d = new Date(ms + 330 * 60000);
+  const h = d.getUTCHours();
+  return `${guestEmailedDay(ms)}, ${h % 12 || 12}:${String(d.getUTCMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+function guestEmailBadge(g) {
+  const e = g.arrangementsEmail;
+  if (!e) return '';
+  const when = guestEmailedDay(e.at);
+  return `<span class="inline-flex items-center text-[11px] font-bold px-2 py-0.5 rounded-full border ${e.changed ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-emerald-50 text-emerald-800 border-emerald-300'}"
+    title="${esc(`Sent ${guestEmailedAt(e.at)}${e.by ? ` by ${e.by}` : ''}${e.changed ? '. Their travel or stay has changed since.' : ''}`)}">${esc(e.changed ? `Emailed ${when} · changed since` : `Emailed ${when} ✓`)}</span>`;
+}
+function guestEmailButton(g, cls = '') {
+  if (g.cancelled || !can('guests.edit')) return '';
+  if (!g.email) return '<span class="text-[12px] text-slate-400">No email address</span>';
+  const again = !!g.arrangementsEmail;
+  return `<button type="button" onclick="event.stopPropagation(); emailGuestArrangements(${esc(g.id)}, this)" onkeydown="event.stopPropagation()"
+      class="h-8 px-3 rounded-lg text-[13px] font-semibold shrink-0 ${again && !g.arrangementsEmail.changed ? 'border border-slate-300 text-slate-700 bg-white hover:bg-slate-50' : 'bg-navy hover:bg-indigo-700 text-white'} ${cls}">${again ? 'Email again' : 'Email'}</button>`;
+}
+async function emailGuestArrangements(id, btn) {
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
+  // The reply holds the email; the fetch wrapper then asks Send or Cancel.
+  const data = await (await fetch(`/api/guests/${encodeURIComponent(id)}/arrangements-email`, { method: 'POST' })).json().catch(() => ({}));
+  if (btn) { btn.disabled = false; btn.textContent = label; }
+  if (!data.success) showToast(data.error || 'Could not prepare the email. Check the connection and try again.');
+}
+
 function renderGuestList() {
   const box = document.getElementById('guests-list');
   if (!box || !guestData) return;
@@ -14453,7 +14494,7 @@ function renderGuestList() {
   box.innerHTML = rows.length ? rows.map((g) => {
     const needs = guestNeeds(g);
     return `<div role="button" tabindex="0" onclick="openGuestPanel(${esc(g.id)})" onkeydown="if (event.key === 'Enter') openGuestPanel(${esc(g.id)})"
-        class="grid grid-cols-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_12rem] gap-x-3 gap-y-1.5 px-4 py-2.5 items-center cursor-pointer hover:bg-slate-50 ${guestPanelId === g.id ? 'bg-indigo-50 ring-2 ring-inset ring-navy' : ''} ${g.cancelled ? 'opacity-60' : ''}">
+        class="grid grid-cols-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_12rem_10rem] gap-x-3 gap-y-1.5 px-4 py-2.5 items-center cursor-pointer hover:bg-slate-50 ${guestPanelId === g.id ? 'bg-indigo-50 ring-2 ring-inset ring-navy' : ''} ${g.cancelled ? 'opacity-60' : ''}">
         <div class="col-span-3 lg:col-span-1 min-w-0">
           <p class="font-semibold text-navy ${g.cancelled ? 'line-through' : ''}">${esc(g.name)}</p>
           ${g.designation ? `<p class="text-slate-500 truncate" title="${esc(g.designation)}">${esc(g.designation)}</p>` : ''}
@@ -14463,6 +14504,7 @@ function renderGuestList() {
         <div class="min-w-0">${label('Leaves')}${guestLegCell(g.departure_date, g.departure_time, g.drop_vehicle, g.drop_driver, g.drop_status, false, false)}</div>
         <div class="min-w-0">${label('Stay')}${guestStayCell(g)}</div>
         <div class="col-span-3 lg:col-span-1 flex flex-wrap gap-1">${g.cancelled ? guestStatusBadge(g.overall_status) : needs.length ? needs.map(guestNeedChip).join('') : '<span class="text-emerald-700 font-semibold">All set ✓</span>'}</div>
+        <div class="col-span-3 lg:col-span-1 flex flex-wrap lg:flex-col lg:items-start items-center gap-1.5">${g.cancelled ? '' : `${guestEmailBadge(g)}${guestEmailButton(g)}`}</div>
       </div>`;
   }).join('') : `<p class="p-8 text-center text-slate-400">${guestData.guests.length ? 'No one matches.' : 'No faculty yet. Mark a delegate as faculty to start.'}</p>`;
   const live = guestData.guests.filter((g) => !g.cancelled).length;
@@ -15512,6 +15554,12 @@ function renderGuestPanel() {
         ${guestNeeds(g).map(guestNeedChip).join(' ')}</div>
     </div>
     <div class="divide-y divide-slate-100 text-sm">
+      ${g.cancelled ? '' : `<div class="px-5 py-3 flex flex-wrap items-center justify-between gap-2">
+        <div class="min-w-0"><p class="font-semibold text-slate-800">Travel & stay email</p>
+          <p class="text-[13px] ${g.arrangementsEmail && g.arrangementsEmail.changed ? 'text-amber-800' : 'text-slate-500'}">${g.arrangementsEmail
+            ? esc(`Sent ${guestEmailedAt(g.arrangementsEmail.at)}${g.arrangementsEmail.by ? ` by ${g.arrangementsEmail.by}` : ''}${g.arrangementsEmail.changed ? '. Their travel or stay has changed since.' : '.'}`)
+            : esc(g.email ? `Not sent yet. Goes to ${g.email}.` : 'No email address. Add one with Edit.')}</p></div>
+        ${guestEmailButton(g)}</div>`}
       ${!g.registered && !g.cancelled && can('payments.complimentary') ? `<div class="px-5 py-3"><div class="rounded-lg bg-gold-50 border border-gold-100 px-3 py-2 flex items-center justify-between gap-2"><span>Not registered yet.</span>
         <button type="button" onclick="registerFacultyFree(${esc(g.id)})" class="h-8 px-3 rounded-lg bg-navy hover:bg-indigo-700 text-white text-[13px] font-semibold shrink-0">Register free</button></div></div>` : ''}
       ${part('Coming', 'Arrival', leg(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, 'Pickup'))}
