@@ -11007,11 +11007,17 @@ async function certificateBackground(settings) {
   return certBackgroundCopying.done;
 }
 
-async function certificatePdf(cert, { specimen = false } = {}) {
+// draft: wording and signatories not saved yet, for the settings page's
+// live preview (20 Nov 2026) -- { title, subtitle, lead, body, signatories }.
+async function certificatePdf(cert, { specimen = false, draft = null } = {}) {
   await seedSignatories();
   const settings = await certificateSettings();
   const signatories = await dbAll('SELECT * FROM certificate_signatories ORDER BY sort_order, id');
-  const tpl = certTemplates(settings, signatories)[cert.kind];
+  const tpl = { ...certTemplates(settings, signatories)[cert.kind] };
+  if (draft) {
+    for (const f of ['title', 'subtitle', 'lead', 'body']) if (typeof draft[f] === 'string') tpl[f] = draft[f].slice(0, f === 'body' ? 2000 : 200);
+    if (Array.isArray(draft.signatories)) { tpl.signatories = draft.signatories.map(Number).filter(Number.isInteger).slice(0, MAX_SIGNATORIES); tpl.byWorkshop = {}; }
+  }
   const values = {
     name: cert.name, council: cert.council_name || 'Medical Council', council_reg_no: cert.council_reg_no || '',
     category: cert.category_label || '', conference: CONFERENCE.name, acronym: CONFERENCE.acronym, venue: CONFERENCE.location,
@@ -11065,6 +11071,8 @@ app.get('/api/admin/certificates/settings', requirePermission('certificates.mana
       maxSignatories: MAX_SIGNATORIES,
       workshops: [...(await certificateWorkshops()).values()].map((w) => ({ optionId: w.optionId, name: w.name, date: w.date })),
       categories: await dbAll('SELECT category_key AS value, label FROM fee_categories ORDER BY sort_order, id'),
+      // Who would get each kind today (count, and names for the preview).
+      due: await certificateDueByKind(),
     });
   } catch (err) {
     next(err);
@@ -11260,6 +11268,54 @@ app.get('/api/admin/certificates/preview.pdf', requirePermission('certificates.v
     next(err);
   }
 });
+
+// The settings page's live preview (20 Nov 2026): one kind, with its
+// wording and signatories as they are on screen (not yet saved), for an
+// example person -- or for someone who qualifies (phone), as theirs will
+// print. Nothing is stored.
+app.post('/api/admin/certificates/preview.pdf', requirePermission('certificates.manage'), async (req, res, next) => {
+  try {
+    const kind = CERT_KINDS.includes(req.body.kind) ? req.body.kind : 'MMC';
+    const ws = (kind === 'WORKSHOP' || kind === 'WORKSHOP_FACULTY') && /^\d+$/.test(String(req.body.option || '')) ? (await certificateWorkshops()).get(Number(req.body.option)) : null;
+    const facultyKind = ['FACULTY', 'WORKSHOP_FACULTY', ...CERT_ROLE_KINDS].includes(kind);
+    const cert = {
+      kind, name: facultyKind ? 'Dr Example Faculty' : 'Dr Example Delegate', detail: certSessionList(kind === 'JUDGE' ? ['Award Paper Presentations'] : ['An Example Session']),
+      council_name: 'Maharashtra Medical Council', council_reg_no: '2012/03/1234', category_label: 'Doctor',
+      workshop_name: ws ? ws.name : 'Example Workshop', workshop_date: ws ? ws.date : CONFERENCE.startDate, option_id: ws ? ws.optionId : null,
+      cert_no: `${certPrefix()}/${CERT_KIND_CODE[kind]}/0000`, verify_code: 'SPECIMEN00',
+    };
+    const who = req.body.phone ? (await certificateCandidates()).find((p) => p.phone === String(req.body.phone)) : null;
+    if (who) {
+      cert.name = who.name;
+      cert.council_name = who.councilName || cert.council_name;
+      cert.council_reg_no = who.councilRegNo || '';
+      cert.category_label = who.category || '';
+      const role = (who.roles || []).find((r) => r.kind === kind);
+      if (role) cert.detail = certSessionList(role.sessions);
+      const w = kind === 'WORKSHOP' ? (who.workshops || []).find((x) => x.eligible) : kind === 'WORKSHOP_FACULTY' ? (who.workshopFaculty || [])[0] : null;
+      if (w) Object.assign(cert, { workshop_name: w.name, workshop_date: w.date, option_id: w.optionId });
+    }
+    const draft = req.body.draft && typeof req.body.draft === 'object' ? req.body.draft : null;
+    sendPdf(res, await certificatePdf(cert, { specimen: true, draft }), `preview-${kind}.pdf`);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Who would get each kind today and has not had it yet -- for the settings
+// page ("Today: 12 would get it", and its "Shown for" list).
+async function certificateDueByKind() {
+  const due = Object.fromEntries(CERT_KINDS.map((k) => [k, []]));
+  const add = (k, p) => { if (due[k] && !due[k].some((x) => x.phone === p.phone)) due[k].push({ phone: p.phone, name: p.name }); };
+  for (const p of await certificateCandidates()) {
+    if (p.conference && p.conference.kind) add(p.conference.kind, p);
+    for (const w of p.workshops || []) if (w.eligible) add('WORKSHOP', p);
+    for (const w of p.workshopFaculty || []) if (w.eligible) add('WORKSHOP_FACULTY', p);
+    if (p.faculty && p.faculty.eligible) add('FACULTY', p);
+    for (const r of p.roles || []) if (r.eligible) add(r.kind, p);
+  }
+  return Object.fromEntries(Object.entries(due).map(([k, list]) => [k, { count: list.length, people: list.sort((a, b) => a.name.localeCompare(b.name)).slice(0, 300) }]));
+}
 
 // --- Eligibility and issuing ---
 app.get('/api/admin/certificates/candidates', requirePermission('certificates.view'), async (req, res, next) => {

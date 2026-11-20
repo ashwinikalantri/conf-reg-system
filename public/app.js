@@ -17347,103 +17347,422 @@ function loadCertificateSettingsCard() {
   if (allowed) renderCertificateSettings();
 }
 
+// Redesigned 20 Nov 2026: one part at a time. csState.view is a part
+// ('points', 'signatories', 'design', 'rules') or a kind ('MMC', ...);
+// wording typed and not saved is kept per kind (drafts) and shown in the
+// live preview, which renders it on the server without saving.
+const CS_PARTS = [['points', 'Points and who earns them'], ['signatories', 'Signatories'], ['design', 'Design'], ['rules', 'Who qualifies']];
+const CS_GROUPS = [['Conference', ['MMC', 'NURSING', 'CONF']], ['Workshops', ['WORKSHOP', 'WORKSHOP_FACULTY']],
+  ['Faculty and session roles', ['FACULTY', 'SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE']]];
+const CS_SHORT = { MMC: 'With MMC points', NURSING: 'With Nursing points', CONF: 'Participation', WORKSHOP: 'Workshop', WORKSHOP_FACULTY: 'Workshop faculty',
+  FACULTY: 'Faculty', SPEAKER: 'Speaker', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist', JUDGE: 'Judge' };
+const CS_WHO = {
+  MMC: 'Doctors and Medical PGs who gave a council number, registered, paid and checked in at the desk.',
+  NURSING: 'Nurses in the categories that earn Nursing points, registered, paid and checked in at the desk.',
+  CONF: 'Everyone else registered, paid and checked in at the desk.',
+  WORKSHOP: 'Marked present at the workshop, and gave its feedback.',
+  WORKSHOP_FACULTY: 'A workshop\'s faculty: on its roster as faculty, or named in its sessions.',
+  FACULTY: 'Everyone on the Faculty list who is not Cancelled.',
+  SPEAKER: 'Speakers in the programme (panels aside).', CHAIR: 'Chairpersons in the programme.', MODERATOR: 'Chairs of panel discussions.',
+  PANELIST: 'Speakers in panel discussions.', JUDGE: 'Chairs of award and presentation sessions.',
+};
+// The fill-ins, by the words people know them by.
+const CS_FIELDS = { name: 'Name', conference: 'Conference', acronym: 'Short name', venue: 'Venue', dates: 'Dates', category: 'Category',
+  council: 'Council', council_reg_no: 'Council reg. no.', mmc_accreditation_no: 'MMC accreditation no.', mmc_points: 'MMC points',
+  nursing_council: 'Nursing council', nursing_accreditation_no: 'Nursing accreditation no.', nursing_points: 'Nursing points',
+  workshop: 'Workshop', workshop_date: 'Workshop date', sessions: 'Their sessions', cert_no: 'Certificate no.' };
+const csFieldsFor = (kind) => Object.keys(CS_FIELDS).filter((k) => !((/^mmc_|^council/.test(k) && kind !== 'MMC')
+  || (/^nursing_/.test(k) && kind !== 'NURSING') || (/^workshop/.test(k) && !/^WORKSHOP/.test(kind))
+  || (k === 'sessions' && !['SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE'].includes(kind))));
+const csState = { d: null, view: 'MMC', drafts: {}, points: null, timer: null, url: null, seq: 0, shownFor: {} };
+// "XXX", "MMC/…/XXXXX", "—", blank: not a real value yet.
+const csPlaceholder = (v) => { const t = String(v == null ? '' : v).trim(); return !t || /x{3,}/i.test(t) || /^x+$/i.test(t) || /^[-—–?]+$/.test(t); };
+
 async function renderCertificateSettings() {
   const res = await fetch('/api/admin/certificates/settings');
   if (!res.ok) return;
   const d = await res.json();
   certState.settings = d;
-  document.getElementById('cs-mmc-no').value = d.settings.mmc.accreditationNo || '';
-  document.getElementById('cs-mmc-points').value = d.settings.mmc.points || '';
-  document.getElementById('cs-categories').innerHTML = d.categories.map((c) => `<label class="flex items-center gap-1.5">
-    <input type="checkbox" class="cs-category" value="${esc(c.value)}" ${d.settings.eligibleCategories.includes(c.value) ? 'checked' : ''}> ${esc(c.label)}</label>`).join('');
-  const n = d.settings.nursing || {};
-  if (document.getElementById('cs-nursing-council')) {
-    document.getElementById('cs-nursing-council').value = n.councilLabel || '';
-    document.getElementById('cs-nursing-no').value = n.accreditationNo || '';
-    document.getElementById('cs-nursing-points').value = n.points || '';
-    document.getElementById('cs-nursing-categories').innerHTML = d.categories.map((c) => `<label class="flex items-center gap-1.5">
-      <input type="checkbox" class="cs-nursing-category" value="${esc(c.value)}" ${(n.categories || []).includes(c.value) ? 'checked' : ''}> ${esc(c.label)}</label>`).join('');
-    setText('cs-nursing-state', n.accreditationNo && n.points ? 'Set: nurses in these categories receive the Nursing certificate.'
-      : 'Not set yet: nurses in these categories wait for it, and are not given the participation certificate meanwhile.');
+  csState.d = d;
+  csState.points = null;
+  renderCsChrome();
+  renderCsPane();
+}
+
+// Who may sign a kind: the active ones, an MMC-only one on MMC alone.
+const csSigners = (kind) => csState.d.signatories.filter((s) => s.active && (kind === 'MMC' || !Number(s.mmc_only)));
+const csTemplate = (kind) => csState.drafts[kind] || csState.d.templates[kind];
+function csChecks() {
+  const d = csState.d;
+  const s = d.settings;
+  const mmcReady = !csPlaceholder(s.mmc.accreditationNo) && !csPlaceholder(s.mmc.points);
+  const nursing = s.nursing || {};
+  const nursingReady = !csPlaceholder(nursing.accreditationNo) && !csPlaceholder(nursing.points);
+  const active = d.signatories.filter((x) => x.active);
+  const noSignature = active.filter((x) => !Number(x.has_signature));
+  const unsigned = Object.keys(d.templates).filter((k) => !csTemplate(k).signatories.some((id) => csSigners(k).some((x) => Number(x.id) === Number(id))));
+  return { mmcReady, nursingReady, nursing, active, noSignature, unsigned };
+}
+function csKindState(kind, c) {
+  if (kind === 'MMC' && !c.mmcReady) return 'bad';
+  if (kind === 'NURSING' && !c.nursingReady) return 'bad';
+  if (c.unsigned.includes(kind)) return 'warn';
+  return 'ok';
+}
+const CS_DOT = { ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-rose-500', none: 'bg-slate-300' };
+
+function renderCsChrome() {
+  const d = csState.d;
+  const c = csChecks();
+  const pill = (tone, text, view) => `<button type="button" onclick="setCsView('${view}')" class="min-h-[32px] px-3 rounded-full text-[13px] ${tone === 'ok' ? 'font-semibold border border-emerald-300 bg-emerald-50 text-emerald-800' : tone === 'bad' ? 'font-bold border border-rose-300 bg-rose-50 text-rose-800' : 'font-semibold border border-amber-300 bg-amber-50 text-amber-800'}">${esc(text)}</button>`;
+  document.getElementById('cs-ready').innerHTML = `<p class="font-bold text-slate-900 mr-1">Ready to issue?</p>
+    ${pill(c.mmcReady ? 'ok' : 'bad', c.mmcReady ? `✓ MMC: ${d.settings.mmc.accreditationNo} · ${d.settings.mmc.points} points` : '! MMC accreditation number or points not set', 'points')}
+    ${pill(c.nursingReady ? 'ok' : 'bad', c.nursingReady ? `✓ Nursing: ${c.nursing.accreditationNo} · ${c.nursing.points} points` : !String(c.nursing.accreditationNo || '').trim() ? '! Nursing accreditation no. not set' : csPlaceholder(c.nursing.accreditationNo) ? `! Nursing accreditation no. is “${c.nursing.accreditationNo}”` : '! Nursing credit points not set', 'points')}
+    ${pill(c.active.length && !c.noSignature.length ? 'ok' : 'warn', !c.active.length ? 'No signatories' : c.noSignature.length ? `${c.noSignature.length} signator${c.noSignature.length === 1 ? 'y has' : 'ies have'} no signature` : `✓ ${c.active.length} signatories, all with signatures`, 'signatories')}
+    ${pill(d.settings.hasBackground ? 'ok' : 'warn', d.settings.hasBackground ? '✓ Designer’s background' : 'Generated design (no background uploaded)', 'design')}
+    ${c.unsigned.length ? pill('warn', `${c.unsigned.length} certificate${c.unsigned.length === 1 ? ' has' : 's have'} no signatory`, c.unsigned[0]) : ''}`;
+  const kindState = (k) => csKindState(k, c);
+  const partState = { points: c.mmcReady && c.nursingReady ? 'ok' : 'bad', signatories: c.active.length && !c.noSignature.length ? 'ok' : 'warn', design: d.settings.hasBackground ? 'ok' : 'warn', rules: 'none' };
+  const item = (view, label, state, extra) => `<button type="button" onclick="setCsView('${view}')" aria-current="${csState.view === view ? 'true' : 'false'}"
+      class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-[14px] font-semibold ${csState.view === view ? 'bg-navy text-white' : 'text-slate-700 hover:bg-slate-100'}">
+      <span class="w-2 h-2 rounded-full shrink-0 ${CS_DOT[state]}"></span><span class="flex-1 min-w-0 truncate">${esc(label)}${csState.drafts[view] ? ' <span title="Not saved">•</span>' : ''}</span>
+      ${extra ? `<span class="text-[12px] font-normal ${csState.view === view ? 'text-slate-300' : 'text-slate-400'}">${esc(extra)}</span>` : ''}</button>`;
+  const head = (t) => `<p class="px-3 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">${esc(t)}</p>`;
+  const signs = (k) => {
+    if (k === 'WORKSHOP' && Object.keys(d.templates.WORKSHOP.byWorkshop || {}).length) return 'per workshop';
+    const n = csTemplate(k).signatories.filter((id) => csSigners(k).some((x) => Number(x.id) === Number(id))).length;
+    return n ? `${n} sign` : 'none';
+  };
+  document.getElementById('cs-rail').innerHTML = `${head('For all certificates')}${CS_PARTS.map(([v, l]) => item(v, l, partState[v], v === 'signatories' ? String(c.active.length) : '')).join('')}
+    ${CS_GROUPS.map(([g, kinds]) => `${head(g)}${kinds.map((k) => item(k, CS_SHORT[k], kindState(k), signs(k))).join('')}`).join('')}`;
+  const sel = document.getElementById('cs-rail-select');
+  if (sel) {
+    sel.innerHTML = `<optgroup label="For all certificates">${CS_PARTS.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</optgroup>
+      ${CS_GROUPS.map(([g, kinds]) => `<optgroup label="${esc(g)}">${kinds.map((k) => `<option value="${k}">${esc(CS_SHORT[k])}${kindState(k) === 'ok' ? '' : ' (!)'}</option>`).join('')}</optgroup>`).join('')}`;
+    sel.value = csState.view;
   }
-  document.getElementById('cs-lunch').value = d.settings.attendance.lunchSplit;
-  document.getElementById('cs-show-from').value = d.settings.attendance.showFrom || '';
-  setText('cs-show-from-note', d.settings.attendance.showFrom ? '' : `Blank: the day before the conference${d.settings.attendance.showFromEffective ? ` (${formatFullDate(d.settings.attendance.showFromEffective)})` : ''}.`);
-  document.getElementById('cs-early').value = d.settings.attendance.earlyMinutes;
-  document.getElementById('cs-late').value = d.settings.attendance.lateMinutes;
-  setText('cs-background-state', d.settings.hasBackground
-    ? "Certificates are printed over the designer's background. The text sits in the same places as on the generated design."
-    : 'Certificates use the generated design: a navy frame with a gold rule. Upload the designer\'s artwork (A4 landscape, 297 × 210 mm) to print over it instead.');
-  document.getElementById('cs-background-remove').classList.toggle('hidden', !d.settings.hasBackground);
+}
 
-  document.getElementById('cs-signatories').innerHTML = d.signatories.map((s) => `
-    <div class="p-3 border border-slate-200 rounded-xl space-y-2 ${s.active ? '' : 'opacity-60'}">
-      <div class="flex flex-col sm:flex-row sm:items-center gap-2">
-        <div class="sig-preview w-full sm:w-40 h-14 border border-dashed border-slate-300 rounded-lg flex items-center justify-center shrink-0">
-          ${Number(s.has_signature) ? `<img src="/api/admin/certificates/signatories/${encodeURIComponent(s.id)}/signature?t=${Date.now()}" alt="Signature" class="max-h-12 max-w-full">` : '<span class="text-[11px] text-slate-400">No signature yet</span>'}
-        </div>
-        <div class="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <input value="${esc(s.name)}" data-sig="${esc(s.id)}" data-field="name" aria-label="Name" class="cs-sig-field w-full min-w-0 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-          <input value="${esc(s.designation)}" data-sig="${esc(s.id)}" data-field="designation" aria-label="Designation" class="cs-sig-field w-full min-w-0 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-        </div>
-      </div>
-      <div class="flex flex-wrap items-center gap-1.5">
-        <label class="inline-flex items-center h-8 px-3 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-slate-50 cursor-pointer">Signature
-          <input type="file" accept="image/png,image/jpeg" class="hidden" onchange="uploadSignature(${Number(s.id)}, this)"></label>
-        <button type="button" onclick="saveSignatory(${Number(s.id)})" class="inline-flex items-center h-8 px-3 rounded-lg text-xs font-semibold bg-navy hover:bg-indigo-700 text-white">Save</button>
-        <button type="button" onclick="toggleSignatory(${Number(s.id)}, ${s.active ? 0 : 1})" class="inline-flex items-center h-8 px-3 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-slate-50">${s.active ? 'Turn off' : 'Turn on'}</button>
-        <label class="flex items-center gap-1.5 text-xs text-slate-600 sm:ml-auto"><input type="checkbox" ${Number(s.mmc_only) ? 'checked' : ''} onchange="putSignatory(${Number(s.id)}, { mmcOnly: this.checked })"> Only on certificates with MMC points</label>
-      </div>
-    </div>`).join('');
+function setCsView(view) {
+  csState.view = view;
+  renderCsChrome();
+  renderCsPane();
+}
 
-  const chips = Object.keys(d.placeholders).map((k) => `<code class="text-[11px] bg-slate-100 px-1 py-0.5 rounded" title="${esc(d.placeholders[k])}">{{${esc(k)}}}</code>`).join(' ');
+function renderCsPane() {
+  const pane = document.getElementById('cs-pane');
+  if (!pane || !csState.d) return;
+  const v = csState.view;
+  pane.innerHTML = v === 'points' ? csPointsHtml() : v === 'signatories' ? csSignatoriesHtml() : v === 'design' ? csDesignHtml()
+    : v === 'rules' ? csRulesHtml() : csKindHtml(v);
+  if (csState.d.templates[v]) csPreview(true);
+}
+
+const csCard = (title, sub, actions, body) => `<section class="bg-white rounded-2xl border border-slate-200 shadow-sm">
+    <div class="px-4 sm:px-5 py-4 border-b border-slate-100 flex flex-wrap items-start justify-between gap-3">
+      <div class="min-w-0"><h4 class="text-xl font-bold text-navy">${esc(title)}</h4>${sub ? `<p class="text-sm text-slate-600 mt-0.5">${sub}</p>` : ''}</div>
+      ${actions ? `<div class="flex flex-wrap gap-2">${actions}</div>` : ''}
+    </div>${body}</section>`;
+const csSaveBtn = (onclick, label = 'Save') => `<button type="button" onclick="${onclick}" class="h-10 px-4 rounded-lg bg-navy hover:bg-indigo-700 text-white text-sm font-semibold">${esc(label)}</button>`;
+const csInput = (id, label, value, extra = '') => `<label class="block min-w-0"><span class="block text-xs font-semibold text-slate-600 mb-1">${esc(label)}</span>
+    <input id="${id}" value="${esc(value == null ? '' : value)}" ${extra} class="w-full min-w-0 h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-200"></label>`;
+
+// --- One certificate: its wording, its signatories, and how it prints ---
+function csKindHtml(kind) {
+  const d = csState.d;
+  const t = csTemplate(kind);
+  const due = (d.due || {})[kind] || { count: 0, people: [] };
   const max = d.maxSignatories || 6;
-  // Who may sign a kind: the active ones, and an MMC-only signatory on the
-  // MMC certificate alone.
-  const signers = (kind) => d.signatories.filter((s) => s.active && (kind === 'MMC' || !Number(s.mmc_only)));
-  const sigBoxes = (kind, ticked, cls) => `<div class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">${signers(kind).map((s) => `<label class="flex items-center gap-1.5">
-      <input type="checkbox" class="${cls}" value="${esc(s.id)}" ${ticked.includes(Number(s.id)) ? 'checked' : ''}> <span><b class="font-semibold">${esc(s.name)}</b> <span class="text-slate-500">· ${esc(s.designation)}</span></span></label>`).join('')}</div>`;
-  const sigNames = (ids) => ids.map((id) => d.signatories.find((s) => Number(s.id) === id)).filter((s) => s && s.active).map((s) => s.name).join(', ') || 'nobody';
-  const workshopRows = (t) => !d.workshops.length ? '' : `
-      <div class="pt-2 border-t border-slate-100">
-        <p class="text-xs font-semibold text-slate-600 mb-1">Each workshop's signatories</p>
-        <p class="text-[11px] text-slate-500 mb-2">A workshop without its own is signed by those ticked above. Add the workshop's faculty under Signatories first.</p>
-        <div class="space-y-1.5">${d.workshops.map((w) => {
-          const own = t.byWorkshop && t.byWorkshop[String(w.optionId)];
-          return `<details class="border border-slate-200 rounded-lg" data-ws="${esc(w.optionId)}">
-            <summary class="px-3 py-2 cursor-pointer text-sm"><span class="font-semibold text-slate-800">${esc(w.name)}</span>
-              <span class="text-xs ${own ? 'text-slate-600' : 'text-slate-400'}">· ${own ? esc(sigNames(own)) : 'as above'}</span></summary>
-            <div class="px-3 pb-3 space-y-2">
-              ${sigBoxes('WORKSHOP', own || t.signatories, 'cs-wsig')}
-              <div class="flex flex-wrap gap-2">
-                <button type="button" onclick="saveWorkshopSignatories(${Number(w.optionId)})" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save for this workshop</button>
-                ${own ? `<button type="button" onclick="saveWorkshopSignatories(${Number(w.optionId)}, true)" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">Sign as above</button>` : ''}
-                <a href="/api/admin/certificates/preview.pdf?kind=WORKSHOP&option=${encodeURIComponent(w.optionId)}" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50">Preview specimen</a>
-              </div>
+  const ticked = t.signatories.map(Number);
+  const chips = csFieldsFor(kind).map((k) => `<button type="button" onclick="csInsert('${k}')" title="${esc((d.placeholders || {})[k] || '')}" class="h-8 px-2.5 rounded-full border border-slate-300 bg-white text-[12px] font-semibold text-slate-700 hover:border-navy hover:text-navy">${esc(CS_FIELDS[k])}</button>`).join('');
+  const sigCard = (s) => {
+    const n = ticked.indexOf(Number(s.id));
+    const on = n >= 0;
+    return `<div class="rounded-xl ${on ? 'border-2 border-navy bg-indigo-50/40' : 'border border-slate-200'} p-2.5 min-w-0">
+      <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" ${on ? 'checked' : ''} onchange="csToggleSigner('${kind}', ${Number(s.id)})" class="w-4 h-4">
+        ${on ? `<span class="text-[11px] font-bold text-navy">${n + 1}</span>` : ''}${Number(s.mmc_only) ? '<span class="ml-auto text-[10px] font-bold px-1.5 rounded bg-gold-100 text-gold-700">MMC only</span>' : ''}</label>
+      <div class="h-10 my-1 flex items-center">${Number(s.has_signature) ? `<img src="/api/admin/certificates/signatories/${encodeURIComponent(s.id)}/signature" alt="" class="max-h-10 max-w-full ${on ? '' : 'opacity-50'}">` : '<span class="text-[11px] text-rose-700">No signature yet</span>'}</div>
+      <p class="text-[13px] font-semibold truncate ${on ? 'text-slate-900' : 'text-slate-500'}">${esc(s.name)}</p>
+      <p class="text-[12px] text-slate-500 truncate">${esc(s.designation)}</p>
+      ${on && ticked.length > 1 ? `<div class="mt-1.5 flex gap-1">
+        <button type="button" onclick="csMoveSigner('${kind}', ${Number(s.id)}, -1)" ${n === 0 ? 'disabled' : ''} aria-label="Earlier" class="h-7 w-8 rounded border border-slate-300 text-sm disabled:opacity-30">◀</button>
+        <button type="button" onclick="csMoveSigner('${kind}', ${Number(s.id)}, 1)" ${n === ticked.length - 1 ? 'disabled' : ''} aria-label="Later" class="h-7 w-8 rounded border border-slate-300 text-sm disabled:opacity-30">▶</button></div>` : ''}
+    </div>`;
+  };
+  const signers = csSigners(kind);
+  // Ticked first, in their order; then the rest.
+  const orderedSigners = [...ticked.map((id) => signers.find((s) => Number(s.id) === id)).filter(Boolean), ...signers.filter((s) => !ticked.includes(Number(s.id)))];
+  const shownFor = csState.shownFor[kind] || '';
+  const actions = `<a href="/api/admin/certificates/preview.pdf?kind=${encodeURIComponent(kind)}" target="_blank" rel="noopener" class="h-10 px-3 inline-flex items-center rounded-lg border border-slate-300 text-sm font-semibold text-navy hover:bg-slate-50">Download a specimen</a>
+    ${csState.drafts[kind] ? `<button type="button" onclick="csDiscard('${kind}')" class="h-10 px-3 rounded-lg border border-slate-300 text-sm font-semibold text-slate-700">Discard changes</button>` : ''}
+    ${csSaveBtn(`saveCertificateTemplate('${kind}')`)}`;
+  const preview = `<div class="p-4 sm:p-5 bg-slate-50 min-w-0">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <p class="text-xs font-bold uppercase tracking-wider text-slate-500">As it will print · A4 landscape</p>
+        <label class="text-[12px] text-slate-600 flex items-center gap-1.5 min-w-0">Shown for
+          <select id="cs-shown-for" onchange="csState.shownFor['${kind}'] = this.value; csPreview(true)" class="h-8 max-w-[14rem] px-1 border border-slate-300 rounded text-[12px] bg-white">
+            <option value="">an example</option>
+            ${due.people.map((p) => `<option value="${esc(p.phone)}" ${p.phone === shownFor ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+          </select></label>
+      </div>
+      <div class="relative w-full rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden" style="aspect-ratio: 1.414 / 1">
+        <iframe id="cs-preview" title="The certificate as it will print" class="absolute inset-0 w-full h-full"></iframe>
+        <p id="cs-preview-note" class="absolute inset-0 hidden flex items-center justify-center p-4 text-center text-sm text-slate-500"></p>
+      </div>
+      <p class="mt-2 text-[12px] text-slate-500"><span id="cs-preview-state">Drawn as you type, with what is on screen; nothing is saved until you press Save.</span>
+        <button type="button" id="cs-preview-open" onclick="csOpenPreview()" class="hidden ml-1 font-semibold text-indigo-700 underline">Open the preview</button></p>
+    </div>`;
+  const body = `<div class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
+      <div class="p-4 sm:p-5 space-y-4 min-w-0 2xl:border-r border-slate-100">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          ${csInput('cs-t-title', 'Title', t.title, `oninput="csEdit('${kind}', 'title', this.value)" maxlength="200"`)}
+          ${csInput('cs-t-subtitle', 'Under the title', t.subtitle, `oninput="csEdit('${kind}', 'subtitle', this.value)" maxlength="200"`)}
+        </div>
+        ${csInput('cs-t-lead', 'Opening line', t.lead, `oninput="csEdit('${kind}', 'lead', this.value)" maxlength="200"`)}
+        <div>
+          <label for="cs-t-body" class="block text-xs font-semibold text-slate-600 mb-1">After their name</label>
+          <textarea id="cs-t-body" rows="5" oninput="csEdit('${kind}', 'body', this.value)" class="w-full p-3 border border-slate-300 rounded-lg text-[15px] leading-relaxed outline-none focus:ring-2 focus:ring-indigo-200">${esc(t.body)}</textarea>
+          <div class="mt-1.5 flex flex-wrap items-center gap-1.5"><span class="text-xs text-slate-500 mr-0.5">Insert:</span>${chips}</div>
+          <p class="mt-1 text-[12px] text-slate-500">**Two stars** either side make words bold; a new line starts a new paragraph. The preview shows each fill-in as it will read.</p>
+        </div>
+        <div class="2xl:hidden -mx-4 sm:-mx-5">${preview}</div>
+        <div>
+          <div class="flex flex-wrap items-baseline justify-between gap-2 mb-1.5"><p class="text-xs font-semibold text-slate-600">Signed by (up to ${max}, in this order)${kind === 'WORKSHOP' ? ' — every workshop, unless it has its own below' : ''}</p>
+            <button type="button" onclick="setCsView('signatories')" class="text-[12px] font-semibold text-indigo-700">Manage signatories →</button></div>
+          ${orderedSigners.length ? `<div class="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-2 gap-2">${orderedSigners.map(sigCard).join('')}</div>` : '<p class="text-sm text-slate-500">No active signatories. Add them under Signatories.</p>'}
+        </div>
+        ${kind === 'WORKSHOP' ? csWorkshopRows(t) : ''}
+      </div>
+      <div class="hidden 2xl:block">${preview.replace('id="cs-preview"', 'id="cs-preview-wide"').replace('id="cs-shown-for"', 'id="cs-shown-for-wide"').replace('id="cs-preview-note"', 'id="cs-preview-note-wide"').replace('id="cs-preview-state"', 'id="cs-preview-state-wide"').replace('id="cs-preview-open"', 'id="cs-preview-open-wide"')}</div>
+    </div>`;
+  return csCard(d.kinds[kind] || CS_SHORT[kind], `Goes to: ${esc(CS_WHO[kind] || '')} Today: <b>${esc(due.count)}</b> qualif${due.count === 1 ? 'ies' : 'y'}.`, actions, body);
+}
+
+// Each workshop's own signatories (byWorkshop), under the Workshop certificate.
+function csWorkshopRows(t) {
+  const d = csState.d;
+  if (!d.workshops.length) return '';
+  const sigNames = (ids) => ids.map((id) => d.signatories.find((s) => Number(s.id) === Number(id))).filter((s) => s && s.active).map((s) => s.name).join(', ') || 'nobody';
+  return `<div class="pt-3 border-t border-slate-100">
+      <p class="text-xs font-semibold text-slate-600 mb-1">Each workshop's signatories</p>
+      <p class="text-[12px] text-slate-500 mb-2">A workshop without its own is signed by those ticked above.</p>
+      <div class="space-y-1.5">${d.workshops.map((w) => {
+        const own = t.byWorkshop && t.byWorkshop[String(w.optionId)];
+        return `<details class="border border-slate-200 rounded-lg" data-ws="${esc(w.optionId)}">
+          <summary class="px-3 py-2 cursor-pointer text-sm"><span class="font-semibold text-slate-800">${esc(w.name)}</span>
+            <span class="text-xs ${own ? 'text-slate-600' : 'text-slate-400'}">· ${own ? esc(sigNames(own)) : 'as above'}</span></summary>
+          <div class="px-3 pb-3 space-y-2">
+            <div class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">${csSigners('WORKSHOP').map((s) => `<label class="flex items-center gap-1.5">
+              <input type="checkbox" class="cs-wsig" value="${esc(s.id)}" ${(own || t.signatories).map(Number).includes(Number(s.id)) ? 'checked' : ''}> <span><b class="font-semibold">${esc(s.name)}</b> <span class="text-slate-500">· ${esc(s.designation)}</span></span></label>`).join('')}</div>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" onclick="saveWorkshopSignatories(${Number(w.optionId)})" class="px-3 py-1.5 bg-navy hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold">Save for this workshop</button>
+              ${own ? `<button type="button" onclick="saveWorkshopSignatories(${Number(w.optionId)}, true)" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">Sign as above</button>` : ''}
+              <a href="/api/admin/certificates/preview.pdf?kind=WORKSHOP&option=${encodeURIComponent(w.optionId)}" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50">Preview specimen</a>
             </div>
-          </details>`;
-        }).join('')}</div>
-      </div>`;
-  document.getElementById('cs-templates').innerHTML = Object.entries(d.templates).map(([kind, t]) => `
-    <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm space-y-2" data-kind="${esc(kind)}">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <h3 class="text-sm font-bold text-slate-800">${esc(d.kinds[kind])}</h3>
-        <a href="/api/admin/certificates/preview.pdf?kind=${encodeURIComponent(kind)}" target="_blank" rel="noopener" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50">Preview specimen</a>
+          </div>
+        </details>`;
+      }).join('')}</div>
+    </div>`;
+}
+
+function csDraft(kind) {
+  if (!csState.drafts[kind]) {
+    const t = csState.d.templates[kind];
+    csState.drafts[kind] = { title: t.title, subtitle: t.subtitle, lead: t.lead, body: t.body, signatories: t.signatories.map(Number) };
+    renderCsChrome();
+  }
+  return csState.drafts[kind];
+}
+function csEdit(kind, field, value) { csDraft(kind)[field] = value; csPreview(); }
+function csToggleSigner(kind, id) {
+  const dr = csDraft(kind);
+  const max = csState.d.maxSignatories || 6;
+  if (dr.signatories.includes(id)) dr.signatories = dr.signatories.filter((x) => x !== id);
+  else if (dr.signatories.length >= max) { showToast(`Up to ${max} signatories fit on a certificate.`); renderCsPane(); return; }
+  else dr.signatories.push(id);
+  renderCsChrome();
+  renderCsPane();
+}
+function csMoveSigner(kind, id, by) {
+  const list = csDraft(kind).signatories;
+  const i = list.indexOf(id);
+  const j = i + by;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  renderCsPane();
+}
+function csDiscard(kind) { delete csState.drafts[kind]; renderCsChrome(); renderCsPane(); }
+// A fill-in, at the cursor in "After their name".
+function csInsert(key) {
+  const box = document.getElementById('cs-t-body');
+  if (!box) return;
+  const code = `{{${key}}}`;
+  const at = typeof box.selectionStart === 'number' ? box.selectionStart : box.value.length;
+  const end = typeof box.selectionEnd === 'number' ? box.selectionEnd : at;
+  box.value = box.value.slice(0, at) + code + box.value.slice(end);
+  box.focus();
+  if (box.setSelectionRange) box.setSelectionRange(at + code.length, at + code.length);
+  csEdit(csState.view, 'body', box.value);
+}
+
+// The certificate as it will print, from what is on screen: rendered on the
+// server (POST, nothing saved), shown in the page where the browser shows
+// PDFs; a phone that does not gets a button to open it.
+function csPreview(now = false) {
+  clearTimeout(csState.timer);
+  csState.timer = setTimeout(async () => {
+    const kind = csState.view;
+    if (!csState.d || !csState.d.templates[kind]) return;
+    const seq = ++csState.seq;
+    const states = ['cs-preview-state', 'cs-preview-state-wide'].map((id) => document.getElementById(id)).filter(Boolean);
+    states.forEach((el) => { el.textContent = 'Drawing…'; });
+    const res = await fetch('/api/admin/certificates/preview.pdf', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, draft: csState.drafts[kind] || null, phone: csState.shownFor[kind] || null }) }).catch(() => null);
+    if (seq !== csState.seq) return;
+    if (!res || !res.ok) { states.forEach((el) => { el.textContent = 'The preview could not be drawn. Check the connection.'; }); return; }
+    const blob = await res.blob();
+    if (seq !== csState.seq) return;
+    if (csState.url) URL.revokeObjectURL(csState.url);
+    csState.url = URL.createObjectURL(blob);
+    const inline = navigator.pdfViewerEnabled !== false;
+    [['cs-preview', 'cs-preview-note', 'cs-preview-open'], ['cs-preview-wide', 'cs-preview-note-wide', 'cs-preview-open-wide']].forEach(([f, n, o]) => {
+      const frame = document.getElementById(f);
+      const note = document.getElementById(n);
+      const open = document.getElementById(o);
+      if (frame) { frame.classList.toggle('hidden', !inline); if (inline) frame.src = `${csState.url}#toolbar=0&navpanes=0&view=Fit`; }
+      if (note) { note.classList.toggle('hidden', inline); note.classList.toggle('flex', !inline); note.textContent = 'This browser does not show PDFs in the page.'; }
+      if (open) open.classList.toggle('hidden', inline);
+    });
+    states.forEach((el) => { el.textContent = csState.drafts[kind] ? 'Showing your changes, not saved yet.' : 'As saved.'; });
+  }, now ? 0 : 600);
+}
+function csOpenPreview() { if (csState.url) window.open(csState.url, '_blank', 'noopener'); }
+
+// --- Points and who earns them ---
+function csPointsHtml() {
+  const d = csState.d;
+  const s = d.settings;
+  const n = s.nursing || {};
+  if (!csState.points) csState.points = { mmc: [...s.eligibleCategories], nursing: [...(n.categories || [])] };
+  const c = csChecks();
+  const toggles = (which) => `<div class="flex flex-wrap gap-1.5" role="group">${d.categories.map((cat) => {
+    const on = csState.points[which].includes(cat.value);
+    return `<button type="button" aria-pressed="${on}" onclick="csToggleCategory('${which}', '${esc(cat.value)}')" class="min-h-[32px] px-3 rounded-full text-[13px] font-semibold border ${on ? 'bg-navy text-white border-navy' : 'bg-white text-slate-700 border-slate-300 hover:border-navy'}">${esc(cat.label)}${on ? ' ✓' : ''}</button>`;
+  }).join('')}</div>`;
+  const badge = (ok) => `<span class="text-[12px] font-bold px-2 rounded-full border ${ok ? 'bg-emerald-50 text-emerald-800 border-emerald-300' : 'bg-rose-50 text-rose-800 border-rose-300'}">${ok ? 'Ready' : 'Not ready'}</span>`;
+  const warnNo = csPlaceholder(n.accreditationNo);
+  return csCard('Points and who earns them', 'The accreditation printed on the certificates with points, and which categories earn them.', csSaveBtn('saveCertificatePoints()'), `
+    <div class="grid grid-cols-1 lg:grid-cols-2">
+      <div class="p-4 sm:p-5 space-y-3 lg:border-r border-slate-100">
+        <div class="flex items-center gap-2"><h5 class="font-bold text-slate-900">MMC credit points</h5>${badge(c.mmcReady)}</div>
+        ${csInput('cs-mmc-no', 'Accreditation number', s.mmc.accreditationNo, 'maxlength="80"')}
+        <div class="w-32">${csInput('cs-mmc-points', 'Credit points', s.mmc.points, 'maxlength="20"')}</div>
+        <p class="text-xs font-semibold text-slate-600">Who earns them (with a council number given)</p>
+        ${toggles('mmc')}
       </div>
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <input value="${esc(t.title)}" data-tfield="title" aria-label="Title" placeholder="Title" class="h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-        <input value="${esc(t.subtitle)}" data-tfield="subtitle" aria-label="Subtitle" placeholder="Subtitle" class="sm:col-span-2 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
-        <input value="${esc(t.lead)}" data-tfield="lead" aria-label="Line above the name" placeholder="This is to certify that" class="sm:col-span-3 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+      <div class="p-4 sm:p-5 space-y-3">
+        <div class="flex items-center gap-2"><h5 class="font-bold text-slate-900">Nursing credit points</h5>${badge(c.nursingReady)}</div>
+        ${csInput('cs-nursing-council', 'Council', n.councilLabel, 'maxlength="80"')}
+        <label class="block min-w-0"><span class="block text-xs font-semibold text-slate-600 mb-1">Accreditation number</span>
+          <input id="cs-nursing-no" value="${esc(n.accreditationNo || '')}" maxlength="80" class="w-full min-w-0 h-10 px-3 rounded-lg text-sm outline-none ${warnNo ? 'border-2 border-rose-400 bg-rose-50' : 'border border-slate-300'}">
+          ${warnNo ? `<span class="block text-[12px] text-rose-700 mt-1">${n.accreditationNo ? `“${esc(n.accreditationNo)}” would print` : 'Nothing would print'} on every Nursing certificate. Enter the real number.</span>` : ''}</label>
+        <div class="w-32">${csInput('cs-nursing-points', 'Credit points', n.points, 'maxlength="20"')}</div>
+        <p class="text-xs font-semibold text-slate-600">Who earns them</p>
+        ${toggles('nursing')}
       </div>
-      <textarea data-tfield="body" rows="4" aria-label="Wording after the name" class="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none">${esc(t.body)}</textarea>
-      <p class="text-[11px] text-slate-500">After the name. <b>**bold**</b> for bold; a new line for a new paragraph. ${chips}</p>
-      <div>
-        <p class="text-xs font-semibold text-slate-600 mb-1">Signed by (up to ${max}, in this order)${kind === 'WORKSHOP' ? ' — every workshop, unless it has its own below' : ''}</p>
-        ${sigBoxes(kind, t.signatories, 'cs-tsig')}
+    </div>`);
+}
+function csToggleCategory(which, value) {
+  const list = csState.points[which];
+  csState.points[which] = list.includes(value) ? list.filter((x) => x !== value) : [...list, value];
+  const keep = { mmcNo: document.getElementById('cs-mmc-no').value, mmcPts: document.getElementById('cs-mmc-points').value,
+    nc: document.getElementById('cs-nursing-council').value, nNo: document.getElementById('cs-nursing-no').value, nPts: document.getElementById('cs-nursing-points').value };
+  renderCsPane();
+  document.getElementById('cs-mmc-no').value = keep.mmcNo;
+  document.getElementById('cs-mmc-points').value = keep.mmcPts;
+  document.getElementById('cs-nursing-council').value = keep.nc;
+  document.getElementById('cs-nursing-no').value = keep.nNo;
+  document.getElementById('cs-nursing-points').value = keep.nPts;
+}
+async function saveCertificatePoints() {
+  const ok = await putCertificateSettings({
+    mmc: { accreditationNo: document.getElementById('cs-mmc-no').value, points: document.getElementById('cs-mmc-points').value },
+    eligibleCategories: csState.points.mmc,
+    nursing: { councilLabel: document.getElementById('cs-nursing-council').value, accreditationNo: document.getElementById('cs-nursing-no').value,
+      points: document.getElementById('cs-nursing-points').value, categories: csState.points.nursing },
+  });
+  if (ok) renderCertificateSettings();
+}
+
+// --- Signatories: one card each, the signature as it will print ---
+function csSignatoriesHtml() {
+  const d = csState.d;
+  const onHowMany = (s) => Object.keys(d.templates).filter((k) => csTemplate(k).signatories.map(Number).includes(Number(s.id)) && (k === 'MMC' || !Number(s.mmc_only))).length;
+  const cards = d.signatories.map((s) => `<div class="rounded-xl border border-slate-200 p-3 min-w-0 ${s.active ? '' : 'opacity-60'}">
+      <div class="sig-preview h-16 rounded-lg flex items-center justify-center overflow-hidden">
+        ${Number(s.has_signature) ? `<img src="/api/admin/certificates/signatories/${encodeURIComponent(s.id)}/signature?t=${Date.now()}" alt="Signature" class="max-h-14 max-w-full">` : '<span class="text-[12px] font-semibold text-rose-700">No signature yet</span>'}
       </div>
-      <button type="button" onclick="saveCertificateTemplate('${esc(kind)}')" class="px-4 py-2 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Save wording</button>
-      ${kind === 'WORKSHOP' ? workshopRows(t) : ''}
+      <div class="mt-2 grid grid-cols-1 gap-1.5">
+        <input value="${esc(s.name)}" data-sig="${esc(s.id)}" data-field="name" aria-label="Name" class="cs-sig-field w-full min-w-0 h-9 px-3 border border-slate-300 rounded-lg text-sm font-semibold outline-none">
+        <input value="${esc(s.designation)}" data-sig="${esc(s.id)}" data-field="designation" aria-label="Designation" class="cs-sig-field w-full min-w-0 h-9 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+      </div>
+      <p class="mt-1.5 text-[12px] text-slate-500">${s.active ? `On ${onHowMany(s)} certificate${onHowMany(s) === 1 ? '' : 's'}` : 'Turned off: on none'}${Number(s.mmc_only) ? ' · MMC certificate only' : ''}</p>
+      <div class="mt-2 flex flex-wrap items-center gap-1.5">
+        <button type="button" onclick="saveSignatory(${Number(s.id)})" class="inline-flex items-center h-8 px-3 rounded-lg text-xs font-semibold bg-navy hover:bg-indigo-700 text-white">Save</button>
+        <label class="inline-flex items-center h-8 px-3 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-slate-50 cursor-pointer">${Number(s.has_signature) ? 'Replace signature' : 'Upload signature'}
+          <input type="file" accept="image/png,image/jpeg" class="hidden" onchange="uploadSignature(${Number(s.id)}, this)"></label>
+        <button type="button" onclick="toggleSignatory(${Number(s.id)}, ${s.active ? 0 : 1})" class="inline-flex items-center h-8 px-3 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-slate-50">${s.active ? 'Turn off' : 'Turn on'}</button>
+      </div>
+      <label class="mt-2 flex items-center gap-1.5 text-xs text-slate-600"><input type="checkbox" ${Number(s.mmc_only) ? 'checked' : ''} onchange="putSignatory(${Number(s.id)}, { mmcOnly: this.checked })"> Only on certificates with MMC points</label>
     </div>`).join('');
+  return csCard('Signatories', 'A PNG with a transparent background, about 600 × 200 pixels. Printed exactly as uploaded; the checks show through where it is clear.', '', `
+    <div class="p-4 sm:p-5 grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-3 gap-3">${cards || '<p class="text-sm text-slate-500">No signatories yet.</p>'}</div>
+    <form onsubmit="addSignatory(event)" class="px-4 sm:px-5 pb-5 pt-4 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2">
+      <input id="cs-new-sig-name" placeholder="Name, e.g. Dr A. B. Sharma" maxlength="120" class="min-w-0 h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+      <input id="cs-new-sig-designation" placeholder="Designation" maxlength="160" class="min-w-0 h-10 px-3 border border-slate-300 rounded-lg text-sm outline-none">
+      <button type="submit" class="h-10 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Add a signatory</button>
+    </form>`);
+}
+
+// --- Design: the background, and a specimen on it ---
+function csDesignHtml() {
+  const has = csState.d.settings.hasBackground;
+  return csCard('Design', has ? 'Certificates are printed over the designer’s background; the text sits in the same places as on the generated design.'
+    : 'Certificates use the generated design: a navy frame with a gold rule. Upload the designer’s artwork (A4 landscape, 297 × 210 mm) to print over it.', '', `
+    <div class="p-4 sm:p-5 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_15rem] gap-4 items-start">
+      <div class="relative w-full rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden" style="aspect-ratio: 1.414 / 1">
+        <iframe title="A specimen on the current design" src="/api/admin/certificates/preview.pdf?kind=CONF#toolbar=0&navpanes=0&view=Fit" class="absolute inset-0 w-full h-full"></iframe>
+      </div>
+      <div class="space-y-2">
+        <p class="text-sm"><b>${has ? 'Designer’s background' : 'Generated design'}</b> in use.</p>
+        <label class="w-full h-10 inline-flex items-center justify-center rounded-lg bg-navy hover:bg-indigo-700 text-white text-sm font-semibold cursor-pointer">${has ? 'Replace the background' : 'Upload the designer’s background'}
+          <input type="file" accept="image/png,image/jpeg" class="hidden" onchange="uploadCertificateBackground(this)"></label>
+        ${has ? '<button type="button" onclick="removeCertificateBackground()" class="w-full h-10 rounded-lg border border-slate-300 text-sm font-semibold text-slate-700">Use the generated design</button>' : ''}
+        <a href="/api/admin/certificates/preview.pdf?kind=CONF" target="_blank" rel="noopener" class="block text-center text-sm font-semibold text-indigo-700">Open the specimen</a>
+      </div>
+    </div>`);
+}
+
+// --- Who qualifies: the rules in words; the attendance settings ---
+function csRulesHtml() {
+  const a = csState.d.settings.attendance;
+  return csCard('Who qualifies', 'The rules, as they are now. Exceptions are made person by person on the Certificates list: Include or Exclude, with a reason.', '', `
+    <div class="p-4 sm:p-5 space-y-2 text-[15px]">
+      <p><b>Conference</b> (MMC, Nursing, participation): registered, paid, and <b>checked in at the registration desk</b>. Sessions attended are not counted.</p>
+      <p><b>Workshop</b>: marked present at that workshop, and gave its feedback.</p>
+      <p><b>Faculty, workshop faculty and session roles</b>: from the Faculty list and the programme. No attendance needed.</p>
+    </div>
+    <div class="px-4 sm:px-5 pb-5 pt-4 border-t border-slate-100 space-y-3">
+      <h5 class="font-bold text-slate-900">Attendance at the hall doors</h5>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        ${csInput('cs-early', 'Marking opens (min before)', a.earlyMinutes, 'type="number" min="0" max="60"')}
+        ${csInput('cs-late', 'Marking closes (min after the end)', a.lateMinutes, 'type="number" min="0" max="240"')}
+        ${csInput('cs-lunch', 'Lunch starts (splits the day on the Front Desk)', a.lunchSplit, 'type="time"')}
+      </div>
+      <div class="max-w-xs">${csInput('cs-show-from', 'Delegates see their attendance from', a.showFrom || '', 'type="date"')}
+        <p class="text-[12px] text-slate-500 mt-1">${a.showFrom ? '' : `Blank: the day before the conference${a.showFromEffective ? ` (${esc(formatFullDate(a.showFromEffective))})` : ''}.`}</p></div>
+      ${csSaveBtn('saveCertificateSettings()')}
+    </div>`);
 }
 
 async function putCertificateSettings(body, okText = 'Saved.') {
@@ -17455,36 +17774,30 @@ async function putCertificateSettings(body, okText = 'Saved.') {
   return true;
 }
 
+// The attendance settings (Who qualifies).
 async function saveCertificateSettings() {
   const ok = await putCertificateSettings({
-    mmc: { accreditationNo: document.getElementById('cs-mmc-no').value, points: document.getElementById('cs-mmc-points').value },
-    eligibleCategories: Array.from(document.querySelectorAll('.cs-category')).filter((b) => b.checked).map((b) => b.value),
-    nursing: document.getElementById('cs-nursing-no') ? {
-      councilLabel: document.getElementById('cs-nursing-council').value,
-      accreditationNo: document.getElementById('cs-nursing-no').value,
-      points: document.getElementById('cs-nursing-points').value,
-      categories: Array.from(document.querySelectorAll('.cs-nursing-category')).filter((b) => b.checked).map((b) => b.value),
-    } : undefined,
-    attendance: { lunchSplit: document.getElementById('cs-lunch').value, earlyMinutes: Number(document.getElementById('cs-early').value), lateMinutes: Number(document.getElementById('cs-late').value), showFrom: document.getElementById('cs-show-from').value },
+    attendance: { lunchSplit: document.getElementById('cs-lunch').value, earlyMinutes: Number(document.getElementById('cs-early').value),
+      lateMinutes: Number(document.getElementById('cs-late').value), showFrom: document.getElementById('cs-show-from').value },
   });
   if (ok) renderCertificateSettings();
 }
 
 async function saveCertificateTemplate(kind) {
-  const box = document.querySelector(`#cs-templates [data-kind="${kind}"]`);
-  if (!box) return;
-  const t = {};
-  box.querySelectorAll('[data-tfield]').forEach((el) => { t[el.dataset.tfield] = el.value; });
-  t.signatories = Array.from(box.querySelectorAll('.cs-tsig')).filter((b) => b.checked).map((b) => Number(b.value));
+  const t = csState.drafts[kind];
+  if (!t) return showToast('No changes to save.');
   const max = (certState.settings && certState.settings.maxSignatories) || 6;
   if (t.signatories.length > max) return showToast(`Up to ${max} signatories fit on a certificate.`);
-  if (await putCertificateSettings({ templates: { [kind]: t } }, 'Wording saved. It applies to certificates already issued too.')) renderCertificateSettings();
+  if (await putCertificateSettings({ templates: { [kind]: t } }, 'Saved. It applies to certificates already issued too.')) {
+    delete csState.drafts[kind];
+    renderCertificateSettings();
+  }
 }
 
 // One workshop's own signatories; asDefault puts it back on the workshop
 // certificate's.
 async function saveWorkshopSignatories(optionId, asDefault = false) {
-  const box = document.querySelector(`#cs-templates [data-ws="${optionId}"]`);
+  const box = document.querySelector(`#cs-pane [data-ws="${optionId}"]`);
   if (!box) return;
   const ids = asDefault ? null : Array.from(box.querySelectorAll('.cs-wsig')).filter((b) => b.checked).map((b) => Number(b.value));
   const max = (certState.settings && certState.settings.maxSignatories) || 6;

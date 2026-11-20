@@ -112,6 +112,16 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     check('a health worker who completed: participation', of(worker).conference.kind === 'CONF');
     check('a doctor without a council number: participation, flagged -- and no session attended, checked in is enough', of(nocouncil).conference.kind === 'CONF' && of(nocouncil).mmcCategory && !of(nocouncil).councilRegNo
       && of(nocouncil).attended.length === 0);
+    console.log('\n== The settings page: live preview and who qualifies (20 Nov) ==');
+    const sd = (await call('GET', '/api/admin/certificates/settings', null, admin)).body;
+    check('each kind says how many qualify today, with their names for the preview', sd.due && sd.due.MMC.people.some((x) => x.phone === doctor.phone)
+      && sd.due.CONF.people.some((x) => x.phone === worker.phone) && !sd.due.CONF.people.some((x) => x.phone === partial.phone) && typeof sd.due.JUDGE.count === 'number');
+    const pv = await call('POST', '/api/admin/certificates/preview.pdf', { kind: 'MMC', draft: { title: 'Draft Title', body: 'x {{name}}', signatories: [] }, phone: doctor.phone }, admin);
+    check('the live preview: a PDF of the wording on screen, for a real person, nothing saved', pv.status === 200 && /application\/pdf/.test(pv.headers['content-type'])
+      && (pv.buf || Buffer.from(pv.raw || '')).slice(0, 4).toString() === '%PDF'
+      && (await call('GET', '/api/admin/certificates/settings', null, admin)).body.templates.MMC.title !== 'Draft Title');
+    check('...only for those who may change the wording', (await call('POST', '/api/admin/certificates/preview.pdf', { kind: 'MMC' }, desk)).status === 403);
+
     check('not checked in at the desk: not yet, saying so -- whatever sessions they attended', of(partial).conference.kind === null && /Not checked in at the registration desk/.test(of(partial).conference.whyNot), of(partial).conference.whyNot);
     check('the workshop: present and paid, but waiting for the feedback', of(doctor).workshops.some((w) => w.e === ws.e && !w.eligible && w.whyNot === 'Feedback not given' && w.feedback === false));
     check('...not for one enrolled who was not there', of(worker).workshops.some((w) => w.e === ws.e && !w.eligible && /Not marked present/.test(w.whyNot)));
@@ -238,7 +248,7 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     const navTabs = fs.readFileSync(appFile('views', 'admin', 'partials', 'nav-tabs.ejs'), 'utf8');
     const adminHeader = fs.readFileSync(appFile('views', 'admin', 'partials', 'header.ejs'), 'utf8');
     check('Certificates are a page under Settings › Conference, their settings a card in Conference setup (1 Nov)',
-      /<section id="section-certificates"/.test(certView) && /id="cert-list"/.test(certView) && /id="gs-card-certificates" class="hidden space-y-5"/.test(setView) && /id="cs-templates"/.test(setView)
+      /<section id="section-certificates"/.test(certView) && /id="cert-list"/.test(certView) && /id="gs-card-certificates" class="hidden space-y-4"/.test(setView) && /id="cs-pane"/.test(setView) && /id="cs-rail-select"/.test(setView)
       && !navTabs.includes('certificates')
       && /id="settings-group-conference"[\s\S]*?id="settings-item-certificates" onclick="selectSettingsTab\('certificates'\)"[\s\S]*?id="settings-group-fees"/.test(adminHeader)
       && !adminHeader.includes('certsettings')

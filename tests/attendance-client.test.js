@@ -48,7 +48,7 @@ function page(cookie, perms) {
     myPermissions = new Set(${JSON.stringify(perms)});
     conferenceInfo = { name: 'Fixture Conference', acronym: 'FIXCON', location: 'Sevagram', startDate: '2026-11-21', endDate: '2026-11-22' };
     showToast = (m, t) => globalThis.__toasts.push([m, t]);
-    globalThis.__f = { renderAttendance, attendanceSignIn, renderBackendPrograms, loadAttendanceCard, saveCertificateDetails, renderCertificates, renderCertificateSettings, renderProgramme, loadHallsCard,
+    globalThis.__f = { renderAttendance, attendanceSignIn, renderBackendPrograms, loadAttendanceCard, saveCertificateDetails, renderCertificates, renderCertificateSettings, setCsView, renderProgramme, loadHallsCard,
       renderProgrammeSessions, fillProgrammeHallFilter, editProgrammeSession, loadProgrammeCard, renderBadge, showAbstractCard,
       openProgrammePage, renderHomeHero, applyRegistrationState, openProfilePage, openBadgeFullScreen, dashGo };
     globalThis.__setReg = (r) => { currentRegistration = r; };
@@ -116,12 +116,22 @@ function page(cookie, perms) {
       && /Showing \d+ of \d+/.test(C.el('cert-count').textContent) && /Issue conference certificates \(\d+ due\)/.test(C.el('cert-issue-conf').textContent)
       && /Issue faculty certificates \(\d+ due\)/.test(C.el('cert-issue-fac').textContent));
     await C.f.renderCertificateSettings();
-    // Eleven kinds since 20 Nov 2026: Nursing, workshop faculty and the five programme roles.
-    check('the settings view: MMC details, categories, signatories and each kind\'s wording (faculty too)', /X/.test(C.el('cs-mmc-no').value)
-      && /class="cs-category" value="faculty_mo" checked/.test(C.el('cs-categories').innerHTML)
-      && /MMC Observer/.test(C.el('cs-signatories').innerHTML) && (C.el('cs-templates').innerHTML.match(/data-kind="/g) || []).length === 11
-      && /data-kind="FACULTY"/.test(C.el('cs-templates').innerHTML) && /data-kind="MODERATOR"/.test(C.el('cs-templates').innerHTML));
-    check('...and when lunch starts and marking opens', C.el('cs-lunch').value === '13:00' && Number(C.el('cs-early').value) === 30 && Number(C.el('cs-late').value) === 120);
+    // Redesigned 20 Nov 2026: a "Ready to issue?" line, the parts and the
+    // eleven kinds on the left, one at a time on the right.
+    const rail = C.el('cs-rail').innerHTML;
+    check('the settings: Ready to issue?, the shared parts and all eleven kinds on the left', /Ready to issue\?/.test(C.el('cs-ready').innerHTML)
+      && ['points', 'signatories', 'design', 'rules', 'MMC', 'NURSING', 'CONF', 'WORKSHOP', 'WORKSHOP_FACULTY', 'FACULTY', 'SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE']
+        .every((v) => rail.includes(`setCsView('${v}')`)), rail.slice(0, 300));
+    check('...a certificate opens first: its wording, fill-ins by name, its signatories and the preview', /id="cs-t-body"/.test(C.el('cs-pane').innerHTML)
+      && /csInsert\('mmc_points'\)/.test(C.el('cs-pane').innerHTML) && /MMC Observer/.test(C.el('cs-pane').innerHTML) && /id="cs-preview/.test(C.el('cs-pane').innerHTML));
+    C.f.setCsView('points');
+    check('...Points: the MMC details, and the categories as toggles', /id="cs-mmc-no" value="[^"]*X/.test(C.el('cs-pane').innerHTML)
+      && /aria-pressed="true" onclick="csToggleCategory\('mmc', 'faculty_mo'\)"/.test(C.el('cs-pane').innerHTML));
+    C.f.setCsView('signatories');
+    check('...Signatories: a card each', /MMC Observer/.test(C.el('cs-pane').innerHTML) && /cs-sig-field/.test(C.el('cs-pane').innerHTML));
+    C.f.setCsView('rules');
+    check('...Who qualifies: the rules in words, and when marking opens and closes', /checked in at the registration desk/.test(C.el('cs-pane').innerHTML)
+      && /id="cs-early" value="30"/.test(C.el('cs-pane').innerHTML) && /id="cs-late" value="120"/.test(C.el('cs-pane').innerHTML) && /id="cs-lunch" value="13:00"/.test(C.el('cs-pane').innerHTML));
 
     console.log('\n== Programs ==');
     await A.f.renderBackendPrograms();
