@@ -27,6 +27,8 @@ const { call, adminLogin, loginOtp, check, report, openDb } = require('./harness
     const perms = require('../permissions');
     check('Volunteer – Attendance: the attendance screen alone', perms.roleSeesSection('VOLUNTEER_ATTENDANCE', 'attendance') && perms.roleCan('VOLUNTEER_ATTENDANCE', 'attendance.mark')
       && !perms.roleSeesSection('VOLUNTEER_ATTENDANCE', 'desk') && !perms.roleSeesSection('VOLUNTEER_ATTENDANCE', 'meals') && !perms.roleCan('VOLUNTEER_ATTENDANCE', 'desk.checkin'));
+    check('Volunteer – Registration registers walk-ins too (owner, 20 Nov)', perms.roleCan('VOLUNTEER_REGISTRATION', 'payments.desk_register')
+      && !perms.roleCan('VOLUNTEER_REGISTRATION', 'payments.complimentary') && !perms.roleCan('VOLUNTEER_REGISTRATION', 'payments.link'));
     check('...a built-in role, offered as a volunteer area', (await call('GET', '/api/admin/roles', null, admin)).body.roles.some((r) => r.key === 'VOLUNTEER_ATTENDANCE'));
     check('...given to a delegate, they take attendance', (await setRoles(['VOLUNTEER_ATTENDANCE'])).body.success
       && (await call('GET', '/api/attendance/halls', null, await loginOtp(phone))).status === 200);
