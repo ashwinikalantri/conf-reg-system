@@ -6,7 +6,7 @@
 # mirrors them into the Drive the nightly backups use, one folder per format:
 #
 #   NQOCN 2026 Presentations/Oral/   NQOCN20260045_Asha_Patil_Oral.pdf ...
-#                           /Poster/<session>/<screen>/
+#                           /Poster/<session>/<screen>/01_<file> ...
 #                           /Award/
 #
 # E-posters go by poster session and screen (owner, 20 Nov 2026), as the app
@@ -116,7 +116,8 @@ if OUT="$(docker run --rm \
         const top = JSON.parse(fs.readFileSync(\"/tmp/root.json\", \"utf8\")).find((d) => d.Name === folder) || {};
         const folders = Object.fromEntries(JSON.parse(fs.readFileSync(\"/tmp/sub.json\", \"utf8\")).map((d) => [d.Name, d.ID]));
         const walk = (rel) => fs.readdirSync(\"/tmp/stage/\" + rel, { withFileTypes: true }).flatMap((e) => (e.isDirectory()
-          ? walk(rel + \"/\" + e.name) : [{ path: rel + \"/\" + e.name, size: fs.statSync(\"/tmp/stage/\" + rel + \"/\" + e.name).size }]));
+          ? walk(rel + \"/\" + e.name) : [{ path: rel + \"/\" + e.name, name: require(\"path\").basename(fs.readlinkSync(\"/tmp/stage/\" + rel + \"/\" + e.name)),
+            size: fs.statSync(\"/tmp/stage/\" + rel + \"/\" + e.name).size }]));
         const files = types.split(\" \").flatMap((t) => walk(t));
         process.stdout.write(JSON.stringify({ checkedAt: Date.now(), folder, folderId: top.ID || null, folders, files }));
       " "$2" "$3"

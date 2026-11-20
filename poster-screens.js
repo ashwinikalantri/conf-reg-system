@@ -120,7 +120,10 @@ function placeLine(screen, poster, session) {
 // Where each e-poster's file goes in the Google Drive copy (owner, 20 Nov
 // 2026): a folder per poster session, numbered in time order so they sort
 // as they run, a folder per screen in it; a poster not on a screen yet in
-// its own folder. Keyed by file name; the host script stages the tree.
+// its own folder. In a screen's folder each file starts with its place in
+// the running order (owner, 20 Nov 2026: 01_<file>), so they list in the
+// order they are shown; the file itself keeps its name. Keyed by file name:
+// { folder, name }; the host script stages the tree.
 const NOT_PLACED_FOLDER = 'Not on a screen yet';
 const folderName = (s) => String(s == null ? '' : s).replace(/[/\\]+/g, '-').replace(/\s+/g, ' ').trim() || '-';
 function driveFolders({ sessions, unallotted }) {
@@ -128,10 +131,12 @@ function driveFolders({ sessions, unallotted }) {
   sessions.forEach((session, i) => {
     const sessionFolder = folderName(`${i + 1}. ${[session.day, session.startTime, session.hall].filter(Boolean).join(', ')}`);
     for (const screen of session.screens) {
-      for (const p of screen.posters) if (p.file && p.file.fileName) out[p.file.fileName] = `${sessionFolder}/${folderName(screen.name)}`;
+      screen.posters.forEach((p, i) => {
+        if (p.file && p.file.fileName) out[p.file.fileName] = { folder: `${sessionFolder}/${folderName(screen.name)}`, name: `${String(p.place || i + 1).padStart(2, '0')}_${p.file.fileName}` };
+      });
     }
   });
-  for (const p of unallotted) if (p.file && p.file.fileName) out[p.file.fileName] = NOT_PLACED_FOLDER;
+  for (const p of unallotted) if (p.file && p.file.fileName) out[p.file.fileName] = { folder: NOT_PLACED_FOLDER, name: p.file.fileName };
   return out;
 }
 

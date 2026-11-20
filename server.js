@@ -15733,9 +15733,10 @@ async function presentationsDrive() {
     readJsonFile(PRESENTATIONS_DRIVE_STATUS), readJsonFile(PRESENTATIONS_DRIVE_ERROR), readJsonFile(PRESENTATIONS_DRIVE_REQUEST)]);
   const folders = (status && status.folders) || {};
   // By format and file name, wherever in the format's folder it is (posters
-  // sit in session and screen folders).
-  const key = (p) => { const parts = String(p).split('/'); return `${parts[0]}/${parts[parts.length - 1]}`; };
-  const files = new Map(((status && status.files) || []).map((f) => [key(f.path), Number(f.size)]));
+  // sit in session and screen folders, named with their place: name is the
+  // file's own name).
+  const key = (f) => { const parts = String(f.path).split('/'); return `${parts[0]}/${f.name || parts[parts.length - 1]}`; };
+  const files = new Map(((status && status.files) || []).map((f) => [key(f), Number(f.size)]));
   return {
     view: {
       copiedAt: (status && status.checkedAt) || null,
