@@ -36,6 +36,7 @@ function build(earlyUntil, conf) {
     ${js.match(/const presentationDetailsBox = [\s\S]*?<\/div>`;/)[0]}
     ${grab('buildPresentationGuidelinesBody')} ${grab('buildPresentationReminderBody')} ${grab('buildWorkshopFeedbackBody')}
     ${grab('buildRegistrationReminderBody')} ${grab('buildBalanceDueBody')} ${grab('buildCodeHolderBody')} ${grab('buildVerifyEmailBody')} ${grab('buildCertificateReadyBody')} ${grab('buildMgimsVerifyBody')}
+    ${grab('buildPosterSlotBody')}
     ${js.match(/const welcomeWhen = [\s\S]*?\n};/)[0]} ${js.match(/const welcomeWebsite = [\s\S]*?<\/p>`;/)[0]} ${js.match(/const welcomeWeather = [^\n]+/)[0]}
     ${js.match(/const FACULTY_CONTACTS = [\s\S]*?\n\];/)[0]} ${grab('buildWelcomeDelegateBody')} ${grab('buildWelcomeFacultyBody')}
     ${js.match(/const NOT_REGISTERED = [^\n]+/)[0]}
@@ -193,6 +194,11 @@ const CONF={ name:'International Conference on Healthcare Quality & Patient Safe
  check('every audience but the registered starts from a template', pairs.length===R.AUDIENCES.length-1 && !pairs.some(([k])=>k==='registered'), pairs);
  check('...one that is offered to it', pairs.every(([k, t])=>TT[t] && TT[t].audiences.includes(k)), pairs.filter(([k, t])=>!(TT[t] && TT[t].audiences.includes(k))));
  check('the MGIMS email can go to pasted addresses and to the domain audience', TT['mgims-register'].audiences.includes('paste') && TT['mgims-register'].audiences.includes('domain'));
+ console.log('\n== The e-poster slot (20 Nov) ==');
+ const ps=await TT['poster-slot'].body();
+ check('the slot email: their screen, title, 5+2, be there 15 minutes early, the upload date', /\{\{screen\}\}/.test(ps) && /\{\{title\}\}/.test(ps)
+   && /5 minutes to present and 2 minutes for questions/.test(ps) && /15 minutes before it/.test(ps) && /\{\{deadline\}\}/.test(ps) && /E-Poster Slot/.test(await TT['poster-slot'].subject()));
+ check('...to presenters', TT['poster-slot'].audiences.join()==='presenters');
  console.log('\n== The welcome (20 Nov) ==');
  const wd=await TT['welcome-delegates'].body();
  const wf=await TT['welcome-faculty'].body();

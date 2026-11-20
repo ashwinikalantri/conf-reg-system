@@ -9997,6 +9997,26 @@ ${steelButton(portalHomeUrl(), 'Upload My Presentation')}
 ${reminderSignOff()}`;
 }
 
+// E-poster presenters: their slot (owner, 20 Nov 2026). {{screen}} is each
+// one's own screen, day, approximate time, place in the order and hall
+// (Step 4); sent to the Presenters audience narrowed to e-posters.
+async function buildPosterSlotBody() {
+  return `<p>Dear {{name}},</p>
+<p>Here is the slot for your e-poster <b>&ldquo;{{title}}&rdquo;</b>.</p>
+<div style="background:#faf5e8;border:1px solid #d6b46a;border-radius:10px;padding:1rem 1.25rem;margin:1.25rem 0">
+  <div style="font-size:.7rem;letter-spacing:.09em;text-transform:uppercase;color:#8a6d2b;font-weight:700">Your slot</div>
+  <p style="font-size:1rem;color:#1c3549;margin:.4rem 0 0"><b>{{screen}}</b></p>
+</div>
+<ul style="padding-left:1.1rem;margin:.5rem 0 1rem;line-height:1.6">
+  <li>You have <b>5 minutes to present and 2 minutes for questions</b>.</li>
+  <li>The time is approximate. Please be at your screen <b>15 minutes before it</b>, and stay until the session ends.</li>
+  <li>Your poster is shown from the file you uploaded in the delegate portal. If you have not uploaded it yet, please do so by <b>{{deadline}}</b>.</li>
+  <li>Please wear your conference badge.</li>
+</ul>
+${steelButton(portalHomeUrl(), 'Open the Delegate Portal')}
+${reminderSignOff()}`;
+}
+
 // For delegates marked present at a workshop who have not given feedback on
 // it: the workshop certificate is issued only once it is in.
 async function buildWorkshopFeedbackBody() {
@@ -10216,6 +10236,15 @@ const CUSTOM_REMINDER_TEMPLATES = {
       return `Your Presentation${who}: Guidelines, Template and Upload by {{deadline}}`;
     },
     body: buildPresentationGuidelinesBody,
+  },
+  'poster-slot': {
+    label: 'E-poster slot: screen, day and time',
+    audiences: ['presenters'],
+    async subject() {
+      const at = conferenceInfo.acronym ? ` at ${conferenceInfo.acronym}` : '';
+      return `Your E-Poster Slot${at}`;
+    },
+    body: buildPosterSlotBody,
   },
   'presentation-reminder': {
     label: 'Presentations — reminder to upload',
