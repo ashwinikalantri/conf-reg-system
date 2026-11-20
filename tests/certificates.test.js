@@ -98,8 +98,11 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     const attend = async (p, keys) => { for (const k of keys) await db.run("INSERT INTO attendance (phone_number, event_key, at, method) VALUES (?, ?, ?, 'MANUAL')", [p.phone, k, Date.now()]); };
     await attend(doctor, [...dayKeys, ws.key]);
     await attend(worker, dayKeys);
-    await attend(nocouncil, dayKeys);
+    // nocouncil attends no session at all: checked in is enough.
     await attend(partial, dayKeys.slice(0, 1));
+    // The conference certificate asks for a check-in at the desk, not
+    // session attendance (owner, 20 Nov 2026): three checked in, one not.
+    await db.run('UPDATE registrations SET checked_in_at = ?, checked_in_by = ? WHERE id IN (?, ?, ?)', [Date.now(), 'Test desk', doctor.regId, worker.regId, nocouncil.regId]);
     await db.run('INSERT INTO registration_options (registration_id, group_id, option_id, is_faculty) VALUES (?, (SELECT group_id FROM program_options WHERE id = ?), ?, 0)', [worker.regId, ws.optionId, ws.optionId]);
 
     const cand = async () => (await call('GET', '/api/admin/certificates/candidates', null, admin)).body.people;
@@ -107,8 +110,9 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     const of = (p) => list.find((x) => x.phone === p.phone);
     check('a doctor who completed, with a council number: MMC', of(doctor).conference.kind === 'MMC');
     check('a health worker who completed: participation', of(worker).conference.kind === 'CONF');
-    check('a doctor without a council number: participation, flagged', of(nocouncil).conference.kind === 'CONF' && of(nocouncil).mmcCategory && !of(nocouncil).councilRegNo);
-    check('only a morning: not yet, saying what is missing', of(partial).conference.kind === null && /after lunch/.test(of(partial).conference.whyNot), of(partial).conference.whyNot);
+    check('a doctor without a council number: participation, flagged -- and no session attended, checked in is enough', of(nocouncil).conference.kind === 'CONF' && of(nocouncil).mmcCategory && !of(nocouncil).councilRegNo
+      && of(nocouncil).attended.length === 0);
+    check('not checked in at the desk: not yet, saying so -- whatever sessions they attended', of(partial).conference.kind === null && /Not checked in at the registration desk/.test(of(partial).conference.whyNot), of(partial).conference.whyNot);
     check('the workshop: present and paid, but waiting for the feedback', of(doctor).workshops.some((w) => w.e === ws.e && !w.eligible && w.whyNot === 'Feedback not given' && w.feedback === false));
     check('...not for one enrolled who was not there', of(worker).workshops.some((w) => w.e === ws.e && !w.eligible && /Not marked present/.test(w.whyNot)));
 

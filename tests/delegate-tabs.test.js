@@ -96,15 +96,16 @@ check('the programme and map pages lose their Back buttons to it', !/onclick="cl
 console.log('\n== The conference day ==');
 {
   const { sb, el } = load();
-  sb.__set(prog, confirmed, [], { completion: { parts: [{ label: '22 Nov, Morning', done: true }, { label: '22 Nov, Afternoon', done: false }] } });
+  // Since 20 Nov 2026 the conference certificate asks only for a check-in at the desk.
+  sb.__set(prog, confirmed, [], { completion: { parts: [{ label: 'Checked in at the registration desk', done: true }] } });
   sb.__f.renderHomeHero();
   const hero = el('home-hero').innerHTML;
   check('one gold panel: what is on now, until when', !el('home-hero').classList.contains('hidden') && /On now/.test(hero) && /until 11:00 AM/.test(hero)
     && /Quality as an Organizational Strategy/.test(hero) && /Dr Vikram Datta/.test(hero));
   check('...how far it has run', /aria-label="50% of the session gone"/.test(hero) && /style="width:50%"/.test(hero));
   check('...its hall, on the map, with the building', /onclick="openMapPage\(1\)"/.test(hero) && /Main Auditorium<\/span><span class="block text-sm text-slate-600">New Auditorium Complex · Map and directions/.test(hero));
-  check('...one badge button, navy, and the attendance so far', (hero.match(/openBadgeFullScreen\(\)/g) || []).length === 1 && /bg-navy[^"]*">Show my badge to mark attendance/.test(hero)
-    && /✓ Morning marked/.test(hero) && /○ Afternoon</.test(hero) && !/Full programme/.test(hero));
+  check('...one badge button, navy, and whether they are checked in', (hero.match(/openBadgeFullScreen\(\)/g) || []).length === 1 && /bg-navy[^"]*">Show my badge to mark attendance/.test(hero)
+    && /✓ Checked in at the registration desk</.test(hero) && !/Full programme/.test(hero));
   const next = el('home-next').innerHTML;
   check('then the next talk, breaks aside', !el('home-next').classList.contains('hidden') && /Next · 11:30 AM/.test(next) && /Transforming Healthcare/.test(next) && /Hall A · Dr Amit Shah/.test(next));
   check('registration shrinks to one line', !el('registration-row').classList.contains('hidden') && el('registration-card').classList.contains('hidden')

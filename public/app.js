@@ -1269,7 +1269,7 @@ async function loadAttendanceCard() {
   document.getElementById('attendance-session-list').innerHTML = data.attended.map((s) => `<li>${esc(shortDateRange(s.date, s.date))}, ${esc(time(s.at))} · ${esc(s.hall)} · ${esc(s.title)}</li>`).join('');
   const status = document.getElementById('attendance-status');
   status.className = `text-xs font-bold px-2.5 py-1 rounded-full border ${data.completion.complete ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-600 border-slate-200'}`;
-  status.textContent = data.completion.complete ? 'Conference completed' : 'Attendance in progress';
+  status.textContent = data.completion.complete ? 'Checked in' : 'Not checked in yet';
   // Issued certificates, to download; once issued, the details are fixed.
   let mine = [];
   try { mine = (await (await fetch('/api/certificates/mine')).json()).certificates || []; } catch (e) { mine = []; }
@@ -1813,7 +1813,7 @@ function renderHomeHero() {
     html = `${live.length ? live.slice(0, 3).map((it, i) => homeLiveHtml(it, allHalls, i === 0)).join('<div class="my-4 border-t border-gold-100"></div>')
         : `${kicker('Today')}<h3 class="text-xl font-bold text-slate-900 mt-1">Nothing is on right now</h3>`}
       ${primary('Show my badge to mark attendance', 'openBadgeFullScreen()').replace('sm:w-auto ', '')}
-      ${parts.length ? `<div class="mt-3 flex flex-wrap gap-2">${parts.map((p) => `<span class="text-sm font-semibold px-3 py-1 rounded-full border ${p.done ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-white border-slate-300 text-slate-600'}">${p.done ? '✓' : '○'} ${esc(p.label.replace(/^\d+ \w+, /, ''))}${p.done ? ' marked' : ''}</span>`).join('')}</div>` : ''}
+      ${parts.length ? `<div class="mt-3 flex flex-wrap gap-2">${parts.map((p) => `<span class="text-sm font-semibold px-3 py-1 rounded-full border ${p.done ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-white border-slate-300 text-slate-600'}">${p.done ? '✓' : '○'} ${esc(p.label)}</span>`).join('')}</div>` : ''}
       <p class="text-sm text-slate-600 mt-2">Or scan the QR code at the hall door.</p>`;
     nextHtml = homeNextHtml(sessions, allHalls);
   } else if (reg.bank_status === 'BANK_VERIFIED' && last && today > last) {
@@ -13339,13 +13339,13 @@ function deskCertificateCheck(cd) {
   if (c.kind) return ['ok', 'Eligible'];
   if (/^Excluded/.test(c.whyNot || '')) return ['bad', 'Excluded'];
   if (c.whyNot === 'Payment not complete') return ['bad', 'Payment due'];
-  const parts = cd.days.flatMap((x) => x.parts);
-  return ['todo', parts.length ? `${parts.filter((p) => p.done).length} of ${parts.length} marked` : 'Not yet'];
+  if (/^Not checked in/.test(c.whyNot || '')) return ['todo', 'Check in first'];
+  return ['todo', 'Not yet'];
 }
 
-// Each conference day: present before and after lunch (as the certificate
-// counts it) and the meals served, with the times; then what the certificate
-// still needs.
+// Each conference day: present before and after lunch, and the meals
+// served, with the times; then what the certificate still needs (since 20
+// Nov 2026 only a check-in at the desk).
 function deskDaysCard(cd, reg) {
   if (!reg || !cd || !cd.days.length) return '';
   const tile = (label, on, value, title) => `<div class="min-w-0 rounded-xl border px-3 py-2 ${on ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-slate-50 text-slate-500'}"${title ? ` title="${esc(title)}"` : ''}>
@@ -13364,7 +13364,7 @@ function deskDaysCard(cd, reg) {
   const line = !c ? ''
     : c.issued ? 'Their conference certificate has been issued.'
       : c.kind ? 'They are eligible for the conference certificate.'
-        : /^Not present/.test(c.whyNot || '') ? `<b class="text-slate-900">For the certificate</b> they still need: ${esc(cd.missing.join('; '))}.`
+        : /^Not checked in/.test(c.whyNot || '') ? '<b class="text-slate-900">For the certificate</b> they need to check in at the registration desk.'
           : `<b class="text-amber-800">No certificate yet:</b> ${esc(c.whyNot || '')}.`;
   return deskCard('Conference days', `<div class="space-y-3">${days}
       ${line ? `<p class="text-sm text-slate-600">${line}</p>` : ''}

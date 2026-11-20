@@ -10391,7 +10391,8 @@ app.get('/api/attendance/me', requireAuth, async (req, res, next) => {
     const rows = await dbAll("SELECT event_key, at, method FROM attendance WHERE phone_number = ? AND removed_at IS NULL AND event_key LIKE 's:%'", [req.session.phone]);
     const at = new Map(rows.map((r) => [Number(r.event_key.slice(2)), r.at]));
     const attended = sessions.filter((s) => at.has(s.id));
-    const done = attendanceLib.completion(attended, attendanceLib.conferenceSessions(sessions, isWorkshopSession), settings.attendance.lunchSplit);
+    // The conference certificate: checked in at the desk (owner, 20 Nov 2026).
+    const done = conferenceCompletion(reg && reg.checked_in_at);
     const enrolled = reg ? (await dbAll('SELECT option_id FROM registration_options WHERE registration_id = ?', [reg.id])).map((r) => Number(r.option_id)) : [];
     const given = new Map((await dbAll('SELECT option_id, submitted_at FROM workshop_feedback WHERE phone_number = ?', [req.session.phone]))
       .map((f) => [Number(f.option_id), f.submitted_at]));
@@ -10780,6 +10781,15 @@ const newVerifyCode = () => {
 
 // Everyone who could receive a certificate, with what they would receive and
 // why not, and what they already hold.
+// What the conference certificate asks (owner, 20 Nov 2026): checked in at
+// the registration desk. { complete, parts, missing } as the delegate's
+// card, the desk and the certificates list show it.
+const CHECKED_IN_LABEL = 'Checked in at the registration desk';
+function conferenceCompletion(checkedInAt) {
+  const done = !!checkedInAt;
+  return { complete: done, parts: [{ label: CHECKED_IN_LABEL, done, session: null, at: checkedInAt || null }], missing: done ? [] : ['check in at the registration desk'] };
+}
+
 async function certificateCandidates() {
   const settings = await certificateSettings();
   const sessions = await programmeSessions();
@@ -10787,7 +10797,7 @@ async function certificateCandidates() {
   const workshops = await certificateWorkshops(sessions);
   const regs = await dbAll(
     `SELECT r.id AS registration_id, r.phone_number, r.registration_number, r.delegate_name, r.category_key, r.category_label, r.bank_status,
-            u.salutation, u.full_name, u.certificate_name, u.council_name, u.council_reg_no
+            r.checked_in_at, u.salutation, u.full_name, u.certificate_name, u.council_name, u.council_reg_no
        FROM registrations r LEFT JOIN users u ON u.phone_number = r.phone_number
       WHERE COALESCE(r.bank_status, '') != 'REJECTED'
       ORDER BY COALESCE(u.full_name, r.delegate_name)`);
@@ -10881,7 +10891,10 @@ async function certificateCandidates() {
 
   const people = regs.map((r) => {
     const ids = att.get(r.phone_number) || new Set();
-    const done = attendanceLib.completion(sessions.filter((s) => ids.has(s.id)), conf, settings.attendance.lunchSplit);
+    // The conference certificate needs them checked in at the registration
+    // desk -- session attendance is not asked (owner, 20 Nov 2026). Shaped
+    // as the attendance halves were, so every screen reads it the same way.
+    const done = conferenceCompletion(r.checked_in_at);
     const paid = r.bank_status === 'BANK_VERIFIED';
     const name = r.certificate_name || reminderName(r.salutation, r.full_name) || withDelegateSalutation({ delegate_name: r.delegate_name, delegate_salutation: r.salutation }).delegate_name;
     const mmcCategory = settings.eligibleCategories.includes(r.category_key);
@@ -10890,7 +10903,7 @@ async function certificateCandidates() {
     let confKind = null;
     let confWhyNot = null;
     if (ov && ov.decision === 'EXCLUDE') confWhyNot = `Excluded: ${ov.reason}`;
-    else if (!included && !done.complete) confWhyNot = done.missing.length ? `Not present: ${done.missing.join('; ')}` : 'No sessions take attendance yet';
+    else if (!included && !done.complete) confWhyNot = 'Not checked in at the registration desk';
     else if (!included && !paid) confWhyNot = 'Payment not complete';
     else if (mmcCategory && r.council_reg_no) confKind = 'MMC';
     else if ((nursing.categories || []).includes(r.category_key)) {
@@ -11880,8 +11893,10 @@ async function deskConferenceDays(phone) {
       })),
       meals: meals.filter((m) => m.date === date).map((m) => ({ key: m.key, title: m.title, servedAt: served.get(m.key) || null })),
     })),
-    complete: done.complete,
-    missing: done.missing,
+    // The certificate asks only that they are checked in (20 Nov 2026); the
+    // halves above stay as a record of where they were.
+    complete: !!(me && me.complete),
+    missing: me ? me.missing : [],
     certificate: me ? { kind: me.conference.kind, whyNot: me.conference.whyNot, issued: !!me.conference.issued } : null,
     workshops: (me ? me.workshops : []).map((w) => {
       const s = sessions.find((x) => Number(x.option_id) === Number(w.optionId)) || null;
