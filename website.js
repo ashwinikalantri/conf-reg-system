@@ -170,6 +170,45 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
     return (await d.programmeSessions()).filter((s) => s.title);
   }
 
+  // One day's programme, time by time: the talks starting together, then
+  // the breaks. hall narrows the talks to one hall.
+  function programmeRows(ofDay, hall = '') {
+    const shown = mergeHalls(ofDay.filter((s) => !hall || isBreak(s) || s.hall === hall));
+    const starts = [...new Set(shown.map((s) => s.start_time))].sort();
+    const rows = [];
+    for (const st of starts) {
+      const at = shown.filter((s) => s.start_time === st);
+      const talks = at.filter((s) => !isBreak(s));
+      const breaks = at.filter(isBreak);
+      if (talks.length) {
+        rows.push({ kind: 'talks', time: t12(st), items: talks.map((s) => ({
+          label: s.label || '', title: s.title, hall: s.halls.join(', '), when: timeRange(s),
+          speakers: s.speakers || '', chairs: s.chairs || '', chairLabel: chairLabel(s),
+        })) });
+      }
+      for (const b of breaks) rows.push({ kind: 'break', text: `${timeRange(b)} · ${b.title}${b.halls.length === 1 ? `, ${b.halls[0]}` : ''}` });
+    }
+    return rows;
+  }
+
+  // The whole programme as a printable A4 PDF (owner, 20 Nov 2026).
+  async function programmePdf(req, res, next) {
+    try {
+      const all = await sessions();
+      const dates = [...new Set(all.map((s) => s.session_date))].sort();
+      const C = d.CONFERENCE;
+      const pdf = await require('./programme-pdf').renderProgrammePdf(
+        dates.map((day) => ({ label: dayLong(day), rows: programmeRows(all.filter((s) => s.session_date === day)) })),
+        { conference: C.name, acronym: C.acronym, venue: C.location, dates: d.formatConferenceDates ? d.formatConferenceDates() : '', url: host ? `${host}/programme` : '' });
+      res.set('Content-Type', 'application/pdf');
+      res.set('Content-Disposition', `inline; filename="${String(C.acronym || 'Conference').replace(/[^A-Za-z0-9]+/g, '-')}-Scientific-Programme.pdf"`);
+      res.set('Cache-Control', 'no-cache');
+      res.send(pdf);
+    } catch (err) {
+      next(err);
+    }
+  }
+
   // --- the pages ---
   const builders = {
     async '' (req) {
@@ -227,21 +266,7 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
       const ofDay = all.filter((s) => s.session_date === day);
       const hallNames = [...new Set(ofDay.filter((s) => !isBreak(s)).map((s) => s.hall))];
       const hall = hallNames.includes(String(req.query.hall || '')) ? String(req.query.hall) : '';
-      const shown = mergeHalls(ofDay.filter((s) => !hall || isBreak(s) || s.hall === hall));
-      const starts = [...new Set(shown.map((s) => s.start_time))].sort();
-      const rows = [];
-      for (const st of starts) {
-        const at = shown.filter((s) => s.start_time === st);
-        const talks = at.filter((s) => !isBreak(s));
-        const breaks = at.filter(isBreak);
-        if (talks.length) {
-          rows.push({ kind: 'talks', time: t12(st), items: talks.map((s) => ({
-            label: s.label || '', title: s.title, hall: s.halls.join(', '), when: timeRange(s),
-            speakers: s.speakers || '', chairs: s.chairs || '', chairLabel: chairLabel(s),
-          })) });
-        }
-        for (const b of breaks) rows.push({ kind: 'break', text: `${timeRange(b)} · ${b.title}${b.halls.length === 1 ? `, ${b.halls[0]}` : ''}` });
-      }
+      const rows = programmeRows(ofDay, hall);
       const link = (q) => `${base}/programme?${new URLSearchParams(q).toString()}`;
       return {
         day, dayLabel: dayLong(day),
@@ -249,6 +274,7 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
         halls: [{ name: '', label: 'All halls' }, ...hallNames.map((n) => ({ name: n, label: n }))]
           .map((h) => ({ ...h, href: h.name ? link({ day, hall: h.name }) : link({ day }), current: h.name === hall })),
         rows,
+        pdf: `${base}/programme.pdf`,
       };
     },
 
@@ -373,6 +399,7 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
       // A hall's QR code (/?hall=...) is the portal's attendance.
       if (p === '/' && req.query.hall) return res.redirect(302, `/portal${query}`);
       if (p === '/') return render(req, res, next, '', siteCtx);
+      if (p === '/programme.pdf') return programmePdf(req, res, next);
       const page = /^\/([a-z-]+)\/?$/.exec(p);
       if (page && PAGES.has(page[1])) return render(req, res, next, page[1], siteCtx);
       // Old /website links, on this address: the same page at the root.
@@ -386,6 +413,7 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
   // On the portal's own address, at /website.
   const atPath = { base: '/website', portal: '/portal' };
   app.get(['/website', '/website/'], (req, res, next) => render(req, res, next, '', atPath));
+  app.get('/website/programme.pdf', programmePdf);
   app.get('/website/:page', (req, res, next) => {
     const key = String(req.params.page || '');
     if (PAGES.has(key) && key) return render(req, res, next, key, atPath);
