@@ -16778,7 +16778,7 @@ async function renderAttendance() {
 // the counter where a meal is served at several places; then scan, or find
 // someone by name. Each answer fills the screen: Serve (green), Already
 // served (amber), Not on the list (red). The server decides (meals.js).
-const mealState = { meals: [], key: null, expected: null, scanner: null, lastScan: { text: '', at: 0 }, searchTimer: null, searchSeq: 0, flashTimer: null };
+const mealState = { meals: [], key: null, expected: null, scanner: null, trying: false, lastScan: { text: '', at: 0 }, searchTimer: null, searchSeq: 0, flashTimer: null };
 const mealOf = () => mealState.meals.find((m) => m.key === mealState.key) || null;
 const mealWhen = (m) => `${shortDateRange(m.date, m.date)}, ${guestTime12(m.start)}–${guestTime12(m.end)}`;
 
@@ -16839,6 +16839,7 @@ function renderMealCounts() {
     setText('meal-served', 0);
     if (status) { status.textContent = 'No meal is ticked in the programme yet.'; status.className = 'text-sm font-semibold text-slate-600'; }
     if (btn) btn.disabled = true;
+    setText('meal-scan-label', 'No meal to scan for');
     return;
   }
   const w = m.window || {};
@@ -16846,7 +16847,14 @@ function renderMealCounts() {
     status.textContent = w.anyTime ? 'Practice mode: any meal, any time.' : w.open ? 'Being served now.' : w.over ? 'This meal is over.' : `Opens half an hour before ${guestTime12(m.start)}, on ${shortDateRange(m.date, m.date)}.`;
     status.className = `text-sm font-semibold ${w.open ? 'text-emerald-700' : 'text-slate-600'}`;
   }
+  // Shut: the button says so, plainly greyed, and the camera can be tried.
   if (btn) btn.disabled = !w.open;
+  const [sh, sm] = String(m.start || '00:00').split(':').map(Number);
+  const open = Math.max(0, sh * 60 + sm - 30);
+  const opensAt = guestTime12(`${String(Math.floor(open / 60)).padStart(2, '0')}:${String(open % 60).padStart(2, '0')}`);
+  setText('meal-scan-label', w.open ? 'Scan badges and passes' : w.over ? 'This meal is over' : `Scanning opens ${opensAt}, ${shortDateRange(m.date, m.date)}`);
+  const tryBtn = document.getElementById('meal-try-btn');
+  if (tryBtn) tryBtn.classList.toggle('hidden', !!w.open);
   setText('meal-served', m.served);
   setText('meal-expected-line', mealState.expected ? `of ${mealState.expected.total} expected` : '');
   const here = document.getElementById('meal-here-line');
@@ -16872,6 +16880,14 @@ function mealResultHtml(d, big) {
       ${d.servingId ? `<button type="button" onclick="mealUndo(${Number(d.servingId)})" class="mt-3 h-11 px-4 rounded-xl bg-white/15 hover:bg-white/25 text-sm font-semibold">Undo, a mistake</button>` : ''}
     </div>`;
   }
+  // Testing the camera: who it is, and whether they would be served.
+  if (d.result === 'CHECK') {
+    return `<div class="rounded-2xl ${p.eligible ? 'bg-sky-700' : 'bg-rose-700'} text-white ${pad}">
+      <p class="${head} font-extrabold tracking-wide">${p.eligible ? 'Read: would be served' : 'Read: not on the list'}</p>${who}
+      ${p.eligible ? '' : `<p class="text-[15px] font-semibold mt-2">${esc(p.reason || '')}</p>`}
+      <p class="text-sm mt-2 opacity-90">Testing only: nothing was recorded.</p>
+    </div>`;
+  }
   if (d.result === 'ALREADY') {
     const at = d.servedAt ? new Date(d.servedAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '';
     return `<div class="rounded-2xl bg-amber-400 text-amber-950 ${pad}">
@@ -16895,7 +16911,7 @@ function mealResultHtml(d, big) {
 // How long an answer stays over the camera: "Serve" briefly, so the next
 // person can step up; "Already served" or "Not found" long enough to read.
 // "Not on the list" stays until tapped -- someone has to decide.
-const MEAL_FLASH_MS = { SERVE: 2500, ALREADY: 6000, UNKNOWN: 4000 };
+const MEAL_FLASH_MS = { SERVE: 2500, ALREADY: 6000, UNKNOWN: 4000, CHECK: 4000 };
 
 function hideMealFlash() {
   clearTimeout(mealState.flashTimer);
@@ -16924,7 +16940,7 @@ function showMealResult(d) {
   const line = document.getElementById('meal-scan-result');
   if (line && mealState.scanner) {
     const p = d.person || {};
-    const word = { SERVE: d.anyway ? 'Served anyway' : 'Served', ALREADY: 'Already served', NOT_ELIGIBLE: 'Not on the list' }[d.result] || 'Not found';
+    const word = { SERVE: d.anyway ? 'Served anyway' : 'Served', ALREADY: 'Already served', NOT_ELIGIBLE: 'Not on the list', CHECK: 'Read (test)' }[d.result] || 'Not found';
     line.className = 'p-4 text-center text-[15px] font-semibold text-slate-600';
     line.textContent = p.name ? `Last: ${p.name} · ${word}` : `Last: ${word}`;
   }
@@ -16979,11 +16995,14 @@ async function mealUndo(servingId) {
 
 // The camera stays open; the same code seen again within a few seconds is
 // read once.
-async function openMealScanner() {
+// trying: before (or after) the meal, scans only say who it is and whether
+// they would be served (/api/meals/check) -- nobody is served.
+async function openMealScanner(trying = false) {
   const m = mealOf();
   if (!m) return showToast('Choose the meal.');
+  mealState.trying = !!trying;
   const counter = m.counters.find((c) => c.sessionId === mealCounterId());
-  setText('meal-scan-title', `${m.title}${counter && m.counters.length > 1 ? ` · ${counter.hall}` : ''}`);
+  setText('meal-scan-title', trying ? 'Testing the camera: nobody is served' : `${m.title}${counter && m.counters.length > 1 ? ` · ${counter.hall}` : ''}`);
   const line = document.getElementById('meal-scan-result');
   line.className = 'p-4 text-center text-[15px] font-semibold text-slate-600';
   line.textContent = 'Starting the camera…';
@@ -17008,6 +17027,11 @@ async function onMealScan(text) {
   const raw = String(text || '').trim();
   const identifier = /^MP[A-Z2-9]{10}$/i.test(raw) ? raw.toUpperCase() : deskIdentifierFromScan(raw);
   if (!identifier) return showMealResult({ result: 'UNKNOWN', error: 'That code is not a badge or meal pass.' });
+  if (mealState.trying) {
+    const res = await fetch('/api/meals/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier }) });
+    const data = await res.json().catch(() => ({ result: 'UNKNOWN', error: 'No answer from the server. Check the connection.' }));
+    return showMealResult(data.success ? data : { result: 'UNKNOWN', error: data.error || 'Nobody found.' });
+  }
   await mealServe({ identifier });
 }
 

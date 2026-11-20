@@ -30,10 +30,13 @@
           <p class="text-[15px] text-slate-600"><b id="meal-served" class="text-2xl font-bold text-slate-900 tabular-nums">0</b> served <span id="meal-expected-line"></span> <span id="meal-here-line" class="hidden text-sm"></span></p>
           <p id="meal-status" class="text-sm font-semibold"></p>
         </div>
-        <button type="button" id="meal-scan-btn" onclick="openMealScanner()" class="w-full h-14 rounded-xl bg-navy hover:bg-indigo-700 text-white text-lg font-bold flex items-center justify-center gap-2">
+        <!-- Off (grey, saying when it opens) while the meal is not being
+             served; Test the camera then tries scanning, serving nobody. -->
+        <button type="button" id="meal-scan-btn" onclick="openMealScanner()" class="w-full h-14 rounded-xl bg-navy hover:bg-indigo-700 text-white text-lg font-bold flex items-center justify-center gap-2 disabled:bg-slate-200 disabled:text-slate-500 disabled:hover:bg-slate-200 disabled:cursor-not-allowed disabled:text-base">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M7 12h10"/></svg>
-          Scan badges and passes
+          <span id="meal-scan-label">Scan badges and passes</span>
         </button>
+        <button type="button" id="meal-try-btn" onclick="openMealScanner(true)" class="hidden w-full h-11 rounded-xl border border-slate-300 text-navy text-[15px] font-semibold hover:bg-slate-50">Test the camera (serves nobody)</button>
       </div>
 
       <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-3 sm:p-4">

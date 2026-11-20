@@ -146,6 +146,12 @@ check('the Meals report needs the counts', perms.REPORT_PERMISSIONS.meals === 'm
     made.sessions.push(later.body.id);
     const fut = await call('POST', '/api/meals/serve', { mealKey: '2099-01-01 13:00', sessionId: later.body.id, identifier: okId }, admin);
     check('a meal not on now: the counter says when it is', fut.status === 409 && /1:00 PM to 2:00 PM/i.test(fut.body.error), fut.body);
+    const before = (await db.get('SELECT COUNT(*) AS n FROM meal_servings')).n;
+    const tryIt = await call('POST', '/api/meals/check', { identifier: okId }, admin);
+    check('testing the camera, any time: who it is and whether they would be served, nothing recorded', tryIt.body.result === 'CHECK' && tryIt.body.person.eligible === true
+      && (await db.get('SELECT COUNT(*) AS n FROM meal_servings')).n === before, tryIt.body);
+    check('...a code nobody has: not found', (await call('POST', '/api/meals/check', { identifier: `NOPE${N}` }, admin)).status === 404);
+    check('...not for the front desk', (await call('POST', '/api/meals/check', { identifier: okId }, desk)).status === 403);
 
     console.log('\n== The screens ==');
     const view = fs.readFileSync(appFile('views', 'admin', 'sections', 'meals.ejs'), 'utf8');
@@ -166,6 +172,8 @@ check('the Meals report needs the counts', perms.REPORT_PERMISSIONS.meals === 'm
       /<div class="flex gap-2 sm:gap-3">\s*<div class="flex-1 min-w-0">\s*<label for="meal-select"/.test(view) && /hidden sm:block text-\[15px\] text-slate-600">Scan each badge/.test(view)
         && view.indexOf('id="meal-search"') < view.indexOf('id="meal-result"') && /if \(body\.personKey\) \{[\s\S]{0,200}?input\.value = ''/.test(js)
         && /min-h-0 overflow-hidden[^"]*bg-black/.test(view) && view.includes('h-[100dvh]'));
+    check('shut: the scan button is greyed and says when it opens; Test the camera instead', /disabled:bg-slate-200/.test(view) && view.includes('id="meal-try-btn"')
+      && /Scanning opens \$\{opensAt\}/.test(js) && /onclick="openMealScanner\(true\)"/.test(view) && /if \(mealState\.trying\) \{[\s\S]{0,120}\/api\/meals\/check/.test(js));
     check('a meal pass is read as it is, a badge as the desk reads it', /\/\^MP\[A-Z2-9\]\{10\}\$\/i\.test\(raw\) \? raw\.toUpperCase\(\) : deskIdentifierFromScan\(raw\)/.test(js));
   } finally {
     for (const id of made.sessions) {

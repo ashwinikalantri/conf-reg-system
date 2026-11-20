@@ -10118,6 +10118,18 @@ app.post('/api/meals/serve', requirePermission('meals.scan'), async (req, res, n
   }
 });
 
+// Trying the camera before a meal (20 Nov 2026): who the code is, and
+// whether they would be served -- nothing recorded, at any time.
+app.post('/api/meals/check', requirePermission('meals.scan'), async (req, res, next) => {
+  try {
+    const found = await mealFind(req.body.identifier, req.body.personKey);
+    if (!found.person) return res.status(404).json({ success: false, result: 'UNKNOWN', error: found.error || 'Nobody found.' });
+    res.json({ success: true, result: 'CHECK', person: publicMealPerson(found.person) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Someone not signed up, served on the spot (owner, 20 Nov 2026): their
 // name is taken down -- and a mobile and institution if they give them.
 // Once a meal: by their mobile, else by their name. A mobile that belongs

@@ -367,6 +367,7 @@ const ROUTE_PERMISSIONS = {
   'POST /api/guests/drivers/:id/link': 'guests.travel',
   'POST /api/guests/:id/checkin': 'guests.view',
   'POST /api/meals/walkin': 'meals.scan',
+  'POST /api/meals/check': 'meals.scan',
   'POST /api/guests/:id/wifi': 'guests.view',
   'POST /api/guests/wifi': 'guests.manage',
   'DELETE /api/guests/wifi/:id': 'guests.manage',

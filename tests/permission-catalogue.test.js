@@ -152,6 +152,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/guests/:id/wifi': 'Gives a faculty member the next free guest Wi-Fi login, or takes it back. guests.view to reach it; then guests.edit, or whoever may set their stay -- as checking them in.',
     'POST /api/guests/wifi': 'Adds guest Wi-Fi logins to the list (pasted). guests.manage -- those who manage the Faculty tab.',
     'DELETE /api/guests/wifi/:id': 'Removes a free guest Wi-Fi login from the list. guests.manage.',
+    'POST /api/meals/check': 'Reads a badge or pass at the meal counter to test the camera: who it is and whether they would be served; nothing is recorded. meals.scan.',
     'POST /api/meals/walkin': 'Serves someone not signed up at a meal counter, with their name (and mobile and institution if given) kept. meals.scan -- the counter volunteers who already serve.',
     'POST /api/guests/:id/arrangements-email': 'Holds an email to one faculty member saying what has been arranged for their travel and stay; the Send / Cancel popup decides whether it goes. guests.edit -- the coordinators who already mark faculty and edit their status.',
     'POST /api/guests/:id/checkin': 'Marks a faculty member checked in at their accommodation, or takes it back. guests.view to reach it; then whoever may set their stay -- guests.stay, or their accommodation volunteer -- as PUT /api/guests/:id checks the field.',
