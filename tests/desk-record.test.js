@@ -19,6 +19,7 @@ const hhmm = (ms) => new Date(ms + IST).toISOString().slice(11, 16);
   const desk = await loginPassword(DESK, ADMIN_PW);
   let hallId = null;
   let sessionId = null;
+  let checkedBefore = null;
   try {
     console.log('\n== What the desk is told ==');
     const before = (await call('GET', `/api/desk/delegate/${PERSON}`, null, desk)).body;
@@ -40,6 +41,9 @@ const hhmm = (ms) => new Date(ms + IST).toISOString().slice(11, 16);
     check('a session taking attendance now', !!hallId && !!sessionId);
     const halls = (await call('GET', '/api/attendance/halls', null, desk)).body.halls || [];
     check('the desk sees it on now, to pick', halls.some((h) => h.id === hallId && h.now && h.now.id === sessionId));
+    // Checked in at the desk first (owner, 20 Nov 2026); put back after.
+    checkedBefore = await db.get('SELECT id, checked_in_at, checked_in_by FROM registrations WHERE phone_number = ?', [PERSON]);
+    if (checkedBefore) await db.run('UPDATE registrations SET checked_in_at = COALESCE(checked_in_at, ?), checked_in_by = COALESCE(checked_in_by, ?) WHERE id = ?', [Date.now(), 'Test desk', checkedBefore.id]);
     const marked = await call('POST', '/api/attendance/scan', { hallId, identifier: PERSON }, desk);
     check('the desk marks them present there', marked.status === 200 && marked.body.success && marked.body.session.id === sessionId, marked.body);
     const again = await call('POST', '/api/attendance/scan', { hallId, identifier: PERSON }, desk);
@@ -63,6 +67,7 @@ const hhmm = (ms) => new Date(ms + IST).toISOString().slice(11, 16);
       await db.run('DELETE FROM programme_sessions WHERE id = ?', [sessionId]);
     }
     if (hallId) await db.run('DELETE FROM halls WHERE id = ?', [hallId]);
+    if (checkedBefore) await db.run('UPDATE registrations SET checked_in_at = ?, checked_in_by = ? WHERE id = ?', [checkedBefore.checked_in_at, checkedBefore.checked_in_by, checkedBefore.id]);
     db.close();
   }
   report();

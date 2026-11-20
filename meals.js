@@ -70,6 +70,12 @@ const KIND_LABEL = { FACULTY: 'Faculty', ORGANISER: 'Organiser', VOLUNTEER: 'Vol
 function decide(facts) {
   if (facts.faculty) return { eligible: true, kind: 'FACULTY', reason: null };
   if (facts.staff) return { eligible: true, kind: 'ORGANISER', reason: null };
+  // A delegate checks in at the registration desk first (owner, 20 Nov
+  // 2026); faculty, organisers and volunteers do not. checkedIn undefined:
+  // not asked (older callers), so not held against them.
+  if (facts.regStatus === 'BANK_VERIFIED' && !facts.volunteer && facts.checkedIn === false) {
+    return { eligible: false, kind: 'DELEGATE', reason: 'Not checked in yet: send them to the registration desk to check in first.' };
+  }
   if (facts.regStatus === 'BANK_VERIFIED') return { eligible: true, kind: facts.volunteer ? 'VOLUNTEER' : 'DELEGATE', reason: null };
   const reason = facts.facultyCancelled ? 'Taken off the Faculty list (cancelled).'
     : facts.regStatus === 'PARTIAL_PAYMENT' ? 'Balance due: send them to the registration desk.'

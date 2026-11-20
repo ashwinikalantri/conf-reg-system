@@ -77,8 +77,16 @@ check('the Meals report needs the counts', perms.REPORT_PERMISSIONS.meals === 'm
     };
     const okId = await reg('BANK_VERIFIED', '1');
     const dueId = await reg('PARTIAL_PAYMENT', '2');
+    // A delegate checks in at the desk before the counter serves them (20 Nov).
+    const notInId = await reg('BANK_VERIFIED', '3');
+    await db.run('UPDATE registrations SET checked_in_at = ? WHERE id = ?', [Date.now(), made.regs[0].id]);
     const serve = (body) => call('POST', '/api/meals/serve', { mealKey: meal.key, sessionId: meal.counters[0].sessionId, ...body }, admin);
 
+    const notIn = await serve({ identifier: notInId });
+    check('confirmed but not checked in yet: Not on the list, sent to check in', notIn.body.result === 'NOT_ELIGIBLE' && /Not checked in yet/.test(notIn.body.person.reason), notIn.body);
+    check('...the rule: delegates only; faculty, organisers and volunteers never check in', !M.decide({ regStatus: 'BANK_VERIFIED', checkedIn: false }).eligible
+      && M.decide({ regStatus: 'BANK_VERIFIED', checkedIn: true }).eligible && M.decide({ faculty: true, checkedIn: false }).eligible
+      && M.decide({ staff: true, checkedIn: false }).eligible && M.decide({ regStatus: 'BANK_VERIFIED', volunteer: true, checkedIn: false }).eligible);
     const first = await serve({ identifier: okId });
     check('a confirmed delegate\'s badge: Serve', first.body.result === 'SERVE' && first.body.person.kind === 'DELEGATE' && first.body.servingId, first.body);
     const again = await call('POST', '/api/meals/serve', { mealKey: meal.key, sessionId: meal.counters[1].sessionId, identifier: okId }, admin);

@@ -9717,7 +9717,7 @@ const publicSession = (s) => ({
 
 // The registration someone attends under: any not rejected.
 const attendingRegistration = (phone) => dbGet(
-  "SELECT id, phone_number, delegate_name, category_key, category_label, bank_status FROM registrations WHERE phone_number = ? AND COALESCE(bank_status, '') != 'REJECTED'",
+  "SELECT id, phone_number, delegate_name, category_key, category_label, bank_status, checked_in_at FROM registrations WHERE phone_number = ? AND COALESCE(bank_status, '') != 'REJECTED'",
   [phone]);
 const enrolledIn = async (regId, optionId) => !!(await dbGet(
   'SELECT 1 AS yes FROM registration_options WHERE registration_id = ? AND option_id = ?', [regId, optionId]));
@@ -9743,6 +9743,16 @@ async function recordAttendance(req, { phone, session, method, note = null }) {
 async function markPresent(req, phone, session, method, { notEnrolledReason = '', note = null } = {}) {
   const reg = await attendingRegistration(phone);
   if (!reg) return { status: 409, error: 'Not registered.' };
+  // A delegate checks in at the registration desk before a door marks them
+  // (owner, 20 Nov 2026). Not asked of faculty, organisers or volunteers;
+  // an attendance manager marking by hand, with a reason, is not stopped.
+  if (method !== 'MANUAL' && !reg.checked_in_at && reg.category_key !== VOLUNTEER_CATEGORY) {
+    const u = await dbGet('SELECT role FROM users WHERE phone_number = ?', [phone]);
+    const faculty = (await dbAll('SELECT overall_status FROM guests WHERE phone_number = ?', [phone])).some((g) => !isCancelledGuest(g));
+    if (!faculty && !(u && !NOT_STAFF_ROLES.has(u.role))) {
+      return { status: 409, notCheckedIn: true, error: 'Not checked in yet. Send them to the registration desk to check in first.' };
+    }
+  }
   let why = note;
   if (isWorkshopSession(session) && !(await enrolledIn(reg.id, session.option_id))) {
     const reason = String(notEnrolledReason || '').trim();
@@ -10001,13 +10011,13 @@ async function mealPerson(key) {
   if (!u) return null;
   const guests = await dbAll('SELECT overall_status FROM guests WHERE phone_number = ?', [u.phone_number]);
   const onList = guests.some((g) => !isCancelledGuest(g));
-  const reg = await dbGet('SELECT registration_number, category_key, category_label, bank_status FROM registrations WHERE phone_number = ?', [u.phone_number]);
+  const reg = await dbGet('SELECT registration_number, category_key, category_label, bank_status, checked_in_at FROM registrations WHERE phone_number = ?', [u.phone_number]);
   return {
     key: u.phone_number,
     name: reminderName(u.salutation, u.full_name) || (reg && reg.registration_number) || 'Unnamed account',
     detail: [(reg && reg.registration_number) || u.registration_number, reg && reg.category_label].filter(Boolean).join(' · '),
     ...mealsLib.decide({ staff: !NOT_STAFF_ROLES.has(u.role), faculty: onList, facultyCancelled: !onList && guests.length > 0, regStatus: reg ? reg.bank_status : null,
-      volunteer: !!reg && reg.category_key === VOLUNTEER_CATEGORY }),
+      volunteer: !!reg && reg.category_key === VOLUNTEER_CATEGORY, checkedIn: !!reg && !!reg.checked_in_at }),
   };
 }
 const publicMealPerson = (p) => ({ key: p.key, name: p.name, detail: p.detail, eligible: p.eligible, kind: p.kind,
@@ -10356,7 +10366,8 @@ app.post('/api/attendance/hall', requireAuth, async (req, res, next) => {
     const done = await markPresent(req, req.session.phone, session, 'SELF');
     if (done.status !== 200) {
       return res.status(done.status).json({ success: false,
-        error: done.notEnrolled ? `You are not enrolled in ${session.option_name || session.title}. Please see the volunteer at the door.`
+        error: done.notCheckedIn ? 'Please check in at the registration desk first, then scan this code again.'
+          : done.notEnrolled ? `You are not enrolled in ${session.option_name || session.title}. Please see the volunteer at the door.`
           : 'Only registered delegates can mark attendance. Please see the registration desk.' });
     }
     res.json({ success: true, hall: hall.name, session: publicSession(session), ...done });

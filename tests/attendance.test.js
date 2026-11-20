@@ -111,6 +111,11 @@ const S = (id, date, start, end, extra = {}) => ({ id, session_date: date, start
     const halls = (await call('GET', '/api/attendance/halls', null, desk)).body.halls;
     check('the desk sees each hall and what is on there now', halls.find((x) => x.id === hall.id).now.id === all.body.id);
     const scan = (b, who = desk) => call('POST', '/api/attendance/scan', b, who);
+    // A delegate checks in at the desk before a door marks them (20 Nov).
+    const notIn = await scan({ hallId: hall.id, identifier: inP.registration_number });
+    check('not checked in at the desk yet: refused, sent to the registration desk', notIn.status === 409 && /Not checked in yet/.test(notIn.body.error), notIn.body);
+    check('...and by their own scan of the hall code too', /check in at the registration desk first/.test((await call('POST', '/api/attendance/hall', { code: h.code }, inP.cookie)).body.error || ''));
+    await db.run('UPDATE registrations SET checked_in_at = ?, checked_in_by = ? WHERE id IN (?, ?)', [Date.now(), 'Test desk', inP.regId, outP.regId]);
     const first = await scan({ hallId: hall.id, identifier: inP.registration_number });
     check('a badge scanned: present at the session on there', first.body.success && first.body.session.id === all.body.id && first.body.already === false, first.body);
     const again = await scan({ hallId: hall.id, identifier: inP.registration_number });
@@ -136,6 +141,7 @@ const S = (id, date, start, end, extra = {}) => ({ id, session_date: date, start
     const wsCode = prog.halls.find((x) => x.id === wsHall.id).code;
     const other = await signUp('other');
     made.people.push(other);
+    await db.run('UPDATE registrations SET checked_in_at = ? WHERE id = ?', [Date.now(), other.regId]);
     check('a workshop they are not enrolled in: refused, sent to the volunteer', /not enrolled/.test((await self(wsCode, other.cookie)).body.error || ''));
     check('nobody signed out can', (await call('POST', '/api/attendance/hall', { code: h.code })).status === 401);
     const newCode = await call('PUT', `/api/admin/programme/halls/${hall.id}`, { newCode: true }, admin);
