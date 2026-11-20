@@ -708,6 +708,15 @@ const SYSTEM_ROLES = [
     description: 'Faculty stay: accommodation, rooms, check-in and check-out. Sees the whole faculty list; can mark a delegate as faculty.',
     permissions: ['guests.view', 'guests.edit', 'guests.stay'],
   },
+  // Owner, 20 Nov 2026: one role for the whole of faculty coordination --
+  // the two coordinators' together. Removing faculty, deleting cars and
+  // rooms, the dropdown lists and settings stay with guests.manage.
+  {
+    key: 'FACULTY_COORDINATOR',
+    label: 'Faculty Coordinator',
+    description: 'All of faculty coordination: travel and stay, pickups and drops, cars, drivers and rooms, the Day plan, travel & stay emails and Wi-Fi logins. Sees the whole faculty list; can mark a delegate as faculty.',
+    permissions: ['guests.view', 'guests.edit', 'guests.travel', 'guests.stay', 'reports.checked_in'],
+  },
 ];
 
 // FINANCE_ACADEMIC is the union of the two roles it implies today.
