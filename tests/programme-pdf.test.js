@@ -36,5 +36,6 @@ const { call, check, report, appFile } = require('./harness');
   check('...draws a workshop day and a timetable day without failing, even with a logo file missing', sample.slice(0, 4).toString() === '%PDF' && !/NaN|undefined/.test(sample.toString('latin1')));
   check('...under the conference header, with the partners\' logos on every page (20 Nov design)', /logo: img\('nqocn-mgims-logo\.png'\), partners: content\.partners\.map/.test(site)
     && /'In partnership with'/.test(fs.readFileSync(appFile('programme-glance-pdf.js'), 'utf8')));
+  check('...and a Programme PDF button on the admin Programme page makes it (21 Nov)', /href="\/website\/programme-at-a-glance\.pdf"[^>]*>[\s\S]*?Programme PDF<\/a>/.test(fs.readFileSync(appFile('views/admin/sections/programme.ejs'), 'utf8')));
   report();
 })();
