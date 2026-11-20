@@ -774,8 +774,36 @@ function guestsCsv(rows) {
     .map((r) => r.map(cell).join(',')).join('\r\n');
 }
 
-// The guests table. phone_number is the linked account, NULL until linked
-// (SQLite lets UNIQUE hold any number of NULLs).
+// --- Wi-Fi logins (owner, 20 Nov 2026) ---
+// The venue's guest Wi-Fi logins, for faculty only: a list pasted in once
+// (from the IT sheet: "Sr No, Username, Password"), one given to a faculty
+// member at a time, taken back to be given again.
+const WIFI_NETWORK = 'Guest';
+// Each line: username and password, comma- or tab-separated; a leading
+// serial number and a header line are passed over. Returns { logins, errors }.
+function parseWifiLogins(text) {
+  const logins = [];
+  const errors = [];
+  const seen = new Set();
+  String(text || '').split(/\r?\n/).forEach((raw, i) => {
+    const line = raw.trim();
+    if (!line) return;
+    let cells = line.split(line.includes('\t') ? '\t' : ',').map((c) => c.trim().replace(/^"(.*)"$/, '$1'));
+    if (cells.some((c) => /^user\s*name$/i.test(c))) return;
+    if (cells.length >= 3 && /^\d+$/.test(cells[0])) cells = cells.slice(1);
+    if (cells.length < 2 || !cells[0] || !cells[1]) { errors.push(`Line ${i + 1}: needs a username and a password.`); return; }
+    if (cells[0].length > 100 || cells[1].length > 100) { errors.push(`Line ${i + 1}: too long.`); return; }
+    const key = cells[0].toLowerCase();
+    if (seen.has(key)) { errors.push(`Line ${i + 1}: ${cells[0]} is listed twice.`); return; }
+    seen.add(key);
+    logins.push({ username: cells[0], password: cells[1] });
+  });
+  return { logins, errors };
+}
+// What a faculty member is told: the network, the username, the password.
+const wifiInstructions = (username, password) =>
+  `Wi-Fi: connect to the network "${WIFI_NETWORK}" and sign in with Username: ${username}  Password: ${password}`;
+
 // --- The arrangements email (owner, 20 Nov 2026) ---
 // What has been arranged for one faculty member -- arrival and pickup,
 // stay, departure and drop, and whom to call -- sent only when someone
@@ -870,6 +898,8 @@ function arrangementsEmail(g, { drivers = [], vehicles = [], contacts = [], conf
   return { subject: `Your travel and stay${conference ? ` for ${conference}` : ''}`, title: 'Your travel and stay', body };
 }
 
+// The guests table. phone_number is the linked account, NULL until linked
+// (SQLite lets UNIQUE hold any number of NULLs).
 const GUEST_TABLE_SQL = (name) => `
   CREATE TABLE IF NOT EXISTS ${name} (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -950,4 +980,5 @@ module.exports = {
   validateGuestFields, forbiddenChanges, changedFields, autoStatusValues, arrivedMayFollow, ARRIVED, validateVehicle, validateRoom, validateSettings,
   nightsBetween, parseRoomNumbers, MAX_BULK_ROOMS,
   buildBoard, guestsCsv, arrangementsPrint, arrangementsEmail,
+  WIFI_NETWORK, parseWifiLogins, wifiInstructions,
 };

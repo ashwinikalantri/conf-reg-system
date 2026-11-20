@@ -2288,6 +2288,18 @@ db.serialize(() => {
   `);
   // The drivers, a list apart from the vehicles: one car may be driven by
   // different drivers, chosen for each pickup and drop (owner, 19 Nov 2026).
+  // The venue's guest Wi-Fi logins, for faculty only (owner, 20 Nov 2026):
+  // one given to a faculty member at a time (guest_id), taken back to free it.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS guest_wifi (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      password TEXT NOT NULL,
+      guest_id INTEGER UNIQUE,
+      allotted_at INTEGER, allotted_by TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
   db.run(`
     CREATE TABLE IF NOT EXISTS guest_drivers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16473,8 +16485,10 @@ async function guestRowsJoined(where = '', params = []) {
             (r.id IS NOT NULL AND COALESCE(r.bank_status, '') != 'REJECTED') AS registered,
             (r.payment_mode = 'COMPLIMENTARY' AND COALESCE(r.bank_status, '') != 'REJECTED') AS complimentary,
             tc.salutation AS tc_salutation, tc.full_name AS tc_name,
-            ac.salutation AS ac_salutation, ac.full_name AS ac_name
+            ac.salutation AS ac_salutation, ac.full_name AS ac_name,
+            w.username AS wifi_username, w.password AS wifi_password
        FROM guests g
+       LEFT JOIN guest_wifi w ON w.guest_id = g.id
        LEFT JOIN users u ON u.phone_number = g.phone_number
        LEFT JOIN registrations r ON r.phone_number = g.phone_number
        LEFT JOIN users tc ON tc.phone_number = g.transport_coordinator
@@ -16587,6 +16601,7 @@ app.get('/api/guests', requirePermission('guests.view'), async (req, res, next) 
       listLabels: guestLib.LIST_LABELS,
       settings,
       coordinators: await guestCoordinatorPool(),
+      wifi: { network: guestLib.WIFI_NETWORK, logins: await dbAll('SELECT id, username, password, guest_id, allotted_at, allotted_by FROM guest_wifi ORDER BY id') },
       today: istDateString(),
     });
   } catch (err) {
@@ -17211,6 +17226,78 @@ app.post('/api/guests/:id/arrangements-email', requirePermission('guests.edit'),
     await dbRun("UPDATE held_emails SET status = 'CANCELLED', decided_at = ? WHERE status = 'PENDING' AND ref LIKE ?", [Date.now(), `guest:${g.id}:arrangements:%`]);
     const held = await holdEmailTo(req, to, g.name || null, mail.subject, emailWrap(mail.title, mail.body), `guest:${g.id}:arrangements:${guestLib.arrangementsPrint(g)}`);
     if (!held) return res.status(400).json({ success: false, error: 'Email is switched off, so nothing can be sent.' });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Wi-Fi logins (owner, 20 Nov 2026) ---
+// The venue's guest Wi-Fi logins, for faculty only. Whoever may set a
+// faculty member's stay (or edit faculty) gives them the next free one, or
+// takes it back; the list itself is pasted in, and a free one removed, by
+// those who manage the Faculty tab.
+const mayGiveWifi = (req, current) => sessionCan(req, 'guests.edit')
+  || guestLib.mayEditField('accommodation', current, (p) => sessionCan(req, p), req.session.phone);
+app.post('/api/guests/:id/wifi', requirePermission('guests.view'), async (req, res, next) => {
+  try {
+    const current = await dbGet('SELECT * FROM guests WHERE id = ?', [req.params.id]);
+    if (!current) return res.status(404).json({ success: false, error: 'Faculty member not found.' });
+    if (!mayGiveWifi(req, current)) return res.status(403).json({ success: false, error: 'Only whoever looks after their stay can give or take back a Wi-Fi login.' });
+    const [g] = await guestRowsJoined('WHERE g.id = ?', [current.id]);
+    const by = req.session.name || req.session.phone;
+    const held = await dbGet('SELECT * FROM guest_wifi WHERE guest_id = ?', [current.id]);
+    if (req.body && req.body.undo) {
+      if (!held) return res.json({ success: true, changed: 0 });
+      await dbRun('UPDATE guest_wifi SET guest_id = NULL, allotted_at = NULL, allotted_by = NULL WHERE id = ?', [held.id]);
+      await recordAudit({ req, entityType: 'guest', entityId: String(current.id), action: 'GUEST_WIFI_TAKEN_BACK', oldValue: g.name, newValue: `Wi-Fi login ${held.username} taken back` });
+      return res.json({ success: true, changed: 1 });
+    }
+    if (held) return res.json({ success: true, changed: 0, username: held.username });
+    if (String(current.overall_status || '').trim().toLowerCase() === guestLib.CANCELLED.toLowerCase()) {
+      return res.status(400).json({ success: false, error: 'They are Cancelled.' });
+    }
+    // The next free one, in the list's order; claimed only if still free.
+    for (let tries = 0; tries < 5; tries++) {
+      const free = await dbGet('SELECT * FROM guest_wifi WHERE guest_id IS NULL ORDER BY id LIMIT 1');
+      if (!free) return res.status(400).json({ success: false, error: 'No Wi-Fi logins left. Add more under Cars, drivers & rooms.' });
+      const claim = await dbRun('UPDATE guest_wifi SET guest_id = ?, allotted_at = ?, allotted_by = ? WHERE id = ? AND guest_id IS NULL', [current.id, Date.now(), by, free.id]);
+      if (claim.changes === 1) {
+        await recordAudit({ req, entityType: 'guest', entityId: String(current.id), action: 'GUEST_WIFI_GIVEN', oldValue: g.name, newValue: `Wi-Fi login ${free.username}` });
+        return res.json({ success: true, changed: 1, username: free.username });
+      }
+    }
+    res.status(409).json({ success: false, error: 'Someone else took that login at the same moment. Try again.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/guests/wifi', requirePermission('guests.manage'), async (req, res, next) => {
+  try {
+    const { logins, errors } = guestLib.parseWifiLogins(req.body && req.body.text);
+    if (errors.length) return res.status(400).json({ success: false, error: errors.slice(0, 5).join(' ') });
+    if (!logins.length) return res.status(400).json({ success: false, error: 'Paste at least one username and password.' });
+    let added = 0;
+    let already = 0;
+    for (const l of logins) {
+      const r = await dbRun('INSERT OR IGNORE INTO guest_wifi (username, password, created_at) VALUES (?, ?, ?)', [l.username, l.password, Date.now()]);
+      if (r.changes) added++; else already++;
+    }
+    await recordAudit({ req, entityType: 'guest_vehicle', entityId: 'wifi', action: 'GUEST_WIFI_ADDED', oldValue: null, newValue: `${added} Wi-Fi login(s) added${already ? `; ${already} already there` : ''}` });
+    res.json({ success: true, added, already });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/guests/wifi/:id', requirePermission('guests.manage'), async (req, res, next) => {
+  try {
+    const w = await dbGet('SELECT * FROM guest_wifi WHERE id = ?', [req.params.id]);
+    if (!w) return res.status(404).json({ success: false, error: 'Login not found.' });
+    if (w.guest_id) return res.status(400).json({ success: false, error: 'It is given to someone. Take it back first.' });
+    await dbRun('DELETE FROM guest_wifi WHERE id = ? AND guest_id IS NULL', [w.id]);
+    await recordAudit({ req, entityType: 'guest_vehicle', entityId: 'wifi', action: 'GUEST_WIFI_REMOVED', oldValue: w.username, newValue: 'Removed from the list' });
     res.json({ success: true });
   } catch (err) {
     next(err);

@@ -14415,7 +14415,7 @@ function switchGuestView(view) {
   });
   if (!guestData) return;
   ({
-    day: renderGuestDay, list: renderGuestList, resources: () => { renderGuestVehicles(); renderGuestRooms(); }, settings: renderGuestSettings,
+    day: renderGuestDay, list: renderGuestList, resources: () => { renderGuestVehicles(); renderGuestRooms(); renderGuestWifi(); }, settings: renderGuestSettings,
   })[view]();
 }
 
@@ -15683,6 +15683,7 @@ function renderGuestPanel() {
             ? esc(`Sent ${guestEmailedAt(g.arrangementsEmail.at)}${g.arrangementsEmail.by ? ` by ${g.arrangementsEmail.by}` : ''}${g.arrangementsEmail.changed ? '. Their travel or stay has changed since.' : '.'}`)
             : esc(g.email ? `Not sent yet. Goes to ${g.email}.` : 'No email address. Add one with Edit.')}</p></div>
         ${guestEmailButton(g)}</div>`}
+      ${guestWifiStrip(g)}
       ${!g.registered && !g.cancelled && can('payments.complimentary') ? `<div class="px-5 py-3"><div class="rounded-lg bg-gold-50 border border-gold-100 px-3 py-2 flex items-center justify-between gap-2"><span>Not registered yet.</span>
         <button type="button" onclick="registerFacultyFree(${esc(g.id)})" class="h-8 px-3 rounded-lg bg-navy hover:bg-indigo-700 text-white text-[13px] font-semibold shrink-0">Register free</button></div></div>` : ''}
       ${part('Coming', 'Arrival', leg(g.arrival_date, g.arrival_time, g.arrival_mode, g.arrival_number, g.arrival_point, 'Pickup'))}
@@ -15696,6 +15697,88 @@ function renderGuestPanel() {
     </div>`;
   box.classList.remove('hidden');
   document.getElementById('guest-panel-backdrop').classList.remove('hidden');
+}
+
+// --- Wi-Fi logins (owner, 20 Nov 2026) ---
+// The venue's guest Wi-Fi logins, for faculty only: one given from the list
+// (the next free), shown on their panel to read out or copy, taken back to
+// give again. The list is under Cars, drivers & rooms.
+const guestMayWifi = (g) => can('guests.edit') || guestMayStay(g);
+const guestWifiText = (g) => `Wi-Fi: connect to the network "${(guestData.wifi || {}).network || 'Guest'}" and sign in with\nUsername: ${g.wifi_username}\nPassword: ${g.wifi_password}`;
+function guestWifiStrip(g) {
+  const w = guestData.wifi || { logins: [] };
+  if (!g.wifi_username && (g.cancelled || !w.logins.length)) return '';
+  const free = w.logins.filter((l) => !l.guest_id).length;
+  if (!g.wifi_username) {
+    return `<div class="px-5 py-3 flex flex-wrap items-center justify-between gap-2">
+      <div class="min-w-0"><p class="font-semibold text-slate-800">Wi-Fi login</p><p class="text-[13px] text-slate-500">${free ? `None given yet. ${free} left.` : 'None given yet, and none left.'}</p></div>
+      ${guestMayWifi(g) && free ? `<button type="button" onclick="giveGuestWifi(${esc(g.id)}, true)" class="h-8 px-3 rounded-lg text-[13px] font-semibold bg-navy hover:bg-indigo-700 text-white shrink-0">Give Wi-Fi login</button>` : ''}</div>`;
+  }
+  return `<div class="px-5 py-3">
+      <div class="flex items-center justify-between gap-2"><p class="font-semibold text-slate-800">Wi-Fi login</p>
+        ${guestMayWifi(g) ? `<button type="button" onclick="giveGuestWifi(${esc(g.id)}, false)" class="text-[13px] text-slate-500 hover:text-rose-700 font-semibold">Take back</button>` : ''}</div>
+      <dl class="mt-1 grid grid-cols-[6rem_minmax(0,1fr)] gap-y-0.5 text-[15px]">
+        <dt class="text-slate-500">Network</dt><dd class="font-semibold">${esc((guestData.wifi || {}).network || 'Guest')}</dd>
+        <dt class="text-slate-500">Username</dt><dd class="font-mono font-semibold break-all">${esc(g.wifi_username)}</dd>
+        <dt class="text-slate-500">Password</dt><dd class="font-mono font-semibold break-all">${esc(g.wifi_password)}</dd>
+      </dl>
+      <button type="button" onclick="copyGuestWifi(${esc(g.id)})" class="${guestBtn.plain} h-9 mt-2">Copy for WhatsApp</button>
+    </div>`;
+}
+function copyGuestWifi(id) {
+  const g = guestById(id);
+  if (g && g.wifi_username) guestCopy(guestWifiText(g), 'Copied. Paste it into WhatsApp or a message.');
+}
+async function giveGuestWifi(id, give) {
+  if (!give && !(await showConfirm('Take this Wi-Fi login back? It can then be given to someone else.', 'Take back'))) return;
+  const data = await (await fetch(`/api/guests/${encodeURIComponent(id)}/wifi`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(give ? {} : { undo: true }),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not save.');
+  showToast(give ? `Wi-Fi login ${data.username || ''} given.` : 'Wi-Fi login taken back.', 'success');
+  await renderGuests();
+}
+
+function renderGuestWifi() {
+  const box = document.getElementById('guests-view-wifi');
+  if (!box || !guestData) return;
+  const w = guestData.wifi || { network: 'Guest', logins: [] };
+  const manage = can('guests.manage');
+  const given = w.logins.filter((l) => l.guest_id);
+  const nameOf = (id) => { const g = guestById(id); return g ? g.name : 'Someone removed'; };
+  box.innerHTML = `<section class="space-y-2">
+      <div class="flex flex-wrap items-end justify-between gap-2">
+        <div><h3 class="text-base font-bold text-slate-900">Wi-Fi logins <span class="text-sm font-semibold text-slate-500">· faculty only</span></h3>
+          <p class="text-sm text-slate-500">Network <b>${esc(w.network)}</b>. ${w.logins.length ? `${given.length} of ${w.logins.length} given, ${w.logins.length - given.length} left.` : 'No logins yet.'} Give one from a faculty member's panel.</p></div>
+      </div>
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="hidden sm:grid sm:grid-cols-[8rem_8rem_minmax(0,1fr)_6rem] gap-3 px-4 py-2 bg-slate-50 text-[11px] text-slate-500 uppercase tracking-wide font-semibold"><span>Username</span><span>Password</span><span>Given to</span><span></span></div>
+        <div class="divide-y divide-slate-100 text-sm">${w.logins.length ? w.logins.map((l) => `<div class="grid grid-cols-2 sm:grid-cols-[8rem_8rem_minmax(0,1fr)_6rem] gap-x-3 gap-y-1 px-4 py-2 items-center">
+            <span class="font-mono font-semibold">${esc(l.username)}</span><span class="font-mono">${esc(l.password)}</span>
+            <span class="col-span-2 sm:col-span-1 min-w-0">${l.guest_id ? `<button type="button" onclick="openGuestPanel(${esc(l.guest_id)})" class="font-semibold text-indigo-700 hover:underline text-left">${esc(nameOf(l.guest_id))}</button>${l.allotted_by ? ` <span class="text-slate-400">· by ${esc(l.allotted_by)}</span>` : ''}` : '<span class="text-emerald-700">Free</span>'}</span>
+            <span class="col-span-2 sm:col-span-1 sm:text-right">${manage && !l.guest_id ? `<button type="button" onclick="deleteGuestWifi(${esc(l.id)})" class="px-3 py-1.5 border border-rose-300 text-rose-700 hover:bg-rose-50 text-xs font-semibold rounded-lg">Remove</button>` : ''}</span>
+          </div>`).join('') : '<p class="p-6 text-center text-slate-400">No Wi-Fi logins yet.</p>'}</div>
+      </div>
+      ${manage ? `<details class="bg-white rounded-2xl border border-slate-200 p-4">
+        <summary class="cursor-pointer font-semibold text-navy text-sm">Add logins</summary>
+        <p class="text-[13px] text-slate-500 mt-2">Paste one per line: username and password, separated by a comma or a tab (a serial number first, and a header line, are fine).</p>
+        <textarea id="guest-wifi-paste" rows="5" class="mt-2 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono" placeholder="username,password"></textarea>
+        <button type="button" onclick="addGuestWifi()" class="mt-2 h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Add</button>
+      </details>` : ''}
+    </section>`;
+}
+async function addGuestWifi() {
+  const text = document.getElementById('guest-wifi-paste').value;
+  const data = await (await fetch('/api/guests/wifi', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not add them.');
+  showToast(`${data.added} added${data.already ? `; ${data.already} were already there` : ''}.`, 'success');
+  await renderGuests();
+}
+async function deleteGuestWifi(id) {
+  if (!(await showConfirm('Remove this Wi-Fi login from the list?', 'Remove'))) return;
+  const data = await (await fetch(`/api/guests/wifi/${encodeURIComponent(id)}`, { method: 'DELETE' })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not remove it.');
+  await renderGuests();
 }
 
 // --- vehicles and drivers ---
