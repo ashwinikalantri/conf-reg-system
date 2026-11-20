@@ -125,10 +125,31 @@ const FIXTURE_ORAL = '9000001003'; // Half Price: an accepted ORAL abstract
     d = (await call('GET', '/api/admin/poster-screens', null, admin)).body;
     check('a sixth screen, in every session, empty, named in turn', added.success && d.screens.length === 6 && d.screens[5].name === 'Screen 6'
       && d.sessions.every((x) => x.screens.length === 6 && x.screens[5].posters.length === 0));
-    await call('PUT', `/api/admin/poster-screens/${added.id}`, { name: 'Screen 6 (foyer)', moderator: 'Dr Moderator' }, admin);
+    await call('PUT', `/api/admin/poster-screens/${added.id}`, { name: 'Screen 6 (foyer)' }, admin);
     await call('POST', '/api/admin/poster-screens/move', { abstractId: mover.id, sessionId: twoS.id, screenId: added.id }, admin);
     d = (await call('GET', '/api/admin/poster-screens', null, admin)).body;
-    check('renamed, with a moderator, and a poster on it', d.screens[5].name === 'Screen 6 (foyer)' && d.screens[5].moderator === 'Dr Moderator' && d.sessions[1].screens[5].posters.length === 1);
+    check('renamed, and a poster on it', d.screens[5].name === 'Screen 6 (foyer)' && d.sessions[1].screens[5].posters.length === 1);
+
+    console.log('\n== Judges, per screen per session (20 Nov) ==');
+    const found = (await call('GET', '/api/admin/poster-screens/judge-candidates?q=Payment', null, admin)).body.people || [];
+    const judge = found.find((x) => x.key === '9000001001');
+    check('found by name among registered delegates (and the Faculty list)', !!judge, found);
+    check('...a short search finds nobody', ((await call('GET', '/api/admin/poster-screens/judge-candidates?q=P', null, admin)).body.people || []).length === 0);
+    const addJ = await call('POST', `/api/admin/poster-screens/${added.id}/judges`, { sessionId: twoS.id, key: judge.key }, admin);
+    check('a judge added to one screen in one session', addJ.body.success && addJ.body.added === 1, addJ.body);
+    check('...once', (await call('POST', `/api/admin/poster-screens/${added.id}/judges`, { sessionId: twoS.id, key: judge.key }, admin)).body.added === 0);
+    check('...only someone on the Faculty list or registered', (await call('POST', `/api/admin/poster-screens/${added.id}/judges`, { sessionId: twoS.id, key: 'nobody-here' }, admin)).status === 400);
+    check('...only for a poster session', (await call('POST', `/api/admin/poster-screens/${added.id}/judges`, { sessionId: 999999, key: judge.key }, admin)).status === 400);
+    check('...not by the front desk', (await call('POST', `/api/admin/poster-screens/${added.id}/judges`, { sessionId: twoS.id, key: judge.key }, desk)).status === 403);
+    d = (await call('GET', '/api/admin/poster-screens', null, admin)).body;
+    const lane = d.sessions.find((x) => x.id === twoS.id).screens[5];
+    check('shown on that screen in that session only', lane.judges.length === 1 && lane.judges[0].name === judge.name
+      && d.sessions.find((x) => x.id !== twoS.id).screens[5].judges.length === 0);
+    const jpdf = await call('GET', `/api/admin/poster-screens/order.pdf?screen=${added.id}`, null, admin);
+    check('...and on its running order', jpdf.status === 200);
+    check('a judge can be taken off', (await call('DELETE', `/api/admin/poster-screens/judges/${lane.judges[0].id}`, null, admin)).body.success
+      && (await call('GET', '/api/admin/poster-screens', null, admin)).body.sessions.find((x) => x.id === twoS.id).screens[5].judges.length === 0);
+    await call('POST', `/api/admin/poster-screens/${added.id}/judges`, { sessionId: twoS.id, key: judge.key }, admin);
     const removed = (await call('DELETE', `/api/admin/poster-screens/${added.id}`, null, admin)).body;
     d = (await call('GET', '/api/admin/poster-screens', null, admin)).body;
     check('removing it sends its poster to Not allotted', removed.unallotted === 1 && d.screens.length === 5 && d.unallotted.some((p) => p.id === mover.id));
@@ -170,6 +191,7 @@ const FIXTURE_ORAL = '9000001003'; // Half Price: an accepted ORAL abstract
     if (ids.length) await db.run(`DELETE FROM abstracts WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
     await db.run('UPDATE abstracts SET allocation = ?, decision_sent_at = ? WHERE id = ?', [fixtureOral.allocation, fixtureOral.decision_sent_at, fixtureOral.id]);
     await db.run('DELETE FROM poster_slots');
+    await db.run(`DELETE FROM poster_judges WHERE screen_id NOT IN (${screensBefore.map(() => '?').join(',') || 'NULL'})`, screensBefore.map((x) => x.id));
     await db.run(`DELETE FROM poster_screens WHERE id NOT IN (${screensBefore.map(() => '?').join(',') || 'NULL'})`, screensBefore.map((s) => s.id));
     await db.run("DELETE FROM schema_meta WHERE key IN ('poster_session_ids', 'poster_minutes', 'poster_published')");
     db.close();

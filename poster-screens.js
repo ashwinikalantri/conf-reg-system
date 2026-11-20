@@ -47,7 +47,10 @@ const cleanMinutes = (v) => {
 //   slots:    [{ abstract_id, session_id, screen_id, position }]
 //   posters:  [{ id, ... }] -- the e-posters that take a screen
 //   sessions: [{ id, date, start, end, ... }]; minutes: per poster
-function board({ screens, slots, posters, sessions, minutes }) {
+// judges: [{ id, session_id, screen_id, person_key, name, position }] -- each
+// screen's judges in each session (owner, 20 Nov 2026; they replaced the
+// one free-text moderator per screen).
+function board({ screens, slots, posters, sessions, minutes, judges = [] }) {
   const byId = new Map(posters.map((p) => [Number(p.id), p]));
   const ordered = [...screens].sort((a, b) => a.sort_order - b.sort_order || a.id - b.id);
   const placed = new Set();
@@ -67,6 +70,8 @@ function board({ screens, slots, posters, sessions, minutes }) {
         const finish = start == null ? null : start + items.length * minutes;
         return {
           id: s.id, name: s.name, moderator: s.moderator || '', posters: items,
+          judges: judges.filter((j) => Number(j.screen_id) === Number(s.id) && Number(j.session_id) === Number(session.id))
+            .sort((a, b) => a.position - b.position || a.id - b.id).map((j) => ({ id: j.id, key: j.person_key, name: j.name })),
           endMin: finish, endTime: finish == null ? null : to12(finish),
           overrun: finish != null && end != null && items.length ? Math.max(0, finish - end) : 0,
         };

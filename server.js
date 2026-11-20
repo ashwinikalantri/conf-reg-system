@@ -2141,6 +2141,21 @@ db.serialize(() => {
       created_at INTEGER NOT NULL
     )
   `);
+  // Each screen's judges in each poster session (owner, 20 Nov 2026):
+  // someone on the Faculty list or a registered delegate, chosen by name.
+  // person_key: their account, or faculty-<id> for faculty not signed up.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS poster_judges (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id INTEGER NOT NULL,
+      screen_id INTEGER NOT NULL,
+      person_key TEXT NOT NULL,
+      name TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      UNIQUE (session_id, screen_id, person_key)
+    )
+  `);
   db.run(`
     CREATE TABLE IF NOT EXISTS poster_slots (
       abstract_id INTEGER PRIMARY KEY,
@@ -16200,13 +16215,14 @@ const posterAbstracts = () => dbAll(
 async function posterBoard() {
   const settings = await posterSettings();
   const sessions = await posterSessions(settings);
-  const [screens, slots, rows] = await Promise.all([
-    dbAll('SELECT * FROM poster_screens ORDER BY sort_order, id'), dbAll('SELECT * FROM poster_slots'), posterAbstracts()]);
+  const [screens, slots, rows, judges] = await Promise.all([
+    dbAll('SELECT * FROM poster_screens ORDER BY sort_order, id'), dbAll('SELECT * FROM poster_slots'), posterAbstracts(),
+    dbAll('SELECT * FROM poster_judges').catch(() => [])]);
   const posters = rows.map((r) => ({
     id: r.id, title: r.title, presenter: reminderName(r.salutation, r.full_name || r.author_name), regNo: r.registration_number || null,
     phone: r.phone_number, file: r.file_name ? { fileName: r.file_name, size: r.size } : null,
   }));
-  const b = posterScreensLib.board({ screens, slots, posters, sessions, minutes: settings.minutes });
+  const b = posterScreensLib.board({ screens, slots, posters, sessions, minutes: settings.minutes, judges });
   return { settings, screens, ...b, fit: posterScreensLib.fit({ total: posters.length, screens: screens.length, minutes: settings.minutes, sessions }) };
 }
 
@@ -16386,7 +16402,7 @@ app.post('/api/admin/poster-screens/move', requirePermission('abstracts.assign')
 });
 
 // The running order: one screen's, or every screen's, as a PDF for the
-// moderator -- a section for each session -- with Present and Score to
+// judges -- a section for each session -- with Present and Score to
 // fill in by hand.
 app.get('/api/admin/poster-screens/order.pdf', requirePermission('abstracts.view'), async (req, res, next) => {
   try {
@@ -16398,7 +16414,7 @@ app.get('/api/admin/poster-screens/order.pdf', requirePermission('abstracts.view
       for (const x of b.sessions) {
         const s = x.screens.find((y) => y.id === screen.id);
         sections.push({
-          name: [`${s.name}, ${x.startTime}–${x.endTime}`, s.moderator ? `Moderator: ${s.moderator}` : '', x.day, x.hall, `${b.settings.minutes} minutes each`].filter(Boolean).join(' · '),
+          name: [`${s.name}, ${x.startTime}–${x.endTime}`, (s.judges || []).length ? `Judges: ${s.judges.map((j) => j.name).join(', ')}` : '', x.day, x.hall, `${b.settings.minutes} minutes each`].filter(Boolean).join(' · '),
           columns: ['#', 'Time', 'Presenter', 'Title', 'Reg No', 'Present', 'Score'],
           rows: s.posters.map((p) => [String(p.place), p.time || '', p.presenter, p.title, p.regNo || '', '', '']),
         });
@@ -16442,7 +16458,91 @@ app.get('/api/admin/poster-screens/:id/files.zip', requirePermission('abstracts.
   }
 });
 
-// Rename a screen, or name its moderator.
+// --- Judges (owner, 20 Nov 2026) ---
+// Who may judge: everyone on the Faculty list (not cancelled) and every
+// registered delegate, found by name, mobile or registration number.
+async function posterJudgeCandidates(q) {
+  const term = String(q || '').trim();
+  if (term.length < 2) return [];
+  const like = `%${term}%`;
+  const out = new Map();
+  for (const g of await dbAll(
+    `SELECT g.id, g.phone_number, g.guest_name, g.guest_designation, u.salutation, u.full_name, u.designation
+       FROM guests g LEFT JOIN users u ON u.phone_number = g.phone_number
+      WHERE COALESCE(g.overall_status, '') != ? AND (COALESCE(u.full_name, g.guest_name) LIKE ? OR g.guest_name LIKE ?)
+      ORDER BY COALESCE(u.full_name, g.guest_name) LIMIT 10`, [guestLib.CANCELLED, like, like])) {
+    const key = g.phone_number || `faculty-${g.id}`;
+    out.set(key, { key, name: (g.phone_number && reminderName(g.salutation, g.full_name)) || g.guest_name, detail: ['Faculty', g.designation || g.guest_designation].filter(Boolean).join(' · ') });
+  }
+  for (const r of await dbAll(
+    `SELECT r.phone_number, r.registration_number, r.category_label, r.delegate_name, u.salutation, u.full_name
+       FROM registrations r LEFT JOIN users u ON u.phone_number = r.phone_number
+      WHERE COALESCE(r.bank_status, '') != 'REJECTED' AND (COALESCE(u.full_name, r.delegate_name) LIKE ? OR r.registration_number LIKE ? OR r.phone_number LIKE ?)
+      ORDER BY COALESCE(u.full_name, r.delegate_name) LIMIT 10`, [like, like, like])) {
+    if (out.has(r.phone_number)) continue;
+    out.set(r.phone_number, { key: r.phone_number, name: reminderName(r.salutation, r.full_name || r.delegate_name), detail: [r.registration_number, r.category_label].filter(Boolean).join(' · ') });
+  }
+  return [...out.values()].slice(0, 12);
+}
+// The one person a key names, if they may judge: { key, name } or null.
+async function posterJudgeFor(key) {
+  const fac = /^faculty-(\d+)$/.exec(String(key || ''));
+  if (fac) {
+    const g = await dbGet('SELECT id, guest_name, overall_status, phone_number FROM guests WHERE id = ?', [fac[1]]);
+    if (!g || isCancelledGuest(g)) return null;
+    return g.phone_number ? posterJudgeFor(g.phone_number) : { key: `faculty-${g.id}`, name: g.guest_name };
+  }
+  const u = await dbGet('SELECT phone_number, salutation, full_name FROM users WHERE phone_number = ?', [String(key || '')]);
+  if (!u) return null;
+  const onList = (await dbAll('SELECT overall_status FROM guests WHERE phone_number = ?', [u.phone_number])).some((g) => !isCancelledGuest(g));
+  const reg = await dbGet("SELECT delegate_name FROM registrations WHERE phone_number = ? AND COALESCE(bank_status, '') != 'REJECTED'", [u.phone_number]);
+  if (!onList && !reg) return null;
+  return { key: u.phone_number, name: reminderName(u.salutation, u.full_name) || (reg && reg.delegate_name) || u.phone_number };
+}
+
+app.get('/api/admin/poster-screens/judge-candidates', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    res.json({ success: true, people: await posterJudgeCandidates(req.query.q) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/admin/poster-screens/:id/judges', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const s = await dbGet('SELECT * FROM poster_screens WHERE id = ?', [req.params.id]);
+    if (!s) return res.status(404).json({ success: false, error: 'No such screen.' });
+    const session = (await posterSessions(await posterSettings())).find((x) => x.id === Number(req.body.sessionId));
+    if (!session) return res.status(400).json({ success: false, error: 'Choose the poster session.' });
+    const who = await posterJudgeFor(req.body.key);
+    if (!who) return res.status(400).json({ success: false, error: 'A judge is someone on the Faculty list or a registered delegate.' });
+    const top = await dbGet('SELECT MAX(position) AS p FROM poster_judges WHERE session_id = ? AND screen_id = ?', [session.id, s.id]);
+    const r = await dbRun('INSERT OR IGNORE INTO poster_judges (session_id, screen_id, person_key, name, position, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [session.id, s.id, who.key, who.name, (top && top.p != null ? top.p : -1) + 1, Date.now()]);
+    if (r.changes) {
+      await recordAudit({ req, entityType: 'poster_screen', entityId: s.id, action: 'POSTER_JUDGE_ADDED', oldValue: null,
+        newValue: `${who.name}: ${s.name}, ${session.day} ${session.startTime}` });
+    }
+    res.json({ success: true, added: r.changes });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/admin/poster-screens/judges/:judgeId', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const j = await dbGet('SELECT j.*, s.name AS screen FROM poster_judges j LEFT JOIN poster_screens s ON s.id = j.screen_id WHERE j.id = ?', [req.params.judgeId]);
+    if (!j) return res.status(404).json({ success: false, error: 'Not a judge there.' });
+    await dbRun('DELETE FROM poster_judges WHERE id = ?', [j.id]);
+    await recordAudit({ req, entityType: 'poster_screen', entityId: j.screen_id, action: 'POSTER_JUDGE_REMOVED', oldValue: `${j.name}: ${j.screen || ''}`, newValue: null });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Rename a screen (its free-text moderator is no longer asked: judges are
+// chosen per session above).
 app.put('/api/admin/poster-screens/:id', requirePermission('abstracts.assign'), async (req, res, next) => {
   try {
     const s = await dbGet('SELECT * FROM poster_screens WHERE id = ?', [req.params.id]);
@@ -16466,6 +16566,7 @@ app.delete('/api/admin/poster-screens/:id', requirePermission('abstracts.assign'
     if (!s) return res.status(404).json({ success: false, error: 'No such screen.' });
     const moved = await dbRun('DELETE FROM poster_slots WHERE screen_id = ?', [s.id]);
     await dbRun('DELETE FROM poster_screens WHERE id = ?', [s.id]);
+    await dbRun('DELETE FROM poster_judges WHERE screen_id = ?', [s.id]);
     await recordAudit({ req, entityType: 'poster_screen', entityId: s.id, action: 'POSTER_SCREEN_REMOVED', oldValue: s.name, newValue: `${moved.changes} poster(s) now not allotted` });
     res.json({ success: true, unallotted: moved.changes });
   } catch (err) {

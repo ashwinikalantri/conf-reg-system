@@ -11369,12 +11369,11 @@ function drawPosterScreens() {
         <b class="font-semibold">${esc(x.startTime)}–${esc(x.endTime)}</b><span class="text-slate-500">· ${esc(x.day)} · ${esc(x.hall)}</span>
         ${assign ? `<button type="button" aria-label="Take this session off" onclick="removePosterSession(${esc(x.id)})" class="w-7 h-7 rounded-md text-slate-500 hover:bg-slate-100">×</button>` : ''}</span>`).join('');
     const screenChips = d.screens.map((s) => `<span class="inline-flex items-center gap-1">
-        ${assign ? `<button type="button" onclick="togglePosterScreenEdit(${esc(s.id)})" class="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-800" title="Rename, moderator, remove">${esc(s.name)}${s.moderator ? ` <span class="font-normal text-slate-500">· ${esc(s.moderator)}</span>` : ''}</button>`
-          : `<span class="h-9 px-3 inline-flex items-center rounded-lg border border-slate-200 bg-white text-sm font-semibold">${esc(s.name)}${s.moderator ? ` · ${esc(s.moderator)}` : ''}</span>`}
+        ${assign ? `<button type="button" onclick="togglePosterScreenEdit(${esc(s.id)})" class="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-800" title="Rename, remove">${esc(s.name)}</button>`
+          : `<span class="h-9 px-3 inline-flex items-center rounded-lg border border-slate-200 bg-white text-sm font-semibold">${esc(s.name)}</span>`}
       </span>`).join('');
     const edits = assign ? d.screens.map((s) => `<form id="screen-edit-${esc(s.id)}" onsubmit="event.preventDefault(); savePosterScreen(${esc(s.id)})" class="hidden w-full flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
         <input id="screen-name-${esc(s.id)}" value="${esc(s.name)}" maxlength="40" aria-label="Screen name" class="${field} w-40">
-        <input id="screen-mod-${esc(s.id)}" value="${esc(s.moderator)}" maxlength="80" placeholder="Moderator (optional)" aria-label="Moderator" class="${field} flex-1 min-w-[10rem]">
         <button type="submit" class="h-9 px-3 bg-navy text-white font-semibold text-sm rounded-lg">Save</button>
         <button type="button" onclick="removePosterScreen(${esc(s.id)})" class="h-9 px-3 border border-rose-300 text-rose-700 font-semibold text-sm rounded-lg">Remove screen</button>
       </form>`).join('') : '';
@@ -11455,7 +11454,8 @@ function drawPosterScreens() {
             <div class="px-3 py-2.5 border-b border-slate-100">
               <div class="flex items-center justify-between gap-2"><h5 class="font-bold text-slate-900">${esc(s.name)}</h5>
                 <span class="text-xs text-slate-500 whitespace-nowrap">${esc(s.posters.length)} ${s.posters.length === 1 ? 'poster' : 'posters'}</span></div>
-              <p class="text-xs text-slate-500">${s.posters.length ? `${esc(x.startTime)} – ${esc(s.endTime)}` : ''}${s.moderator ? `${s.posters.length ? ' · ' : ''}Moderator: <span class="text-slate-700">${esc(s.moderator)}</span>` : ''}</p>
+              <p class="text-xs text-slate-500">${s.posters.length ? `${esc(x.startTime)} – ${esc(s.endTime)}` : ''}</p>
+              ${posterJudgesHtml(x, s, assign)}
               ${s.overrun ? `<p class="text-[11px] font-semibold text-amber-800 mt-0.5">${esc(s.overrun)} min past ${esc(x.endTime)}</p>` : ''}
             </div>
             <ol class="divide-y divide-slate-100">${s.posters.map((p) => row(p, x, s)).join('') || '<li class="px-3 py-3 text-xs text-slate-500">No posters yet.</li>'}</ol>
@@ -11534,6 +11534,58 @@ async function addPosterScreen() {
   renderPosterScreens();
 }
 
+// Each screen's judges, per poster session (owner, 20 Nov 2026): chosen by
+// name from the Faculty list and registered delegates.
+function posterJudgesHtml(x, s, assign) {
+  const k = `${x.id}-${s.id}`;
+  const chips = (s.judges || []).map((j) => `<span class="inline-flex items-center gap-1 h-7 pl-2.5 ${assign ? 'pr-1' : 'pr-2.5'} rounded-full bg-gold-50 border border-gold-300 text-[12px] font-semibold text-slate-800 max-w-full">
+      <span class="truncate">${esc(j.name)}</span>${assign ? `<button type="button" onclick="removePosterJudge(${Number(j.id)})" aria-label="Remove ${esc(j.name)}" class="w-6 h-6 rounded-full text-slate-500 hover:bg-white/70">×</button>` : ''}</span>`).join('');
+  if (!assign && !chips) return '';
+  return `<div class="mt-1.5">
+      <p class="text-[11px] font-bold uppercase tracking-wide text-slate-400">Judges</p>
+      <div class="mt-1 flex flex-wrap gap-1">${chips || '<span class="text-xs text-slate-400">None yet.</span>'}
+        ${assign ? `<button type="button" onclick="openPosterJudgeSearch('${k}')" class="h-7 px-2.5 rounded-full border border-dashed border-indigo-400 text-indigo-700 text-[12px] font-semibold">+ Judge</button>` : ''}</div>
+      ${assign ? `<div id="judge-pick-${k}" class="hidden mt-1.5">
+        <input id="judge-q-${k}" type="search" autocomplete="off" placeholder="Name, mobile or Reg No" oninput="searchPosterJudges('${k}', ${Number(x.id)}, ${Number(s.id)})"
+          class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm">
+        <div id="judge-res-${k}" class="mt-1 max-h-56 overflow-y-auto divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white empty:hidden"></div>
+      </div>` : ''}
+    </div>`;
+}
+function openPosterJudgeSearch(k) {
+  const box = document.getElementById(`judge-pick-${k}`);
+  if (!box) return;
+  box.classList.toggle('hidden');
+  if (!box.classList.contains('hidden')) document.getElementById(`judge-q-${k}`).focus();
+}
+const posterJudgeSearch = { timer: null, seq: 0 };
+function searchPosterJudges(k, sessionId, screenId) {
+  clearTimeout(posterJudgeSearch.timer);
+  posterJudgeSearch.timer = setTimeout(async () => {
+    const q = document.getElementById(`judge-q-${k}`).value.trim();
+    const res = document.getElementById(`judge-res-${k}`);
+    if (q.length < 2) { res.innerHTML = ''; return; }
+    const seq = ++posterJudgeSearch.seq;
+    const data = await (await fetch(`/api/admin/poster-screens/judge-candidates?q=${encodeURIComponent(q)}`)).json().catch(() => ({}));
+    if (seq !== posterJudgeSearch.seq) return;
+    const people = data.people || [];
+    res.innerHTML = people.length ? people.map((p) => `<button type="button" onclick="addPosterJudge(${sessionId}, ${screenId}, ${esc(JSON.stringify(p.key))})"
+        class="w-full text-left px-2.5 py-2 hover:bg-slate-50 min-h-[44px]"><span class="block text-sm font-semibold text-slate-900">${esc(p.name)}</span>
+        <span class="block text-[12px] text-slate-500">${esc(p.detail || '')}</span></button>`).join('')
+      : '<p class="px-2.5 py-2 text-sm text-slate-500">Nobody on the Faculty list or registered by that name.</p>';
+  }, 250);
+}
+async function addPosterJudge(sessionId, screenId, key) {
+  const data = await posterScreensCall(`/api/admin/poster-screens/${encodeURIComponent(screenId)}/judges`, 'POST', { sessionId, key });
+  if (data.success) showToast(data.added ? 'Judge added.' : 'Already a judge there.', 'success');
+  renderPosterScreens();
+}
+async function removePosterJudge(judgeId) {
+  const data = await posterScreensCall(`/api/admin/poster-screens/judges/${encodeURIComponent(judgeId)}`, 'DELETE');
+  if (data.success) showToast('Judge removed.', 'success');
+  renderPosterScreens();
+}
+
 function togglePosterScreenEdit(id) {
   const form = document.getElementById(`screen-edit-${id}`);
   if (form) form.classList.toggle('hidden');
@@ -11541,7 +11593,7 @@ function togglePosterScreenEdit(id) {
 
 async function savePosterScreen(id) {
   const data = await posterScreensCall(`/api/admin/poster-screens/${encodeURIComponent(id)}`, 'PUT', {
-    name: document.getElementById(`screen-name-${id}`).value, moderator: document.getElementById(`screen-mod-${id}`).value,
+    name: document.getElementById(`screen-name-${id}`).value,
   });
   if (data.success) showToast('Saved.', 'success');
   renderPosterScreens();
