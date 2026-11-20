@@ -36,7 +36,7 @@ function build(earlyUntil, conf) {
     ${js.match(/const presentationDetailsBox = [\s\S]*?<\/div>`;/)[0]}
     ${grab('buildPresentationGuidelinesBody')} ${grab('buildPresentationReminderBody')} ${grab('buildWorkshopFeedbackBody')}
     ${grab('buildRegistrationReminderBody')} ${grab('buildBalanceDueBody')} ${grab('buildCodeHolderBody')} ${grab('buildVerifyEmailBody')} ${grab('buildCertificateReadyBody')} ${grab('buildMgimsVerifyBody')}
-    ${grab('buildPosterSlotBody')}
+    ${grab('buildPosterSlotBody')} ${grab('buildOralSlotBody')}
     ${js.match(/const welcomeWhen = [\s\S]*?\n};/)[0]} ${js.match(/const welcomeWebsite = [\s\S]*?<\/p>`;/)[0]} ${js.match(/const welcomeWeather = [^\n]+/)[0]}
     ${js.match(/const FACULTY_CONTACTS = [\s\S]*?\n\];/)[0]} ${grab('buildWelcomeDelegateBody')} ${grab('buildWelcomeFacultyBody')}
     ${js.match(/const NOT_REGISTERED = [^\n]+/)[0]}
@@ -199,6 +199,9 @@ const CONF={ name:'International Conference on Healthcare Quality & Patient Safe
  check('the slot email: their screen, title, 5+2, be there 15 minutes early, the upload date', /\{\{screen\}\}/.test(ps) && /\{\{title\}\}/.test(ps)
    && /5 minutes to present and 2 minutes for questions/.test(ps) && /15 minutes before it/.test(ps) && /\{\{deadline\}\}/.test(ps) && /E-Poster Slot/.test(await TT['poster-slot'].subject()));
  check('...to presenters', TT['poster-slot'].audiences.join()==='presenters');
+ const os=await TT['oral-slot'].body();
+ check('the oral and award slot email: their slot, title and format, in the hall 15 minutes early, the upload date', /\{\{screen\}\}/.test(os) && /\{\{title\}\}/.test(os) && /\{\{format\}\}/.test(os)
+   && /15 minutes before your session starts/.test(os) && /\{\{deadline\}\}/.test(os) && !/e-poster|screen/i.test(os.replace(/\{\{screen\}\}/g, '')) && TT['oral-slot'].audiences.join()==='presenters');
  console.log('\n== The welcome (20 Nov) ==');
  const wd=await TT['welcome-delegates'].body();
  const wf=await TT['welcome-faculty'].body();

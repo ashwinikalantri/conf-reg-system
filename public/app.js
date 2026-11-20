@@ -10017,6 +10017,26 @@ ${steelButton(portalHomeUrl(), 'Open the Delegate Portal')}
 ${reminderSignOff()}`;
 }
 
+// Oral and award paper presenters: their place in the running order (owner,
+// 20 Nov 2026). {{screen}} is their day, approximate time, turn and hall
+// (Step 4, Oral / Award papers); {{format}} says which.
+async function buildOralSlotBody() {
+  return `<p>Dear {{name}},</p>
+<p>Here is the slot for your {{format}} <b>&ldquo;{{title}}&rdquo;</b>.</p>
+<div style="background:#faf5e8;border:1px solid #d6b46a;border-radius:10px;padding:1rem 1.25rem;margin:1.25rem 0">
+  <div style="font-size:.7rem;letter-spacing:.09em;text-transform:uppercase;color:#8a6d2b;font-weight:700">Your slot</div>
+  <p style="font-size:1rem;color:#1c3549;margin:.4rem 0 0"><b>{{screen}}</b></p>
+</div>
+<ul style="padding-left:1.1rem;margin:.5rem 0 1rem;line-height:1.6">
+  <li>The time is approximate. Please be in the hall <b>15 minutes before your session starts</b>, and stay until it ends.</li>
+  <li>Please keep to your time; the chairs will keep the session to time.</li>
+  <li>Your presentation is shown from the file you uploaded in the delegate portal. If you have not uploaded it yet, please do so by <b>{{deadline}}</b>.</li>
+  <li>Please wear your conference badge.</li>
+</ul>
+${steelButton(portalHomeUrl(), 'Open the Delegate Portal')}
+${reminderSignOff()}`;
+}
+
 // For delegates marked present at a workshop who have not given feedback on
 // it: the workshop certificate is issued only once it is in.
 async function buildWorkshopFeedbackBody() {
@@ -10245,6 +10265,15 @@ const CUSTOM_REMINDER_TEMPLATES = {
       return `Your E-Poster Slot${at}`;
     },
     body: buildPosterSlotBody,
+  },
+  'oral-slot': {
+    label: 'Oral or award paper slot: day, time and hall',
+    audiences: ['presenters'],
+    async subject() {
+      const at = conferenceInfo.acronym ? ` at ${conferenceInfo.acronym}` : '';
+      return `Your Presentation Slot${at}`;
+    },
+    body: buildOralSlotBody,
   },
   'presentation-reminder': {
     label: 'Presentations — reminder to upload',
