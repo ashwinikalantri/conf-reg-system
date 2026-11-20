@@ -23,6 +23,15 @@ const { call, adminLogin, loginOtp, check, report, openDb } = require('./harness
     check('a delegate alone has no admin access', who.user.admin_access === false);
     check('...and the admin page is closed to them', (await call('GET', '/admin', null, me)).status === 403);
 
+    console.log('\n== The attendance volunteer (20 Nov) ==');
+    const perms = require('../permissions');
+    check('Volunteer – Attendance: the attendance screen alone', perms.roleSeesSection('VOLUNTEER_ATTENDANCE', 'attendance') && perms.roleCan('VOLUNTEER_ATTENDANCE', 'attendance.mark')
+      && !perms.roleSeesSection('VOLUNTEER_ATTENDANCE', 'desk') && !perms.roleSeesSection('VOLUNTEER_ATTENDANCE', 'meals') && !perms.roleCan('VOLUNTEER_ATTENDANCE', 'desk.checkin'));
+    check('...a built-in role, offered as a volunteer area', (await call('GET', '/api/admin/roles', null, admin)).body.roles.some((r) => r.key === 'VOLUNTEER_ATTENDANCE'));
+    check('...given to a delegate, they take attendance', (await setRoles(['VOLUNTEER_ATTENDANCE'])).body.success
+      && (await call('GET', '/api/attendance/halls', null, await loginOtp(phone))).status === 200);
+    await setRoles([]);
+
     console.log('\n== Made a volunteer ==');
     check('a staff role cannot go on a delegate as an extra', (await setRoles(['FINANCE_ADMIN'])).status === 400);
     const ok = await setRoles(['VOLUNTEER_MEALS', 'VOLUNTEER_TRANSPORT']);

@@ -14677,7 +14677,7 @@ async function buildReport(type, opts = {}) {
   // volunteer role (as their main role or on top of Delegate) -- who they
   // are, their areas, their registration, and the faculty assigned to them.
   if (type === 'volunteers') {
-    const AREA = { VOLUNTEER_REGISTRATION: 'Registration', VOLUNTEER_MEALS: 'Meals', VOLUNTEER_TRANSPORT: 'Transport', VOLUNTEER_ACCOMMODATION: 'Accommodation' };
+    const AREA = { VOLUNTEER_REGISTRATION: 'Registration', VOLUNTEER_ATTENDANCE: 'Attendance', VOLUNTEER_MEALS: 'Meals', VOLUNTEER_TRANSPORT: 'Transport', VOLUNTEER_ACCOMMODATION: 'Accommodation' };
     const STATUS = { BANK_VERIFIED: 'Confirmed', PENDING: 'Pending', PARTIAL_PAYMENT: 'Balance due', REJECTED: 'Rejected' };
     const people = await dbAll(
       `SELECT u.phone_number, u.phone, u.salutation, u.full_name, u.email, u.designation, u.institution, u.role,

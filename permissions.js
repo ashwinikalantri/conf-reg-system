@@ -664,6 +664,14 @@ const SYSTEM_ROLES = [
     description: 'Registration desk volunteer: looks delegates up on the Front Desk, checks them in, and signs them in at the hall and workshop doors.',
     permissions: ['desk.view', 'desk.checkin', 'attendance.mark'],
   },
+  // Owner, 20 Nov 2026: a volunteer for attendance alone -- the hall and
+  // workshop doors, without the registration desk.
+  {
+    key: 'VOLUNTEER_ATTENDANCE',
+    label: 'Volunteer – Attendance',
+    description: 'Attendance volunteer: at the hall and workshop doors, scans badges to mark people present at the session on there; nothing else.',
+    permissions: ['attendance.mark'],
+  },
   {
     key: 'VOLUNTEER_MEALS',
     label: 'Volunteer – Meals',
