@@ -199,7 +199,7 @@ const CONF={ name:'International Conference on Healthcare Quality & Patient Safe
  check('delegates: welcomed, sent to the website programme, told the weather', /A warm welcome/.test(wd) && /\/programme"/.test(wd) && /13&ndash;15&deg;C/.test(wd) && /light woollen for the early field visit/.test(wd), wd);
  check('...to registered delegates', TT['welcome-delegates'].audiences.join()==='registered');
  check('faculty: their own sessions, the website, the weather', /\{\{sessions\}\}/.test(wf) && /\/programme"/.test(wf) && /13&ndash;15&deg;C/.test(wf));
- check('...and whom to call for accommodation, travel and anything else', /Accommodation[\s\S]*Dr Jwalant Waghmare[\s\S]*\+91 98228 82766[\s\S]*Dr Praful Ambullkar[\s\S]*Travel[\s\S]*Dr Dipak Das[\s\S]*Dr Abhay Deshmukh[\s\S]*Any other help[\s\S]*Dr Anuj Mundra[\s\S]*Dr Abhishek Raut[\s\S]*\+91 70831 70552/.test(wf));
+ check('...and whom to call for accommodation, travel and anything else', /Accommodation[\s\S]*Dr Jwalant Waghmare[\s\S]*\+91 98228 82766[\s\S]*Dr Praful Ambulkar[\s\S]*Travel[\s\S]*Dr Dipak Das[\s\S]*Dr Abhay Deshmukh[\s\S]*Any other help[\s\S]*Dr Anuj Mundra[\s\S]*Dr Abhishek Raut[\s\S]*\+91 70831 70552/.test(wf));
  check('...the contacts only in the faculty email', !/Waghmare|Mundra/.test(wd));
  check('...to all faculty', TT['welcome-faculty'].audiences.join()==='faculty_all');
 

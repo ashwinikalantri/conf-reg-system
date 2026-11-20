@@ -9731,7 +9731,7 @@ ${reminderSignOff()}`;
 }
 
 const FACULTY_CONTACTS = [
-  ['Accommodation', [['Dr Jwalant Waghmare', '+91 98228 82766'], ['Dr Praful Ambullkar', '+91 94056 36310']]],
+  ['Accommodation', [['Dr Jwalant Waghmare', '+91 98228 82766'], ['Dr Praful Ambulkar', '+91 94056 36310']]],
   ['Travel', [['Dr Dipak Das', '+91 91675 65576'], ['Dr Abhay Deshmukh', '+91 97646 86936']]],
   ['Any other help', [['Dr Anuj Mundra', '+91 90282 07622'], ['Dr Abhishek Raut', '+91 70831 70552']]],
 ];
