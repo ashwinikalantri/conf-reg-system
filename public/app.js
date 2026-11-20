@@ -16229,7 +16229,7 @@ async function renderAttendanceView() {
     if (res.ok) attState.summary = await res.json();
     const s = attState.summary;
     if (!s) return;
-    setText('att-completed', `${s.completed} of ${s.registered} have completed the conference`);
+    setText('att-completed', `${s.completed} of ${s.registered} checked in: their conference certificate is due`);
     const days = [...new Set(s.sessions.map((x) => x.date))].sort();
     const daySel = document.getElementById('att-day');
     const keepDay = daySel.value;

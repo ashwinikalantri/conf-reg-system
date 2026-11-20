@@ -10509,11 +10509,9 @@ app.get('/api/attendance/summary', requirePermission('attendance.view'), async (
       if (!byPerson.has(r.phone_number)) byPerson.set(r.phone_number, new Set());
       byPerson.get(r.phone_number).add(id);
     }
-    const conf = attendanceLib.conferenceSessions(sessions, isWorkshopSession);
-    let completed = 0;
-    for (const ids of byPerson.values()) {
-      if (attendanceLib.completion(sessions.filter((s) => ids.has(s.id)), conf, settings.attendance.lunchSplit).complete) completed++;
-    }
+    // Done for the conference certificate: paid and checked in at the desk
+    // (owner, 20 Nov 2026) -- sessions attended are not counted.
+    const completed = (await dbGet("SELECT COUNT(*) AS n FROM registrations WHERE bank_status = 'BANK_VERIFIED' AND checked_in_at IS NOT NULL")).n;
     const registered = (await dbGet("SELECT COUNT(*) AS n FROM registrations WHERE COALESCE(bank_status, '') != 'REJECTED'")).n;
     // For the Overview on a conference day: how many people were marked at
     // any of today's sessions, and how many badges the desk has handed over.

@@ -79,7 +79,7 @@ function page(cookie, perms) {
     A.el('att-hall').value = String(hallId);
     await A.f.renderAttendance();
     check('...and says what is on there', A.el('att-now').innerHTML.includes(`Client Talk ${N}`) && /On now/.test(A.el('att-now').innerHTML));
-    check('the counts, session by session, for today', A.el('att-summary').innerHTML.includes(`Client Talk ${N}`) && /have completed the conference/.test(A.el('att-completed').textContent));
+    check('the counts, session by session, for today', A.el('att-summary').innerHTML.includes(`Client Talk ${N}`) && /checked in: their conference certificate is due/.test(A.el('att-completed').textContent));
     check('who was present at the chosen session', /present/.test(A.el('att-roster-count').textContent));
     check('marking by hand is offered to a role that may', !A.el('att-manual').classList.contains('hidden'));
     const res = await A.f.attendanceSignIn('NO-SUCH-PERSON-1');
