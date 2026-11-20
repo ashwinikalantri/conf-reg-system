@@ -11334,9 +11334,112 @@ let posterScreensData = null;
 const posterScreenShown = {};
 let posterDragId = null;
 
+// Step 4 shows one running order at a time (20 Nov 2026): the e-posters on
+// their screens, or the oral or award papers in their sessions.
+let orderView = 'POSTER';
+function setOrderView(view) {
+  orderView = ['POSTER', 'ORAL', 'AWARD'].includes(view) ? view : 'POSTER';
+  styleOrderView();
+  if (orderView === 'POSTER') renderPosterScreens(); else renderOralOrder();
+}
+function styleOrderView() {
+  document.querySelectorAll('.order-view').forEach((b) => {
+    const on = b.dataset.orderView === orderView;
+    b.classList.toggle('bg-navy', on); b.classList.toggle('text-white', on); b.classList.toggle('text-slate-700', !on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+  setText('order-heading', { POSTER: 'Poster screens', ORAL: 'Oral papers: running order', AWARD: 'Award papers: running order' }[orderView]);
+  const po = document.getElementById('poster-order');
+  const oo = document.getElementById('oral-order');
+  if (po) po.classList.toggle('hidden', orderView !== 'POSTER');
+  if (oo) oo.classList.toggle('hidden', orderView === 'POSTER');
+}
+
+let oralOrderData = null;
+async function renderOralOrder() {
+  const box = document.getElementById('oral-order');
+  if (!box) return;
+  const data = await (await fetch(`/api/admin/oral-order?format=${orderView}`)).json().catch(() => ({}));
+  if (!data.success) { box.innerHTML = '<p class="text-sm text-slate-500">Unable to load the running order.</p>'; return; }
+  oralOrderData = data;
+  drawOralOrder();
+}
+function drawOralOrder() {
+  const d = oralOrderData;
+  const box = document.getElementById('oral-order');
+  if (!d || !box) return;
+  const assign = can('abstracts.assign');
+  const field = 'h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white';
+  const placed = d.sessions.reduce((n, x) => n + x.items.length, 0);
+  const chosen = new Set(d.sessions.map((x) => x.id));
+  const moveMenu = (p, at) => `<select aria-label="Move" onchange="moveOral(${esc(p.id)}, this.value)" class="${field} w-full sm:w-auto max-w-full">
+      ${d.sessions.map((x) => `<option value="${esc(x.id)}" ${at && at.id === x.id ? 'selected' : ''}>${esc(x.startTime)} · ${esc(x.hall)}</option>`).join('')}
+      <option value="" ${at ? '' : 'selected'}>Not placed</option></select>`;
+  const row = (p, x, i, n) => `<li class="px-3 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2">
+      <div class="flex items-start gap-3 min-w-0 flex-1">
+        <span class="w-16 shrink-0 text-sm font-bold tabular-nums text-slate-800">${esc(p.time || '')}</span>
+        <div class="min-w-0"><p class="font-semibold text-slate-900">${esc(p.presenter)}</p>
+          <p class="text-sm text-slate-600">${esc(p.title)}</p>
+          <p class="text-xs text-slate-500">${esc(p.regNo || `#${p.id}`)} · ${p.file ? '<span class="text-emerald-700 font-semibold">File in</span>' : '<span class="text-amber-700 font-semibold">No file yet</span>'}</p></div>
+      </div>
+      ${assign ? `<div class="flex items-center gap-1.5 sm:shrink-0">
+        <button type="button" onclick="moveOral(${esc(p.id)}, ${esc(x.id)}, ${i - 1})" ${i === 0 ? 'disabled' : ''} aria-label="Earlier" class="h-9 w-9 rounded-lg border border-slate-300 disabled:opacity-30">↑</button>
+        <button type="button" onclick="moveOral(${esc(p.id)}, ${esc(x.id)}, ${i + 1})" ${i === n - 1 ? 'disabled' : ''} aria-label="Later" class="h-9 w-9 rounded-lg border border-slate-300 disabled:opacity-30">↓</button>
+        ${moveMenu(p, x)}</div>` : ''}
+    </li>`;
+  box.innerHTML = `<p class="text-sm text-slate-600 mb-3">Every ${d.format === 'AWARD' ? 'award' : 'oral'} paper whose decision has been sent gets a turn in one of these sessions. Times follow from the session's start and the minutes for each talk.</p>
+    <div class="space-y-2 mb-3">
+      <div class="flex flex-wrap items-center gap-2"><span class="text-xs text-slate-500 w-24 shrink-0">Sessions</span>
+        ${d.sessions.map((x) => `<span class="inline-flex items-center gap-1 h-9 pl-3 ${assign ? 'pr-1' : 'pr-3'} rounded-lg border border-slate-300 bg-white text-sm text-slate-800">
+          <b class="font-semibold">${esc(x.startTime)}–${esc(x.endTime)}</b><span class="text-slate-500">· ${esc(x.day)} · ${esc(x.hall)}</span>
+          ${assign ? `<button type="button" aria-label="Take this session off" onclick="setOralSessions(${esc(JSON.stringify(d.sessions.filter((y) => y.id !== x.id).map((y) => y.id)))})" class="w-7 h-7 rounded-md text-slate-500 hover:bg-slate-100">×</button>` : ''}</span>`).join('') || '<span class="text-sm text-amber-800">None chosen.</span>'}
+        ${assign ? `<select aria-label="Add a session" onchange="this.value && setOralSessions([...${esc(JSON.stringify([...chosen]))}, Number(this.value)])" class="${field} max-w-full sm:max-w-xs">
+          <option value="">+ Add a session from the programme</option>
+          ${d.programme.filter((x) => !chosen.has(x.id)).map((x) => `<option value="${esc(x.id)}">${esc(x.text)}</option>`).join('')}</select>` : ''}</div>
+      <div class="flex flex-wrap items-center gap-2"><span class="text-xs text-slate-500 w-24 shrink-0">Minutes each</span>
+        ${assign ? `<input type="number" min="2" max="30" value="${esc(d.minutes)}" onchange="saveOralSetting({ minutes: this.value })" aria-label="Minutes per talk" class="${field} w-20 tabular-nums">` : `<b class="text-sm">${esc(d.minutes)}</b>`}
+        <span class="text-xs text-slate-500">per talk, questions included</span></div>
+    </div>
+    <div class="flex flex-wrap items-center gap-2 mb-3">
+      <p class="text-sm text-slate-700"><b>${esc(placed)}</b> of ${esc(placed + d.unallotted.length)} placed.</p>
+      ${assign && d.unallotted.length && d.sessions.length ? `<button type="button" onclick="allotOrals()" class="h-9 px-3 rounded-lg bg-navy hover:bg-indigo-700 text-white text-sm font-semibold">Place the rest (${esc(d.unallotted.length)})</button>` : ''}
+      ${d.sessions.length ? `<a href="/api/admin/oral-order/order.pdf?format=${esc(d.format)}" download class="text-sm font-semibold text-indigo-700 underline">Running order (PDF)</a>` : ''}
+    </div>
+    <div class="space-y-4">${d.sessions.map((x) => `<section class="bg-white rounded-xl border border-slate-200">
+        <div class="px-3 py-2.5 border-b border-slate-100">
+          <h4 class="font-bold text-navy">${esc(x.startTime)}–${esc(x.endTime)} <span class="font-normal text-slate-600">· ${esc(x.day)} · ${esc(x.title)} · ${esc(x.hall)} · ${esc(x.items.length)} ${x.items.length === 1 ? 'paper' : 'papers'}</span></h4>
+          ${x.judges.length ? `<p class="text-xs text-slate-500">Judges (the session's chairs): <span class="text-slate-700">${esc(x.judges.join(', '))}</span></p>` : '<p class="text-xs text-slate-400">No chairs in the programme for this session yet.</p>'}
+          ${x.overrun ? `<p class="text-[12px] font-semibold text-amber-800 mt-0.5">Runs to ${esc(x.finish)}: ${esc(x.overrun)} min past ${esc(x.endTime)}.</p>` : ''}
+        </div>
+        <ol class="divide-y divide-slate-100">${x.items.map((p, i) => row(p, x, i, x.items.length)).join('') || '<li class="px-3 py-3 text-sm text-slate-500">No papers yet.</li>'}</ol>
+      </section>`).join('') || `<p class="text-sm text-slate-500">Add the ${d.format === 'AWARD' ? 'award' : 'oral'} sessions from the programme first.</p>`}</div>
+    ${d.unallotted.length ? `<section class="mt-4 bg-white rounded-xl border border-amber-200">
+      <h4 class="px-3 py-2.5 border-b border-amber-100 font-bold text-amber-900">Not placed yet · ${esc(d.unallotted.length)}</h4>
+      <ol class="divide-y divide-slate-100">${d.unallotted.map((p) => `<li class="px-3 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2"><div class="min-w-0 flex-1">
+        <p class="font-semibold text-slate-900">${esc(p.presenter)}</p><p class="text-sm text-slate-600">${esc(p.title)}</p></div>${assign && d.sessions.length ? moveMenu(p, null) : ''}</li>`).join('')}</ol></section>` : ''}`;
+}
+async function oralCall(url, method, body) {
+  const data = await (await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: orderView, ...body }) })).json().catch(() => ({}));
+  if (!data.success) showToast(data.error || 'That did not go through. Try again.');
+  return data;
+}
+async function moveOral(abstractId, sessionId, index) {
+  await oralCall('/api/admin/oral-order/move', 'POST', { abstractId, sessionId: sessionId === '' ? null : sessionId, index });
+  renderOralOrder();
+}
+async function allotOrals() {
+  const data = await oralCall('/api/admin/oral-order/allot', 'POST', {});
+  if (data.success) showToast(`${data.allotted} placed. Set the order with the arrows.`, 'success');
+  renderOralOrder();
+}
+async function setOralSessions(ids) { await oralCall('/api/admin/oral-order/settings', 'PUT', { sessionIds: ids }); renderOralOrder(); }
+async function saveOralSetting(change) { await oralCall('/api/admin/oral-order/settings', 'PUT', change); renderOralOrder(); }
+
 async function renderPosterScreens() {
   const board = document.getElementById('screens-board');
   if (!board) return;
+  styleOrderView();
+  if (orderView !== 'POSTER') return renderOralOrder();
   const data = await (await fetch('/api/admin/poster-screens')).json().catch(() => ({}));
   if (!data.success) { board.innerHTML = '<p class="text-sm text-slate-500">Unable to load the poster screens.</p>'; return; }
   posterScreensData = data;

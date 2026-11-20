@@ -2156,6 +2156,15 @@ db.serialize(() => {
       UNIQUE (session_id, screen_id, person_key)
     )
   `);
+  // Oral and award papers in their sessions' running order (owner, 20 Nov
+  // 2026: "for oral presentation also, allow me to select the sequence").
+  db.run(`
+    CREATE TABLE IF NOT EXISTS oral_slots (
+      abstract_id INTEGER PRIMARY KEY,
+      session_id INTEGER NOT NULL,
+      position INTEGER NOT NULL
+    )
+  `);
   db.run(`
     CREATE TABLE IF NOT EXISTS poster_slots (
       abstract_id INTEGER PRIMARY KEY,
@@ -9187,6 +9196,11 @@ async function audienceMembers(key, filters = {}) {
     // Each e-poster's screen line (Step 4), for {{screen}}.
     const board = await posterBoard();
     const places = new Map(board.sessions.flatMap((x) => x.screens.flatMap((sc) => sc.posters.map((p) => [p.id, posterScreensLib.placeLine(sc, p, x)]))));
+    // Oral and award papers: their session, day, approximate time and hall.
+    for (const fmt of ['ORAL', 'AWARD']) {
+      const ob = await oralBoard(fmt);
+      for (const x of ob.sessions) for (const p of x.items) places.set(p.id, posterScreensLib.placeLine({ name: '' }, p, x));
+    }
     return rows.map((r) => {
       const rule = presentationsLib.RULES[r.allocation];
       const name = reminderName(r.salutation, r.full_name || r.author_name);
@@ -16536,6 +16550,167 @@ app.delete('/api/admin/poster-screens/judges/:judgeId', requirePermission('abstr
     await dbRun('DELETE FROM poster_judges WHERE id = ?', [j.id]);
     await recordAudit({ req, entityType: 'poster_screen', entityId: j.screen_id, action: 'POSTER_JUDGE_REMOVED', oldValue: `${j.name}: ${j.screen || ''}`, newValue: null });
     res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- ORAL AND AWARD RUNNING ORDER (owner, 20 Nov 2026) ---------------------
+// As the poster screens, without screens: each format's papers in its
+// sessions (from the programme), in an order, a time each from the
+// session's start. Settings in schema_meta: oral_sessions_<FORMAT> (JSON;
+// unset = programme sessions named for it), oral_minutes_<FORMAT>.
+const ORAL_FORMATS = { ORAL: { label: 'Oral papers', match: /\boral/i, minutes: 8 }, AWARD: { label: 'Award papers', match: /award/i, minutes: 10 } };
+async function oralSettings(format) {
+  const rows = await dbAll('SELECT key, value FROM schema_meta WHERE key IN (?, ?)', [`oral_sessions_${format}`, `oral_minutes_${format}`]);
+  const v = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  let sessionIds = null;
+  try { sessionIds = v[`oral_sessions_${format}`] ? JSON.parse(v[`oral_sessions_${format}`]).map(Number).filter(Boolean) : null; } catch (e) { sessionIds = null; }
+  return { sessionIds, minutes: posterScreensLib.cleanMinutes(v[`oral_minutes_${format}`]) || ORAL_FORMATS[format].minutes };
+}
+async function oralSessions(format, settings) {
+  const rows = settings.sessionIds
+    ? (settings.sessionIds.length ? await dbAll(`${POSTER_SESSION_SQL} WHERE s.id IN (${settings.sessionIds.map(() => '?').join(',')})`, settings.sessionIds) : [])
+    : (await dbAll(`${POSTER_SESSION_SQL} WHERE s.meal = 0`)).filter((x) => ORAL_FORMATS[format].match.test(`${x.label || ''} ${x.title || ''}`));
+  return rows.sort((a, b) => `${a.date} ${a.start}`.localeCompare(`${b.date} ${b.start}`) || a.id - b.id)
+    .map((x) => ({ ...x, day: posterScreensLib.dayText(x.date), startTime: posterScreensLib.to12(posterScreensLib.toMin(x.start)), endTime: posterScreensLib.to12(posterScreensLib.toMin(x.end)) }));
+}
+async function oralBoard(format) {
+  const settings = await oralSettings(format);
+  const sessions = await oralSessions(format, settings);
+  const rows = await dbAll(
+    `SELECT a.id, a.title, a.phone_number, a.author_name, u.salutation, u.full_name, u.registration_number, p.file_name, p.size
+       FROM abstracts a LEFT JOIN users u ON u.phone_number = a.phone_number LEFT JOIN presentations p ON p.abstract_id = a.id
+      WHERE a.status = 'ACCEPTED' AND a.allocation = ? AND a.decision_sent_at IS NOT NULL ORDER BY a.id`, [format]);
+  const posters = rows.map((r) => ({ id: r.id, title: r.title, presenter: reminderName(r.salutation, r.full_name || r.author_name), regNo: r.registration_number || null,
+    phone: r.phone_number, file: r.file_name ? { fileName: r.file_name, size: r.size } : null }));
+  const slots = (await dbAll('SELECT * FROM oral_slots')).map((s) => ({ ...s, screen_id: 0 }));
+  // One lane per session: the poster board with a single, nameless screen.
+  const b = posterScreensLib.board({ screens: [{ id: 0, name: '', sort_order: 0 }], slots, posters, sessions, minutes: settings.minutes });
+  // The chairs in the programme judge them (the Judge certificate's rule).
+  const chairs = sessions.length ? await dbAll(
+    `SELECT f.session_id, COALESCE(NULLIF(TRIM(COALESCE(u.salutation, '') || ' ' || COALESCE(u.full_name, '')), ''), g.guest_name, f.name) AS name
+       FROM programme_session_faculty f LEFT JOIN guests g ON g.id = f.guest_id LEFT JOIN users u ON u.phone_number = g.phone_number
+      WHERE f.role = 'chair' AND f.session_id IN (${sessions.map(() => '?').join(',')}) ORDER BY f.session_id, f.position`, sessions.map((x) => x.id)) : [];
+  return {
+    format, label: ORAL_FORMATS[format].label, settings,
+    sessions: b.sessions.map((x) => ({ ...x, items: x.screens[0].posters, endMin: x.screens[0].endMin, finish: x.screens[0].endTime, overrun: x.screens[0].overrun,
+      judges: chairs.filter((c) => c.session_id === x.id).map((c) => c.name).filter(Boolean), screens: undefined })),
+    unallotted: b.unallotted,
+  };
+}
+const oralFormat = (v) => (ORAL_FORMATS[String(v || '').toUpperCase()] ? String(v).toUpperCase() : null);
+const oralView = (p) => ({ id: p.id, title: p.title, presenter: p.presenter, regNo: p.regNo, file: !!p.file, place: p.place || null, time: p.time || null });
+
+app.get('/api/admin/oral-order', requirePermission('abstracts.view'), async (req, res, next) => {
+  try {
+    const format = oralFormat(req.query.format) || 'ORAL';
+    const b = await oralBoard(format);
+    const programme = await dbAll(`${POSTER_SESSION_SQL} WHERE s.meal = 0 ORDER BY s.session_date, s.start_time, h.sort_order, s.id`);
+    res.json({
+      success: true, format, label: b.label, minutes: b.settings.minutes,
+      sessions: b.sessions.map((x) => ({ id: x.id, day: x.day, startTime: x.startTime, endTime: x.endTime, title: x.title, hall: x.hall,
+        finish: x.finish, overrun: x.overrun, judges: x.judges, items: x.items.map(oralView) })),
+      unallotted: b.unallotted.map(oralView),
+      programme: programme.map((s) => ({ id: s.id, text: `${posterScreensLib.dayText(s.date)}, ${posterScreensLib.to12(posterScreensLib.toMin(s.start))} · ${s.title} · ${s.hall}` })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/admin/oral-order/settings', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const format = oralFormat(req.body.format);
+    if (!format) return res.status(400).json({ success: false, error: 'Oral or award?' });
+    if (req.body.minutes !== undefined) {
+      const m = posterScreensLib.cleanMinutes(req.body.minutes);
+      if (!m) return res.status(400).json({ success: false, error: `Minutes each: ${posterScreensLib.MIN_MINUTES} to ${posterScreensLib.MAX_MINUTES}.` });
+      await setPosterSetting(`oral_minutes_${format}`, m);
+    }
+    if (req.body.sessionIds !== undefined) {
+      const ids = (Array.isArray(req.body.sessionIds) ? req.body.sessionIds : []).map(Number).filter(Boolean);
+      const known = ids.length ? await dbAll(`SELECT id FROM programme_sessions WHERE id IN (${ids.map(() => '?').join(',')})`, ids) : [];
+      if (known.length !== new Set(ids).size) return res.status(400).json({ success: false, error: 'Choose sessions from the programme.' });
+      await setPosterSetting(`oral_sessions_${format}`, JSON.stringify([...new Set(ids)]));
+    }
+    await recordAudit({ req, entityType: 'settings', entityId: `oral-order-${format}`, action: 'ORAL_ORDER_SETTINGS', oldValue: null, newValue: JSON.stringify({ minutes: req.body.minutes, sessionIds: req.body.sessionIds }) });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The papers not yet placed, spread over the sessions (fewest first), each
+// at the end of its order. Nothing already placed moves.
+app.post('/api/admin/oral-order/allot', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const format = oralFormat(req.body.format);
+    if (!format) return res.status(400).json({ success: false, error: 'Oral or award?' });
+    const b = await oralBoard(format);
+    if (!b.sessions.length) return res.status(409).json({ success: false, error: 'Choose the sessions first.' });
+    const tops = new Map((await dbAll('SELECT session_id, MAX(position) AS top FROM oral_slots GROUP BY session_id')).map((r) => [r.session_id, r.top + 1]));
+    const counts = new Map(b.sessions.map((x) => [x.id, x.items.length]));
+    const plan = posterScreensLib.allotEvenly(b.sessions.map((x) => x.id), counts, b.unallotted.map((p) => p.id));
+    for (const x of plan) {
+      const position = tops.get(x.screenId) || 0;
+      tops.set(x.screenId, position + 1);
+      await dbRun('INSERT OR REPLACE INTO oral_slots (abstract_id, session_id, position) VALUES (?, ?, ?)', [x.abstractId, x.screenId, position]);
+    }
+    await recordAudit({ req, entityType: 'settings', entityId: `oral-order-${format}`, action: 'ORAL_ORDER_ALLOTTED', oldValue: null, newValue: `${plan.length} placed` });
+    res.json({ success: true, allotted: plan.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// One paper to a session at a place in its order (index from 0; past the
+// end means last), or off (sessionId null).
+app.post('/api/admin/oral-order/move', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const format = oralFormat(req.body.format);
+    if (!format) return res.status(400).json({ success: false, error: 'Oral or award?' });
+    const abstractId = Number(req.body.abstractId);
+    const b = await oralBoard(format);
+    const all = [...b.unallotted, ...b.sessions.flatMap((x) => x.items)];
+    if (!all.some((p) => p.id === abstractId)) return res.status(404).json({ success: false, error: 'That abstract is not one of these papers.' });
+    const from = b.sessions.find((x) => x.items.some((p) => p.id === abstractId));
+    let to = null;
+    if (req.body.sessionId == null || req.body.sessionId === '') {
+      await dbRun('DELETE FROM oral_slots WHERE abstract_id = ?', [abstractId]);
+    } else {
+      to = b.sessions.find((x) => x.id === Number(req.body.sessionId));
+      if (!to) return res.status(404).json({ success: false, error: 'That session is not one of these.' });
+      const order = to.items.map((p) => p.id).filter((id) => id !== abstractId);
+      const index = Math.max(0, Math.min(order.length, Number.isInteger(Number(req.body.index)) ? Number(req.body.index) : order.length));
+      order.splice(index, 0, abstractId);
+      await dbRun('DELETE FROM oral_slots WHERE abstract_id = ?', [abstractId]);
+      for (let i = 0; i < order.length; i++) await dbRun('INSERT OR REPLACE INTO oral_slots (abstract_id, session_id, position) VALUES (?, ?, ?)', [order[i], to.id, i]);
+    }
+    const name = (x) => (x ? `${x.day} ${x.startTime}, ${x.hall}` : null);
+    await recordAudit({ req, entityType: 'abstract', entityId: abstractId, action: 'ORAL_ORDER_SET', oldValue: name(from), newValue: name(to) });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The running order, each session a section, with Present and Score.
+app.get('/api/admin/oral-order/order.pdf', requirePermission('abstracts.view'), async (req, res, next) => {
+  try {
+    const format = oralFormat(req.query.format) || 'ORAL';
+    const b = await oralBoard(format);
+    const sections = b.sessions.map((x) => ({
+      name: [`${x.title}, ${x.startTime}–${x.endTime}`, x.judges.length ? `Judges: ${x.judges.join(', ')}` : '', x.day, x.hall, `${b.settings.minutes} minutes each`].filter(Boolean).join(' · '),
+      columns: ['#', 'Time', 'Presenter', 'Title', 'Reg No', 'Present', 'Score'],
+      rows: x.items.map((p) => [String(p.place), p.time || '', p.presenter, p.title, p.regNo || '', '', '']),
+    }));
+    if (!sections.length) return res.status(404).json({ success: false, error: 'Choose the sessions first.' });
+    const rep = { title: `${b.label}: running order`, sections };
+    const pdf = await renderReportPdf(rep, { heading: reportHeading(rep), subline: reportSubline(rep), footer: reportHeading(rep) });
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `attachment; filename="${format === 'AWARD' ? 'Award' : 'Oral'}-running-order.pdf"`);
+    res.send(pdf);
   } catch (err) {
     next(err);
   }

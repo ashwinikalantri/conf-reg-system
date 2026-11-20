@@ -181,7 +181,7 @@ const FIXTURE_ORAL = '9000001003'; // Half Price: an accepted ORAL abstract
     console.log('\n== The page ==');
     const html = (await call('GET', '/admin', null, admin)).raw;
     check('Step 4 is the poster screens, between Presentations and Zenodo (Step 5)', html.indexOf('id="abs-tab-3"') < html.indexOf('id="abs-tab-4"') && html.indexOf('id="abs-tab-4"') < html.indexOf('id="abs-tab-5"')
-      && /id="abstracts-screens-block" class="abs-panel" data-step="4"/.test(html) && /<span class="abs-tab-n text-slate-400">4<\/span>Poster screens/.test(html));
+      && /id="abstracts-screens-block" class="abs-panel" data-step="4"/.test(html) && /<span class="abs-tab-n text-slate-400">4<\/span>Running order/.test(html));
     check('one screen of each session at a time on a phone, every screen side by side on a laptop',
       /posterScreenShown\[\$\{esc\(x\.id\)\}\] = \$\{esc\(s\.id\)\}/.test(js) && /'flex' : 'hidden lg:flex'/.test(js));
     check('the move menu names session and screen', /movePosterTo\(\$\{esc\(p\.id\)\}, this\.value\)/.test(js) && /<optgroup label=/.test(js));

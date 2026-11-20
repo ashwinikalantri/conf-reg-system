@@ -26,7 +26,7 @@
            is what is waiting there; while searching, how many match. -->
       <nav id="abs-tabs" class="sticky top-0 z-20 -mx-4 px-4 sm:mx-0 sm:px-0 py-2 bg-slate-100/95 backdrop-blur" aria-label="Review steps">
         <div class="flex gap-1.5 overflow-x-auto border-b border-slate-200 pb-2" role="tablist">
-          <% [['1', 'Approval'], ['2', 'Assignment'], ['3', 'Presentations'], ['4', 'Poster screens'], ['5', 'Zenodo']].forEach(([n, name]) => { %>
+          <% [['1', 'Approval'], ['2', 'Assignment'], ['3', 'Presentations'], ['4', 'Running order'], ['5', 'Zenodo']].forEach(([n, name]) => { %>
           <button type="button" id="abs-tab-<%= n %>" role="tab" aria-selected="false" onclick="showAbstractStep('<%= n %>', true)" class="abs-tab shrink-0 h-10 px-3 rounded-lg text-sm font-semibold whitespace-nowrap flex items-center gap-2 text-slate-700 hover:bg-white">
             <span class="abs-tab-n text-slate-400"><%= n %></span><%= name %><span id="abs-tab-count-<%= n %>" class="abs-tab-count hidden text-[12px] px-1.5 py-0.5 rounded-full font-bold"></span>
           </button>
@@ -60,13 +60,25 @@
            whose decision has been sent gets a screen and a place in its
            running order; the time follows from the poster session. -->
       <div id="abstracts-screens-block" class="abs-panel" data-step="4">
-        <h3 class="text-lg font-bold text-slate-900">Poster screens</h3>
+        <!-- E-posters on their screens; oral and award papers in their
+             sessions' running order (20 Nov 2026), one at a time. -->
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <h3 id="order-heading" class="text-lg font-bold text-slate-900">Poster screens</h3>
+          <div class="inline-flex rounded-xl border border-slate-300 bg-white p-0.5" role="group" aria-label="Running order of">
+            <button type="button" data-order-view="POSTER" onclick="setOrderView('POSTER')" class="order-view h-9 px-3 rounded-lg text-sm font-semibold">E-posters</button>
+            <button type="button" data-order-view="ORAL" onclick="setOrderView('ORAL')" class="order-view h-9 px-3 rounded-lg text-sm font-semibold">Oral papers</button>
+            <button type="button" data-order-view="AWARD" onclick="setOrderView('AWARD')" class="order-view h-9 px-3 rounded-lg text-sm font-semibold">Award papers</button>
+          </div>
+        </div>
+        <div id="oral-order" class="hidden"></div>
+        <div id="poster-order">
         <p class="text-sm text-slate-600 mb-3">Every e-poster whose decision has been sent gets a place: a poster session, a screen, and a turn in that screen's running order. The same screens serve each session. Times follow from the session's start and the minutes per poster. Move a poster with its arrows and menu, or drag it on a laptop. Presenters see their screen and time in the portal once you switch it on.</p>
         <div id="screens-settings" class="mb-3"></div>
         <div id="screens-fit" class="mb-3"></div>
         <div id="screens-actions" class="flex flex-wrap items-center gap-2 mb-3"></div>
         <div id="screens-board" class="space-y-6"></div>
         <div id="screens-unallotted" class="mt-3"></div>
+        </div>
       </div>
       <!-- Step 5, Zenodo (abstracts.publish only, and only while it is
            switched on in Conference setup › Zenodo; renderZenodo()): accepted

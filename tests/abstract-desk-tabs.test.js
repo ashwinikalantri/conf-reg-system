@@ -38,7 +38,7 @@ function makeDoc() {
 
   console.log('\n== The page ==');
   const tabs = [...html.matchAll(/id="abs-tab-(\d)"[^>]*onclick="showAbstractStep\('(\d)', true\)"[\s\S]*?<span class="abs-tab-n text-slate-400">\d<\/span>([^<]+)</g)].map((m) => `${m[1]}${m[3]}`);
-  check('five steps as tabs, in order', tabs.join() === '1Approval,2Assignment,3Presentations,4Poster screens,5Zenodo', tabs);
+  check('five steps as tabs, in order (Step 4 Running order since 20 Nov)', tabs.join() === '1Approval,2Assignment,3Presentations,4Running order,5Zenodo', tabs);
   check('...that stay in reach while scrolling', /<nav id="abs-tabs" class="sticky top-0/.test(html));
   check('each step a panel the tabs show one at a time', ['approval', 'assignment', 'presentations', 'screens', 'zenodo'].every((b, i) => new RegExp(`id="abstracts-${b}-block" class="[^"]*abs-panel[^"]*" data-step="${i + 1}"`).test(html)));
   check('one search for every step', /id="abs-search" type="search"[^>]*oninput="setAbstractSearch\(this\.value\)"/.test(html) && /title, author, Reg No, #id/.test(html));
