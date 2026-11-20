@@ -119,9 +119,9 @@ function page(cookie, perms) {
     // Redesigned 20 Nov 2026: a "Ready to issue?" line, the parts and the
     // eleven kinds on the left, one at a time on the right.
     const rail = C.el('cs-rail').innerHTML;
-    check('the settings: Ready to issue?, the shared parts and all eleven kinds on the left', /Ready to issue\?/.test(C.el('cs-ready').innerHTML)
-      && ['points', 'signatories', 'design', 'rules', 'MMC', 'NURSING', 'CONF', 'WORKSHOP', 'WORKSHOP_FACULTY', 'FACULTY', 'SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE']
-        .every((v) => rail.includes(`setCsView('${v}')`)), rail.slice(0, 300));
+    check('the settings: Ready to issue?, the shared parts and the ten kinds on the left -- no Faculty (retired 20 Nov)', /Ready to issue\?/.test(C.el('cs-ready').innerHTML)
+      && ['points', 'signatories', 'design', 'rules', 'MMC', 'NURSING', 'CONF', 'WORKSHOP', 'WORKSHOP_FACULTY', 'SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE']
+        .every((v) => rail.includes(`setCsView('${v}')`)) && !rail.includes("setCsView('FACULTY')"), rail.slice(0, 300));
     check('...a certificate opens first: its wording, fill-ins by name, its signatories and the preview', /id="cs-t-body"/.test(C.el('cs-pane').innerHTML)
       && /csInsert\('mmc_points'\)/.test(C.el('cs-pane').innerHTML) && /MMC Observer/.test(C.el('cs-pane').innerHTML) && /id="cs-preview/.test(C.el('cs-pane').innerHTML));
     C.f.setCsView('points');

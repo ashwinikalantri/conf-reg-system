@@ -17169,7 +17169,6 @@ async function renderCertificates() {
     stat('Workshops', p.reduce((n, x) => n + x.workshops.filter((w) => w.eligible).length, 0), `${certState.issued.WORKSHOP || 0} issued`),
     stat('Workshop faculty', p.reduce((n, x) => n + (x.workshopFaculty || []).filter((w) => w.eligible).length, 0), `${certState.issued.WORKSHOP_FACULTY || 0} issued`),
     stat('Roles', p.reduce((n, x) => n + (x.roles || []).filter((r) => r.eligible).length, 0), `speaker, judge, chair… · ${issuedRoles} issued`),
-    stat('Faculty', p.filter((x) => x.faculty && x.faculty.eligible).length, `${certState.issued.FACULTY || 0} issued`),
     stat('Not yet', p.filter((x) => !x.conference.kind && !x.notRegistered).length, 'for the conference'),
   ].join('');
   const mayIssue = can('certificates.issue');
@@ -17180,9 +17179,9 @@ async function renderCertificates() {
   confBtn.disabled = !dueConf;
   wsBtn.textContent = `Issue workshop certificates (${dueWs} due)`;
   wsBtn.disabled = !dueWs;
+  // The Faculty certificate is retired (20 Nov 2026): no button.
   const facBtn = document.getElementById('cert-issue-fac');
-  facBtn.textContent = `Issue faculty certificates (${dueFac} due)`;
-  facBtn.disabled = !dueFac;
+  if (facBtn) { facBtn.textContent = `Issue faculty certificates (${dueFac} due)`; facBtn.disabled = !dueFac; }
   const wfBtn = document.getElementById('cert-issue-wf');
   if (wfBtn) { wfBtn.textContent = `Issue workshop faculty certificates (${dueWf} due)`; wfBtn.disabled = !dueWf; }
   const rolesBtn = document.getElementById('cert-issue-roles');
@@ -17233,7 +17232,7 @@ function renderCertificateList() {
           : ` <button type="button" onclick="setCertificateOverride('${esc(x.phone)}', '${esc(w.e)}', '${w.eligible ? 'EXCLUDE' : 'INCLUDE'}')" class="text-slate-500 hover:underline">${w.eligible ? 'Exclude' : 'Include anyway'}</button>`) : ''}
       </div>`).join('');
     const f = x.faculty;
-    const fac = !f ? '' : `<div class="text-xs mt-1">Faculty:
+    const fac = !f || (f.retired && !f.issued) ? '' : `<div class="text-xs mt-1">Faculty:
         ${f.issued ? `${badge('FACULTY', 'Issued')} ${issuedLink(f.issued)}` : f.eligible ? badge('FACULTY', 'Due') : `<span class="text-slate-500">${esc(f.whyNot || '')}</span>`}
         ${mayIssue && !f.issued ? (f.override
           ? ` <button type="button" onclick="setCertificateOverride('${esc(f.key)}', 'FAC', null)" class="text-amber-700 hover:underline">Excluded by hand — undo</button>`
@@ -17353,7 +17352,9 @@ function loadCertificateSettingsCard() {
 // live preview, which renders it on the server without saving.
 const CS_PARTS = [['points', 'Points and who earns them'], ['signatories', 'Signatories'], ['design', 'Design'], ['rules', 'Who qualifies']];
 const CS_GROUPS = [['Conference', ['MMC', 'NURSING', 'CONF']], ['Workshops', ['WORKSHOP', 'WORKSHOP_FACULTY']],
-  ['Faculty and session roles', ['FACULTY', 'SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE']]];
+  // The Faculty certificate is retired (20 Nov 2026): Speaker is theirs.
+  ['Session roles', ['SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE']]];
+const CS_RETIRED = ['FACULTY'];
 const CS_SHORT = { MMC: 'With MMC points', NURSING: 'With Nursing points', CONF: 'Participation', WORKSHOP: 'Workshop', WORKSHOP_FACULTY: 'Workshop faculty',
   FACULTY: 'Faculty', SPEAKER: 'Speaker', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist', JUDGE: 'Judge' };
 const CS_WHO = {
@@ -17400,7 +17401,7 @@ function csChecks() {
   const nursingReady = !csPlaceholder(nursing.accreditationNo) && !csPlaceholder(nursing.points);
   const active = d.signatories.filter((x) => x.active);
   const noSignature = active.filter((x) => !Number(x.has_signature));
-  const unsigned = Object.keys(d.templates).filter((k) => !csTemplate(k).signatories.some((id) => csSigners(k).some((x) => Number(x.id) === Number(id))));
+  const unsigned = Object.keys(d.templates).filter((k) => !CS_RETIRED.includes(k)).filter((k) => !csTemplate(k).signatories.some((id) => csSigners(k).some((x) => Number(x.id) === Number(id))));
   return { mmcReady, nursingReady, nursing, active, noSignature, unsigned };
 }
 function csKindState(kind, c) {
@@ -17697,7 +17698,7 @@ async function saveCertificatePoints() {
 // --- Signatories: one card each, the signature as it will print ---
 function csSignatoriesHtml() {
   const d = csState.d;
-  const onHowMany = (s) => Object.keys(d.templates).filter((k) => csTemplate(k).signatories.map(Number).includes(Number(s.id)) && (k === 'MMC' || !Number(s.mmc_only))).length;
+  const onHowMany = (s) => Object.keys(d.templates).filter((k) => !CS_RETIRED.includes(k) && csTemplate(k).signatories.map(Number).includes(Number(s.id)) && (k === 'MMC' || !Number(s.mmc_only))).length;
   const cards = d.signatories.map((s) => `<div class="rounded-xl border border-slate-200 p-3 min-w-0 ${s.active ? '' : 'opacity-60'}">
       <div class="sig-preview h-16 rounded-lg flex items-center justify-center overflow-hidden">
         ${Number(s.has_signature) ? `<img src="/api/admin/certificates/signatories/${encodeURIComponent(s.id)}/signature?t=${Date.now()}" alt="Signature" class="max-h-14 max-w-full">` : '<span class="text-[12px] font-semibold text-rose-700">No signature yet</span>'}
@@ -17750,7 +17751,7 @@ function csRulesHtml() {
     <div class="p-4 sm:p-5 space-y-2 text-[15px]">
       <p><b>Conference</b> (MMC, Nursing, participation): registered, paid, and <b>checked in at the registration desk</b>. Sessions attended are not counted.</p>
       <p><b>Workshop</b>: marked present at that workshop. Feedback is asked for, not required.</p>
-      <p><b>Faculty, workshop faculty and session roles</b>: from the Faculty list and the programme. No attendance needed.</p>
+      <p><b>Workshop faculty and session roles</b> (speaker, chairperson, moderator, panelist, judge): from the programme. No attendance needed. There is no separate Faculty certificate: the Speaker certificate is theirs.</p>
     </div>
     <div class="px-4 sm:px-5 pb-5 pt-4 border-t border-slate-100 space-y-3">
       <h5 class="font-bold text-slate-900">Attendance at the hall doors</h5>

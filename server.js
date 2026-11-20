@@ -10790,6 +10790,10 @@ function conferenceCompletion(checkedInAt) {
   return { complete: done, parts: [{ label: CHECKED_IN_LABEL, done, session: null, at: checkedInAt || null }], missing: done ? [] : ['check in at the registration desk'] };
 }
 
+// The Faculty certificate (everyone on the Faculty list): retired 20 Nov 2026
+// -- the Speaker certificate (and the other roles') is theirs.
+const FACULTY_CERTIFICATE = false;
+
 async function certificateCandidates() {
   const settings = await certificateSettings();
   const sessions = await programmeSessions();
@@ -10823,12 +10827,15 @@ async function certificateCandidates() {
       WHERE COALESCE(g.overall_status, '') != ?`, [guestLib.CANCELLED])).map((g) => {
     const key = `faculty-${g.id}`;
     const ov = overrides.get(`${key}|FAC`) || null;
-    const excluded = !!(ov && ov.decision === 'EXCLUDE');
+    // The Faculty certificate is retired (owner, 20 Nov 2026: "Speaker and
+    // Faculty are the same. Keep only Speaker."): the entry stays -- it
+    // carries who they are for their role certificates -- never due.
+    const excluded = !FACULTY_CERTIFICATE || !!(ov && ov.decision === 'EXCLUDE');
     return {
       phone: g.phone_number || key, linked: !!g.phone_number,
       name: (g.phone_number && (g.certificate_name || reminderName(g.salutation, g.full_name))) || g.guest_name || '',
       designation: g.guest_designation || '',
-      entry: { guestId: g.id, key, eligible: !excluded, whyNot: excluded ? `Excluded: ${ov.reason}` : null, override: ov,
+      entry: { guestId: g.id, key, eligible: !excluded, retired: !FACULTY_CERTIFICATE, whyNot: !FACULTY_CERTIFICATE ? null : excluded ? `Excluded: ${ov.reason}` : null, override: ov,
         issued: issued.find((c) => c.kind === 'FACULTY' && Number(c.guest_id) === g.id) || null },
     };
   });
@@ -10941,9 +10948,11 @@ async function certificateCandidates() {
       workshopFaculty: workshopFacultyFor(r.phone_number),
     };
   });
-  // Faculty who have not registered: here for their Faculty certificate only.
+  // Faculty who have not registered: here for their faculty certificates
+  // (a role, a workshop's faculty) -- only those who have one.
   for (const f of faculty) {
     if (f.linked && registered.has(f.phone)) continue;
+    if (!FACULTY_CERTIFICATE && !rolesFor(f.entry.guestId).length && !workshopFacultyFor(f.phone).length && !f.entry.issued) continue;
     people.push({
       phone: f.phone, registrationNumber: null, name: f.name, category: f.designation || 'Faculty', categoryKey: null,
       councilName: null, councilRegNo: null, mmcCategory: false, paid: false, attended: [], parts: [], missing: [], complete: false,

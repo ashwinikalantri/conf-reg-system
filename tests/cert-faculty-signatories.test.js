@@ -143,36 +143,37 @@ const images = (pdf) => (pdf.toString('latin1').match(/\/Subtype \/Image/g) || [
     await put({ templates: { WORKSHOP: { byWorkshop: { [wsOpt.id]: null } } } });
     check('"sign as above" puts it back on the default', !(await settings()).templates.WORKSHOP.byWorkshop[String(wsOpt.id)]);
 
-    console.log('\n== Faculty ==');
+    console.log('\n== Faculty: a Speaker certificate, no separate Faculty one (20 Nov) ==');
     guestId = (await db.run("INSERT INTO guests (guest_name, guest_designation, created_at) VALUES (?, 'Professor', ?)", [`Dr Faculty ${N}`, Date.now()])).lastID;
     const key = `faculty-${guestId}`;
     const cand = async () => (await call('GET', '/api/admin/certificates/candidates', null, admin)).body.people.find((x) => x.phone === key || (x.faculty && x.faculty.guestId === guestId));
     let me = await cand();
-    check('someone on the Faculty list, not signed up, is listed for the Faculty certificate', me && me.notRegistered && me.faculty.eligible && !me.conference.kind, me);
+    check('on the Faculty list with no session: no certificate, so not listed', !me);
+    const talkHall = (await call('POST', '/api/admin/programme/halls', { name: `Talk Hall ${N}` }, admin)).body.id;
+    madeHalls.push(talkHall);
+    const talk = (await call('POST', '/api/admin/programme/sessions', { hallId: talkHall, date: '2099-03-02', start: '10:00', end: '11:00', title: `Talk ${N}`, counts: true }, admin)).body.id;
+    await db.run("INSERT INTO programme_session_faculty (session_id, role, position, guest_id) VALUES (?, 'speaker', 0, ?)", [talk, guestId]);
+    me = await cand();
+    check('a speaker in the programme, not signed up: listed for the Speaker certificate, no Faculty one', me && me.notRegistered && !me.conference.kind
+      && me.roles.some((r) => r.kind === 'SPEAKER' && r.eligible) && !(me.faculty && me.faculty.eligible), me);
     {
       const view = fs.readFileSync(appFile('views', 'admin', 'sections', 'certificates.ejs'), 'utf8');
       const client = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
       const listFn = client.slice(client.indexOf('function renderCertificateList()'), client.indexOf('async function setCertificateOverride'));
-      check('...and shown in the list from the start, not only under the Faculty filter (31 Oct)',
+      check('...shown in the list from the start (31 Oct); no Issue faculty certificates button',
         /<option value="">Everyone: delegates and faculty<\/option>\s*<option value="registered">Registered delegates<\/option>/.test(view)
-        && /if \(filter === 'registered'\) return !x\.notRegistered;/.test(listFn) && !/filter === ''\) return !x\.notRegistered/.test(listFn) && /return true;\n  \}\);/.test(listFn));
+        && /if \(filter === 'registered'\) return !x\.notRegistered;/.test(listFn) && /return true;\n  \}\);/.test(listFn) && !view.includes('id="cert-issue-fac"'));
     }
-    check('...and nothing else', me && me.workshops.length === 0 && /Not signed up/.test(me.conference.whyNot));
-    check('the Faculty certificate cannot be "included anyway": they have it', (await call('POST', '/api/admin/certificates/override', { phone: key, scope: 'FAC', decision: 'INCLUDE', reason: 'x' }, admin)).status === 400);
-    await call('POST', '/api/admin/certificates/override', { phone: key, scope: 'FAC', decision: 'EXCLUDE', reason: 'Did not come' }, admin);
-    me = await cand();
-    check('...it can be withheld, with the reason', !me.faculty.eligible && /Did not come/.test(me.faculty.whyNot));
-    await call('POST', '/api/admin/certificates/override', { phone: key, scope: 'FAC', decision: null }, admin);
-    const issued = await call('POST', '/api/admin/certificates/issue', { scope: 'faculty', phones: [key] }, admin);
-    check('issuing faculty certificates', issued.body.success && issued.body.issued.FACULTY === 1, issued.body);
+    check('issuing "faculty" issues nothing', (await call('POST', '/api/admin/certificates/issue', { scope: 'faculty', phones: [key] }, admin)).body.issued.FACULTY === 0);
+    const issued = await call('POST', '/api/admin/certificates/issue', { scope: 'roles', phones: [key] }, admin);
+    check('issuing the Speaker certificate', issued.body.success && issued.body.issued.SPEAKER === 1, issued.body);
     const cert = await db.get('SELECT * FROM certificates WHERE guest_id = ?', [guestId]);
-    check('...numbered in its own series, for the faculty entry', cert && /\/F\/\d{4}$/.test(cert.cert_no) && cert.kind === 'FACULTY' && cert.phone_number === key, cert);
-    check('...once', (await call('POST', '/api/admin/certificates/issue', { scope: 'faculty', phones: [key] }, admin)).body.issued.FACULTY === 0);
+    check('...numbered in its own series, for the faculty entry', cert && /\/S\/\d{4}$/.test(cert.cert_no) && cert.kind === 'SPEAKER' && cert.phone_number === key, cert);
+    check('...once', (await call('POST', '/api/admin/certificates/issue', { scope: 'roles', phones: [key] }, admin)).body.issued.SPEAKER === 0);
     const one = await call('GET', `/api/admin/certificates/${cert.id}.pdf`, null, admin);
     check('...and it draws', one.status === 200 && one.buf.slice(0, 4).toString() === '%PDF');
     const verify = await call('GET', `/verify/${cert.verify_code}`);
-    check('the verify page names it a Faculty certificate', /Valid certificate/.test(verify.raw) && /<dd>Faculty<\/dd>/.test(verify.raw));
-
+    check('the verify page names it a Speaker certificate', /Valid certificate/.test(verify.raw) && /<dd>Speaker<\/dd>/.test(verify.raw), verify.raw && verify.raw.slice(0, 200));
     const email = `fac-${N}@example.test`;
     const otp = await call('POST', '/api/otp/request', { destination: email });
     const reg = await call('POST', '/api/auth/register', { salutation: 'Dr', name: `Faculty ${N}`, age: '50', gender: 'Female', designation: 'Professor', institute: 'Test College',
@@ -181,9 +182,9 @@ const images = (pdf) => (pdf.toString('latin1').match(/\/Subtype \/Image/g) || [
     const linked = await call('PUT', `/api/guests/${guestId}/link`, { phone }, admin);
     check('fixture: they sign up and are linked', linked.body.success === true, linked.body);
     const mine = await call('GET', '/api/certificates/mine', null, reg.cookie);
-    check('linked, the certificate is theirs to download', (mine.body.certificates || []).some((c) => c.id === cert.id && c.label === 'Faculty'), mine.body);
+    check('linked, the certificate is theirs to download', (mine.body.certificates || []).some((c) => c.id === cert.id), mine.body);
     me = await cand();
-    check('...and they are listed under their account, issued', me && me.phone === phone && me.faculty.issued && me.faculty.issued.id === cert.id);
+    check('...and they are listed under their account, issued', me && me.phone === phone && me.roles.some((r) => r.kind === 'SPEAKER' && r.issued && r.issued.id === cert.id));
 
     console.log('\n== The page ==');
     const src = fs.readFileSync(appFile('certificate-pdf.js'), 'utf8');
@@ -197,6 +198,7 @@ const images = (pdf) => (pdf.toString('latin1').match(/\/Subtype \/Image/g) || [
   } finally {
     if (guestId) {
       await db.run('DELETE FROM certificates WHERE guest_id = ?', [guestId]);
+      await db.run('DELETE FROM programme_session_faculty WHERE guest_id = ?', [guestId]);
       await db.run('DELETE FROM certificate_overrides WHERE phone_number = ?', [`faculty-${guestId}`]);
       await db.run('DELETE FROM guests WHERE id = ?', [guestId]);
     }

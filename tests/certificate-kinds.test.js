@@ -54,7 +54,7 @@ const { call, check, report, adminLogin, openDb } = require('./harness');
     check('a workshop\'s facilitator in the programme is its Workshop faculty, not a speaker', b.workshopFaculty.length === 1 && b.workshopFaculty[0].optionId === ws.id && !b.roles.some((r) => r.sessions.includes('Workshop session')));
     check('...and so is one on its roster as faculty', of(rosterReg.phone_number).workshopFaculty.some((w) => w.optionId === ws.id));
     check('no attendance needed for any of them', a.roles.every((r) => r.eligible) && b.workshopFaculty[0].eligible);
-    check('the Faculty certificate stays', !!a.faculty && a.faculty.eligible);
+    check('no separate Faculty certificate: the Speaker one is theirs (20 Nov)', !!a.faculty && !a.faculty.eligible && a.faculty.retired === true && a.roles.some((r) => r.kind === 'SPEAKER'));
 
     console.log('\n== Withholding one ==');
     check('a role cannot be included by hand -- it comes from the programme', (await call('POST', '/api/admin/certificates/override', { phone: `faculty-${A}`, scope: 'role:SPEAKER', decision: 'INCLUDE', reason: 'x' }, admin)).status === 400);
