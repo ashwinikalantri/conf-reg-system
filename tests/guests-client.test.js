@@ -95,7 +95,9 @@ check('Cancelled, apart, struck through', /line-through">Charlie Cancelled/.test
 sb.__g.setGuestChip('unknown');
 check('Travel not known', el('guests-list').innerHTML.includes('>Echo Typed<') && !el('guests-list').innerHTML.includes('>Alpha Arriving<'));
 sb.__g.setGuestChip('all');
-check('the old filters are under More filters', /<details id="guests-more-filters"[\s\S]*id="guests-filter-flag"[\s\S]*id="guests-filter-district"[\s\S]*<\/details>/.test(ejs));
+check('the flags in view beside Sort (owner, 20 Nov); the other old filters under More filters',
+  ejs.indexOf('id="guests-filter-flag"') < ejs.indexOf('id="guests-sort"') && ejs.indexOf('id="guests-filter-flag"') < ejs.indexOf('<details id="guests-more-filters"')
+  && /<details id="guests-more-filters"[\s\S]*id="guests-filter-status"[\s\S]*id="guests-filter-district"[\s\S]*<\/details>/.test(ejs) && /<option value="noProgramme">/.test(ejs));
 
 el('guests-filter-flag').value = 'noAccommodation';
 sb.__g.renderGuestList();

@@ -28,12 +28,27 @@
       <div id="guests-view-day" class="guest-view hidden"></div>
 
       <div id="guests-view-list" class="guest-view hidden">
-        <!-- One search, the chips that matter, and the rest under More
-             filters (their selects keep their ids: filteredGuests reads them). -->
+        <!-- One search, the chips that matter, the flags, and the rest under
+             More filters (their selects keep their ids: filteredGuests reads them). -->
         <div class="flex flex-wrap items-center gap-2 mb-3">
           <input id="guests-search" type="search" oninput="renderGuestList()" placeholder="Find: name, phone, flight, car, room" class="w-full lg:w-80 h-10 px-3 border border-slate-300 rounded-lg text-[15px] bg-white outline-none">
           <div id="guests-chips" class="flex flex-wrap gap-1.5" role="group" aria-label="Show faculty"></div>
-          <select id="guests-sort" onchange="setGuestSort(this.value)" aria-label="Sort" class="h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white lg:ml-auto">
+          <!-- The flags, in view (owner, 20 Nov 2026: lost under More filters in the redesign). -->
+          <select id="guests-filter-flag" onchange="renderGuestList()" aria-label="Flags" class="h-9 w-60 max-w-full px-2 border border-slate-300 rounded-lg text-sm bg-white lg:ml-auto">
+            <option value="">Flags: any</option>
+            <option value="mine">Assigned to me</option>
+            <option value="attention">Needs attention (orange or red)</option>
+            <option value="pickupAlert">Arriving soon, no car</option>
+            <option value="noAccommodation">No room</option>
+            <option value="sharedRoom">Sharing a room</option>
+            <option value="vehicleClash">Car or driver clash</option>
+            <option value="overCapacity">Shared trip over capacity</option>
+            <option value="notRegistered">Not registered</option>
+            <option value="notSignedUp">Not signed up (no account linked)</option>
+            <option value="noProgramme">No programme (no session as speaker or chair)</option>
+            <option value="ownStay">Arranging their own stay</option>
+          </select>
+          <select id="guests-sort" onchange="setGuestSort(this.value)" aria-label="Sort" class="h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white">
             <option value="name">Sort: Name</option>
             <option value="arrival_at">Sort: Arrival</option>
             <option value="departure_at">Sort: Departure</option>
@@ -45,20 +60,6 @@
           <summary class="inline-flex items-center h-9 text-sm font-semibold text-indigo-700 cursor-pointer select-none">More filters</summary>
           <div class="grid grid-cols-2 gap-2 mt-2 md:flex md:flex-wrap">
             <select id="guests-filter-status" onchange="renderGuestList()" class="min-w-0 h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
-            <select id="guests-filter-flag" onchange="renderGuestList()" class="min-w-0 h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white">
-              <option value="">Any flag</option>
-              <option value="mine">Assigned to me</option>
-              <option value="attention">Needs attention (orange or red)</option>
-              <option value="pickupAlert">Arriving soon, no car</option>
-              <option value="noAccommodation">No room</option>
-              <option value="sharedRoom">Sharing a room</option>
-              <option value="vehicleClash">Car or driver clash</option>
-              <option value="overCapacity">Shared trip over capacity</option>
-              <option value="notRegistered">Not registered</option>
-              <option value="notSignedUp">Not signed up (no account linked)</option>
-              <option value="noProgramme">No programme (no session as speaker or chair)</option>
-              <option value="ownStay">Arranging their own stay</option>
-            </select>
             <select id="guests-filter-acc" onchange="renderGuestList()" class="min-w-0 h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
             <select id="guests-filter-institution" onchange="renderGuestList()" aria-label="Institute" class="min-w-0 md:max-w-[16rem] h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
             <select id="guests-filter-district" onchange="renderGuestList()" aria-label="District" class="min-w-0 md:max-w-[14rem] h-10 md:h-9 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>

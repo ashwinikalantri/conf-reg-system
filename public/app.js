@@ -14610,6 +14610,9 @@ function renderGuestList() {
   }
   const sortSel = document.getElementById('guests-sort');
   if (sortSel && sortSel.value !== guestSort.key) sortSel.value = guestSort.key;
+  // A flag chosen: the select says so, so a short list is not a surprise.
+  const flagSel = document.getElementById('guests-filter-flag');
+  if (flagSel) ['border-navy', 'ring-2', 'ring-indigo-200', 'font-semibold'].forEach((c) => flagSel.classList.toggle(c, !!flagSel.value));
   const rows = base.filter((g) => guestChipMatch(g, guestChip));
   const keyOf = GUEST_SORTS[guestSort.key] || GUEST_SORTS.name;
   rows.sort((a, b) => {
@@ -15347,8 +15350,6 @@ function guestShowList(flag, chip) {
   guestChip = chip || 'all';
   const sel = document.getElementById('guests-filter-flag');
   if (sel) sel.value = flag || '';
-  const more = document.getElementById('guests-more-filters');
-  if (more && flag) more.open = true;
   switchGuestView('list');
 }
 
