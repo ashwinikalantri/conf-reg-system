@@ -4596,6 +4596,7 @@ async function initBackendPortal() {
   const me = await meRes.json();
   activeAdminUser = me.user;
   showHeldEmails();
+  showVolunteerTestBanner(me.volunteerTest);
   // Who is signed in, on the bar's account button and at the top of its menu.
   const meName = (me.user && me.user.full_name) || '';
   const meInitials = nameInitials(meName);
@@ -9219,6 +9220,8 @@ async function renderGeneralSettings() {
   // Halls, Certificates and Zenodo are shown by their own permissions; a role that
   // holds one of those but not the settings sees just that card.
   const full = can('system.settings_view');
+  if (can('system.settings_edit')) renderVolunteerTest();
+  else { const vt = document.getElementById('gs-card-volunteer-test'); if (vt) vt.classList.add('hidden'); }
   document.querySelectorAll('#section-general [id^="gs-card-"]').forEach((card) => {
     if (card.id === 'gs-card-halls' || card.id === 'gs-card-certificates' || card.id === 'gs-card-zenodo') return;
     card.classList.toggle('hidden', !full);
@@ -9363,6 +9366,59 @@ function renderAuthorsDeadlineState(conf) {
 // Turning this on locks every delegate and non-super admin out of the portal,
 // so it confirms first rather than acting on a single stray click. Turning it
 // back off is the safe direction and goes straight through.
+// --- VOLUNTEER TEST MODE ----------------------------------------------------
+// While it is on, a volunteer's changes are recorded and undone when it ends
+// (server: volunteer-test.js). The banner says which side of that you are on.
+function showVolunteerTestBanner(t) {
+  const el = document.getElementById('volunteer-test-banner');
+  if (!el) return;
+  el.classList.toggle('hidden', !(t && t.on));
+  if (!(t && t.on)) return;
+  el.className = `-mx-4 sm:-mx-8 -mt-6 mb-6 px-4 sm:px-8 py-2.5 text-sm font-semibold ${t.practice ? 'bg-violet-700 text-white' : 'bg-violet-100 text-violet-900'}`;
+  el.textContent = t.practice
+    ? 'Practice mode: nothing you change now will be kept, and no emails are sent. Use it to learn the steps.'
+    : 'Volunteer test mode is on: volunteers\' changes will be undone when it ends. Yours are kept.';
+}
+
+async function renderVolunteerTest() {
+  const actions = document.getElementById('vt-actions');
+  if (!actions) return;
+  const res = await fetch('/api/admin/volunteer-test');
+  if (!res.ok) { document.getElementById('gs-card-volunteer-test').classList.add('hidden'); return; }
+  const d = await res.json();
+  setText('vt-state', d.on ? '· ON' : '· off');
+  document.getElementById('vt-state').className = `text-xs font-semibold ${d.on ? 'text-violet-700' : 'text-slate-400'}`;
+  actions.innerHTML = d.on || d.changes
+    ? `<button type="button" onclick="endVolunteerTest()" class="h-10 px-4 rounded-lg bg-violet-700 hover:bg-violet-800 text-white text-sm font-semibold">End test and undo changes</button>`
+    : `<button type="button" onclick="startVolunteerTest()" class="h-10 px-4 rounded-lg bg-navy hover:bg-indigo-700 text-white text-sm font-semibold">Start test mode</button>`;
+  const since = d.since ? new Date(d.since).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+  document.getElementById('vt-body').innerHTML = d.on || d.changes
+    ? `<p class="text-slate-600">${d.on ? `On since ${esc(since)}. ` : ''}<b>${esc(d.changes)}</b> change${d.changes === 1 ? '' : 's'} by volunteers so far${d.changes ? ':' : '.'}</p>
+       ${d.tables.length ? `<ul class="mt-1 grid sm:grid-cols-2 gap-x-6 text-slate-700">${d.tables.map((t) => `<li class="flex justify-between gap-3 py-0.5 border-b border-slate-100"><span>${esc(t.label)}</span><span class="tabular-nums text-slate-500">${esc(t.changes)}</span></li>`).join('')}</ul>` : ''}
+       <button type="button" onclick="renderVolunteerTest()" class="mt-2 text-indigo-700 font-semibold text-sm">Refresh</button>`
+    : '<p class="text-slate-500">Off. Volunteers\' changes are real.</p>';
+}
+
+async function startVolunteerTest() {
+  if (!(await showConfirm('Start volunteer test mode? From now until you end it, everything volunteers change will be undone at the end, and emails they trigger will not be sent. Staff changes are kept. Tell the volunteers they are practising.', 'Start test mode'))) return;
+  const data = await (await fetch('/api/admin/volunteer-test/start', { method: 'POST' })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not start test mode.');
+  showToast('Volunteer test mode is on.', 'success');
+  showVolunteerTestBanner({ on: true, practice: false });
+  renderVolunteerTest();
+}
+
+async function endVolunteerTest() {
+  const d = await (await fetch('/api/admin/volunteer-test')).json().catch(() => ({}));
+  const list = (d.tables || []).map((t) => `${t.label}: ${t.changes}`).join('\n');
+  if (!(await showConfirm(`End the test and undo ${d.changes || 0} change${d.changes === 1 ? '' : 's'} made by volunteers?${list ? `\n\n${list}` : ''}\n\nA copy of the database is saved first. Anything staff changed since stays. Volunteers' changes from now on are real.`, 'End and undo'))) return;
+  const data = await (await fetch('/api/admin/volunteer-test/end', { method: 'POST' })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not end test mode. Nothing was undone yet; try again.');
+  showToast(`Test mode ended. ${data.undone} change${data.undone === 1 ? '' : 's'} undone${data.kept ? `; ${data.kept} kept because staff changed them since` : ''}.`, 'success');
+  showVolunteerTestBanner(null);
+  renderVolunteerTest();
+}
+
 async function setMaintenanceMode(enabled) {
   const toggle = document.getElementById('maintenance-toggle');
   if (enabled && !(await showConfirm('Turn ON maintenance mode? Delegates will not be able to register, pay, or submit abstracts, and finance/reviewer admins will lose access to the panel. Only super admins can use the portal until you turn this off.'))) {
@@ -9648,6 +9704,55 @@ ${reminderSignOff()}`;
 
 // Certificates issued: where to download them. Each one carries a QR code
 // that verifies it, so it can be shared as it is.
+// The welcome (owner, 20 Nov 2026): to every registered delegate (faculty
+// left out) and, with their own sessions and whom to call, to every faculty
+// member. The website carries the programme as it changes.
+const welcomeWhen = () => {
+  const c = conferenceInfo;
+  const start = formatFullDate(c.startDate);
+  const end = formatFullDate(c.endDate);
+  const dateRange = (start && end && c.startDate !== c.endDate) ? `${start} &ndash; ${end}` : (start || end);
+  return [dateRange, esc(c.location || '')].filter(Boolean).join(', ');
+};
+const welcomeWebsite = () => `<p>The latest programme, venue details and announcements are on the conference website. Please check it before you travel and during the conference, as the programme is kept up to date there.</p>
+${steelButton(`${siteUrl().replace(/\/+$/, '')}/programme`, 'See the Programme')}
+<p style="text-align:center;margin:-.75rem 0 1.25rem;font-size:.85rem"><a href="${esc(siteUrl())}" style="color:#2f5673">${esc(siteUrl().replace(/^https?:\/\//, '').replace(/\/+$/, ''))}</a></p>`;
+const welcomeWeather = () => `<p><b>The weather</b><br>Late-November mornings in Wardha are cool, around 13&ndash;15&deg;C, with pleasant afternoons. A light woollen for the early field visit is advisable.</p>`;
+
+async function buildWelcomeDelegateBody() {
+  const c = conferenceInfo;
+  const when = welcomeWhen();
+  return `<p>Dear {{name}},</p>
+<p>A warm welcome to the <b>${esc(c.name || 'conference')}</b>${when ? ` (${when})` : ''}. We are delighted that you are joining us.</p>
+${welcomeWebsite()}
+${welcomeWeather()}
+<p>We look forward to seeing you at Sevagram.</p>
+${reminderSignOff()}`;
+}
+
+const FACULTY_CONTACTS = [
+  ['Accommodation', [['Dr Jwalant Waghmare', '+91 98228 82766'], ['Dr Praful Ambullkar', '+91 94056 36310']]],
+  ['Travel', [['Dr Dipak Das', '+91 91675 65576'], ['Dr Abhay Deshmukh', '+91 97646 86936']]],
+  ['Any other help', [['Dr Anuj Mundra', '+91 90282 07622'], ['Dr Abhishek Raut', '+91 70831 70552']]],
+];
+async function buildWelcomeFacultyBody() {
+  const c = conferenceInfo;
+  const when = welcomeWhen();
+  const contacts = FACULTY_CONTACTS.map(([what, people]) => `<tr>
+    <td style="padding:.5rem .75rem .5rem 0;border-bottom:1px solid #eef3f6;color:#46708c;font-weight:700;vertical-align:top;white-space:nowrap">${esc(what)}</td>
+    <td style="padding:.5rem 0;border-bottom:1px solid #eef3f6;vertical-align:top">${people.map(([n, p]) => `${esc(n)}, <a href="tel:${esc(p.replace(/[^\d+]/g, ''))}" style="color:#244560;font-weight:700;text-decoration:none">${esc(p)}</a>`).join('<br>')}</td></tr>`).join('');
+  return `<p>Dear {{name}},</p>
+<p>A warm welcome to the <b>${esc(c.name || 'conference')}</b>${when ? ` (${when})` : ''}. Thank you for joining us as faculty; we are grateful for your time and contribution.</p>
+<p><b>Your sessions</b></p>
+{{sessions}}
+${welcomeWebsite()}
+${welcomeWeather()}
+<p><b>Whom to call</b></p>
+<table style="width:100%;border-collapse:collapse;font-size:.9rem;margin:.25rem 0 1rem">${contacts}</table>
+<p>We look forward to welcoming you to Sevagram.</p>
+${reminderSignOff()}`;
+}
+
 async function buildCertificateReadyBody() {
   const c = conferenceInfo;
   return `<p>Dear {{name}},</p>
@@ -10143,6 +10248,22 @@ const CUSTOM_REMINDER_TEMPLATES = {
     },
     body: buildWorkshopFeedbackBody,
   },
+  'welcome-delegates': {
+    label: 'Welcome to the conference',
+    audiences: ['registered'],
+    async subject() {
+      return `Welcome to ${conferenceInfo.acronym || 'the conference'}: programme, website and weather`;
+    },
+    body: buildWelcomeDelegateBody,
+  },
+  'welcome-faculty': {
+    label: 'Welcome, faculty: your sessions and whom to call',
+    audiences: ['faculty_all'],
+    async subject() {
+      return `Welcome to ${conferenceInfo.acronym || 'the conference'}: your sessions and whom to call`;
+    },
+    body: buildWelcomeFacultyBody,
+  },
   'balance-due': {
     label: 'Balance payment pending',
     audiences: ['balance'],
@@ -10161,7 +10282,7 @@ const REMINDER_DEFAULT_TEMPLATE = {
   balance: 'balance-due', paste: 'early-bird-ending', certificates: 'certificate-ready',
   abstract_authors: 'abstract-add-authors',
   presenters: 'presentation-guidelines', presenters_awaiting: 'presentation-reminder',
-  workshop_feedback: 'workshop-feedback',
+  workshop_feedback: 'workshop-feedback', faculty_all: 'welcome-faculty',
 };
 
 // --- The composer ------------------------------------------------------------
@@ -10171,7 +10292,7 @@ const REMINDER_DEFAULT_TEMPLATE = {
 // at once if it now uses a placeholder the new audience cannot fill.
 const remState = {
   audiences: [], placeholders: {}, options: { categories: [], statuses: [] },
-  key: null, recipients: [], selected: new Set(), filters: { domain: '', category: '', status: '', format: '' },
+  key: null, recipients: [], selected: new Set(), filters: { domain: '', category: '', status: '', format: '', faculty: '' },
   autoFilled: null, problems: { unsupported: [], missing: [] }, previewTimer: null, previewSeq: 0,
 };
 const REMINDER_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -10274,6 +10395,7 @@ function applyReminderFilters() {
   }
   remState.filters.category = document.getElementById('rem-category').value;
   remState.filters.status = document.getElementById('rem-status').value;
+  remState.filters.faculty = (document.getElementById('rem-faculty') || {}).value || '';
   remState.filters.format = document.getElementById('rem-format').value;
   remState.selected = new Set();
   loadReminderRecipients().then(() => scheduleReminderPreview(0));
@@ -10284,6 +10406,7 @@ function reminderFilterQuery() {
   const f = {};
   if (a && a.filters.includes('domain')) f.domain = remState.filters.domain;
   if (a && a.filters.includes('category')) { f.category = remState.filters.category; f.status = remState.filters.status; }
+  if (a && a.filters.includes('faculty')) f.faculty = remState.filters.faculty;
   if (a && a.filters.includes('format')) f.format = remState.filters.format;
   return f;
 }

@@ -36,6 +36,8 @@ function build(earlyUntil, conf) {
     ${js.match(/const presentationDetailsBox = [\s\S]*?<\/div>`;/)[0]}
     ${grab('buildPresentationGuidelinesBody')} ${grab('buildPresentationReminderBody')} ${grab('buildWorkshopFeedbackBody')}
     ${grab('buildRegistrationReminderBody')} ${grab('buildBalanceDueBody')} ${grab('buildCodeHolderBody')} ${grab('buildVerifyEmailBody')} ${grab('buildCertificateReadyBody')} ${grab('buildMgimsVerifyBody')}
+    ${js.match(/const welcomeWhen = [\s\S]*?\n};/)[0]} ${js.match(/const welcomeWebsite = [\s\S]*?<\/p>`;/)[0]} ${js.match(/const welcomeWeather = [^\n]+/)[0]}
+    ${js.match(/const FACULTY_CONTACTS = [\s\S]*?\n\];/)[0]} ${grab('buildWelcomeDelegateBody')} ${grab('buildWelcomeFacultyBody')}
     ${js.match(/const NOT_REGISTERED = [^\n]+/)[0]}
     ${js.slice(js.indexOf('const CUSTOM_REMINDER_TEMPLATES = {'), js.indexOf('\n};', js.indexOf('const CUSTOM_REMINDER_TEMPLATES = {'))+3)}
     CUSTOM_REMINDER_TEMPLATES;`;
@@ -191,6 +193,15 @@ const CONF={ name:'International Conference on Healthcare Quality & Patient Safe
  check('every audience but the registered starts from a template', pairs.length===R.AUDIENCES.length-1 && !pairs.some(([k])=>k==='registered'), pairs);
  check('...one that is offered to it', pairs.every(([k, t])=>TT[t] && TT[t].audiences.includes(k)), pairs.filter(([k, t])=>!(TT[t] && TT[t].audiences.includes(k))));
  check('the MGIMS email can go to pasted addresses and to the domain audience', TT['mgims-register'].audiences.includes('paste') && TT['mgims-register'].audiences.includes('domain'));
+ console.log('\n== The welcome (20 Nov) ==');
+ const wd=await TT['welcome-delegates'].body();
+ const wf=await TT['welcome-faculty'].body();
+ check('delegates: welcomed, sent to the website programme, told the weather', /A warm welcome/.test(wd) && /\/programme"/.test(wd) && /13&ndash;15&deg;C/.test(wd) && /light woollen for the early field visit/.test(wd), wd);
+ check('...to registered delegates', TT['welcome-delegates'].audiences.join()==='registered');
+ check('faculty: their own sessions, the website, the weather', /\{\{sessions\}\}/.test(wf) && /\/programme"/.test(wf) && /13&ndash;15&deg;C/.test(wf));
+ check('...and whom to call for accommodation, travel and anything else', /Accommodation[\s\S]*Dr Jwalant Waghmare[\s\S]*\+91 98228 82766[\s\S]*Dr Praful Ambullkar[\s\S]*Travel[\s\S]*Dr Dipak Das[\s\S]*Dr Abhay Deshmukh[\s\S]*Any other help[\s\S]*Dr Anuj Mundra[\s\S]*Dr Abhishek Raut[\s\S]*\+91 70831 70552/.test(wf));
+ check('...the contacts only in the faculty email', !/Waghmare|Mundra/.test(wd));
+ check('...to all faculty', TT['welcome-faculty'].audiences.join()==='faculty_all');
 
  report();
 })();

@@ -84,7 +84,7 @@ const base = { salutation: 'Dr', age: '41', gender: 'Female', designation: 'Prof
 
     console.log('\n== Every audience, counted ==');
     const aud = (await call('GET', '/api/admin/reminders/audiences', null, admin)).body;
-    check('all fourteen, in four groups', aud.audiences.length === 14 && new Set(aud.audiences.map((a) => a.group)).size === 4, aud.audiences.map((a) => a.key));
+    check('all fifteen, in five groups', aud.audiences.length === 15 && new Set(aud.audiences.map((a) => a.group)).size === 5, aud.audiences.map((a) => a.key));
     const count = (k, list = aud) => list.audiences.find((a) => a.key === k).count;
     check('pasted addresses have no count, nor a domain until one is given', count('paste') === null && count('domain') === null);
     const withDomain = (await call('GET', `/api/admin/reminders/audiences?domain=@${DOMAIN.toUpperCase()}`, null, admin)).body;
@@ -117,8 +117,22 @@ const base = { salutation: 'Dr', age: '41', gender: 'Female', designation: 'Prof
     check('not signed up: in, at the address on their faculty record', !!facBy(`Faculty Unlinked ${N}`) && facBy(`Faculty Unlinked ${N}`).tags.includes('Not signed up'));
     check('cancelled: out', !facBy(`Faculty Cancelled ${N}`));
 
-    console.log('\n== The preview ==');
     const pv = (k, body) => call('POST', `/api/admin/reminders/audiences/${k}/preview`, body, admin).then((r) => r.body);
+    const pv0 = pv;
+    console.log('\n== All faculty (the welcome, 20 Nov) ==');
+    const allFac = await list('faculty_all');
+    const allBy = (name) => allFac.find((r) => r.name && r.name.includes(name));
+    check('everyone on the list, registered or not, signed up or not; cancelled out', !!allBy(`Dom Out ${N}`) && !!allBy(`Faculty Unlinked ${N}`) && !allBy(`Faculty Cancelled ${N}`)
+      && allFac.length >= fac.length, allFac.map((r) => r.name));
+    const pf = await pv0('faculty_all', { subject: 'S', bodyHtml: '<p>{{name}}</p>{{sessions}}', recipientId: allBy(`Faculty Unlinked ${N}`).id });
+    check('{{sessions}} is filled in: their sessions, or where to find them', !/\{\{sessions\}\}/.test(pf.html) && (/<li/.test(pf.html) || /in the programme on the conference website/.test(pf.html)) && !pf.problems.unsupported.length, pf.problems);
+    const regAll = await list('registered');
+    const regNoFac = await list('registered', '?faculty=exclude');
+    const facPhones = new Set((await db.all("SELECT phone_number FROM guests WHERE phone_number IS NOT NULL AND COALESCE(overall_status, '') != 'Cancelled'")).map((r) => r.phone_number));
+    check('registered delegates can leave out the faculty', regNoFac.every((r) => !facPhones.has(r.id)) && regNoFac.length === regAll.filter((r) => !facPhones.has(r.id)).length);
+
+    console.log('\n== The preview ==');
+
     const p1 = await pv('faculty', { subject: 'For {{name}}', bodyHtml: '<p>Dear {{name}},</p>', recipientId: `unlinked-${N}@example.test` });
     check('it is the chosen recipient\'s email, filled in', p1.recipient && p1.recipient.name === `Faculty Unlinked ${N}` && p1.html.includes(`Dear Faculty Unlinked ${N},`) && p1.subject === `For Faculty Unlinked ${N}`, p1.recipient);
     check('...inside the email\'s own chrome (the steel header band)', p1.html.includes('background:#1c3549') && p1.html.indexOf('background:#1c3549') < p1.html.indexOf('Dear Faculty Unlinked'));

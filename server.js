@@ -40,6 +40,8 @@ const certificatePdfLib = require('./certificate-pdf');
 const { renderAbstractPdf } = require('./abstract-pdf');
 const abstractAuthorsLib = require('./abstract-authors');
 const presentationsLib = require('./presentations');
+const volunteerTestLib = require('./volunteer-test');
+const { AsyncLocalStorage } = require('async_hooks');
 const posterScreensLib = require('./poster-screens');
 const workshopFeedbackLib = require('./workshop-feedback');
 const zenodoLib = require('./zenodo');
@@ -619,6 +621,11 @@ rebuildSesClient();
 // and says whether it went. The runtime notifyToggle.email switch lets a super
 // admin silence all email.
 async function sendEmail(to, subject, html) {
+  // A volunteer practising in test mode sends nothing; it only looks sent.
+  if ((requestContext.getStore() || {}).volunteerTest) {
+    console.log(`Volunteer test mode: email to ${to} not sent (${subject}).`);
+    return true;
+  }
   if (!emailEnabled() || !notifyToggle.email || !to || !sesClient) return false;
   try {
     await sesClient.send(new SendEmailCommand({
@@ -1765,10 +1772,19 @@ const db = new sqlite3.Database(DB_FILE, (err) => {
 // rather than fail the request with SQLITE_BUSY.
 db.configure('busyTimeout', 5000);
 
+// Volunteer test mode (volunteer-test.js): while it is on, a volunteer's
+// request reads and writes through a second connection whose triggers
+// record every change it makes, so ending the test can undo them. Which
+// connection a query takes is decided by the request it runs for
+// (requestContext, set after loadSession).
+const requestContext = new AsyncLocalStorage();
+const volunteerTest = { on: false, since: null, db: null };
+const conn = () => (volunteerTest.db && (requestContext.getStore() || {}).volunteerTest ? volunteerTest.db : db);
+
 // Promise wrappers so the auth flow reads sequentially.
-const dbGet = (sql, p = []) => new Promise((res, rej) => db.get(sql, p, (e, r) => (e ? rej(e) : res(r))));
-const dbAll = (sql, p = []) => new Promise((res, rej) => db.all(sql, p, (e, r) => (e ? rej(e) : res(r))));
-const dbRun = (sql, p = []) => new Promise((res, rej) => db.run(sql, p, function (e) { e ? rej(e) : res(this); }));
+const dbGet = (sql, p = []) => new Promise((res, rej) => conn().get(sql, p, (e, r) => (e ? rej(e) : res(r))));
+const dbAll = (sql, p = []) => new Promise((res, rej) => conn().all(sql, p, (e, r) => (e ? rej(e) : res(r))));
+const dbRun = (sql, p = []) => new Promise((res, rej) => conn().run(sql, p, function (e) { e ? rej(e) : res(this); }));
 
 // db.serialize() only orders statements relative to WHEN they're queued, not
 // their position in this file. The additive migrations below queue their
@@ -3985,6 +4001,15 @@ require('./website').redirectOldHosts(app, {
 // redirect answered first.
 app.use(express.static(path.join(__dirname, 'public'), { index: false, redirect: false }));
 app.use(loadSession);
+// Volunteer test mode: a volunteer's request runs on the recording
+// connection (see dbRun). Staff, delegates and anyone else: as ever.
+app.use((req, res, next) => {
+  if (volunteerTest.on && req.session && volunteerTestLib.isVolunteerOnly(req.session.roles, VOLUNTEER_ROLE_KEYS)) {
+    req.volunteerTest = true;
+    return requestContext.run({ volunteerTest: true }, next);
+  }
+  next();
+});
 app.use(maintenanceGate);
 
 // The public conference website (website.js): no sign-in, read only, built
@@ -4736,7 +4761,9 @@ app.get('/api/auth/me', requireAuth, async (req, res, next) => {
     const permissions = [...new Set(roles.flatMap((r) => permissionsOf(r)))];
     const sections = {};
     for (const key of Object.keys(SECTION_PERMISSIONS)) sections[key] = roles.some((r) => sectionVisible(r, key));
-    res.json({ success: true, user: { ...omitPasswordHash(user), admin_access: rolesOpenAdmin(roles) }, roles, permissions, sections });
+    res.json({ success: true, user: { ...omitPasswordHash(user), admin_access: rolesOpenAdmin(roles) }, roles, permissions, sections,
+      // Volunteer test mode on: whether this person's changes will be undone.
+      volunteerTest: volunteerTest.on ? { on: true, practice: req.volunteerTest === true, since: volunteerTest.since } : null });
   } catch (err) {
     next(err);
   }
@@ -9031,6 +9058,43 @@ async function audienceMembers(key, filters = {}) {
     });
   }
 
+  if (key === 'faculty_all') {
+    // Every faculty member not cancelled, registered or not; {{sessions}}:
+    // their sessions in the programme, in time order, named as on their
+    // certificates (Speaker, Chairperson, Moderator, Panelist, Judge).
+    const rows = await dbAll(
+      `SELECT g.id, g.phone_number, g.guest_name, g.guest_email, g.guest_designation,
+              u.salutation, u.full_name, u.email AS account_email
+         FROM guests g LEFT JOIN users u ON u.phone_number = g.phone_number
+        WHERE COALESCE(g.overall_status, '') != ?
+        ORDER BY COALESCE(u.full_name, g.guest_name)`, [guestLib.CANCELLED]);
+    const theirs = await dbAll(
+      `SELECT f.guest_id, f.role, s.label, COALESCE(o.name, s.title) AS title, s.session_date AS date, s.start_time AS start, s.end_time AS end,
+              h.name AS hall, h.sort_order AS hall_sort, s.session_date, s.start_time
+         FROM programme_session_faculty f JOIN programme_sessions s ON s.id = f.session_id JOIN halls h ON h.id = s.hall_id
+         LEFT JOIN program_options o ON o.id = s.option_id
+        WHERE f.guest_id IS NOT NULL`);
+    theirs.sort(programmeOrder);
+    const sessionsHtml = (list) => (list.length
+      ? `<ul style="margin:.5rem 0 1rem;padding-left:1.1rem">${list.map((t) => {
+        const from = posterScreensLib.toMin(t.start);
+        const to = posterScreensLib.toMin(t.end);
+        const when = [posterScreensLib.dayText(t.date), from == null ? '' : `${posterScreensLib.to12(from)}${to == null ? '' : ` – ${posterScreensLib.to12(to)}`}`, t.hall].filter(Boolean).join(' · ');
+        return `<li style="margin:.35rem 0"><b>${escapeHtml(CERT_KIND_LABEL[certRoleKind(t, t.role)] || 'Speaker')}</b>: ${escapeHtml(t.title || 'Session')}<br><span style="color:#475569">${escapeHtml(when)}</span></li>`;
+      }).join('')}</ul>`
+      : '<p>Your session details are in the programme on the conference website.</p>');
+    return rows.map((g) => {
+      const email = g.account_email || g.guest_email || null;
+      const name = g.phone_number ? reminderName(g.salutation, g.full_name) || g.guest_name : g.guest_name;
+      const mine = theirs.filter((t) => t.guest_id === g.id);
+      return person(g.phone_number || (email ? normalizeEmail(email) : `faculty-${g.id}`), name, email, {
+        detail: [g.guest_designation, `${mine.length} session${mine.length === 1 ? '' : 's'}`].filter(Boolean).join(' · '),
+        tags: g.phone_number ? [] : ['Not signed up'],
+        values: { name: escapeHtml(name || 'Colleague'), sessions: sessionsHtml(mine) },
+      });
+    });
+  }
+
   if (key === 'abstract') {
     const rows = await dbAll(
       `SELECT a.phone_number, a.title, COALESCE(a.status, 'UNDER_REVIEW') AS status, a.author_name,
@@ -9152,6 +9216,10 @@ async function audienceMembers(key, filters = {}) {
     if (key === 'balance') where.push("registrations.bank_status = 'PARTIAL_PAYMENT'");
     if (key === 'registered' && filters.category) { where.push('registrations.category_key = ?'); params.push(String(filters.category)); }
     if (key === 'registered' && filters.status) { where.push('registrations.bank_status = ?'); params.push(String(filters.status)); }
+    if (key === 'registered' && filters.faculty === 'exclude') {
+      where.push("registrations.phone_number NOT IN (SELECT phone_number FROM guests WHERE phone_number IS NOT NULL AND COALESCE(overall_status, '') != ?)");
+      params.push(guestLib.CANCELLED);
+    }
     // registrations is not aliased: DELEGATE_SALUTATION_COLUMN's subquery
     // names that table.
     const rows = (await dbAll(
@@ -9209,6 +9277,8 @@ const reminderFilters = (src) => ({
   category: src && src.category ? String(src.category) : '',
   status: src && src.status ? String(src.status) : '',
   format: src && src.format ? String(src.format) : '',
+  // 'exclude': registered delegates without the faculty (not cancelled).
+  faculty: src && src.faculty === 'exclude' ? 'exclude' : '',
 });
 const audienceOr404 = (req, res) => {
   const a = reminderLib.AUDIENCE_BY_KEY[req.params.key];
@@ -9265,9 +9335,10 @@ async function reminderSample(a, filters, recipientId) {
     deadline: presentationsLib.dueText(CONFERENCE.presentationsDue) || 'the last date', filerules: presentationsLib.RULES.POSTER.text,
     screen: 'Screen 2 · Sunday 22 November · about 2:07 PM (2nd) · Hall B',
     workshops: 'An example workshop',
+    sessions: '<ul><li><b>Speaker</b>: An example session<br>Saturday 21 November · 10:00 AM – 11:00 AM · Hall A</li></ul>',
     codes: codeHolderCodesHtml([{ code: 'EXAMPLE2026', discount: 'Pay the Early Bird fee', validUntil: null, waiting: false }]),
   };
-  return { recipient: null, values: Object.fromEntries(a.placeholders.map((p) => [p, p === 'codes' ? example.codes : escapeHtml(example[p])])) };
+  return { recipient: null, values: Object.fromEntries(a.placeholders.map((p) => [p, p === 'codes' || p === 'sessions' ? example[p] : escapeHtml(example[p])])) };
 }
 
 // The email as one recipient will receive it, chrome and all, for the
@@ -16190,6 +16261,97 @@ app.delete('/api/admin/poster-screens/:id', requirePermission('abstracts.assign'
   }
 });
 
+// --- VOLUNTEER TEST MODE -----------------------------------------------------
+// Owner, 20 Nov 2026: "all volunteer changes to be in test mode and changes
+// reverted once the test mode is turned off. All changes by non-volunteer
+// users remain." Start opens the recording connection; End stops it, saves
+// a copy of the database, and undoes every recorded change (last first),
+// leaving any field someone else has changed since. On through a restart.
+const sqlHelpers = (c) => ({
+  all: (sql, p = []) => new Promise((res, rej) => c.all(sql, p, (e, r) => (e ? rej(e) : res(r)))),
+  get: (sql, p = []) => new Promise((res, rej) => c.get(sql, p, (e, r) => (e ? rej(e) : res(r)))),
+  run: (sql, p = []) => new Promise((res, rej) => c.run(sql, p, function (e) { e ? rej(e) : res(this); })),
+});
+const openConnection = () => new Promise((res, rej) => {
+  const c = new sqlite3.Database(DB_FILE, (e) => (e ? rej(e) : res(c)));
+  c.configure('busyTimeout', 5000);
+});
+const closeConnection = (c) => new Promise((res) => c.close(() => res()));
+async function startVolunteerTestConnection(since) {
+  const c = await openConnection();
+  await volunteerTestLib.arm(sqlHelpers(c));
+  Object.assign(volunteerTest, { db: c, since, on: true });
+}
+async function loadVolunteerTestOnBoot() {
+  await dbRun(volunteerTestLib.JOURNAL_SQL);
+  const row = await dbGet("SELECT value FROM schema_meta WHERE key = 'volunteer_test_since'");
+  if (row && Number(row.value)) await startVolunteerTestConnection(Number(row.value));
+}
+async function volunteerTestView() {
+  return { on: volunteerTest.on, since: volunteerTest.since, ...(await volunteerTestLib.summary({ all: dbAll })) };
+}
+
+app.get('/api/admin/volunteer-test', requirePermission('system.settings_edit'), async (req, res, next) => {
+  try {
+    res.json({ success: true, ...(await volunteerTestView()) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/admin/volunteer-test/start', requirePermission('system.settings_edit'), async (req, res, next) => {
+  try {
+    if (!volunteerTest.on) {
+      const since = Date.now();
+      await startVolunteerTestConnection(since);
+      await dbRun("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('volunteer_test_since', ?)", [String(since)]);
+      await recordAudit({ req, entityType: 'system', entityId: 'volunteer-test', action: 'VOLUNTEER_TEST_STARTED', oldValue: null, newValue: 'Volunteer test mode on: volunteers\' changes will be undone when it ends' });
+    }
+    res.json({ success: true, ...(await volunteerTestView()) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/admin/volunteer-test/end', requirePermission('system.settings_edit'), async (req, res, next) => {
+  try {
+    const before = await volunteerTestLib.summary({ all: dbAll });
+    if (!volunteerTest.on && !before.changes) return res.status(400).json({ success: false, error: 'Test mode is not on.' });
+    // Off first: from here a volunteer's change is real. Then the
+    // recording connection is closed, once what it was doing is done.
+    const c = volunteerTest.db;
+    Object.assign(volunteerTest, { on: false, db: null, since: null });
+    await dbRun("DELETE FROM schema_meta WHERE key = 'volunteer_test_since'");
+    if (c) await closeConnection(c);
+    const now = await volunteerTestLib.summary({ all: dbAll });
+    // A copy of the database as it was, before anything is undone.
+    const snapshot = path.join(DATA_DIR, `pre-volunteer-test-undo-${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}.db`);
+    await dbRun('VACUUM INTO ?', [snapshot]);
+    let result = { undone: 0, kept: 0, tables: {} };
+    if (now.lastId) {
+      const u = await openConnection();
+      const h = sqlHelpers(u);
+      try {
+        await h.run('BEGIN IMMEDIATE');
+        result = await volunteerTestLib.undoAll(h, now.lastId);
+        await h.run(`DELETE FROM ${volunteerTestLib.JOURNAL} WHERE id <= ?`, [now.lastId]);
+        await h.run('COMMIT');
+      } catch (err) {
+        await h.run('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        await closeConnection(u);
+      }
+    }
+    const words = now.tables.map((t) => `${t.label}: ${t.changes}`).join('; ');
+    await recordAudit({ req, entityType: 'system', entityId: 'volunteer-test', action: 'VOLUNTEER_TEST_ENDED', oldValue: words || 'No changes',
+      newValue: `Undone ${result.undone}; kept ${result.kept} (changed since by someone else). Copy before: ${path.basename(snapshot)}` });
+    res.json({ success: true, ...result, recorded: now, snapshot: path.basename(snapshot) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- HELD EMAILS ----------------------------------------------------------
 // What sending a held email changes. An abstract's decision marks it told --
 // only if it is still accepted for the format the email names.
@@ -17201,6 +17363,7 @@ registrationsMigrationReady.then(retitleNamesOnBoot)
   .then(() => seedPosterScreensOnBoot().catch((err) => console.error('Poster screens seeding failed (continuing to start):', err.message)))
   .then(() => posterSlotsSessionOnBoot().catch((err) => console.error('Poster places session backfill failed (continuing to start):', err.message)))
   .then(() => presentationsDriveLayoutOnBoot())
+  .then(() => loadVolunteerTestOnBoot().catch((err) => console.error('Volunteer test mode load failed (continuing to start):', err.message)))
   .then(() => guestLib.migrateGuestsTable(dbRun, dbAll)
     .then((r) => {
       if (r === 'rebuilt') console.log('Guests table rebuilt: faculty no longer need an account.');

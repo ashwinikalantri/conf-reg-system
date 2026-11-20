@@ -146,6 +146,9 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'DELETE /api/guests/drivers/:id': 'Deletes a driver. guests.manage.',
     // The Day plan (20 Nov 2026).
     'POST /api/guests/drivers/:id/link': 'Makes, or with reset makes anew, a driver\'s own link to their trips (/driver/<token>, no sign-in). guests.travel, like editing the driver.',
+    'GET /api/admin/volunteer-test': 'Whether volunteer test mode is on and what volunteers have changed so far. system.settings_edit -- the same people who switch maintenance mode.',
+    'POST /api/admin/volunteer-test/start': 'Starts volunteer test mode: volunteers\' changes from now are recorded to be undone. system.settings_edit, as maintenance mode.',
+    'POST /api/admin/volunteer-test/end': 'Ends volunteer test mode: saves a copy of the database, then undoes the volunteers\' recorded changes, keeping anything staff changed since. system.settings_edit, as maintenance mode.',
     'POST /api/guests/:id/arrangements-email': 'Holds an email to one faculty member saying what has been arranged for their travel and stay; the Send / Cancel popup decides whether it goes. guests.edit -- the coordinators who already mark faculty and edit their status.',
     'POST /api/guests/:id/checkin': 'Marks a faculty member checked in at their accommodation, or takes it back. guests.view to reach it; then whoever may set their stay -- guests.stay, or their accommodation volunteer -- as PUT /api/guests/:id checks the field.',
     'POST /api/guests/rooms': 'Adds a room. guests.stay.',

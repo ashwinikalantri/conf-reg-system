@@ -439,6 +439,9 @@ const ROUTE_PERMISSIONS = {
   // System
   'GET /api/admin/general-settings': 'system.settings_view',
   'PUT /api/admin/general-settings': 'system.settings_edit',
+  'GET /api/admin/volunteer-test': 'system.settings_edit',
+  'POST /api/admin/volunteer-test/start': 'system.settings_edit',
+  'POST /api/admin/volunteer-test/end': 'system.settings_edit',
   'GET /api/admin/activity-log': 'system.activity_log',
   'GET /api/admin/backup/status': 'system.backups',
   'POST /api/admin/backup/request': 'system.backups',

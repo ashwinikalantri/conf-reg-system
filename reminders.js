@@ -48,8 +48,8 @@ const AUDIENCES = [
     description: 'Everyone holding a personal code they can still use -- including codes waiting for someone to sign up with the address.',
     action: 'CODE_HOLDER_REMINDER_SENT', placeholders: ['name', 'codes'], required: ['codes'] },
   { key: 'registered', label: 'Registered delegates', group: 'Registered',
-    description: 'Everyone who has registered, whatever their payment status. Narrow by category or status.',
-    action: 'REGISTERED_DELEGATE_REMINDER_SENT', placeholders: ['name'], filters: ['category', 'status'] },
+    description: 'Everyone who has registered, whatever their payment status. Narrow by category or status, or leave out faculty (they have their own audience).',
+    action: 'REGISTERED_DELEGATE_REMINDER_SENT', placeholders: ['name'], filters: ['category', 'status', 'faculty'] },
   { key: 'certificates', label: 'Certificate issued', group: 'Registered',
     description: 'Everyone who has a certificate issued (and not withdrawn) -- to tell them it is ready to download.',
     action: 'CERTIFICATE_READY_SENT', placeholders: ['name'] },
@@ -59,6 +59,9 @@ const AUDIENCES = [
   { key: 'balance', label: 'Balance payment due', group: 'Registered',
     description: 'Registrations with a balance still to pay.',
     action: 'BALANCE_DUE_REMINDER_SENT', placeholders: ['name', 'amount'] },
+  { key: 'faculty_all', label: 'All faculty', group: 'Faculty',
+    description: 'Everyone on the Faculty list (not cancelled), registered or not, signed up or not. Each email can carry their own sessions in the programme.',
+    action: 'FACULTY_EMAIL_SENT', placeholders: ['name', 'sessions'] },
   { key: 'paste', label: 'Pasted addresses', group: 'Anyone',
     description: 'Any email addresses you paste -- they need no account here. Nothing is known about them, so nothing is filled in.',
     action: 'CUSTOM_REMINDER_SENT', placeholders: [], cooldown: 'message' },
@@ -78,6 +81,7 @@ const PLACEHOLDERS = {
   filerules: 'The file their format takes, e.g. PDF, one slide, under 10 MB',
   screen: 'An e-poster\'s screen, day, time and hall, e.g. Screen 2 · Sunday 22 November · about 2:07 PM (2nd) · Hall B',
   workshops: 'The workshop(s) they have still to give feedback on',
+  sessions: 'A faculty member\'s sessions in the programme: their role, the session, day, time and hall',
 };
 
 // Every {{word}} in a text, once each, in order of appearance.
