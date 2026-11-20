@@ -40,6 +40,23 @@
         <label for="meal-search" class="block text-xs sm:text-sm font-semibold text-slate-600 mb-1">No badge or pass? Find them</label>
         <input id="meal-search" type="search" oninput="mealSearch()" placeholder="Name, mobile or ID" autocomplete="off" class="w-full h-11 sm:h-12 px-3 border border-slate-300 rounded-xl text-[15px] outline-none focus:ring-2 focus:ring-indigo-200">
         <div id="meal-search-results" class="mt-1 divide-y divide-slate-100 max-h-[13.5rem] overflow-y-auto empty:hidden"></div>
+        <!-- Not signed up: served on the spot, with their name taken down. -->
+        <button type="button" id="meal-walkin-open" onclick="openMealWalkin()" class="mt-2 text-sm font-semibold text-navy hover:underline min-h-[44px]">Not signed up? Serve as a walk-in</button>
+        <form id="meal-walkin" class="hidden mt-2 space-y-2 border-t border-slate-100 pt-3" onsubmit="mealServeWalkin(event)">
+          <p class="text-sm font-semibold text-slate-800">Walk-in, not signed up</p>
+          <div><label for="meal-walkin-name" class="block text-xs font-semibold text-slate-600 mb-1">Name <span class="text-rose-600">*</span></label>
+            <input id="meal-walkin-name" required minlength="2" maxlength="100" autocomplete="off" class="w-full h-11 px-3 border border-slate-300 rounded-xl text-[15px]"></div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div><label for="meal-walkin-phone" class="block text-xs font-semibold text-slate-600 mb-1">Mobile (if they give it)</label>
+              <input id="meal-walkin-phone" type="tel" inputmode="tel" autocomplete="off" class="w-full h-11 px-3 border border-slate-300 rounded-xl text-[15px]"></div>
+            <div><label for="meal-walkin-institution" class="block text-xs font-semibold text-slate-600 mb-1">Institution (if they give it)</label>
+              <input id="meal-walkin-institution" maxlength="150" autocomplete="off" class="w-full h-11 px-3 border border-slate-300 rounded-xl text-[15px]"></div>
+          </div>
+          <div class="flex gap-2">
+            <button type="submit" class="h-11 px-5 rounded-xl bg-navy hover:bg-indigo-700 text-white text-sm font-semibold">Serve walk-in</button>
+            <button type="button" onclick="closeMealWalkin()" class="h-11 px-4 rounded-xl border border-slate-300 text-sm font-semibold text-slate-700">Cancel</button>
+          </div>
+        </form>
       </div>
 
       <!-- The last person, big: Serve (green), Already served (amber), Not on

@@ -2069,6 +2069,9 @@ db.serialize(() => {
     )
   `);
   db.run('CREATE UNIQUE INDEX IF NOT EXISTS meal_servings_once ON meal_servings (meal_key, person_key) WHERE removed_at IS NULL');
+  // A walk-in, not signed up: the mobile and institution they gave, if any.
+  db.run('ALTER TABLE meal_servings ADD COLUMN walkin_phone TEXT', () => {});
+  db.run('ALTER TABLE meal_servings ADD COLUMN walkin_institution TEXT', () => {});
   // The printed meal pass for faculty and organisers: an unguessable code
   // for its QR, one per person.
   // Emails from staff actions, waiting for Send or Cancel (holdEmail).
@@ -10056,7 +10059,7 @@ async function mealCounts(meals, { anyTime = false } = {}) {
     return {
       ...m, window: mealsLib.mealWindow(m, Date.now(), { anyTime }),
       served: mine.reduce((n, r) => n + r.n, 0), anyway: mine.reduce((n, r) => n + (r.anyway || 0), 0),
-      byKind: { DELEGATE: kind('DELEGATE'), VOLUNTEER: kind('VOLUNTEER'), FACULTY: kind('FACULTY'), ORGANISER: kind('ORGANISER') },
+      byKind: { DELEGATE: kind('DELEGATE'), VOLUNTEER: kind('VOLUNTEER'), FACULTY: kind('FACULTY'), ORGANISER: kind('ORGANISER'), WALKIN: kind('WALKIN') },
       counters: m.counters.map((c) => ({ ...c, served: mine.filter((r) => r.session_id === c.sessionId).reduce((n, r) => n + r.n, 0) })),
     };
   });
@@ -10108,6 +10111,51 @@ app.post('/api/meals/serve', requirePermission('meals.scan'), async (req, res, n
       const prev = await dbGet('SELECT at, by_name, session_id FROM meal_servings WHERE meal_key = ? AND person_key = ? AND removed_at IS NULL', [meal.key, p.key]);
       const where = prev && meal.counters.find((c) => c.sessionId === prev.session_id);
       return res.json({ success: true, result: 'ALREADY', person: publicMealPerson(p), servedAt: prev ? prev.at : null,
+        counter: where ? where.hall : '', by: prev ? prev.by_name : '' });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Someone not signed up, served on the spot (owner, 20 Nov 2026): their
+// name is taken down -- and a mobile and institution if they give them.
+// Once a meal: by their mobile, else by their name. A mobile that belongs
+// to an account is that person: the counter is shown them instead.
+app.post('/api/meals/walkin', requirePermission('meals.scan'), async (req, res, next) => {
+  try {
+    const meal = (await mealMeals()).find((m) => m.key === String(req.body.mealKey || ''));
+    if (!meal) return res.status(400).json({ success: false, error: 'Choose the meal.' });
+    const counter = meal.counters.find((c) => c.sessionId === Number(req.body.sessionId)) || (meal.counters.length === 1 ? meal.counters[0] : null);
+    if (!counter) return res.status(400).json({ success: false, error: 'Choose the counter.' });
+    if (!mealsLib.mealWindow(meal, Date.now(), { anyTime: req.volunteerTest === true }).open) {
+      return res.status(409).json({ success: false, error: `${meal.title} is served on ${attendanceLib.shortDate(meal.date)}, ${attendanceLib.to12(meal.start)} to ${attendanceLib.to12(meal.end)}. The counter opens half an hour before and closes 2 hours after.` });
+    }
+    const name = String(req.body.name || '').replace(/\s+/g, ' ').trim();
+    if (name.length < 2 || name.length > 100) return res.status(400).json({ success: false, error: 'Enter their name.' });
+    const rawPhone = String(req.body.phone || '').trim();
+    const phone = rawPhone ? toE164(rawPhone) : '';
+    if (rawPhone && !phone) return res.status(400).json({ success: false, error: 'That mobile number does not look right. Leave it blank if they have none.' });
+    const institution = String(req.body.institution || '').replace(/\s+/g, ' ').trim().slice(0, 150) || null;
+    if (phone) {
+      const account = await dbGet(`SELECT phone_number FROM users WHERE ${PHONE_MATCH_SQL} LIMIT 1`, phoneMatchParams(rawPhone));
+      const p = account && await mealPerson(account.phone_number);
+      if (p) return res.json({ success: true, result: 'HAS_ACCOUNT', person: publicMealPerson(p) });
+    }
+    const key = phone ? `walkin:${phone}` : `walkin:name:${name.toLowerCase()}`;
+    const person = { key, name, detail: [institution, phone].filter(Boolean).join(' · '), eligible: true, kind: 'WALKIN' };
+    try {
+      const r = await dbRun(`INSERT INTO meal_servings (meal_key, session_id, person_key, person_kind, person_name, at, by_phone, by_name, method, walkin_phone, walkin_institution)
+          VALUES (?, ?, ?, 'WALKIN', ?, ?, ?, ?, 'WALKIN', ?, ?)`,
+        [meal.key, counter.sessionId, key, name, Date.now(), req.session.phone, req.session.name || req.session.phone, phone || null, institution]);
+      await recordAudit({ req, entityType: 'meal_serving', entityId: r.lastID, action: 'MEAL_WALKIN_SERVED',
+        oldValue: null, newValue: `${name}${institution ? `, ${institution}` : ''}: ${meal.title}, ${counter.hall}` });
+      return res.json({ success: true, result: 'SERVE', person: publicMealPerson(person), servingId: r.lastID });
+    } catch (e) {
+      if (!/UNIQUE/i.test(String(e.message))) throw e;
+      const prev = await dbGet('SELECT at, by_name, session_id FROM meal_servings WHERE meal_key = ? AND person_key = ? AND removed_at IS NULL', [meal.key, key]);
+      const where = prev && meal.counters.find((c) => c.sessionId === prev.session_id);
+      return res.json({ success: true, result: 'ALREADY', person: publicMealPerson(person), servedAt: prev ? prev.at : null,
         counter: where ? where.hall : '', by: prev ? prev.by_name : '' });
     }
   } catch (err) {
@@ -14963,21 +15011,22 @@ async function buildReport(type, opts = {}) {
     const when = (m) => `${attendanceLib.shortDate(m.date)}, ${attendanceLib.to12(m.start)}–${attendanceLib.to12(m.end)}`;
     const sections = [{
       name: 'Meals',
-      columns: ['Meal', 'When', 'Expected', 'Served', 'Delegates', 'Volunteers', 'Faculty', 'Organisers', 'Served anyway'],
-      rows: meals.map((m) => [m.title, when(m), expected.total, m.served, m.byKind.DELEGATE, m.byKind.VOLUNTEER, m.byKind.FACULTY, m.byKind.ORGANISER, m.anyway]),
+      columns: ['Meal', 'When', 'Expected', 'Served', 'Delegates', 'Volunteers', 'Faculty', 'Organisers', 'Walk-ins', 'Served anyway'],
+      rows: meals.map((m) => [m.title, when(m), expected.total, m.served, m.byKind.DELEGATE, m.byKind.VOLUNTEER, m.byKind.FACULTY, m.byKind.ORGANISER, m.byKind.WALKIN, m.anyway]),
     }, {
       name: 'By counter',
       columns: ['Meal', 'Counter', 'Served'],
       rows: meals.flatMap((m) => m.counters.map((c) => [m.title, c.hall, c.served])),
     }];
     for (const m of meals) {
-      const rows = await dbAll(`SELECT s.at, s.person_name, s.person_kind, s.session_id, s.by_name, s.override_reason
+      const rows = await dbAll(`SELECT s.at, s.person_name, s.person_kind, s.session_id, s.by_name, s.override_reason, s.walkin_phone, s.walkin_institution
           FROM meal_servings s WHERE s.meal_key = ? AND s.removed_at IS NULL ORDER BY s.at`, [m.key]);
       sections.push({
         name: `${m.title}, ${when(m)}`,
-        columns: ['Time', 'Name', 'As', 'Counter', 'Served by', 'Served anyway because'],
+        columns: ['Time', 'Name', 'As', 'Counter', 'Served by', 'Served anyway because', 'Walk-in: mobile, institution'],
         rows: rows.map((r) => [new Date(r.at + 5.5 * 3600e3).toISOString().slice(11, 16), r.person_name, mealsLib.KIND_LABEL[r.person_kind] || r.person_kind,
-          (m.counters.find((c) => c.sessionId === r.session_id) || {}).hall || '', r.by_name || '', r.override_reason || '']),
+          (m.counters.find((c) => c.sessionId === r.session_id) || {}).hall || '', r.by_name || '', r.override_reason || '',
+          [r.walkin_phone, r.walkin_institution].filter(Boolean).join(', ')]),
       });
     }
     return { title: 'Meals Served', sections };

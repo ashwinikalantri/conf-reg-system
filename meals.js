@@ -64,7 +64,9 @@ function currentMeal(meals, now = Date.now()) {
 //          regStatus (their registration's bank_status, or null) }
 //          volunteer (registered in the Volunteer category) }
 // -> { eligible, kind ('FACULTY' | 'ORGANISER' | 'VOLUNTEER' | 'DELEGATE' | null), reason }
-const KIND_LABEL = { FACULTY: 'Faculty', ORGANISER: 'Organiser', VOLUNTEER: 'Volunteer', DELEGATE: 'Delegate' };
+// WALKIN: someone not signed up, served on the spot with their name taken
+// down (owner, 20 Nov 2026).
+const KIND_LABEL = { FACULTY: 'Faculty', ORGANISER: 'Organiser', VOLUNTEER: 'Volunteer', DELEGATE: 'Delegate', WALKIN: 'Walk-in' };
 function decide(facts) {
   if (facts.faculty) return { eligible: true, kind: 'FACULTY', reason: null };
   if (facts.staff) return { eligible: true, kind: 'ORGANISER', reason: null };

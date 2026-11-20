@@ -111,14 +111,34 @@ check('the Meals report needs the counts', perms.REPORT_PERMISSIONS.meals === 'm
     const reserve = await serve({ identifier: okId });
     check('undone, they can be served again', undo.body.success && reserve.body.result === 'SERVE', [undo.body, reserve.body]);
 
+    console.log('\n== A walk-in, not signed up (20 Nov) ==');
+    const walk = (body) => call('POST', '/api/meals/walkin', { mealKey: meal.key, sessionId: meal.counters[0].sessionId, ...body }, admin);
+    check('no name, not served', (await walk({ name: ' ' })).status === 400);
+    check('a mobile that is not one: says so', (await walk({ name: 'Someone', phone: '12' })).status === 400);
+    const w1 = await walk({ name: `Walk In ${N}`, phone: `98${N.slice(-8)}`, institution: 'Some College' });
+    check('served on the spot, as a walk-in, their details kept', w1.body.result === 'SERVE' && w1.body.person.kindLabel === 'Walk-in'
+      && JSON.stringify(await db.get('SELECT person_name, person_kind, walkin_phone, walkin_institution FROM meal_servings WHERE id = ?', [w1.body.servingId]))
+        === JSON.stringify({ person_name: `Walk In ${N}`, person_kind: 'WALKIN', walkin_phone: `+9198${N.slice(-8)}`, walkin_institution: 'Some College' })
+      && !!(await db.get("SELECT 1 AS y FROM audit_log WHERE action = 'MEAL_WALKIN_SERVED' AND entity_id = ?", [String(w1.body.servingId)])), w1.body);
+    check('...the same mobile again: Already served', (await walk({ name: 'Another Name', phone: `98${N.slice(-8)}` })).body.result === 'ALREADY');
+    const w2 = await walk({ name: `No Phone ${N}` });
+    check('no mobile: by name, once a meal', w2.body.result === 'SERVE' && (await walk({ name: `no  phone ${N}` })).body.result === 'ALREADY');
+    // An account's mobile, as accounts carry it (users.phone, E.164).
+    await db.run('UPDATE users SET phone = ? WHERE phone_number = ?', [made.regs[0].phone, made.regs[0].phone]);
+    const acct = await walk({ name: 'Typed Name', phone: made.regs[0].phone.replace('+91', '') });
+    check('a mobile with an account: that person is shown instead, nothing served', acct.body.result === 'HAS_ACCOUNT' && acct.body.person.name === `Meal 1 ${N}`, acct.body);
+    await call('POST', '/api/meals/undo', { servingId: w2.body.servingId }, admin);
+
     console.log('\n== The counts ==');
     const sum = await call('GET', '/api/admin/meals/summary', null, admin);
     const sm = sum.body.meals.find((m) => m.key === meal.key);
-    check('served, by kind and at each counter', sm.served === 3 && sm.byKind.DELEGATE === 2 && sm.byKind.FACULTY === 1 && sm.anyway === 1
-      && sm.counters[0].served === 3 && sm.counters[1].served === 0, sm);
+    check('served, by kind and at each counter', sm.served === 4 && sm.byKind.DELEGATE === 2 && sm.byKind.FACULTY === 1 && sm.byKind.WALKIN === 1 && sm.anyway === 1
+      && sm.counters[0].served === 4 && sm.counters[1].served === 0, sm);
     const rep = await call('GET', '/api/admin/reports/meals?format=json', null, admin);
     check('the Meals report: each meal, each counter, who was served', rep.body.success && rep.body.report.sections[0].name === 'Meals'
-      && rep.body.report.sections.some((s) => s.name === 'By counter') && rep.body.report.sections.some((s) => s.name.startsWith(`Test Lunch ${N}`) && s.rows.length === 3));
+      && rep.body.report.sections.some((s) => s.name === 'By counter') && rep.body.report.sections.some((s) => s.name.startsWith(`Test Lunch ${N}`) && s.rows.length === 4
+        && s.rows.some((r) => r[1] === `Walk In ${N}` && r[2] === 'Walk-in' && /Some College/.test(r[6])))
+      && rep.body.report.sections[0].columns.includes('Walk-ins'));
     check('a role without the counts gets no report', (await call('GET', '/api/admin/reports/meals?format=json', null, desk)).status === 403);
 
     console.log('\n== Not being served now ==');

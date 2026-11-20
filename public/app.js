@@ -17045,8 +17045,54 @@ function mealSearch() {
         </div>
         <button type="button" onclick='${p.eligible ? `mealServe({ personKey: ${key} })` : `mealServeAnyway(${key})`}' class="shrink-0 h-11 px-4 rounded-xl text-sm font-semibold ${p.eligible ? 'bg-navy hover:bg-indigo-700 text-white' : 'border border-rose-300 text-rose-700 hover:bg-rose-50'}">${p.eligible ? 'Serve' : 'Serve anyway'}</button>
       </div>`;
-    }).join('') : '<p class="py-3 text-sm text-slate-500">Nobody found.</p>';
+    }).join('') : '<p class="py-3 text-sm text-slate-500">Nobody found. If they have not signed up, serve them as a walk-in below.</p>';
   }, 250);
+}
+
+// A walk-in, not signed up (owner, 20 Nov 2026): served on the spot with
+// their name taken down. What was typed in the search, if a name, starts it.
+function openMealWalkin() {
+  const form = document.getElementById('meal-walkin');
+  if (!form) return;
+  form.classList.remove('hidden');
+  document.getElementById('meal-walkin-open').classList.add('hidden');
+  const q = (document.getElementById('meal-search') || {}).value || '';
+  const name = document.getElementById('meal-walkin-name');
+  if (!name.value && q.trim() && !/\d/.test(q)) name.value = q.trim();
+  if (!document.getElementById('meal-walkin-phone').value && /^[\d\s+-]{10,}$/.test(q.trim())) document.getElementById('meal-walkin-phone').value = q.trim();
+  name.focus();
+}
+function closeMealWalkin() {
+  const form = document.getElementById('meal-walkin');
+  if (!form) return;
+  form.reset();
+  form.classList.add('hidden');
+  document.getElementById('meal-walkin-open').classList.remove('hidden');
+}
+async function mealServeWalkin(e) {
+  e.preventDefault();
+  const m = mealOf();
+  if (!m) return showToast('Choose the meal.');
+  const body = { mealKey: m.key, sessionId: mealCounterId(), name: document.getElementById('meal-walkin-name').value,
+    phone: document.getElementById('meal-walkin-phone').value, institution: document.getElementById('meal-walkin-institution').value };
+  const res = await fetch('/api/meals/walkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({ error: 'No answer from the server. Check the connection.' }));
+  if (!data.success) return showToast(data.error || 'Could not serve. Check the connection.');
+  // Their mobile has an account: that is who they are -- serve them as such.
+  if (data.result === 'HAS_ACCOUNT') {
+    const p = data.person;
+    if (await showConfirm(`This mobile belongs to ${p.name}${p.kindLabel ? ` (${p.kindLabel})` : ''}. Serve them under their own name instead?`, 'Serve them')) {
+      closeMealWalkin();
+      return p.eligible ? mealServe({ personKey: p.key }) : mealServeAnyway(p.key);
+    }
+    return;
+  }
+  closeMealWalkin();
+  const input = document.getElementById('meal-search');
+  if (input) input.value = '';
+  const list = document.getElementById('meal-search-results');
+  if (list) list.innerHTML = '';
+  showMealResult(data);
 }
 
 // --- CERTIFICATES (admin) ---
