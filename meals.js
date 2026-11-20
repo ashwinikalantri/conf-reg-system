@@ -67,15 +67,17 @@ function currentMeal(meals, now = Date.now()) {
 // WALKIN: someone not signed up, served on the spot with their name taken
 // down (owner, 20 Nov 2026).
 const KIND_LABEL = { FACULTY: 'Faculty', ORGANISER: 'Organiser', VOLUNTEER: 'Volunteer', DELEGATE: 'Delegate', WALKIN: 'Walk-in' };
+const NOT_CHECKED_IN = 'Not checked in yet: send them to the registration desk to check in first.';
 function decide(facts) {
-  if (facts.faculty) return { eligible: true, kind: 'FACULTY', reason: null };
-  if (facts.staff) return { eligible: true, kind: 'ORGANISER', reason: null };
-  // A delegate checks in at the registration desk first (owner, 20 Nov
-  // 2026); faculty, organisers and volunteers do not. checkedIn undefined:
+  // Everyone with a registration checks in at the registration desk first:
+  // delegates (owner, 20 Nov 2026), and faculty and volunteers too (21 Nov).
+  // Organisers are not asked; faculty with no registration to check in
+  // (no account, or none made) are served as faculty. checkedIn undefined:
   // not asked (older callers), so not held against them.
-  if (facts.regStatus === 'BANK_VERIFIED' && !facts.volunteer && facts.checkedIn === false) {
-    return { eligible: false, kind: 'DELEGATE', reason: 'Not checked in yet: send them to the registration desk to check in first.' };
-  }
+  const notIn = facts.regStatus === 'BANK_VERIFIED' && facts.checkedIn === false && !facts.staff;
+  if (facts.faculty) return notIn ? { eligible: false, kind: 'FACULTY', reason: NOT_CHECKED_IN } : { eligible: true, kind: 'FACULTY', reason: null };
+  if (facts.staff) return { eligible: true, kind: 'ORGANISER', reason: null };
+  if (notIn) return { eligible: false, kind: facts.volunteer ? 'VOLUNTEER' : 'DELEGATE', reason: NOT_CHECKED_IN };
   if (facts.regStatus === 'BANK_VERIFIED') return { eligible: true, kind: facts.volunteer ? 'VOLUNTEER' : 'DELEGATE', reason: null };
   const reason = facts.facultyCancelled ? 'Taken off the Faculty list (cancelled).'
     : facts.regStatus === 'PARTIAL_PAYMENT' ? 'Balance due: send them to the registration desk.'

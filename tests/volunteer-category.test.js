@@ -36,7 +36,11 @@ const { call, adminLogin, loginOtp, check, report, openDb, appFile } = require('
     check('the Front Desk card says Volunteer', /const who = reg && reg\.category_key === 'volunteer' \? 'Volunteer' : 'Delegate';/.test(js));
     const found = (await call('GET', `/api/meals/search?q=${encodeURIComponent(`VOL${N}`)}`, null, admin)).body;
     const person = (found.results || found.people || [])[0] || found.person;
-    check('the meal counter serves them as Volunteer', person && person.kind === 'VOLUNTEER' && person.kindLabel === 'Volunteer' && person.eligible === true, found);
+    check('the meal counter knows them as Volunteer, and sends them to check in first (21 Nov)', person && person.kind === 'VOLUNTEER' && person.kindLabel === 'Volunteer' && person.eligible === false && /Not checked in yet/.test(person.reason || ''), found);
+    await db.run('UPDATE registrations SET checked_in_at = ? WHERE id = ?', [Date.now(), regId]);
+    const after = (await call('GET', `/api/meals/search?q=${encodeURIComponent(`VOL${N}`)}`, null, admin)).body;
+    const p2 = (after.results || after.people || [])[0] || after.person;
+    check('...checked in at the desk: served as Volunteer', p2 && p2.kind === 'VOLUNTEER' && p2.eligible === true, after);
     const meals = (await call('GET', '/api/meals', null, admin)).body;
     check('...and counts the volunteers expected on their own', meals.expected && meals.expected.VOLUNTEER >= 1);
 

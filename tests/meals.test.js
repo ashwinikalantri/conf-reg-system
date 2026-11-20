@@ -84,9 +84,14 @@ check('the Meals report needs the counts', perms.REPORT_PERMISSIONS.meals === 'm
 
     const notIn = await serve({ identifier: notInId });
     check('confirmed but not checked in yet: Not on the list, sent to check in', notIn.body.result === 'NOT_ELIGIBLE' && /Not checked in yet/.test(notIn.body.person.reason), notIn.body);
-    check('...the rule: delegates only; faculty, organisers and volunteers never check in', !M.decide({ regStatus: 'BANK_VERIFIED', checkedIn: false }).eligible
-      && M.decide({ regStatus: 'BANK_VERIFIED', checkedIn: true }).eligible && M.decide({ faculty: true, checkedIn: false }).eligible
-      && M.decide({ staff: true, checkedIn: false }).eligible && M.decide({ regStatus: 'BANK_VERIFIED', volunteer: true, checkedIn: false }).eligible);
+    check('...the rule (21 Nov): delegates, faculty and volunteers with a registration check in first; organisers never; faculty with none are served', !M.decide({ regStatus: 'BANK_VERIFIED', checkedIn: false }).eligible
+      && M.decide({ regStatus: 'BANK_VERIFIED', checkedIn: true }).eligible
+      && !M.decide({ faculty: true, regStatus: 'BANK_VERIFIED', checkedIn: false }).eligible && M.decide({ faculty: true, regStatus: 'BANK_VERIFIED', checkedIn: true }).eligible
+      && M.decide({ faculty: true }).eligible && M.decide({ faculty: true, regStatus: 'BANK_VERIFIED', staff: true, checkedIn: false }).eligible
+      && M.decide({ staff: true, checkedIn: false }).eligible
+      && !M.decide({ regStatus: 'BANK_VERIFIED', volunteer: true, checkedIn: false }).eligible && M.decide({ regStatus: 'BANK_VERIFIED', volunteer: true, checkedIn: true }).eligible);
+    check('...a volunteer\'s role does not make them an organiser', /const isOrganiserRole = \(role\) => !!role && !NOT_STAFF_ROLES\.has\(role\) && !VOLUNTEER_ROLE_KEYS\.has\(role\);/.test(fs.readFileSync(appFile('server.js'), 'utf8'))
+      && /staff: isOrganiserRole\(u\.role\)/.test(fs.readFileSync(appFile('server.js'), 'utf8')));
     const first = await serve({ identifier: okId });
     check('a confirmed delegate\'s badge: Serve', first.body.result === 'SERVE' && first.body.person.kind === 'DELEGATE' && first.body.servingId, first.body);
     const again = await call('POST', '/api/meals/serve', { mealKey: meal.key, sessionId: meal.counters[1].sessionId, identifier: okId }, admin);

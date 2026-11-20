@@ -9776,13 +9776,13 @@ async function recordAttendance(req, { phone, session, method, note = null }) {
 async function markPresent(req, phone, session, method, { notEnrolledReason = '', note = null } = {}) {
   const reg = await attendingRegistration(phone);
   if (!reg) return { status: 409, error: 'Not registered.' };
-  // A delegate checks in at the registration desk before a door marks them
-  // (owner, 20 Nov 2026). Not asked of faculty, organisers or volunteers;
-  // an attendance manager marking by hand, with a reason, is not stopped.
-  if (method !== 'MANUAL' && !reg.checked_in_at && reg.category_key !== VOLUNTEER_CATEGORY) {
+  // Everyone checks in at the registration desk before a door marks them:
+  // delegates (owner, 20 Nov 2026), faculty and volunteers too (21 Nov).
+  // Not asked of organisers; an attendance manager marking by hand, with a
+  // reason, is not stopped.
+  if (method !== 'MANUAL' && !reg.checked_in_at) {
     const u = await dbGet('SELECT role FROM users WHERE phone_number = ?', [phone]);
-    const faculty = (await dbAll('SELECT overall_status FROM guests WHERE phone_number = ?', [phone])).some((g) => !isCancelledGuest(g));
-    if (!faculty && !(u && !NOT_STAFF_ROLES.has(u.role))) {
+    if (!(u && isOrganiserRole(u.role))) {
       return { status: 409, notCheckedIn: true, error: 'Not checked in yet. Send them to the registration desk to check in first.' };
     }
   }
@@ -10023,6 +10023,9 @@ app.delete('/api/admin/programme/sessions/:id', requirePermission('programme.man
 // name: served once per person per meal, whichever counter. Who is served:
 // meals.js, decide(). Servings never count towards a certificate.
 const NOT_STAFF_ROLES = new Set(['DELEGATE', 'PARTNER']);
+// An organiser: staff, not a volunteer -- the one kind of person not asked
+// to check in at the desk before a meal or a door (owner, 21 Nov 2026).
+const isOrganiserRole = (role) => !!role && !NOT_STAFF_ROLES.has(role) && !VOLUNTEER_ROLE_KEYS.has(role);
 const mealMeals = async () => mealsLib.groupMeals(await programmeSessions());
 const isCancelledGuest = (g) => String(g.overall_status || '').trim().toLowerCase() === guestLib.CANCELLED.toLowerCase();
 
@@ -10049,7 +10052,7 @@ async function mealPerson(key) {
     key: u.phone_number,
     name: reminderName(u.salutation, u.full_name) || (reg && reg.registration_number) || 'Unnamed account',
     detail: [(reg && reg.registration_number) || u.registration_number, reg && reg.category_label].filter(Boolean).join(' · '),
-    ...mealsLib.decide({ staff: !NOT_STAFF_ROLES.has(u.role), faculty: onList, facultyCancelled: !onList && guests.length > 0, regStatus: reg ? reg.bank_status : null,
+    ...mealsLib.decide({ staff: isOrganiserRole(u.role), faculty: onList, facultyCancelled: !onList && guests.length > 0, regStatus: reg ? reg.bank_status : null,
       volunteer: !!reg && reg.category_key === VOLUNTEER_CATEGORY, checkedIn: !!reg && !!reg.checked_in_at }),
   };
 }
