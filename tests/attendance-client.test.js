@@ -121,7 +121,7 @@ function page(cookie, perms) {
       && /class="cs-category" value="faculty_mo" checked/.test(C.el('cs-categories').innerHTML)
       && /MMC Observer/.test(C.el('cs-signatories').innerHTML) && (C.el('cs-templates').innerHTML.match(/data-kind="/g) || []).length === 11
       && /data-kind="FACULTY"/.test(C.el('cs-templates').innerHTML) && /data-kind="MODERATOR"/.test(C.el('cs-templates').innerHTML));
-    check('...and when lunch starts and marking opens', C.el('cs-lunch').value === '13:00' && Number(C.el('cs-early').value) === 15);
+    check('...and when lunch starts and marking opens', C.el('cs-lunch').value === '13:00' && Number(C.el('cs-early').value) === 30 && Number(C.el('cs-late').value) === 120);
 
     console.log('\n== Programs ==');
     await A.f.renderBackendPrograms();

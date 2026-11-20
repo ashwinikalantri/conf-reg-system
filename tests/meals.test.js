@@ -22,9 +22,10 @@ console.log('\n== The rules ==');
   check('two lawns at the same time are one meal, two counters; a talk is no meal', meals.length === 2 && meals[0].counters.length === 2
     && meals[0].counters.map((c) => c.hall).join() === 'Community Medicine Lawn,Kamla Desikan Lawn' && meals[1].title === 'Conference Dinner');
   const at = (hhmm) => Date.parse(`2026-11-21T${hhmm}:00+05:30`);
-  check('served from an hour before to an hour after', M.mealWindow(meals[0], at('12:00')).open && M.mealWindow(meals[0], at('15:00')).open
-    && !M.mealWindow(meals[0], at('11:59')).open && M.mealWindow(meals[0], at('15:01')).over);
-  check('the counter first shows the meal on now, else the next', M.currentMeal(meals, at('13:30')).key === meals[0].key && M.currentMeal(meals, at('16:00')).key === meals[1].key);
+  check('served from half an hour before to two hours after (owner, 20 Nov)', M.mealWindow(meals[0], at('12:30')).open && M.mealWindow(meals[0], at('16:00')).open
+    && !M.mealWindow(meals[0], at('12:29')).open && M.mealWindow(meals[0], at('16:01')).over);
+  check('in volunteer test mode: any meal, any time', M.mealWindow(meals[0], at('08:00'), { anyTime: true }).open && M.mealWindow(meals[1], Date.parse('2026-12-01T10:00:00+05:30'), { anyTime: true }).open);
+  check('the counter first shows the meal on now, else the next', M.currentMeal(meals, at('13:30')).key === meals[0].key && M.currentMeal(meals, at('16:30')).key === meals[1].key);
   check('confirmed delegate: served', M.decide({ regStatus: 'BANK_VERIFIED' }).eligible && M.decide({ regStatus: 'BANK_VERIFIED' }).kind === 'DELEGATE');
   check('faculty, registered or not: served, as faculty', M.decide({ faculty: true }).kind === 'FACULTY' && M.decide({ faculty: true, regStatus: 'PENDING' }).eligible);
   check('organiser: served', M.decide({ staff: true }).kind === 'ORGANISER' && M.decide({ staff: true }).eligible);

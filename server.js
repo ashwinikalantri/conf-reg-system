@@ -10047,14 +10047,14 @@ async function mealExpected() {
 
 // Each meal with what has been served: in all, by kind, at each counter,
 // and how many were served anyway.
-async function mealCounts(meals) {
+async function mealCounts(meals, { anyTime = false } = {}) {
   const rows = await dbAll(`SELECT meal_key, session_id, person_kind, COUNT(*) AS n, SUM(override_reason IS NOT NULL) AS anyway
       FROM meal_servings WHERE removed_at IS NULL GROUP BY meal_key, session_id, person_kind`);
   return meals.map((m) => {
     const mine = rows.filter((r) => r.meal_key === m.key);
     const kind = (k) => mine.filter((r) => r.person_kind === k).reduce((n, r) => n + r.n, 0);
     return {
-      ...m, window: mealsLib.mealWindow(m),
+      ...m, window: mealsLib.mealWindow(m, Date.now(), { anyTime }),
       served: mine.reduce((n, r) => n + r.n, 0), anyway: mine.reduce((n, r) => n + (r.anyway || 0), 0),
       byKind: { DELEGATE: kind('DELEGATE'), VOLUNTEER: kind('VOLUNTEER'), FACULTY: kind('FACULTY'), ORGANISER: kind('ORGANISER') },
       counters: m.counters.map((c) => ({ ...c, served: mine.filter((r) => r.session_id === c.sessionId).reduce((n, r) => n + r.n, 0) })),
@@ -10069,7 +10069,8 @@ app.get('/api/meals', requirePermission('meals.scan'), async (req, res, next) =>
     const meals = await mealMeals();
     const current = mealsLib.currentMeal(meals);
     const expected = await mealExpected();
-    res.json({ success: true, meals: await mealCounts(meals), current: current ? current.key : null,
+    // Volunteer test mode: a volunteer may serve any meal at any time.
+    res.json({ success: true, meals: await mealCounts(meals, { anyTime: req.volunteerTest === true }), current: current ? current.key : null,
       expected: { DELEGATE: expected.DELEGATE, VOLUNTEER: expected.VOLUNTEER, FACULTY: expected.FACULTY, ORGANISER: expected.ORGANISER, total: expected.total } });
   } catch (err) {
     next(err);
@@ -10084,8 +10085,8 @@ app.post('/api/meals/serve', requirePermission('meals.scan'), async (req, res, n
     if (!meal) return res.status(400).json({ success: false, error: 'Choose the meal.' });
     const counter = meal.counters.find((c) => c.sessionId === Number(req.body.sessionId)) || (meal.counters.length === 1 ? meal.counters[0] : null);
     if (!counter) return res.status(400).json({ success: false, error: 'Choose the counter.' });
-    if (!mealsLib.mealWindow(meal).open) {
-      return res.status(409).json({ success: false, error: `${meal.title} is served on ${attendanceLib.shortDate(meal.date)}, ${attendanceLib.to12(meal.start)} to ${attendanceLib.to12(meal.end)}. The counter opens an hour before.` });
+    if (!mealsLib.mealWindow(meal, Date.now(), { anyTime: req.volunteerTest === true }).open) {
+      return res.status(409).json({ success: false, error: `${meal.title} is served on ${attendanceLib.shortDate(meal.date)}, ${attendanceLib.to12(meal.start)} to ${attendanceLib.to12(meal.end)}. The counter opens half an hour before and closes 2 hours after.` });
     }
     const found = await mealFind(req.body.identifier, req.body.personKey);
     if (!found.person) return res.status(404).json({ success: false, result: 'UNKNOWN', error: found.error || 'Nobody found.' });
@@ -10230,12 +10231,14 @@ app.get('/api/admin/programme/posters.pdf', requirePermission('programme.manage'
 app.get('/api/attendance/halls', requirePermission('attendance.mark'), async (req, res, next) => {
   try {
     const now = Date.now();
-    const { earlyMinutes } = (await certificateSettings()).attendance;
+    const { earlyMinutes, lateMinutes } = (await certificateSettings()).attendance;
     const sessions = await programmeSessions();
     const halls = await dbAll('SELECT id, name FROM halls WHERE active = 1 ORDER BY sort_order, id');
+    // Volunteer test mode: a volunteer can mark any time (the next session).
+    const anyTime = req.volunteerTest === true;
     res.json({
       halls: halls.map((h) => {
-        const { session, next: upcoming } = attendanceLib.currentSession(sessions.filter((s) => s.hall_id === h.id), now, earlyMinutes);
+        const { session, next: upcoming } = attendanceLib.currentSession(sessions.filter((s) => s.hall_id === h.id), now, earlyMinutes, lateMinutes, { anyTime });
         return { ...h, now: session ? publicSession(session) : null, next: upcoming ? publicSession(upcoming) : null };
       }),
       today: attendanceLib.istParts(now).date,
@@ -10251,11 +10254,12 @@ app.get('/api/attendance/halls', requirePermission('attendance.mark'), async (re
 app.post('/api/attendance/scan', requirePermission('attendance.mark'), async (req, res, next) => {
   try {
     const now = Date.now();
-    const { earlyMinutes } = (await certificateSettings()).attendance;
+    const { earlyMinutes, lateMinutes } = (await certificateSettings()).attendance;
     const sessions = await programmeSessions();
     const hallId = Number(req.body.hallId);
     if (!hallId) return res.status(400).json({ success: false, error: 'Choose the hall.' });
-    const { session, next: upcoming } = attendanceLib.currentSession(sessions.filter((s) => s.hall_id === hallId), now, earlyMinutes);
+    const { session, next: upcoming } = attendanceLib.currentSession(sessions.filter((s) => s.hall_id === hallId), now, earlyMinutes, lateMinutes,
+      { anyTime: req.volunteerTest === true });
     if (!session) {
       return res.status(409).json({ success: false, closed: true,
         error: `No session is on in this hall now.${upcoming ? ` Next: ${upcoming.title}, ${attendanceLib.shortDate(upcoming.session_date)} ${attendanceLib.to12(upcoming.start_time)}.` : ''}` });
@@ -10279,8 +10283,8 @@ app.post('/api/attendance/hall', requireAuth, async (req, res, next) => {
     const hall = /^[A-Z0-9]{6,16}$/.test(code) ? await dbGet('SELECT id, name FROM halls WHERE code = ? AND active = 1', [code]) : null;
     if (!hall) return res.status(404).json({ success: false, error: 'That hall code is not one of ours. Scan the code at the hall door again.' });
     const now = Date.now();
-    const { earlyMinutes } = (await certificateSettings()).attendance;
-    const { session, next: upcoming } = attendanceLib.currentSession((await programmeSessions()).filter((s) => s.hall_id === hall.id), now, earlyMinutes);
+    const { earlyMinutes, lateMinutes } = (await certificateSettings()).attendance;
+    const { session, next: upcoming } = attendanceLib.currentSession((await programmeSessions()).filter((s) => s.hall_id === hall.id), now, earlyMinutes, lateMinutes);
     if (!session) {
       return res.status(409).json({ success: false,
         error: `No session is on in ${hall.name} now.${upcoming ? ` The next is ${upcoming.title} at ${attendanceLib.to12(upcoming.start_time)}${upcoming.session_date !== attendanceLib.istParts(now).date ? ` on ${attendanceLib.shortDate(upcoming.session_date)}` : ''}.` : ''}` });
@@ -10446,7 +10450,7 @@ app.get('/api/attendance/summary', requirePermission('attendance.view'), async (
       registered, completed, presentToday, badgesCollected, kitsGiven, settings: settings.attendance,
       sessions: sessions.filter(attendanceLib.takesAttendance).map((s) => ({
         ...publicSession(s), present: counts.get(s.id) || 0, enrolled: isWorkshopSession(s) ? (enrolled.get(Number(s.option_id)) || 0) : null,
-        window: attendanceLib.sessionWindow(s, now, settings.attendance.earlyMinutes),
+        window: attendanceLib.sessionWindow(s, now, settings.attendance.earlyMinutes, settings.attendance.lateMinutes),
       })),
     });
   } catch (err) {
@@ -11012,6 +11016,11 @@ app.put('/api/admin/certificates/settings', requirePermission('certificates.mana
         const n = Number(b.attendance.earlyMinutes);
         if (!Number.isInteger(n) || n < 0 || n > 60) return res.status(400).json({ success: false, error: 'Minutes before a session: 0 to 60.' });
         a.earlyMinutes = n;
+      }
+      if (b.attendance.lateMinutes !== undefined) {
+        const n = Number(b.attendance.lateMinutes);
+        if (!Number.isInteger(n) || n < 0 || n > 240) return res.status(400).json({ success: false, error: 'Minutes after a session: 0 to 240.' });
+        a.lateMinutes = n;
       }
       next.attendance = a;
     }

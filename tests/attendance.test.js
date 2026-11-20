@@ -27,15 +27,20 @@ const S = (id, date, start, end, extra = {}) => ({ id, session_date: date, start
   const at = (t) => A.currentSession(hallA, IST(d, t));
   check('during a session: that one', at('09:40').session.id === 1);
   check('as one ends and the next begins: the next', at('09:50').session.id === 2);
-  check('a little before a session (15 minutes): that one', at('09:20').session.id === 1);
-  check('...but not earlier', at('09:10').session === null && at('09:10').next.id === 1);
-  check('in the tea break: nothing, and the next is the one after tea', at('10:35').session === null && at('10:35').next.id === 4);
-  check('...unless it is about to start', at('10:50').session.id === 4);
+  check('a little before a session (half an hour, owner 20 Nov): that one', at('09:00').session.id === 1);
+  check('...but not earlier', at('08:55').session === null && at('08:55').next.id === 1);
+  check('after a session ends: still that one, for two hours', at('10:20').session.id === 2 && at('10:20').next.id === 4);
+  check('...unless the next is about to start', at('10:50').session.id === 4);
+  const late = [S(7, d, '09:00', '10:00')];
+  check('two hours after the end, and no later', A.currentSession(late, IST(d, '12:00')).session.id === 7 && A.currentSession(late, IST(d, '12:01')).session === null);
+  check('in volunteer test mode, with nothing on: the next session there, else the last', A.currentSession(hallA, IST(d, '06:00'), 30, 120, { anyTime: true }).session.id === 1
+    && A.currentSession(hallA, IST('2026-12-01', '10:00'), 30, 120, { anyTime: true }).session.id === 4
+    && A.currentSession(hallA, IST(d, '06:00')).session === null);
   check('the break itself never takes attendance', !A.sessionWindow(hallA[2], IST(d, '10:40')).open);
   check('another day\'s session is not on today', A.currentSession(hallA, IST('2026-11-21', '10:00')).session.id === 5);
-  check('the minutes before can be set', A.currentSession(hallA, IST(d, '09:00'), 30).session.id === 1);
-  check('a window says why it is shut', /opens for attendance at 9:15 AM/.test(A.sessionWindow(hallA[0], IST(d, '09:00')).reason)
-    && /over/.test(A.sessionWindow(hallA[0], IST(d, '12:00')).reason));
+  check('the minutes before can be set', A.currentSession(hallA, IST(d, '08:55'), 40).session.id === 1);
+  check('a window says why it is shut', /opens for attendance at 9:00 AM/.test(A.sessionWindow(hallA[0], IST(d, '08:50')).reason)
+    && /over/.test(A.sessionWindow(hallA[0], IST(d, '12:00')).reason) && A.sessionWindow(hallA[0], IST(d, '11:45')).open);
 
   console.log('\n== Completing the conference ==');
   const conf = [S(10, d, '09:30', '09:50'), S(11, d, '11:00', '11:20'), S(12, d, '14:20', '14:40'), S(13, d, '16:30', '17:00')];

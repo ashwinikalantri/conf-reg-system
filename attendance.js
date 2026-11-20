@@ -20,7 +20,9 @@
 // Pure: no database, no clock of its own -- everything takes `now` (ms).
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-const DEFAULTS = { earlyMinutes: 15, lunchSplit: '13:00' };
+// Marking opens earlyMinutes before a session starts and closes lateMinutes
+// after it ends (owner, 20 Nov 2026: half an hour before, two hours after).
+const DEFAULTS = { earlyMinutes: 30, lateMinutes: 120, lunchSplit: '13:00' };
 
 const toMinutes = (hhmm) => {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ''));
@@ -60,7 +62,7 @@ function dateRange(from, to) {
 const takesAttendance = (s) => Number(s.counts) === 1;
 
 // Whether a session can be marked now: { open: true } or { open: false, reason }.
-function sessionWindow(session, now, earlyMinutes = DEFAULTS.earlyMinutes) {
+function sessionWindow(session, now, earlyMinutes = DEFAULTS.earlyMinutes, lateMinutes = DEFAULTS.lateMinutes) {
   if (!session) return { open: false, reason: 'No such session.' };
   if (!takesAttendance(session)) return { open: false, reason: `${session.title} does not take attendance.` };
   const { date, minutes } = istParts(now);
@@ -71,26 +73,35 @@ function sessionWindow(session, now, earlyMinutes = DEFAULTS.earlyMinutes) {
   const start = toMinutes(session.start_time);
   const end = toMinutes(session.end_time);
   if (minutes < start - earlyMinutes) return { open: false, reason: `${label} opens for attendance at ${to12(fromMinutes(start - earlyMinutes))}.` };
-  if (minutes > end) return { open: false, reason: `${label} is over.` };
+  if (minutes > end + lateMinutes) return { open: false, reason: `${label} is over.` };
   return { open: true };
 }
 
 // The session to mark in a hall now: one running (started, not ended), else
-// one about to start (within earlyMinutes) -- only sessions that take
-// attendance. Also the next one, to say when there is nothing now.
-// sessions: that hall's, any day.
-function currentSession(sessions, now, earlyMinutes = DEFAULTS.earlyMinutes) {
+// one about to start (within earlyMinutes), else one ended within
+// lateMinutes -- only sessions that take attendance. Also the next one, to
+// say when there is nothing now. sessions: that hall's, any day. anyTime
+// (volunteer test mode): with nothing on, the next session there, else the
+// last.
+function currentSession(sessions, now, earlyMinutes = DEFAULTS.earlyMinutes, lateMinutes = DEFAULTS.lateMinutes, { anyTime = false } = {}) {
   const { date, minutes } = istParts(now);
   const today = sessions.filter((s) => s.session_date === date && takesAttendance(s))
     .sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time));
   const running = today.filter((s) => toMinutes(s.start_time) <= minutes && minutes <= toMinutes(s.end_time));
   // Of two running (a session ending as the next begins), the later start.
-  const session = running.length ? running[running.length - 1]
-    : today.find((s) => toMinutes(s.start_time) - earlyMinutes <= minutes && minutes < toMinutes(s.start_time)) || null;
+  const ended = today.filter((s) => toMinutes(s.end_time) < minutes && minutes <= toMinutes(s.end_time) + lateMinutes)
+    .sort((a, b) => toMinutes(a.end_time) - toMinutes(b.end_time));
+  let session = running.length ? running[running.length - 1]
+    : today.find((s) => toMinutes(s.start_time) - earlyMinutes <= minutes && minutes < toMinutes(s.start_time))
+      || ended[ended.length - 1] || null;
   const next = today.find((s) => toMinutes(s.start_time) > minutes && s !== session)
     || sessions.filter((s) => s.session_date > date && takesAttendance(s))
       .sort((a, b) => (a.session_date + a.start_time).localeCompare(b.session_date + b.start_time))[0] || null;
-  return { session, next };
+  if (!session && anyTime) {
+    const all = sessions.filter(takesAttendance).sort((a, b) => (a.session_date + a.start_time).localeCompare(b.session_date + b.start_time));
+    session = next || all[all.length - 1] || null;
+  }
+  return { session, next: next === session ? null : next };
 }
 
 // Which sessions count towards the conference certificate: those that take

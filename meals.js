@@ -13,9 +13,11 @@
 // registration desk, or serves them anyway with a reason that is kept.
 
 const IST_MS = 5.5 * 3600 * 1000;
-// Serving opens an hour before a meal's start and runs an hour past its end.
-const OPEN_BEFORE_MIN = 60;
-const OPEN_AFTER_MIN = 60;
+// Serving opens half an hour before a meal's start and runs two hours past
+// its end (owner, 20 Nov 2026; it was an hour each side). In volunteer test
+// mode a volunteer can serve any meal at any time: anyTime.
+const OPEN_BEFORE_MIN = 30;
+const OPEN_AFTER_MIN = 120;
 
 const mealKeyOf = (s) => `${s.session_date} ${s.start_time}`;
 
@@ -39,8 +41,9 @@ function istNow(now = Date.now()) {
   return { date: d.toISOString().slice(0, 10), minutes: d.getUTCHours() * 60 + d.getUTCMinutes() };
 }
 
-// Is it being served now? { open, over, soon }.
-function mealWindow(meal, now = Date.now()) {
+// Is it being served now? { open, over, soon } (and anyTime, in test mode).
+function mealWindow(meal, now = Date.now(), { anyTime = false } = {}) {
+  if (anyTime) return { open: true, over: false, soon: false, anyTime: true };
   const t = istNow(now);
   if (t.date !== meal.date) return { open: false, over: t.date > meal.date, soon: false };
   const from = toMin(meal.start) - OPEN_BEFORE_MIN;

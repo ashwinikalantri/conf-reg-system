@@ -54,6 +54,7 @@ const open = (f) => new Promise((r, j) => { const d = new sqlite3.Database(f, (e
   const vPhone = `97${N}11`;
   const targets = await db.all('SELECT id, phone_number, registration_number, checked_in_at, checked_in_by, kit_given_at, kit_given_by FROM registrations WHERE checked_in_at IS NULL AND registration_number IS NOT NULL LIMIT 2');
   let snapshot = null;
+  const made = {};
   try {
     await db.run("INSERT INTO users (phone_number, full_name, role, created_at, phone_verified) VALUES (?, ?, 'DELEGATE', ?, 1)", [vPhone, `Volunteer ${N}`, Date.now()]);
     await db.run("INSERT INTO user_roles (phone_number, role_key) VALUES (?, 'VOLUNTEER_REGISTRATION')", [vPhone]);
@@ -65,6 +66,11 @@ const open = (f) => new Promise((r, j) => { const d = new sqlite3.Database(f, (e
     check('started', st.body.success && st.body.on === true, st.body);
     check('the volunteer is told they are practising; staff that theirs are kept', (await call('GET', '/api/auth/me', null, vol)).body.volunteerTest.practice === true
       && (await call('GET', '/api/auth/me', null, admin)).body.volunteerTest.practice === false);
+    // A hall whose only session was long ago: nothing to mark there, but in test mode there is.
+    made.hall = (await db.run('INSERT INTO halls (name, code, sort_order, active, created_at) VALUES (?, ?, 99, 1, ?)', [`Test Hall ${N}`, `TH${N}`, Date.now()])).lastID;
+    made.session = (await db.run("INSERT INTO programme_sessions (hall_id, session_date, start_time, end_time, title, counts, created_at) VALUES (?, '2020-01-02', '09:00', '10:00', ?, 1, ?)", [made.hall, `Old Session ${N}`, Date.now()])).lastID;
+    const hall = (await call('GET', '/api/attendance/halls', null, vol)).body.halls.find((h) => h.id === made.hall);
+    check('in test mode a volunteer marks attendance at any time: a session long past is still there to mark', !!hall && !!hall.now && hall.now.id === made.session, hall);
     const [t1, t2] = targets;
     const vc = await call('POST', '/api/desk/checkin', { identifier: t1.registration_number, kit: true }, vol);
     check('the volunteer checks someone in, with the kit', vc.body.success && !!(await db.get('SELECT checked_in_at FROM registrations WHERE id = ?', [t1.id])).checked_in_at, vc.body);
@@ -99,6 +105,8 @@ const open = (f) => new Promise((r, j) => { const d = new sqlite3.Database(f, (e
     }
     await db.run('DELETE FROM user_roles WHERE phone_number = ?', [vPhone]);
     await db.run('DELETE FROM users WHERE phone_number = ?', [vPhone]);
+    if (made.session) await db.run('DELETE FROM programme_sessions WHERE id = ?', [made.session]);
+    if (made.hall) await db.run('DELETE FROM halls WHERE id = ?', [made.hall]);
     if (snapshot) fs.rmSync(path.join(dataDir(), snapshot), { force: true });
     db.close();
   }

@@ -16843,7 +16843,7 @@ function renderMealCounts() {
   }
   const w = m.window || {};
   if (status) {
-    status.textContent = w.open ? 'Being served now.' : w.over ? 'This meal is over.' : `Opens at ${guestTime12(m.start)} less an hour, on ${shortDateRange(m.date, m.date)}.`;
+    status.textContent = w.anyTime ? 'Practice mode: any meal, any time.' : w.open ? 'Being served now.' : w.over ? 'This meal is over.' : `Opens half an hour before ${guestTime12(m.start)}, on ${shortDateRange(m.date, m.date)}.`;
     status.className = `text-sm font-semibold ${w.open ? 'text-emerald-700' : 'text-slate-600'}`;
   }
   if (btn) btn.disabled = !w.open;
@@ -17284,6 +17284,7 @@ async function renderCertificateSettings() {
   document.getElementById('cs-show-from').value = d.settings.attendance.showFrom || '';
   setText('cs-show-from-note', d.settings.attendance.showFrom ? '' : `Blank: the day before the conference${d.settings.attendance.showFromEffective ? ` (${formatFullDate(d.settings.attendance.showFromEffective)})` : ''}.`);
   document.getElementById('cs-early').value = d.settings.attendance.earlyMinutes;
+  document.getElementById('cs-late').value = d.settings.attendance.lateMinutes;
   setText('cs-background-state', d.settings.hasBackground
     ? "Certificates are printed over the designer's background. The text sits in the same places as on the generated design."
     : 'Certificates use the generated design: a navy frame with a gold rule. Upload the designer\'s artwork (A4 landscape, 297 × 210 mm) to print over it instead.');
@@ -17378,7 +17379,7 @@ async function saveCertificateSettings() {
       points: document.getElementById('cs-nursing-points').value,
       categories: Array.from(document.querySelectorAll('.cs-nursing-category')).filter((b) => b.checked).map((b) => b.value),
     } : undefined,
-    attendance: { lunchSplit: document.getElementById('cs-lunch').value, earlyMinutes: Number(document.getElementById('cs-early').value), showFrom: document.getElementById('cs-show-from').value },
+    attendance: { lunchSplit: document.getElementById('cs-lunch').value, earlyMinutes: Number(document.getElementById('cs-early').value), lateMinutes: Number(document.getElementById('cs-late').value), showFrom: document.getElementById('cs-show-from').value },
   });
   if (ok) renderCertificateSettings();
 }
