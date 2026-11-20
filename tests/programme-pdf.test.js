@@ -32,7 +32,9 @@ const { call, check, report, appFile } = require('./harness');
     ...day('2026-11-21', [...many, ['13:00', '14:00', 'Lunch', 'Lawn', { meal: 1 }]]),
     ...day('2026-11-22', [['09:00', '10:00', 'Opening', 'Hall A'], ['10:00', '12:00', 'Long session', 'Hall A'], ['09:00', '12:00', 'Posters', 'Hall B'], ['10:00', '11:00', 'Talk', 'Hall B'],
       ['11:00', '11:30', 'Tea Break', 'Lawn', { meal: 1 }]]),
-  ], { conference: 'Test', acronym: 'T', dates: '21–22 Nov' });
-  check('...draws a workshop day and a timetable day without failing', sample.slice(0, 4).toString() === '%PDF' && !/NaN|undefined/.test(sample.toString('latin1')));
+  ], { conference: 'Test', acronym: 'T', dates: '21–22 Nov', logo: '/no/such/logo.png', partners: [{ name: 'Gone', path: '/no/such/partner.png' }] });
+  check('...draws a workshop day and a timetable day without failing, even with a logo file missing', sample.slice(0, 4).toString() === '%PDF' && !/NaN|undefined/.test(sample.toString('latin1')));
+  check('...under the conference header, with the partners\' logos on every page (20 Nov design)', /logo: img\('nqocn-mgims-logo\.png'\), partners: content\.partners\.map/.test(site)
+    && /'In partnership with'/.test(fs.readFileSync(appFile('programme-glance-pdf.js'), 'utf8')));
   report();
 })();

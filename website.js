@@ -240,12 +240,15 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
 
   // The programme at a glance (owner, 20 Nov 2026): the same sessions,
   // typeset on a few pages -- the workshop day as a table, the conference
-  // day as a timetable by hall. Linked beside the full programme.
+  // day as a timetable by hall -- under the conference header, with the
+  // partners' logos at the foot of every page. Linked beside the full programme.
   async function programmeGlancePdf(req, res, next) {
     try {
       const C = d.CONFERENCE;
+      const img = (file) => path.join(__dirname, 'public', 'website', 'img', file);
       const pdf = await require('./programme-glance-pdf').renderGlancePdf(await sessions(),
-        { conference: C.name, acronym: C.acronym, venue: C.location, dates: d.formatConferenceDates ? d.formatConferenceDates() : '', url: host ? `${host}/programme` : '' });
+        { conference: C.name, acronym: C.acronym, venue: C.location, dates: d.formatConferenceDates ? d.formatConferenceDates() : '', url: host ? `${host}/programme` : '',
+          logo: img('nqocn-mgims-logo.png'), partners: content.partners.map((x) => ({ name: x.name, path: img(x.file) })) });
       res.set('Content-Type', 'application/pdf');
       res.set('Content-Disposition', `inline; filename="${String(C.acronym || 'Conference').replace(/[^A-Za-z0-9]+/g, '-')}-Programme-at-a-Glance.pdf"`);
       res.set('Cache-Control', 'no-cache');
