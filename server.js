@@ -10923,7 +10923,8 @@ async function certificateCandidates() {
       else if (wov && wov.decision === 'INCLUDE') eligible = true;
       else if (!signed) whyNot = 'Not marked present';
       else if (!paid) whyNot = 'Payment not complete';
-      else if (!feedback.has(`${r.phone_number}|${w.optionId}`)) whyNot = 'Feedback not given';
+      // Attendance alone (owner, 20 Nov 2026): the feedback is asked for,
+      // no longer waited for.
       else eligible = true;
       const cert = myIssued.find((c) => c.kind === 'WORKSHOP' && Number(c.option_id) === w.optionId) || null;
       return { optionId: w.optionId, e: w.e, name: w.name, date: w.date, signed, enrolled, eligible, whyNot, override: wov, issued: cert,

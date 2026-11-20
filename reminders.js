@@ -54,7 +54,7 @@ const AUDIENCES = [
     description: 'Everyone who has a certificate issued (and not withdrawn) -- to tell them it is ready to download.',
     action: 'CERTIFICATE_READY_SENT', placeholders: ['name'] },
   { key: 'workshop_feedback', label: 'Workshop feedback pending', group: 'Registered',
-    description: 'Delegates marked present at a workshop who have not yet given their feedback on it. Its certificate waits for the feedback.',
+    description: 'Delegates marked present at a workshop who have not yet given their feedback on it.',
     action: 'WORKSHOP_FEEDBACK_REMINDER_SENT', placeholders: ['name', 'workshops'] },
   { key: 'balance', label: 'Balance payment due', group: 'Registered',
     description: 'Registrations with a balance still to pay.',

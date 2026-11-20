@@ -123,7 +123,8 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     check('...only for those who may change the wording', (await call('POST', '/api/admin/certificates/preview.pdf', { kind: 'MMC' }, desk)).status === 403);
 
     check('not checked in at the desk: not yet, saying so -- whatever sessions they attended', of(partial).conference.kind === null && /Not checked in at the registration desk/.test(of(partial).conference.whyNot), of(partial).conference.whyNot);
-    check('the workshop: present and paid, but waiting for the feedback', of(doctor).workshops.some((w) => w.e === ws.e && !w.eligible && w.whyNot === 'Feedback not given' && w.feedback === false));
+    // Attendance alone since 20 Nov 2026: feedback is asked for, not waited for.
+    check('the workshop: present and paid, so due -- feedback not yet given and not needed', of(doctor).workshops.some((w) => w.e === ws.e && w.eligible && !w.whyNot && w.feedback === false));
     check('...not for one enrolled who was not there', of(worker).workshops.some((w) => w.e === ws.e && !w.eligible && /Not marked present/.test(w.whyNot)));
 
     console.log('\n== Workshop feedback ==');
@@ -160,7 +161,7 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     check('the card goes, once given', !!(await me(doctor)).workshops.find((w) => Number(w.optionId) === ws.optionId).feedbackAt);
     check('...and they leave the pending list', !(await pending()).some((x) => x.id === doctor.phone));
     list = await cand();
-    check('now the workshop certificate is due', of(doctor).workshops.some((w) => w.e === ws.e && w.eligible && w.feedback === true));
+    check('the workshop certificate stays due, the feedback now in', of(doctor).workshops.some((w) => w.e === ws.e && w.eligible && w.feedback === true));
     check('the front desk cannot read the feedback', (await call('GET', '/api/admin/reports/workshop-feedback?format=json', null, desk)).status === 403);
     const rep = (await call('GET', '/api/admin/reports/workshop-feedback?format=json', null, admin)).body.report;
     const ratings = rep.sections.find((x) => x.name.endsWith('present responded)') && x.rows.some((r) => r[1] > 0) && x.name.includes('1 of'));

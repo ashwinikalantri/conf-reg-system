@@ -1263,7 +1263,7 @@ async function loadAttendanceCard() {
   document.getElementById('attendance-list').innerHTML = [
     ...data.completion.parts.map((p) => tick(p.done, `Conference: ${p.label}`, p.session ? `${p.session.title}, ${p.session.hall}` : '')),
     ...data.workshops.map((w) => tick(w.present, `Workshop: ${w.name}`,
-      !w.present ? formatFullDate(w.date) : w.feedbackAt ? 'Feedback given' : 'Feedback needed for the certificate: on your home screen')),
+      !w.present ? formatFullDate(w.date) : w.feedbackAt ? 'Feedback given' : 'Your feedback is welcome: on your home screen')),
   ].join('') || '<li class="text-slate-500">The programme is not out yet.</li>';
   document.getElementById('attendance-sessions').classList.toggle('hidden', !showAtt || !data.attended.length);
   document.getElementById('attendance-session-list').innerHTML = data.attended.map((s) => `<li>${esc(shortDateRange(s.date, s.date))}, ${esc(time(s.at))} · ${esc(s.hall)} · ${esc(s.title)}</li>`).join('');
@@ -1296,7 +1296,7 @@ async function loadAttendanceCard() {
 // --- Workshop feedback ---
 // A card on the home screen for each workshop they were marked present at
 // and have not yet given feedback on: three ratings, 1 to 5, and optional
-// suggestions. Given once; the workshop's certificate waits for it.
+// suggestions. Given once. (Until 20 Nov 2026 the certificate waited for it.)
 function renderWorkshopFeedback() {
   const box = document.getElementById('workshop-feedback');
   const data = attendanceMeData;
@@ -1309,7 +1309,7 @@ function renderWorkshopFeedback() {
     <form onsubmit="submitWorkshopFeedback(event, ${Number(w.optionId)})" class="rounded-2xl border-2 border-gold-500 bg-white p-5 shadow-card">
       <p class="text-xs font-bold tracking-[0.15em] text-gold-700 uppercase">Workshop feedback</p>
       <h3 class="text-xl font-bold text-slate-900 mt-1 leading-snug">${esc(w.name)}</h3>
-      <p class="text-[15px] text-slate-600 mt-1">Your certificate for this workshop is issued once you have given your feedback. It can be given once.</p>
+      <p class="text-[15px] text-slate-600 mt-1">It takes a minute, and helps us improve the workshop. It can be given once.</p>
       ${f.questions.map((q, i) => `
       <fieldset class="mt-5">
         <legend class="text-[15px] font-semibold text-slate-900">${i + 1}. ${esc(q.label)}</legend>
@@ -10002,7 +10002,7 @@ ${reminderSignOff()}`;
 async function buildWorkshopFeedbackBody() {
   return `<p>Dear {{name}},</p>
 <p>Thank you for attending <b>{{workshops}}</b>. We would value your feedback: three quick ratings, and any suggestions for improving the workshop in future.</p>
-<p><b>Your workshop certificate is issued once your feedback is in.</b> It takes a minute, on the home screen of the delegate portal.</p>
+<p>It takes a minute, on the home screen of the delegate portal, and helps us improve the workshop for the future.</p>
 ${steelButton(portalHomeUrl(), 'Give My Feedback')}
 ${reminderSignOff()}`;
 }
@@ -10244,10 +10244,10 @@ const CUSTOM_REMINDER_TEMPLATES = {
     body: buildCertificateReadyBody,
   },
   'workshop-feedback': {
-    label: 'Workshop feedback — certificate waits for it',
+    label: 'Workshop feedback, please',
     audiences: ['workshop_feedback'],
     async subject() {
-      return 'Your Feedback on {{workshops}}, for Your Certificate';
+      return 'Your Feedback on {{workshops}}';
     },
     body: buildWorkshopFeedbackBody,
   },
@@ -13551,7 +13551,7 @@ async function renderWaivers() {
 
 // Their choices, one per programme group, each changeable here; a workshop
 // with when and where it is, whether they were marked present, and their
-// feedback -- which its certificate waits for.
+// feedback (asked for; the certificate does not wait for it since 20 Nov 2026).
 function deskProgrammeCard(selections, cd) {
   const chosen = new Map((selections || []).map((s) => [s.group_id, s]));
   const workshops = new Map(((cd && cd.workshops) || []).map((w) => [Number(w.optionId), w]));
@@ -13575,7 +13575,7 @@ function deskProgrammeCard(selections, cd) {
           ${can('desk.enroll') ? deskBtn('Change', `deskOpenEnroll(${g.id})`, 'link') : ''}
         </div>
         ${chips ? `<div class="flex flex-wrap gap-1.5 mt-2">${chips}</div>` : ''}
-        ${w && w.present && !w.feedback ? '<p class="text-sm text-slate-600 mt-2">The workshop certificate waits for their feedback. They give it on their phone, on the delegate portal home.</p>' : ''}
+        ${w && w.present && !w.feedback ? '<p class="text-sm text-slate-600 mt-2">Their feedback is still to come. They give it on their phone, on the delegate portal home.</p>' : ''}
         <div id="desk-enroll-form-${g.id}" class="hidden mt-3"></div>
       </div>`;
     }).join('')
@@ -17360,7 +17360,7 @@ const CS_WHO = {
   MMC: 'Doctors and Medical PGs who gave a council number, registered, paid and checked in at the desk.',
   NURSING: 'Nurses in the categories that earn Nursing points, registered, paid and checked in at the desk.',
   CONF: 'Everyone else registered, paid and checked in at the desk.',
-  WORKSHOP: 'Marked present at the workshop, and gave its feedback.',
+  WORKSHOP: 'Marked present at the workshop.',
   WORKSHOP_FACULTY: 'A workshop\'s faculty: on its roster as faculty, or named in its sessions.',
   FACULTY: 'Everyone on the Faculty list who is not Cancelled.',
   SPEAKER: 'Speakers in the programme (panels aside).', CHAIR: 'Chairpersons in the programme.', MODERATOR: 'Chairs of panel discussions.',
@@ -17749,7 +17749,7 @@ function csRulesHtml() {
   return csCard('Who qualifies', 'The rules, as they are now. Exceptions are made person by person on the Certificates list: Include or Exclude, with a reason.', '', `
     <div class="p-4 sm:p-5 space-y-2 text-[15px]">
       <p><b>Conference</b> (MMC, Nursing, participation): registered, paid, and <b>checked in at the registration desk</b>. Sessions attended are not counted.</p>
-      <p><b>Workshop</b>: marked present at that workshop, and gave its feedback.</p>
+      <p><b>Workshop</b>: marked present at that workshop. Feedback is asked for, not required.</p>
       <p><b>Faculty, workshop faculty and session roles</b>: from the Faculty list and the programme. No attendance needed.</p>
     </div>
     <div class="px-4 sm:px-5 pb-5 pt-4 border-t border-slate-100 space-y-3">
