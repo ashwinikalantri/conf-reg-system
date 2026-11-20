@@ -835,17 +835,19 @@ function arrangementsEmail(g, { drivers = [], vehicles = [], contacts = [], conf
     const rows = [[isArrival ? 'Arriving' : 'Leaving',
       `<b>${escHtml(when(date, time))}</b>${how(mode, number) || !blank(point) ? `<br>${escHtml([how(mode, number), blank(point) ? '' : `${isArrival ? 'at' : 'from'} ${point}`].filter(Boolean).join(' · '))}` : ''}`]];
     const label = isArrival ? 'Pickup' : 'Drop';
-    if (transferNotRequired(status)) rows.push([label, muted('Not needed: you are making your own way.')]);
-    else if (!blank(vehicle) || !blank(driver)) {
+    // Not needed: the email leaves the pickup or drop out (owner, 20 Nov).
+    if (transferNotRequired(status)) return rows;
+    if (!blank(vehicle) || !blank(driver)) {
       const phone = phoneOf(driver, vehicle);
       rows.push([label, `${escHtml(isArrival ? `We will meet you${blank(point) ? '' : ` at ${point}`}.` : `We will take you${blank(point) ? '' : ` to ${point}`}.`)}`
         + `${blank(vehicle) ? '' : `<br>Car: <b>${escHtml(vehicle)}</b>`}${blank(driver) ? '' : `<br>Driver: <b>${escHtml(driver)}</b>`}${phone ? `${blank(driver) ? '<br>Driver: ' : ', '}${tel(phone)}` : ''}`]);
-    } else rows.push([label, muted("Being arranged. We will send you the car and driver's details.")]);
+    } else rows.push([label, muted('The details will be shared soon.')]);
     return rows;
   };
   const stay = () => {
-    if (Number(g.stay_not_needed)) return [['Staying', muted('You are arranging your own stay.')]];
-    if (blank(g.accommodation)) return [['Staying', muted('Being arranged. We will tell you where you are staying.')]];
+    // Not needed: no stay in the email at all; not set yet: soon.
+    if (Number(g.stay_not_needed)) return [];
+    if (blank(g.accommodation)) return [['Staying', muted('The details will be shared soon.')]];
     const from = g.checkin_date || g.arrival_date;
     const to = g.checkout_date || g.departure_date;
     const n = nightsBetween(from, to);

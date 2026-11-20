@@ -18,13 +18,17 @@ const { call, check, report, adminLogin, openDb, appFile } = require('./harness'
   check('pickup: where, the car, the driver and their phone', /We will meet you at Nagpur Airport/.test(text) && /Car: Kia Carens/.test(text) && /Driver: Ravi , \+919800011111/.test(text)
     && /href="tel:\+919800011111"/.test(mail.body));
   check('staying: the place, room and nights', /Yatri Nivas , Room 12/.test(text) && /Check in Saturday, 21 November, check out Sunday, 22 November \(1 night\)/.test(text));
-  check('a drop not needed says so, without the old details', /Not needed: you are making your own way\./.test(text) && !/Wardha Station/.test(text));
+  check('a drop not needed: no drop in the email, nor the old details', !/>Drop</.test(mail.body) && !/Wardha Station/.test(text) && /Leaving/.test(text), text);
+  check('...and a pickup not needed likewise', !/>Pickup</.test(G.arrangementsEmail({ ...g, pickup_status: 'Not required' }).body));
   check('whom to call', /Tara , who looks after your travel: \+919800022222/.test(text));
   check('names are escaped', /Dr &lt;b&gt;Rao&lt;\/b&gt;/.test(mail.body) && !/<b>Rao/.test(mail.body));
   const blankMail = G.arrangementsEmail({ name: 'Dr X' }).body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
   check('nothing known yet: asks for it, and says the room is being arranged', /We do not have your arrival details yet/.test(blankMail) && /We do not have your departure details yet/.test(blankMail)
-    && /Being arranged\. We will tell you where you are staying/.test(blankMail) && /please let the conference team know/.test(blankMail));
-  check('own stay says so', /You are arranging your own stay/.test(G.arrangementsEmail({ name: 'Y', stay_not_needed: 1, accommodation: 'Yatri' }).body));
+    && /Staying The details will be shared soon\./.test(blankMail) && /please let the conference team know/.test(blankMail), blankMail);
+  const noCar = G.arrangementsEmail({ name: 'Z', arrival_date: '2026-11-21', departure_date: '2026-11-22' }).body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  check('a pickup or drop not entered yet: shared soon', /Pickup The details will be shared soon\./.test(noCar) && /Drop The details will be shared soon\./.test(noCar), noCar);
+  const own = G.arrangementsEmail({ name: 'Y', stay_not_needed: 1, accommodation: 'Yatri' }).body;
+  check('own stay: no stay in the email at all', !/Staying/.test(own) && !/Yatri/.test(own));
   check('a car with no driver: the car\'s own driver phone', /Driver: <a href="tel:0712/.test(G.arrangementsEmail({ name: 'Y', arrival_date: '2026-11-21', pickup_vehicle: 'Bolero' }, { vehicles: [{ label: 'Bolero', driver_phone: '0712 222' }] }).body));
 
   console.log('\n== Changed since ==');
