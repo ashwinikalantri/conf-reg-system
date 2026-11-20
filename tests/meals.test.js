@@ -37,7 +37,7 @@ console.log('\n== The rules ==');
 }
 
 console.log('\n== The role and the permissions ==');
-check('a Volunteer – Meals role that may serve and nothing else', JSON.stringify(perms.permissionsForRole('VOLUNTEER_MEALS')) === '["meals.scan"]');
+check('a Volunteer – Meals role that may serve, and see who is checked in (20 Nov), nothing else', JSON.stringify(perms.permissionsForRole('VOLUNTEER_MEALS')) === '["meals.scan","reports.checked_in"]');
 check('the counter and the counts are their own permissions', perms.PERMISSION_KEYS.includes('meals.scan') && perms.PERMISSION_KEYS.includes('meals.view'));
 check('the Meals report needs the counts', perms.REPORT_PERMISSIONS.meals === 'meals.view');
 

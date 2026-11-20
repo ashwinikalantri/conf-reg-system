@@ -151,6 +151,9 @@ const PERMISSIONS = [
   ['reports.programs', 'reports', 'Programme roster report', 'The roster for one workshop or practice.'],
   ['reports.abstracts', 'reports', 'Abstracts report', 'Submissions and their review status.'],
   ['reports.users', 'reports', 'Users report', 'Accounts, contact details and roles.'],
+  // Owner, 20 Nov 2026: who has been checked in, for the volunteers too --
+  // names and registration, no contact details.
+  ['reports.checked_in', 'reports', 'Checked-in delegates report', 'Who has been checked in at the Front Desk, when and by whom, and whether their kit was given. No contact details.'],
   // The one report with no line list: headline counts and totals, nothing
   // that identifies a person. It opens for a role, but what it SHOWS is
   // decided block by block by that role's other permissions (see the
@@ -464,6 +467,7 @@ const REPORT_PERMISSIONS = {
   delegates: 'reports.delegates',
   // The same people as Registered Delegates, fewer details: the same permission.
   badges: 'reports.delegates',
+  'checked-in': 'reports.checked_in',
   // The Faculty tab as a report: whoever sees that tab.
   faculty: 'guests.view',
   // Volunteers, with contact details and roles: as the All accounts report.
@@ -497,7 +501,7 @@ const SECTION_PERMISSIONS = {
   payments: { permission: 'payments.view' },
   statement: { permission: 'statement.view' },
   abstracts: { permission: 'abstracts.view' },
-  reports: { anyOf: ['meals.view', 'reports.delegates', 'reports.delegate_programs', 'reports.payments',
+  reports: { anyOf: ['meals.view', 'reports.delegates', 'reports.checked_in', 'reports.delegate_programs', 'reports.payments',
     'reports.programs', 'reports.abstracts', 'reports.users', 'reports.summary', 'guests.view'] },
   users: { permission: 'users.view' },
   roles: { permission: 'users.manage_roles' },
@@ -578,7 +582,7 @@ const SYSTEM_ROLES = [
       // fix is a plain read grant, not a product decision like the two
       // deliberately-left-alone ones above.
       'masters.fees_view',
-      'reports.delegates', 'reports.delegate_programs', 'reports.payments', 'reports.programs',
+      'reports.delegates', 'reports.checked_in', 'reports.delegate_programs', 'reports.payments', 'reports.programs',
       'reports.summary',
     ],
   },
@@ -602,7 +606,7 @@ const SYSTEM_ROLES = [
     label: 'Front Desk',
     description: 'One delegate at a time on the conference days: look them up, register walk-ins, take cash, fix details, check them in; and serve meals at a counter.',
     permissions: [
-      'desk.view', 'desk.enroll', 'desk.checkin',
+      'desk.view', 'desk.enroll', 'desk.checkin', 'reports.checked_in',
       // Existing keys at exactly the right grain, deliberately reused rather
       // than re-invented. None of them opens a tab of its own, so the desk
       // can hold them without seeing the payments worklist: the Payments tab
@@ -637,7 +641,7 @@ const SYSTEM_ROLES = [
     description: 'Users and every report, including meals and faculty (read only). No payments, statement or abstracts.',
     permissions: [
       'users.view', 'users.create', 'users.assign_role',
-      'reports.delegates', 'reports.delegate_programs', 'reports.payments',
+      'reports.delegates', 'reports.checked_in', 'reports.delegate_programs', 'reports.payments',
       'reports.programs', 'reports.abstracts', 'reports.users', 'reports.summary',
       // Every report means the Meals and Faculty ones too (6 Nov 2026):
       // the meal counts and passes, and the Faculty tab to read.
@@ -663,7 +667,7 @@ const SYSTEM_ROLES = [
     label: 'Volunteer – Registration',
     description: 'Registration desk volunteer: looks delegates up on the Front Desk, checks them in, registers walk-ins (taking cash), and signs them in at the hall and workshop doors.',
     // Walk-in registration added at the owner's request, 20 Nov 2026.
-    permissions: ['desk.view', 'desk.checkin', 'attendance.mark', 'payments.desk_register'],
+    permissions: ['desk.view', 'desk.checkin', 'attendance.mark', 'payments.desk_register', 'reports.checked_in'],
   },
   // Owner, 20 Nov 2026: a volunteer for attendance alone -- the hall and
   // workshop doors, without the registration desk.
@@ -671,25 +675,25 @@ const SYSTEM_ROLES = [
     key: 'VOLUNTEER_ATTENDANCE',
     label: 'Volunteer – Attendance',
     description: 'Attendance volunteer: at the hall and workshop doors, scans badges to mark people present at the session on there; nothing else.',
-    permissions: ['attendance.mark'],
+    permissions: ['attendance.mark', 'reports.checked_in'],
   },
   {
     key: 'VOLUNTEER_MEALS',
     label: 'Volunteer – Meals',
     description: 'Meal counter volunteer: scans badges and meal passes at the lunch and dinner counters, and finds people by name; nothing else.',
-    permissions: ['meals.scan'],
+    permissions: ['meals.scan', 'reports.checked_in'],
   },
   {
     key: 'VOLUNTEER_TRANSPORT',
     label: 'Volunteer – Transport',
     description: 'Transport volunteer: assigned to faculty for pickups and drops; sees the Faculty tab and updates the pickup and drop of the faculty assigned to them.',
-    permissions: ['guests.view', 'guests.travel_assigned'],
+    permissions: ['guests.view', 'guests.travel_assigned', 'reports.checked_in'],
   },
   {
     key: 'VOLUNTEER_ACCOMMODATION',
     label: 'Volunteer – Accommodation',
     description: 'Accommodation volunteer: assigned to faculty for their stay; sees the Faculty tab and updates the stay details of the faculty assigned to them.',
-    permissions: ['guests.view', 'guests.stay_assigned'],
+    permissions: ['guests.view', 'guests.stay_assigned', 'reports.checked_in'],
   },
   {
     key: 'TRANSPORT_COORDINATOR',

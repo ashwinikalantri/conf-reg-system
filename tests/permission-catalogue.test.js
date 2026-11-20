@@ -398,6 +398,14 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
   // deliberately, in a diff somebody reads -- rather than absorbed silently
   // into "every role runs the same reports".
   const REPORTS_ADDED_SINCE_BASELINE = {
+    'checked-in': {
+      // Of the baseline roles; Front Desk and every volunteer role (newer than the
+      // baseline) hold it too -- see tests/volunteer-delegate.test.js.
+      roles: ['FINANCE_ACADEMIC', 'FINANCE_ADMIN', 'OPERATIONS', 'SUPER_ADMIN'],
+      why: 'Checked-in delegates (owner, 20 Nov 2026: "Allow volunteers access"): name, registration, category, '
+        + 'institution, when and by whom checked in, and the kit -- no contact details. Behind reports.checked_in: '
+        + 'whoever sees the delegate list, the Front Desk that checks people in, and every volunteer role.',
+    },
     'workshop-feedback': {
       roles: ['FINANCE_ACADEMIC', 'FINANCE_ADMIN', 'OPERATIONS', 'SUPER_ADMIN'],
       why: 'Each workshop\'s feedback (owner, 17 Nov 2026): the ratings summed up, and each response with '

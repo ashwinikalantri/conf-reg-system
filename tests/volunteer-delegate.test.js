@@ -29,6 +29,10 @@ const { call, adminLogin, loginOtp, check, report, openDb } = require('./harness
       && !perms.roleSeesSection('VOLUNTEER_ATTENDANCE', 'desk') && !perms.roleSeesSection('VOLUNTEER_ATTENDANCE', 'meals') && !perms.roleCan('VOLUNTEER_ATTENDANCE', 'desk.checkin'));
     check('Volunteer – Registration registers walk-ins too (owner, 20 Nov)', perms.roleCan('VOLUNTEER_REGISTRATION', 'payments.desk_register')
       && !perms.roleCan('VOLUNTEER_REGISTRATION', 'payments.complimentary') && !perms.roleCan('VOLUNTEER_REGISTRATION', 'payments.link'));
+    check('every volunteer role, and the Front Desk, open the Checked-in delegates report (owner, 20 Nov)',
+      ['VOLUNTEER_REGISTRATION', 'VOLUNTEER_ATTENDANCE', 'VOLUNTEER_MEALS', 'VOLUNTEER_TRANSPORT', 'VOLUNTEER_ACCOMMODATION', 'FRONT_DESK']
+        .every((r) => perms.roleCan(r, 'reports.checked_in') && perms.roleSeesSection(r, 'reports'))
+      && perms.REPORT_PERMISSIONS['checked-in'] === 'reports.checked_in' && !perms.roleCan('VOLUNTEER_MEALS', 'reports.delegates'));
     check('...a built-in role, offered as a volunteer area', (await call('GET', '/api/admin/roles', null, admin)).body.roles.some((r) => r.key === 'VOLUNTEER_ATTENDANCE'));
     check('...given to a delegate, they take attendance', (await setRoles(['VOLUNTEER_ATTENDANCE'])).body.success
       && (await call('GET', '/api/attendance/halls', null, await loginOtp(phone))).status === 200);

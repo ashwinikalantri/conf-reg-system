@@ -3210,6 +3210,10 @@ const PERMISSION_BACKFILLS = [
   ...['reports.delegates', 'reports.delegate_programs', 'reports.payments',
     'reports.programs', 'reports.abstracts', 'reports.users']
     .map((key) => ({ permission: 'reports.summary', ifRoleHas: key })),
+  // The Checked-in delegates report (owner, 20 Nov 2026): whoever sees the
+  // delegate list or checks people in, and every volunteer role.
+  ...['reports.delegates', 'desk.checkin', 'attendance.mark', 'meals.scan', 'guests.travel_assigned', 'guests.stay_assigned']
+    .map((key) => ({ permission: 'reports.checked_in', ifRoleHas: key })),
 ];
 
 async function backfillNewSystemPermissions() {
@@ -14714,6 +14718,38 @@ async function buildReport(type, opts = {}) {
   // Faculty: the Faculty tab's list as a report, one detail to a column --
   // who they are, their registration, their sessions, how they come and go,
   // where they stay. Cancelled ones last.
+  // Checked-in delegates (owner, 20 Nov 2026): everyone checked in at the
+  // Front Desk, latest first -- when and by whom, and the kit. Names and
+  // registration only: volunteers see it too.
+  if (type === 'checked-in') {
+    const rows = (await dbAll(
+      `SELECT registrations.registration_number, delegate_name, ${DELEGATE_SALUTATION_COLUMN}, registrations.phone_number AS phone_number,
+              registrations.category_key, registrations.category_label, u.institution,
+              registrations.checked_in_at, registrations.checked_in_by, registrations.kit_given_at, registrations.kit_given_by
+         FROM registrations LEFT JOIN users u ON u.phone_number = registrations.phone_number
+        WHERE registrations.checked_in_at IS NOT NULL AND COALESCE(registrations.bank_status, '') != 'REJECTED'
+        ORDER BY registrations.checked_in_at DESC`)).map(withDelegateSalutation);
+    const facultyPhones = new Set((await dbAll('SELECT phone_number, overall_status FROM guests WHERE phone_number IS NOT NULL'))
+      .filter((g) => !isCancelledGuest(g)).map((g) => g.phone_number));
+    const at = (ms) => {
+      if (!ms) return '';
+      const d = new Date(Number(ms) + 5.5 * 3600e3).toISOString();
+      return `${attendanceLib.shortDate(d.slice(0, 10))}, ${attendanceLib.to12(d.slice(11, 16))}`;
+    };
+    const kits = rows.filter((r) => r.kit_given_at).length;
+    return {
+      title: 'Checked-in Delegates',
+      sections: [{
+        name: `${rows.length} checked in · ${kits} kit${kits === 1 ? '' : 's'} given · ${rows.length - kits} still to give`,
+        columns: ['Reg No', 'Name', 'Role', 'Category', 'Institution', 'Checked in', 'Checked in by', 'Kit given', 'Kit given by'],
+        rows: rows.map((r) => [r.registration_number, r.delegate_name,
+          facultyPhones.has(r.phone_number) ? 'Faculty' : r.category_key === VOLUNTEER_CATEGORY ? 'Volunteer' : 'Delegate',
+          r.category_label || '', r.institution || '', at(r.checked_in_at), r.checked_in_by || '',
+          r.kit_given_at ? `Yes, ${at(r.kit_given_at)}` : 'No', r.kit_given_by || '']),
+      }],
+    };
+  }
+
   if (type === 'faculty') {
     const { board } = await guestBoard();
     const day = (d) => (d ? attendanceLib.dateRange(d, d) : '');

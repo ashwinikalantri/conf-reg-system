@@ -4499,6 +4499,7 @@ function applyRoleVisibility() {
     'report-summary': 'reports.summary',
     'report-delegates': 'reports.delegates',
     'report-badges': 'reports.delegates',
+    'report-checked-in': 'reports.checked_in',
     'report-faculty': 'guests.view',
     'report-volunteers': 'reports.users',
     'report-delegate-programs': 'reports.delegate_programs',
@@ -4631,7 +4632,9 @@ async function initBackendPortal() {
     : canSee('payments') ? 'payments'
     : canSee('statement') ? 'statement'
     : canSee('abstracts') ? 'abstracts'
-    : canSee('reports') ? 'reports'
+    // A volunteer's only report (Checked-in delegates) is not their home.
+    : canSee('reports') && !(can('reports.checked_in') && !['meals.view', 'reports.delegates', 'reports.delegate_programs', 'reports.payments',
+      'reports.programs', 'reports.abstracts', 'reports.users', 'reports.summary'].some(can)) ? 'reports'
     // The coordinators' whole job is the Guests tab.
     : canSee('faculty') ? 'faculty'
     : canSee('attendance') ? 'attendance'

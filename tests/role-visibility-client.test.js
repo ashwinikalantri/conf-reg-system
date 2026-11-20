@@ -72,7 +72,8 @@ const EXPECTED_VISIBLE = {
   // categories need a student ID.
   // Meals moved from Settings to the Front Desk menu (19 Nov 2026).
   // ...and Attendance, also under the Front Desk menu since 19 Nov 2026.
-  FRONT_DESK: ['nav-tab-desk', 'nav-tab-attendance', 'nav-tab-meals', 'settings-group-fees', 'settings-item-fees'],
+  // Reports: the Checked-in delegates report (20 Nov 2026).
+  FRONT_DESK: ['nav-tab-desk', 'nav-tab-attendance', 'nav-tab-meals', 'nav-tab-reports', 'settings-group-fees', 'settings-item-fees'],
   // ...and, since 6 Nov 2026, meal counts (meals.view): under the Front Desk
   // menu since 19 Nov 2026, so nothing of theirs is left under Conference.
   OPERATIONS: ['nav-tab-reports', 'nav-tab-meals', 'settings-group-system', 'settings-item-users',
