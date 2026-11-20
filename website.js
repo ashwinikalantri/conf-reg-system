@@ -238,6 +238,23 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
     }
   }
 
+  // The programme at a glance (owner, 20 Nov 2026): the same sessions,
+  // typeset on a few pages -- the workshop day as a table, the conference
+  // day as a timetable by hall. Linked beside the full programme.
+  async function programmeGlancePdf(req, res, next) {
+    try {
+      const C = d.CONFERENCE;
+      const pdf = await require('./programme-glance-pdf').renderGlancePdf(await sessions(),
+        { conference: C.name, acronym: C.acronym, venue: C.location, dates: d.formatConferenceDates ? d.formatConferenceDates() : '', url: host ? `${host}/programme` : '' });
+      res.set('Content-Type', 'application/pdf');
+      res.set('Content-Disposition', `inline; filename="${String(C.acronym || 'Conference').replace(/[^A-Za-z0-9]+/g, '-')}-Programme-at-a-Glance.pdf"`);
+      res.set('Cache-Control', 'no-cache');
+      res.send(pdf);
+    } catch (err) {
+      next(err);
+    }
+  }
+
   // --- the pages ---
   const builders = {
     async '' (req) {
@@ -304,6 +321,7 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
           .map((h) => ({ ...h, href: h.name ? link({ day, hall: h.name }) : link({ day }), current: h.name === hall })),
         rows,
         pdf: `${base}/programme.pdf`,
+        glancePdf: `${base}/programme-at-a-glance.pdf`,
       };
     },
 
@@ -429,6 +447,7 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
       if (p === '/' && req.query.hall) return res.redirect(302, `/portal${query}`);
       if (p === '/') return render(req, res, next, '', siteCtx);
       if (p === '/programme.pdf') return programmePdf(req, res, next);
+      if (p === '/programme-at-a-glance.pdf') return programmeGlancePdf(req, res, next);
       const page = /^\/([a-z-]+)\/?$/.exec(p);
       if (page && PAGES.has(page[1])) return render(req, res, next, page[1], siteCtx);
       // Old /website links, on this address: the same page at the root.
@@ -443,6 +462,7 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
   const atPath = { base: '/website', portal: '/portal' };
   app.get(['/website', '/website/'], (req, res, next) => render(req, res, next, '', atPath));
   app.get('/website/programme.pdf', programmePdf);
+  app.get('/website/programme-at-a-glance.pdf', programmeGlancePdf);
   app.get('/website/:page', (req, res, next) => {
     const key = String(req.params.page || '');
     if (PAGES.has(key) && key) return render(req, res, next, key, atPath);
