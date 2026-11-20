@@ -2254,9 +2254,16 @@ function renderPresentationPanel(p, registered) {
   } else if (!f) {
     action = '<p class="mt-3 text-sm font-semibold text-rose-700">Uploads have closed. Write to the organisers.</p>';
   }
-  // Where and when they present, once Step 4 shows it (an e-poster).
+  // Where and when they present, once Step 4 shows it: an e-poster's screen,
+  // or (20 Nov 2026) an oral or award paper's turn in its session.
   const sc = p.screen;
-  const screenBox = sc ? `<div class="mb-3 rounded-xl bg-navy text-white p-4">
+  const screenBox = sc && !sc.screen ? `<div class="mb-3 rounded-xl bg-navy text-white p-4">
+      <p class="text-xs text-indigo-100">You present on</p>
+      <p class="font-display text-2xl font-bold mt-0.5">${esc(sc.day)}${sc.time ? `, about ${esc(sc.time)}` : ''}</p>
+      <p class="text-sm mt-1">${esc(sc.placeText)} in the session${sc.hall ? ` · <b>${esc(sc.hall)}</b>` : ''}</p>
+      ${sc.sessionTitle ? `<p class="text-sm text-indigo-100">${esc(sc.sessionTitle)}</p>` : ''}
+      <p class="text-xs text-gold-100 mt-2">Be in the hall at least 15 minutes before your session starts. You have ${esc(sc.minutes)} minutes in all, questions included; times are approximate.</p>
+    </div>` : sc ? `<div class="mb-3 rounded-xl bg-navy text-white p-4">
       <p class="text-xs text-indigo-100">You present on</p>
       <p class="font-display text-2xl font-bold mt-0.5">${esc(sc.screen)}</p>
       <p class="text-sm mt-1">${[esc(sc.day), sc.time ? `about <b>${esc(sc.time)}</b>` : '', `${esc(sc.placeText)} on the screen`].filter(Boolean).join(' · ')}</p>
@@ -11433,6 +11440,11 @@ function drawOralOrder() {
       <p class="text-sm text-slate-700"><b>${esc(placed)}</b> of ${esc(placed + d.unallotted.length)} placed.</p>
       ${assign && d.unallotted.length && d.sessions.length ? `<button type="button" onclick="allotOrals()" class="h-9 px-3 rounded-lg bg-navy hover:bg-indigo-700 text-white text-sm font-semibold">Place the rest (${esc(d.unallotted.length)})</button>` : ''}
       ${d.sessions.length ? `<a href="/api/admin/oral-order/order.pdf?format=${esc(d.format)}" download class="text-sm font-semibold text-indigo-700 underline">Running order (PDF)</a>` : ''}
+      ${can('comms.reminders_view') && placed ? `<button type="button" onclick="emailSlots('${esc(d.format)}')" class="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-700">Email presenters their slots</button>` : ''}
+      ${assign ? `<label class="sm:ml-auto inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer min-h-[44px]">
+          <input type="checkbox" ${d.published ? 'checked' : ''} onchange="saveOralSetting({ published: this.checked })" class="w-5 h-5 accent-[#1c3549]">
+          Show presenters their day, time and hall in the portal</label>`
+        : `<span class="sm:ml-auto text-sm text-slate-600">${d.published ? 'Shown to presenters in the portal' : 'Not shown to presenters yet'}</span>`}
     </div>
     <div class="space-y-4">${d.sessions.map((x) => `<section class="bg-white rounded-xl border border-slate-200">
         <div class="px-3 py-2.5 border-b border-slate-100">
@@ -11462,7 +11474,24 @@ async function allotOrals() {
   renderOralOrder();
 }
 async function setOralSessions(ids) { await oralCall('/api/admin/oral-order/settings', 'PUT', { sessionIds: ids }); renderOralOrder(); }
-async function saveOralSetting(change) { await oralCall('/api/admin/oral-order/settings', 'PUT', change); renderOralOrder(); }
+async function saveOralSetting(change) {
+  const data = await oralCall('/api/admin/oral-order/settings', 'PUT', change);
+  if (data.success && 'published' in change) showToast(change.published ? 'Presenters now see their day, time and hall in the portal.' : 'Hidden from presenters.', 'success');
+  renderOralOrder();
+}
+
+// Email presenters their slots (20 Nov 2026): Reminders, set to the
+// Presenters audience, this format, and its slot template -- to check and
+// send there, with the usual test and 24-hour rule.
+async function emailSlots(format) {
+  selectSettingsTab('reminders');
+  await renderReminders();
+  await selectReminderAudience('presenters');
+  const f = document.getElementById('rem-format');
+  if (f) f.value = format;
+  applyReminderFilters();
+  await applyReminderTemplate(format === 'POSTER' ? 'poster-slot' : 'oral-slot');
+}
 
 async function renderPosterScreens() {
   const board = document.getElementById('screens-board');
@@ -11543,6 +11572,7 @@ function drawPosterScreens() {
       ${assign && d.unallotted.length && d.sessions.length && d.screens.length ? `<button type="button" onclick="allotPosterScreens()" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg whitespace-nowrap">Allot the rest evenly (${esc(d.unallotted.length)})</button>` : ''}
       <span class="text-sm text-slate-600"><b class="tabular-nums">${esc(placed)}</b> of ${esc(all)} allotted · <b class="tabular-nums">${esc(files)}</b> ${files === 1 ? 'file' : 'files'} in · <b class="tabular-nums">${esc(all - files)}</b> awaited</span>
       ${d.screens.length && d.sessions.length ? `<a href="/api/admin/poster-screens/order.pdf" download class="${btn}">Running order, all screens (PDF)</a>` : ''}
+      ${can('comms.reminders_view') && placed ? `<button type="button" onclick="emailSlots('POSTER')" class="${btn}">Email presenters their slots</button>` : ''}
       ${assign ? `<label class="sm:ml-auto inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer min-h-[44px]">
           <input type="checkbox" ${d.settings.published ? 'checked' : ''} onchange="savePosterSetting({ published: this.checked })" class="w-5 h-5 accent-[#1c3549]">
           Show presenters their screen and time in the portal</label>`
@@ -13913,7 +13943,7 @@ function deskAbstractCard(abstracts, win, ext, due) {
       </div>
       ${a.revision_note ? `<p class="text-[11px] text-amber-800 mt-1">${esc(a.revision_note)}</p>` : ''}
       ${fileLine(a)}
-      ${a.poster ? `<p class="text-sm text-slate-800 mt-1"><b>${esc(a.poster.screen)}</b> · ${esc(a.poster.line.split(' · ').slice(1).join(' · '))}${a.poster.published ? '' : ' <span class="text-[12px] text-slate-500">(not shown to them yet)</span>'}</p>` : ''}
+      ${a.poster ? `<p class="text-sm text-slate-800 mt-1">${a.poster.screen ? `<b>${esc(a.poster.screen)}</b> · ${esc(a.poster.line.split(' · ').slice(1).join(' · '))}` : esc(a.poster.line)}${a.poster.published ? '' : ' <span class="text-[12px] text-slate-500">(not shown to them yet)</span>'}</p>` : ''}
       ${abstractActions(a) ? `<div class="flex flex-wrap gap-1.5 mt-2">${abstractActions(a)}</div>` : ''}
     </div>`;
   }).join('') + (ext ? `<p class="text-[11px] text-slate-500 mt-2">They were given a later last date of ${esc(formatFullDate(ext.until))}.</p>` : ''), '');

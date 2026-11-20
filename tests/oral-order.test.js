@@ -2,7 +2,7 @@
 // screens, without screens -- each paper a turn in one of its format's
 // sessions, a time each from the session's start, set by hand.
 const fs = require('fs');
-const { call, check, report, adminLogin, loginPassword, ADMIN_PW, openDb, appFile } = require('./harness');
+const { call, check, report, adminLogin, loginPassword, loginOtp, ADMIN_PW, openDb, appFile } = require('./harness');
 
 (async () => {
   const admin = await adminLogin();
@@ -19,7 +19,7 @@ const { call, check, report, adminLogin, loginPassword, ADMIN_PW, openDb, appFil
     }
     for (let i = 0; i < 5; i++) {
       ids.push((await db.run(`INSERT INTO abstracts (phone_number, author_name, format, title, text, word_count, status, allocation, decision_sent_at)
-        VALUES (?, ?, 'Oral', ?, 'Body', 100, 'ACCEPTED', 'ORAL', ?)`, [`96666${N}${i}`, `Oral Person ${i}`, `Oral Paper ${N} ${i}`, Date.now()])).lastID);
+        VALUES (?, ?, 'Oral', ?, 'Body', 100, 'ACCEPTED', 'ORAL', ?)`, [`97${N}${i}${i}`, `Oral Person ${i}`, `Oral Paper ${N} ${i}`, Date.now()])).lastID);
     }
     const get = async () => (await call('GET', '/api/admin/oral-order?format=ORAL', null, admin)).body;
     check('only the abstracts desk sets it', (await call('PUT', '/api/admin/oral-order/settings', { format: 'ORAL', sessionIds }, desk)).status === 403);
@@ -47,6 +47,28 @@ const { call, check, report, adminLogin, loginPassword, ADMIN_PW, openDb, appFil
     const pdf = await call('GET', '/api/admin/oral-order/order.pdf?format=ORAL', null, admin);
     check('the running order as a PDF', pdf.status === 200 && /application\/pdf/.test(pdf.headers['content-type']));
     await call('POST', '/api/admin/oral-order/allot', { format: 'ORAL' }, admin);
+
+    console.log('\n== Shown in the portal, once switched on (20 Nov) ==');
+    const presenterPhone = `97${N}00`;
+    await db.run("INSERT INTO users (phone_number, full_name, role, created_at, phone_verified) VALUES (?, 'Oral Person 0', 'DELEGATE', ?, 1)", [presenterPhone, Date.now()]);
+    const me = await loginOtp(presenterPhone);
+    const card = async () => {
+      const r = (await call('GET', '/api/abstracts/me', null, me)).body;
+      const list = r.abstracts || (r.abstract ? [r.abstract] : []);
+      const a = list.find((x) => x.id === ids[0]) || r;
+      return (a.presentation || r.presentation || {}).screen;
+    };
+    check('not switched on: the presenter does not see it', !(await card()));
+    check('the switch is for the abstracts desk', (await call('PUT', '/api/admin/oral-order/settings', { format: 'ORAL', published: true }, desk)).status === 403);
+    await call('PUT', '/api/admin/oral-order/settings', { format: 'ORAL', published: true }, admin);
+    const sc = await card();
+    check('switched on: their day, time, turn and hall', sc && sc.screen === '' && /2099|Wednesday|April/.test(sc.day + sc.line) && /AM|PM/.test(sc.time || '') && sc.hall === `Oral Hall ${N}` && sc.published === true, sc);
+    check('...and the Oral papers view says so', (await get()).published === true);
+    await db.run('DELETE FROM users WHERE phone_number = ?', [presenterPhone]);
+    const js0 = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
+    check('"Email presenters their slots": Reminders, Presenters, this format, its slot template', /async function emailSlots\(format\)/.test(js0)
+      && /selectReminderAudience\('presenters'\)/.test(js0) && /applyReminderTemplate\(format === 'POSTER' \? 'poster-slot' : 'oral-slot'\)/.test(js0)
+      && /onclick="emailSlots\('POSTER'\)"/.test(js0) && /onclick="emailSlots\('\$\{esc\(d\.format\)\}'\)"/.test(js0));
     const rec = (await call('GET', '/api/admin/reminders/audiences/presenters/recipients?format=ORAL', null, admin)).body;
     const src = fs.readFileSync(appFile('server.js'), 'utf8');
     check('Reminders {{screen}} gives an oral presenter their day, time and hall', /for \(const fmt of \['ORAL', 'AWARD'\]\)/.test(src) && rec.success === true);

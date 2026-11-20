@@ -12047,7 +12047,7 @@ app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async 
       // An e-poster's screen and time (Step 4), shown to staff whether or
       // not presenters can see it yet.
       abstracts: await Promise.all(abstracts.map(async (a) => ({
-        ...a, poster: a.status === 'ACCEPTED' && a.allocation === 'POSTER' ? await posterPlaceFor(a.id) : null,
+        ...a, poster: a.status === 'ACCEPTED' && ['POSTER', 'ORAL', 'AWARD'].includes(a.allocation) ? await placeFor(a.id, a.allocation) : null,
       }))),
       abstractWindow,
       abstractExtension: abstractExtension || null,
@@ -15947,7 +15947,8 @@ const presentationDueView = () => ({
 // An e-poster's screen and time, once Step 4 shows them to presenters.
 async function presentationFor(abstractId, allocation) {
   const file = await dbGet('SELECT * FROM presentations WHERE abstract_id = ?', [abstractId]);
-  const place = allocation === 'POSTER' ? await posterPlaceFor(abstractId) : null;
+  // Oral and award papers too (20 Nov 2026), once Step 4 shows theirs.
+  const place = await placeFor(abstractId, allocation);
   return { ...presentationRulesView(allocation), ...presentationDueView(), file: presentationFileView(file), screen: place && place.published ? place : null };
 }
 
@@ -16562,11 +16563,13 @@ app.delete('/api/admin/poster-screens/judges/:judgeId', requirePermission('abstr
 // unset = programme sessions named for it), oral_minutes_<FORMAT>.
 const ORAL_FORMATS = { ORAL: { label: 'Oral papers', match: /\boral/i, minutes: 8 }, AWARD: { label: 'Award papers', match: /award/i, minutes: 10 } };
 async function oralSettings(format) {
-  const rows = await dbAll('SELECT key, value FROM schema_meta WHERE key IN (?, ?)', [`oral_sessions_${format}`, `oral_minutes_${format}`]);
+  const rows = await dbAll('SELECT key, value FROM schema_meta WHERE key IN (?, ?, ?)', [`oral_sessions_${format}`, `oral_minutes_${format}`, `oral_published_${format}`]);
   const v = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   let sessionIds = null;
   try { sessionIds = v[`oral_sessions_${format}`] ? JSON.parse(v[`oral_sessions_${format}`]).map(Number).filter(Boolean) : null; } catch (e) { sessionIds = null; }
-  return { sessionIds, minutes: posterScreensLib.cleanMinutes(v[`oral_minutes_${format}`]) || ORAL_FORMATS[format].minutes };
+  // published: presenters see their slot in the portal (20 Nov 2026).
+  return { sessionIds, minutes: posterScreensLib.cleanMinutes(v[`oral_minutes_${format}`]) || ORAL_FORMATS[format].minutes,
+    published: v[`oral_published_${format}`] === '1' };
 }
 async function oralSessions(format, settings) {
   const rows = settings.sessionIds
@@ -16599,6 +16602,22 @@ async function oralBoard(format) {
     unallotted: b.unallotted,
   };
 }
+// One oral or award paper's place, shaped as an e-poster's (posterPlaceFor),
+// with no screen: { place, placeText, time, day, hall, sessionTitle, line,
+// published, minutes, screen: '' } or null.
+async function oralPlaceFor(abstractId, format) {
+  if (!ORAL_FORMATS[format]) return null;
+  const b = await oralBoard(format);
+  for (const session of b.sessions) {
+    const p = session.items.find((x) => x.id === Number(abstractId));
+    if (p) {
+      return { screen: '', place: p.place, placeText: posterScreensLib.ordinal(p.place), time: p.time, day: session.day, hall: session.hall,
+        sessionTitle: session.title, line: posterScreensLib.placeLine({ name: '' }, p, session), published: b.settings.published, minutes: b.settings.minutes };
+    }
+  }
+  return null;
+}
+const placeFor = (abstractId, allocation) => (allocation === 'POSTER' ? posterPlaceFor(abstractId) : oralPlaceFor(abstractId, allocation));
 const oralFormat = (v) => (ORAL_FORMATS[String(v || '').toUpperCase()] ? String(v).toUpperCase() : null);
 const oralView = (p) => ({ id: p.id, title: p.title, presenter: p.presenter, regNo: p.regNo, file: !!p.file, place: p.place || null, time: p.time || null });
 
@@ -16608,7 +16627,7 @@ app.get('/api/admin/oral-order', requirePermission('abstracts.view'), async (req
     const b = await oralBoard(format);
     const programme = await dbAll(`${POSTER_SESSION_SQL} WHERE s.meal = 0 ORDER BY s.session_date, s.start_time, h.sort_order, s.id`);
     res.json({
-      success: true, format, label: b.label, minutes: b.settings.minutes,
+      success: true, format, label: b.label, minutes: b.settings.minutes, published: b.settings.published,
       sessions: b.sessions.map((x) => ({ id: x.id, day: x.day, startTime: x.startTime, endTime: x.endTime, title: x.title, hall: x.hall,
         finish: x.finish, overrun: x.overrun, judges: x.judges, items: x.items.map(oralView) })),
       unallotted: b.unallotted.map(oralView),
@@ -16628,13 +16647,14 @@ app.put('/api/admin/oral-order/settings', requirePermission('abstracts.assign'),
       if (!m) return res.status(400).json({ success: false, error: `Minutes each: ${posterScreensLib.MIN_MINUTES} to ${posterScreensLib.MAX_MINUTES}.` });
       await setPosterSetting(`oral_minutes_${format}`, m);
     }
+    if (req.body.published !== undefined) await setPosterSetting(`oral_published_${format}`, req.body.published === true ? '1' : '0');
     if (req.body.sessionIds !== undefined) {
       const ids = (Array.isArray(req.body.sessionIds) ? req.body.sessionIds : []).map(Number).filter(Boolean);
       const known = ids.length ? await dbAll(`SELECT id FROM programme_sessions WHERE id IN (${ids.map(() => '?').join(',')})`, ids) : [];
       if (known.length !== new Set(ids).size) return res.status(400).json({ success: false, error: 'Choose sessions from the programme.' });
       await setPosterSetting(`oral_sessions_${format}`, JSON.stringify([...new Set(ids)]));
     }
-    await recordAudit({ req, entityType: 'settings', entityId: `oral-order-${format}`, action: 'ORAL_ORDER_SETTINGS', oldValue: null, newValue: JSON.stringify({ minutes: req.body.minutes, sessionIds: req.body.sessionIds }) });
+    await recordAudit({ req, entityType: 'settings', entityId: `oral-order-${format}`, action: 'ORAL_ORDER_SETTINGS', oldValue: null, newValue: JSON.stringify({ minutes: req.body.minutes, sessionIds: req.body.sessionIds, published: req.body.published }) });
     res.json({ success: true });
   } catch (err) {
     next(err);
