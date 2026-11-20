@@ -198,7 +198,8 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
       const dates = [...new Set(all.map((s) => s.session_date))].sort();
       const C = d.CONFERENCE;
       const pdf = await require('./programme-pdf').renderProgrammePdf(
-        dates.map((day) => ({ label: dayLong(day), rows: programmeRows(all.filter((s) => s.session_date === day)) })),
+        // The page shows a time as parts (t12); the PDF prints it as text.
+        dates.map((day) => ({ label: dayLong(day), rows: programmeRows(all.filter((s) => s.session_date === day)).map((r) => (r.kind === 'talks' ? { ...r, time: `${r.time.t} ${r.time.ap}` } : r)) })),
         { conference: C.name, acronym: C.acronym, venue: C.location, dates: d.formatConferenceDates ? d.formatConferenceDates() : '', url: host ? `${host}/programme` : '' });
       res.set('Content-Type', 'application/pdf');
       res.set('Content-Disposition', `inline; filename="${String(C.acronym || 'Conference').replace(/[^A-Za-z0-9]+/g, '-')}-Scientific-Programme.pdf"`);

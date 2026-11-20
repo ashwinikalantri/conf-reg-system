@@ -8,6 +8,7 @@ const { call, check, report, appFile } = require('./harness');
   const buf = pdf.buf || Buffer.from(pdf.raw || '', 'binary');
   check('the programme is a PDF, open to all', pdf.status === 200 && /application\/pdf/.test(pdf.headers['content-type']) && buf.slice(0, 4).toString() === '%PDF', pdf.status);
   check('...A4 portrait (595 × 842 points)', /\/MediaBox \[0 0 595\.28 841\.89\]/.test(buf.toString('latin1')));
+  check('...times printed as times, never "[object Object]"', !/object Object/.test(buf.toString('latin1')) && /time: `\$\{r\.time\.t\} \$\{r\.time\.ap\}`/.test(fs.readFileSync(appFile('website.js'), 'utf8')));
   check('...named for printing', /Scientific-Programme\.pdf/.test(pdf.headers['content-disposition'] || ''));
   const page = await call('GET', '/website/programme');
   check('the programme page links to it', /href="\/website\/programme\.pdf"/.test(page.raw) && /A4 PDF/.test(page.raw));
