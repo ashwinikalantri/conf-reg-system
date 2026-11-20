@@ -15732,7 +15732,10 @@ async function presentationsDrive() {
   const [status, failed, request] = await Promise.all([
     readJsonFile(PRESENTATIONS_DRIVE_STATUS), readJsonFile(PRESENTATIONS_DRIVE_ERROR), readJsonFile(PRESENTATIONS_DRIVE_REQUEST)]);
   const folders = (status && status.folders) || {};
-  const files = new Map(((status && status.files) || []).map((f) => [String(f.path), Number(f.size)]));
+  // By format and file name, wherever in the format's folder it is (posters
+  // sit in session and screen folders).
+  const key = (p) => { const parts = String(p).split('/'); return `${parts[0]}/${parts[parts.length - 1]}`; };
+  const files = new Map(((status && status.files) || []).map((f) => [key(f.path), Number(f.size)]));
   return {
     view: {
       copiedAt: (status && status.checkedAt) || null,
@@ -15921,6 +15924,27 @@ async function posterBoard() {
   }));
   const b = posterScreensLib.board({ screens, slots, posters, sessions, minutes: settings.minutes });
   return { settings, screens, ...b, fit: posterScreensLib.fit({ total: posters.length, screens: screens.length, minutes: settings.minutes, sessions }) };
+}
+
+// The Drive copy files each e-poster by session and screen (owner, 20 Nov
+// 2026). The host script reads where from this file beside the database,
+// rewritten here at boot and each minute when the screens have changed --
+// so a poster moved to another screen moves on Drive with the next copy.
+const PRESENTATIONS_DRIVE_LAYOUT = path.join(DATA_DIR, '.presentations-drive-layout.json');
+let presentationsDriveLayoutText = null;
+async function writePresentationsDriveLayout() {
+  const text = JSON.stringify({ Poster: posterScreensLib.driveFolders(await posterBoard()) });
+  if (text === presentationsDriveLayoutText) return false;
+  const tmp = `${PRESENTATIONS_DRIVE_LAYOUT}.tmp`;
+  await fs.promises.writeFile(tmp, text);
+  await fs.promises.rename(tmp, PRESENTATIONS_DRIVE_LAYOUT);
+  presentationsDriveLayoutText = text;
+  return true;
+}
+function presentationsDriveLayoutOnBoot() {
+  const run = () => writePresentationsDriveLayout().catch((err) => console.error('Drive poster layout failed:', err.message));
+  setInterval(run, 60 * 1000).unref();
+  return run();
 }
 
 // One presenter's place, or null: { screen, place, time, day, line, ... }.
@@ -17175,6 +17199,7 @@ registrationsMigrationReady.then(retitleNamesOnBoot)
   .then(() => backfillDecisionSentOnBoot().catch((err) => console.error('Decision-sent backfill failed (continuing to start):', err.message)))
   .then(() => seedPosterScreensOnBoot().catch((err) => console.error('Poster screens seeding failed (continuing to start):', err.message)))
   .then(() => posterSlotsSessionOnBoot().catch((err) => console.error('Poster places session backfill failed (continuing to start):', err.message)))
+  .then(() => presentationsDriveLayoutOnBoot())
   .then(() => guestLib.migrateGuestsTable(dbRun, dbAll)
     .then((r) => {
       if (r === 'rebuilt') console.log('Guests table rebuilt: faculty no longer need an account.');

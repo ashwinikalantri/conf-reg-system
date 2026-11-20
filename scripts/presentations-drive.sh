@@ -6,8 +6,14 @@
 # mirrors them into the Drive the nightly backups use, one folder per format:
 #
 #   NQOCN 2026 Presentations/Oral/   NQOCN20260045_Asha_Patil_Oral.pdf ...
-#                           /Poster/
+#                           /Poster/<session>/<screen>/
 #                           /Award/
+#
+# E-posters go by poster session and screen (owner, 20 Nov 2026), as the app
+# lays them out in .presentations-drive-layout.json beside the database;
+# scripts/presentations-drive-stage.js builds the tree. A poster moved to
+# another screen is moved on Drive (rclone --track-renames), not uploaded
+# again and not binned.
 #
 # Same arrangement as scripts/backup.sh, for the same reason: the Drive
 # credential (the rclone remote "nqocn-db") never enters the web-facing app
@@ -53,13 +59,16 @@ MOUNT="$(docker volume inspect -f '{{.Mountpoint}}' "$DATA_VOLUME" 2>/dev/null |
 SRC="${PRESENTATIONS_DRIVE_SRC:-$MOUNT/uploads/presentations}"
 REPORT_DIR="${PRESENTATIONS_DRIVE_REPORT:-$MOUNT}"
 REQUEST="$REPORT_DIR/.presentations-drive-request.json"
+LAYOUT="$REPORT_DIR/.presentations-drive-layout.json"
+STAGER="$(dirname "$(readlink -f "$0")")/presentations-drive-stage.js"
 STATUS="$REPORT_DIR/.presentations-drive-status.json"
 FAILED="$REPORT_DIR/.presentations-drive-error.json"
 [ -n "$MOUNT" ] && [ -d "$SRC" ] || exit 0
 
 # What is there now: names, sizes and times of the finished files (a file
 # still being written is a dot-file, and is not counted).
-FINGERPRINT="$(find "$SRC" -maxdepth 1 -type f -name '*.pdf' ! -name '.*' -printf '%f %s %T@\n' | sort | md5sum | cut -d' ' -f1)"
+# A new layout (a poster moved to another screen) counts as a change.
+FINGERPRINT="$( { find "$SRC" -maxdepth 1 -type f -name '*.pdf' ! -name '.*' -printf '%f %s %T@\n' | sort; cat "$LAYOUT" 2>/dev/null; } | md5sum | cut -d' ' -f1)"
 if [ ! -f "$REQUEST" ] && [ -f "$LAST_FILE" ] && [ "$(cat "$LAST_FILE")" = "$FINGERPRINT" ]; then
   exit 0
 fi
@@ -73,8 +82,10 @@ if [ ! -f "$RCLONE_CONF" ]; then
   exit 1
 fi
 
-# The copy, in one pass: each file is staged (as a link) in its format's
-# folder, then the staging tree is mirrored to Drive -- one listing per
+LAYOUT_MOUNT="$LAYOUT"
+[ -f "$LAYOUT" ] || LAYOUT_MOUNT=/dev/null
+
+# The copy, in one pass: each file is staged (as a link) in its folder, then the staging tree is mirrored to Drive -- one listing per
 # folder, rather than a pass per format. The include rules keep the mirror
 # to the files this makes, so anything else in the Drive folder is left
 # alone. Then the folder links for the panel. Few calls to Google on
@@ -84,20 +95,19 @@ fi
 if OUT="$(docker run --rm \
     -v "$RCLONE_CONF":/rclone.conf:ro \
     -v "$SRC":/src:ro \
+    -v "$LAYOUT_MOUNT":/layout.json:ro \
+    -v "$STAGER":/stage.js:ro \
     "$IMAGE" \
     sh -c '
       set -e
       cp /rclone.conf /tmp/r.conf
       R="rclone --config /tmp/r.conf"
       set --  "$0" "$1" "$2" "$3"
-      for t in $3; do
-        mkdir -p "/tmp/stage/$t"
-        for f in /src/*_"$t".pdf; do [ -e "$f" ] && ln -s "$f" "/tmp/stage/$t/"; done
-        INCLUDE="$INCLUDE --include /$t/*_$t.pdf"
-      done
+      node /stage.js /src /layout.json /tmp/stage "$3"
       set -f
+      for t in $3; do INCLUDE="$INCLUDE --include /$t/**_$t.pdf"; done
       fail() { tail -c 400 /tmp/err >&2; exit 1; }
-      $R sync /tmp/stage "$1$2" --copy-links --create-empty-src-dirs $INCLUDE --max-delete "$4" 2>/tmp/err || fail
+      $R sync /tmp/stage "$1$2" --copy-links --create-empty-src-dirs --track-renames $INCLUDE --max-delete "$4" 2>/tmp/err || fail
       $R lsjson --dirs-only --no-modtime --no-mimetype "$1" > /tmp/root.json 2>>/tmp/err || fail
       $R lsjson --dirs-only --no-modtime --no-mimetype "$1$2" > /tmp/sub.json 2>>/tmp/err || fail
       node -e "
@@ -105,8 +115,9 @@ if OUT="$(docker run --rm \
         const [folder, types] = process.argv.slice(1);
         const top = JSON.parse(fs.readFileSync(\"/tmp/root.json\", \"utf8\")).find((d) => d.Name === folder) || {};
         const folders = Object.fromEntries(JSON.parse(fs.readFileSync(\"/tmp/sub.json\", \"utf8\")).map((d) => [d.Name, d.ID]));
-        const files = types.split(\" \").flatMap((t) => fs.readdirSync(\"/tmp/stage/\" + t)
-          .map((n) => ({ path: t + \"/\" + n, size: fs.statSync(\"/tmp/stage/\" + t + \"/\" + n).size })));
+        const walk = (rel) => fs.readdirSync(\"/tmp/stage/\" + rel, { withFileTypes: true }).flatMap((e) => (e.isDirectory()
+          ? walk(rel + \"/\" + e.name) : [{ path: rel + \"/\" + e.name, size: fs.statSync(\"/tmp/stage/\" + rel + \"/\" + e.name).size }]));
+        const files = types.split(\" \").flatMap((t) => walk(t));
         process.stdout.write(JSON.stringify({ checkedAt: Date.now(), folder, folderId: top.ID || null, folders, files }));
       " "$2" "$3"
     ' "$DRIVE_ROOT" "$FOLDER" "$TYPES" "$MAX_DELETE" 2>&1)"; then

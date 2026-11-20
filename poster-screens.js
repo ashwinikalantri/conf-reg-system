@@ -117,4 +117,23 @@ function placeLine(screen, poster, session) {
     session && session.hall ? session.hall : ''].filter(Boolean).join(' · ');
 }
 
-module.exports = { DEFAULT_MINUTES, MIN_MINUTES, MAX_MINUTES, toMin, to12, ordinal, dayText, cleanMinutes, board, fit, allotEvenly, placeLine };
+// Where each e-poster's file goes in the Google Drive copy (owner, 20 Nov
+// 2026): a folder per poster session, numbered in time order so they sort
+// as they run, a folder per screen in it; a poster not on a screen yet in
+// its own folder. Keyed by file name; the host script stages the tree.
+const NOT_PLACED_FOLDER = 'Not on a screen yet';
+const folderName = (s) => String(s == null ? '' : s).replace(/[/\\]+/g, '-').replace(/\s+/g, ' ').trim() || '-';
+function driveFolders({ sessions, unallotted }) {
+  const out = {};
+  sessions.forEach((session, i) => {
+    const sessionFolder = folderName(`${i + 1}. ${[session.day, session.startTime, session.hall].filter(Boolean).join(', ')}`);
+    for (const screen of session.screens) {
+      for (const p of screen.posters) if (p.file && p.file.fileName) out[p.file.fileName] = `${sessionFolder}/${folderName(screen.name)}`;
+    }
+  });
+  for (const p of unallotted) if (p.file && p.file.fileName) out[p.file.fileName] = NOT_PLACED_FOLDER;
+  return out;
+}
+
+module.exports = { DEFAULT_MINUTES, MIN_MINUTES, MAX_MINUTES, toMin, to12, ordinal, dayText, cleanMinutes, board, fit, allotEvenly, placeLine,
+  driveFolders, NOT_PLACED_FOLDER };
