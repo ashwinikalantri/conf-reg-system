@@ -15719,14 +15719,26 @@ function guestWifiStrip(g) {
   }
   return `<div class="px-5 py-3">
       <div class="flex items-center justify-between gap-2"><p class="font-semibold text-slate-800">Wi-Fi login</p>
-        ${guestMayWifi(g) ? `<button type="button" onclick="giveGuestWifi(${esc(g.id)}, false)" class="text-[13px] text-slate-500 hover:text-rose-700 font-semibold">Take back</button>` : ''}</div>
+        ${guestMayWifi(g) && !g.wifi_emailed_at ? `<button type="button" onclick="giveGuestWifi(${esc(g.id)}, false)" class="text-[13px] text-slate-500 hover:text-rose-700 font-semibold">Take back</button>` : ''}</div>
       <dl class="mt-1 grid grid-cols-[6rem_minmax(0,1fr)] gap-y-0.5 text-[15px]">
         <dt class="text-slate-500">Network</dt><dd class="font-semibold">${esc((guestData.wifi || {}).network || 'Guest')}</dd>
         <dt class="text-slate-500">Username</dt><dd class="font-mono font-semibold break-all">${esc(g.wifi_username)}</dd>
         <dt class="text-slate-500">Password</dt><dd class="font-mono font-semibold break-all">${esc(g.wifi_password)}</dd>
       </dl>
-      <button type="button" onclick="copyGuestWifi(${esc(g.id)})" class="${guestBtn.plain} h-9 mt-2">Copy for WhatsApp</button>
+      ${g.wifi_emailed_at ? `<p class="mt-1.5 text-[13px] font-semibold text-emerald-700">Emailed ${esc(guestEmailedAt(Number(g.wifi_emailed_at)))}${g.wifi_emailed_by ? ` by ${esc(g.wifi_emailed_by)}` : ''} ✓</p>` : ''}
+      <div class="mt-2 flex flex-wrap gap-2">
+        <button type="button" onclick="copyGuestWifi(${esc(g.id)})" class="${guestBtn.plain} h-9">Copy for WhatsApp</button>
+        ${guestMayWifi(g) ? (g.email ? `<button type="button" onclick="emailGuestWifi(${esc(g.id)}, this)" class="h-9 px-3 rounded-lg text-[13px] font-semibold ${g.wifi_emailed_at ? 'border border-slate-300 text-slate-700 bg-white hover:bg-slate-50' : 'bg-navy hover:bg-indigo-700 text-white'}">${g.wifi_emailed_at ? 'Email again' : 'Email it to them'}</button>` : '<span class="text-[12px] text-slate-400 self-center">No email address</span>') : ''}
+      </div>
     </div>`;
+}
+// Held for Send or Cancel, like every staff email.
+async function emailGuestWifi(id, btn) {
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
+  const data = await (await fetch(`/api/guests/${encodeURIComponent(id)}/wifi-email`, { method: 'POST' })).json().catch(() => ({}));
+  if (btn) { btn.disabled = false; btn.textContent = label; }
+  if (!data.success) showToast(data.error || 'Could not prepare the email. Check the connection and try again.');
 }
 function copyGuestWifi(id) {
   const g = guestById(id);
@@ -15758,7 +15770,7 @@ function renderGuestWifi() {
         <div class="hidden sm:grid sm:grid-cols-[8rem_8rem_minmax(0,1fr)_6rem] gap-3 px-4 py-2 bg-slate-50 text-[11px] text-slate-500 uppercase tracking-wide font-semibold"><span>Username</span><span>Password</span><span>Given to</span><span></span></div>
         <div class="divide-y divide-slate-100 text-sm">${w.logins.length ? w.logins.map((l) => `<div class="grid grid-cols-2 sm:grid-cols-[8rem_8rem_minmax(0,1fr)_6rem] gap-x-3 gap-y-1 px-4 py-2 items-center">
             <span class="font-mono font-semibold">${esc(l.username)}</span><span class="font-mono">${esc(l.password)}</span>
-            <span class="col-span-2 sm:col-span-1 min-w-0">${l.guest_id ? `<button type="button" onclick="openGuestPanel(${esc(l.guest_id)})" class="font-semibold text-indigo-700 hover:underline text-left">${esc(nameOf(l.guest_id))}</button>${l.allotted_by ? ` <span class="text-slate-400">· by ${esc(l.allotted_by)}</span>` : ''}` : '<span class="text-emerald-700">Free</span>'}</span>
+            <span class="col-span-2 sm:col-span-1 min-w-0">${l.guest_id ? `<button type="button" onclick="openGuestPanel(${esc(l.guest_id)})" class="font-semibold text-indigo-700 hover:underline text-left">${esc(nameOf(l.guest_id))}</button>${l.allotted_by ? ` <span class="text-slate-400">· by ${esc(l.allotted_by)}</span>` : ''}${l.emailed_at ? ' <span class="text-emerald-700 font-semibold">· emailed ✓</span>' : ''}` : '<span class="text-emerald-700">Free</span>'}</span>
             <span class="col-span-2 sm:col-span-1 sm:text-right">${manage && !l.guest_id ? `<button type="button" onclick="deleteGuestWifi(${esc(l.id)})" class="px-3 py-1.5 border border-rose-300 text-rose-700 hover:bg-rose-50 text-xs font-semibold rounded-lg">Remove</button>` : ''}</span>
           </div>`).join('') : '<p class="p-6 text-center text-slate-400">No Wi-Fi logins yet.</p>'}</div>
       </div>

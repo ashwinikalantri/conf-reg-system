@@ -149,6 +149,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'GET /api/admin/volunteer-test': 'Whether volunteer test mode is on and what volunteers have changed so far. system.settings_edit -- the same people who switch maintenance mode.',
     'POST /api/admin/volunteer-test/start': 'Starts volunteer test mode: volunteers\' changes from now are recorded to be undone. system.settings_edit, as maintenance mode.',
     'POST /api/admin/volunteer-test/end': 'Ends volunteer test mode: saves a copy of the database, then undoes the volunteers\' recorded changes, keeping anything staff changed since. system.settings_edit, as maintenance mode.',
+    'POST /api/guests/:id/wifi-email': 'Holds an email to a faculty member with their guest Wi-Fi login and how to connect; Send or Cancel decides. guests.view to reach it; then whoever may give the login.',
     'POST /api/guests/:id/wifi': 'Gives a faculty member the next free guest Wi-Fi login, or takes it back. guests.view to reach it; then guests.edit, or whoever may set their stay -- as checking them in.',
     'POST /api/guests/wifi': 'Adds guest Wi-Fi logins to the list (pasted). guests.manage -- those who manage the Faculty tab.',
     'DELETE /api/guests/wifi/:id': 'Removes a free guest Wi-Fi login from the list. guests.manage.',

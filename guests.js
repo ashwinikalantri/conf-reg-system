@@ -804,6 +804,24 @@ function parseWifiLogins(text) {
 const wifiInstructions = (username, password) =>
   `Wi-Fi: connect to the network "${WIFI_NETWORK}" and sign in with Username: ${username}  Password: ${password}`;
 
+// The same, as an email (owner, 20 Nov 2026), sent by a button on their
+// panel. Their own login; the steps as IT gave them.
+function wifiEmail(g, { username, password, conference = '' } = {}) {
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const cell = 'padding:.55rem .75rem;border-bottom:1px solid #eef3f6';
+  const row = (k, v, mono) => `<tr><td style="${cell};color:#46708c;font-weight:700;width:7rem">${k}</td><td style="${cell};font-weight:700;color:#1e293b${mono ? ';font-family:Consolas,Menlo,monospace;font-size:1rem' : ''}">${esc(v)}</td></tr>`;
+  const body = `<p>Dear ${esc(g.name || 'Colleague')},</p>
+    <p>Here is your own Wi-Fi login for the campus${conference ? ` during ${esc(conference)}` : ''}.</p>
+    <table style="border-collapse:collapse;font-size:.95rem;margin:.75rem 0 1rem;min-width:16rem">${row('Network', WIFI_NETWORK)}${row('Username', username, true)}${row('Password', password, true)}</table>
+    <p><b>To connect</b></p>
+    <ol style="margin:.25rem 0 1rem;padding-left:1.2rem;line-height:1.6">
+      <li>On your phone or laptop, choose the Wi-Fi network <b>${esc(WIFI_NETWORK)}</b>.</li>
+      <li>When the sign-in page opens, enter the username and password above.</li>
+    </ol>
+    <p>The login is for you alone; please do not share it.</p>`;
+  return { subject: `Your Wi-Fi login${conference ? ` for ${conference}` : ''}`, title: 'Your Wi-Fi login', body };
+}
+
 // --- The arrangements email (owner, 20 Nov 2026) ---
 // What has been arranged for one faculty member -- arrival and pickup,
 // stay, departure and drop, and whom to call -- sent only when someone
@@ -980,5 +998,5 @@ module.exports = {
   validateGuestFields, forbiddenChanges, changedFields, autoStatusValues, arrivedMayFollow, ARRIVED, validateVehicle, validateRoom, validateSettings,
   nightsBetween, parseRoomNumbers, MAX_BULK_ROOMS,
   buildBoard, guestsCsv, arrangementsPrint, arrangementsEmail,
-  WIFI_NETWORK, parseWifiLogins, wifiInstructions,
+  WIFI_NETWORK, parseWifiLogins, wifiInstructions, wifiEmail,
 };

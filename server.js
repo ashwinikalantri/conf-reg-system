@@ -2303,6 +2303,10 @@ db.serialize(() => {
       created_at INTEGER NOT NULL
     )
   `);
+  // The login emailed to them (owner, 20 Nov 2026): then it is theirs to
+  // keep -- it cannot be taken back.
+  db.run('ALTER TABLE guest_wifi ADD COLUMN emailed_at INTEGER', () => {});
+  db.run('ALTER TABLE guest_wifi ADD COLUMN emailed_by TEXT', () => {});
   db.run(`
     CREATE TABLE IF NOT EXISTS guest_drivers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16491,6 +16495,11 @@ async function noteHeldEmailSent(row, req) {
   if (m) {
     await dbRun("UPDATE abstracts SET decision_sent_at = ? WHERE id = ? AND status = 'ACCEPTED' AND allocation = ? AND decision_sent_at IS NULL", [Date.now(), Number(m[1]), m[2]]);
   }
+  const w = /^wifi:(\d+):(\d+)$/.exec(row.ref || '');
+  if (w) {
+    await dbRun('UPDATE guest_wifi SET emailed_at = ?, emailed_by = ? WHERE id = ? AND guest_id = ?', [Date.now(), req.session.name || req.session.phone, Number(w[2]), Number(w[1])]);
+    await recordAudit({ req, entityType: 'guest', entityId: w[1], action: 'GUEST_WIFI_EMAILED', oldValue: row.to_name || null, newValue: `Wi-Fi login emailed to ${row.to_address}` });
+  }
   const a = /^guest:(\d+):arrangements:([0-9a-f]{8})$/.exec(row.ref || '');
   if (a) {
     await dbRun('UPDATE guests SET arrangements_sent_at = ?, arrangements_sent_by = ?, arrangements_sent_print = ? WHERE id = ?',
@@ -16603,7 +16612,7 @@ async function guestRowsJoined(where = '', params = []) {
             (r.payment_mode = 'COMPLIMENTARY' AND COALESCE(r.bank_status, '') != 'REJECTED') AS complimentary,
             tc.salutation AS tc_salutation, tc.full_name AS tc_name,
             ac.salutation AS ac_salutation, ac.full_name AS ac_name,
-            w.username AS wifi_username, w.password AS wifi_password
+            w.username AS wifi_username, w.password AS wifi_password, w.emailed_at AS wifi_emailed_at, w.emailed_by AS wifi_emailed_by
        FROM guests g
        LEFT JOIN guest_wifi w ON w.guest_id = g.id
        LEFT JOIN users u ON u.phone_number = g.phone_number
@@ -16718,7 +16727,7 @@ app.get('/api/guests', requirePermission('guests.view'), async (req, res, next) 
       listLabels: guestLib.LIST_LABELS,
       settings,
       coordinators: await guestCoordinatorPool(),
-      wifi: { network: guestLib.WIFI_NETWORK, logins: await dbAll('SELECT id, username, password, guest_id, allotted_at, allotted_by FROM guest_wifi ORDER BY id') },
+      wifi: { network: guestLib.WIFI_NETWORK, logins: await dbAll('SELECT id, username, password, guest_id, allotted_at, allotted_by, emailed_at FROM guest_wifi ORDER BY id') },
       today: istDateString(),
     });
   } catch (err) {
@@ -17366,7 +17375,8 @@ app.post('/api/guests/:id/wifi', requirePermission('guests.view'), async (req, r
     const held = await dbGet('SELECT * FROM guest_wifi WHERE guest_id = ?', [current.id]);
     if (req.body && req.body.undo) {
       if (!held) return res.json({ success: true, changed: 0 });
-      await dbRun('UPDATE guest_wifi SET guest_id = NULL, allotted_at = NULL, allotted_by = NULL WHERE id = ?', [held.id]);
+      if (held.emailed_at) return res.status(400).json({ success: false, error: 'It has been emailed to them, so it stays theirs.' });
+      await dbRun('UPDATE guest_wifi SET guest_id = NULL, allotted_at = NULL, allotted_by = NULL WHERE id = ? AND emailed_at IS NULL', [held.id]);
       await recordAudit({ req, entityType: 'guest', entityId: String(current.id), action: 'GUEST_WIFI_TAKEN_BACK', oldValue: g.name, newValue: `Wi-Fi login ${held.username} taken back` });
       return res.json({ success: true, changed: 1 });
     }
@@ -17385,6 +17395,30 @@ app.post('/api/guests/:id/wifi', requirePermission('guests.view'), async (req, r
       }
     }
     res.status(409).json({ success: false, error: 'Someone else took that login at the same moment. Try again.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Their Wi-Fi login, by email (owner, 20 Nov 2026): a button on their
+// panel, held for Send or Cancel like every staff email. Once sent, the
+// login stays theirs (no Take back).
+app.post('/api/guests/:id/wifi-email', requirePermission('guests.view'), async (req, res, next) => {
+  try {
+    const current = await dbGet('SELECT * FROM guests WHERE id = ?', [req.params.id]);
+    if (!current) return res.status(404).json({ success: false, error: 'Faculty member not found.' });
+    if (!mayGiveWifi(req, current)) return res.status(403).json({ success: false, error: 'Only whoever looks after their stay can email their Wi-Fi login.' });
+    const [g] = await guestRowsJoined('WHERE g.id = ?', [current.id]);
+    const held = await dbGet('SELECT * FROM guest_wifi WHERE guest_id = ?', [current.id]);
+    if (!held) return res.status(400).json({ success: false, error: 'Give them a Wi-Fi login first.' });
+    const to = String(g.email || '').trim();
+    if (!to) return res.status(400).json({ success: false, error: g.linked ? 'Their account has no email address.' : 'No email address for them. Add one with Edit.' });
+    if (!emailEnabled() || !notifyToggle.email) return res.status(400).json({ success: false, error: 'Email is switched off, so nothing can be sent.' });
+    const mail = guestLib.wifiEmail(g, { username: held.username, password: held.password, conference: CONFERENCE.acronym || CONFERENCE.name });
+    await dbRun("UPDATE held_emails SET status = 'CANCELLED', decided_at = ? WHERE status = 'PENDING' AND ref LIKE ?", [Date.now(), `wifi:${current.id}:%`]);
+    const ok = await holdEmailTo(req, to, g.name || null, mail.subject, emailWrap(mail.title, mail.body), `wifi:${current.id}:${held.id}`);
+    if (!ok) return res.status(400).json({ success: false, error: 'Email is switched off, so nothing can be sent.' });
+    res.json({ success: true });
   } catch (err) {
     next(err);
   }
