@@ -21,6 +21,8 @@
           <button type="button" id="cert-issue-all" onclick="issueCertificates('all')" class="hidden min-h-[44px] px-4 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-lg">Issue all due</button>
         </div>
         <div id="cert-ready" class="divide-y divide-slate-100"></div>
+        <!-- Emailing: progress, failures, not yet emailed (renderCertificateEmails). -->
+        <div id="cert-email" class="hidden mt-3 pt-3 border-t border-slate-100 space-y-2 text-sm"></div>
       </section>
 
       <!-- Not yet, and why: each reason a filter. -->

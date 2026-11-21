@@ -1278,7 +1278,10 @@ async function loadAttendanceCard() {
   myCertificates = mine;
   document.getElementById('cert-downloads').classList.toggle('hidden', !mine.length);
   document.getElementById('cert-download-list').innerHTML = mine.map((m) => `
-    <a href="/api/certificates/mine/${encodeURIComponent(m.id)}.pdf" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-lg text-center">Download: ${esc(m.label)}</a>`).join('');
+    <div class="flex flex-col gap-1">
+      <a href="/api/certificates/mine/${encodeURIComponent(m.id)}.pdf" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-lg text-center">Download: ${esc(m.label)}</a>
+      ${m.emailed_at ? `<span class="text-xs text-slate-500 text-center">Emailed to you on ${esc(new Date(m.emailed_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' }))}</span>` : ''}
+    </div>`).join('');
   const c = data.certificate;
   document.getElementById('cert-locked-note').classList.toggle('hidden', !c.locked);
   document.querySelectorAll('#cert-details-form input, #cert-details-form button').forEach((el) => { el.disabled = !!c.locked; });
@@ -17538,12 +17541,13 @@ async function renderCertificates() {
     ['roles', 'Speaker, judge, chair, moderator, panelist', 'From the programme, one per role naming the sessions', issuedOf(['SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST'])],
   ];
   let total = 0;
+  const emailedOf = (scope) => all.reduce((n, a) => n + a.items.filter((i) => i.issueScope === scope && i.issued && i.issued.email_status === 'SENT').length, 0);
   document.getElementById('cert-ready').innerHTML = rows.map(([scope, name, rule, issued]) => {
     const n = due(scope);
     total += n;
-    return `<div class="py-3 grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_7rem_10rem] gap-x-4 gap-y-1 items-center">
+    return `<div class="py-3 grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_9rem_10rem] gap-x-4 gap-y-1 items-center">
       <div class="min-w-0"><p class="font-semibold text-slate-800">${esc(name)}</p><p class="text-sm text-slate-500">${esc(rule)}</p></div>
-      <p class="hidden sm:block text-sm text-slate-500 tabular-nums">${issued} issued</p>
+      <p class="hidden sm:block text-sm text-slate-500 tabular-nums">${issued} issued${issued ? ` · ${emailedOf(scope)} emailed` : ''}</p>
       ${mayIssue ? `<button type="button" onclick="issueCertificates('${scope}')" ${n ? '' : 'disabled'} class="min-h-[44px] px-3 rounded-lg text-sm font-semibold ${n ? 'bg-navy hover:bg-indigo-700 text-white' : 'border border-slate-200 bg-slate-50 text-slate-400'}">${n ? `Issue ${n}` : 'None due'}</button>`
         : `<p class="text-sm font-semibold text-slate-700 tabular-nums">${n} due</p>`}
     </div>`;
@@ -17566,6 +17570,55 @@ async function renderCertificates() {
   }).join('');
   renderCertificateList();
   if (certState.open) renderCertPerson();
+  renderCertificateEmails();
+}
+
+// Emailing (21 Nov 2026): progress while they go, the failed to retry, and
+// those issued but not emailed yet to send.
+let certEmailTimer = null;
+async function renderCertificateEmails() {
+  const box = document.getElementById('cert-email');
+  if (!box) return;
+  let s;
+  try { s = await (await fetch('/api/admin/certificates/email-status')).json(); } catch (e) { return; }
+  if (!s || !s.success) return;
+  const mayIssue = can('certificates.issue');
+  const parts = [];
+  if (s.queued) parts.push(`<p class="font-semibold text-navy">Emailing certificates: ${s.sent} sent, ${s.queued} to go${s.failed ? `, ${s.failed} failed` : ''}…</p>`);
+  else if (s.sent || s.failed) parts.push(`<p class="text-slate-700"><b>${s.sent}</b> emailed${s.failed ? ` · <b class="text-rose-700">${s.failed} failed</b>` : ''}</p>`);
+  if (!s.queued && s.notEmailed && mayIssue) parts.push(`<div class="flex flex-wrap items-center justify-between gap-2"><p class="text-slate-700"><b>${s.notEmailed}</b> issued, not emailed yet.</p>
+    <button type="button" onclick="emailCertificates(null)" class="min-h-[44px] px-4 rounded-lg bg-navy hover:bg-indigo-700 text-white text-sm font-semibold">Email them</button></div>`);
+  if (s.failedList && s.failedList.length) {
+    parts.push(`<div class="space-y-1">${s.failedList.map((f) => `<p class="text-sm text-rose-800">${esc(f.name)} · ${esc(f.cert_no)}: ${esc(f.email_error || 'failed')}</p>`).join('')}
+      ${mayIssue && !s.queued ? '<button type="button" onclick="emailCertificates(null)" class="min-h-[40px] px-3.5 rounded-lg border border-rose-300 bg-white text-rose-800 text-sm font-semibold">Retry the failed</button>' : ''}</div>`);
+  }
+  box.innerHTML = parts.join('');
+  box.classList.toggle('hidden', !parts.length);
+  clearTimeout(certEmailTimer);
+  if (s.queued) certEmailTimer = setTimeout(() => { if (!document.getElementById('section-certificates').classList.contains('hidden')) renderCertificates(); }, 3000);
+}
+
+// Issued now: Send or Cancel. Send emails each their certificates, once.
+async function offerCertificateEmails(ids) {
+  if (!ids || !ids.length) return;
+  const ok = await showConfirm(`Email ${ids.length === 1 ? 'this certificate' : `these ${ids.length} certificates`} to ${ids.length === 1 ? 'its owner' : 'their owners'} now, the PDF attached? Each is emailed once; they can download it again from the portal.`, 'Send', 'Cancel');
+  if (!ok) { showToast('Issued, not emailed. You can email them later from this page.'); renderCertificates(); return; }
+  await emailCertificates(ids);
+}
+async function emailCertificates(ids) {
+  const data = await (await fetch('/api/admin/certificates/email', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ids ? { ids } : { all: true }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not send.');
+  showToast(data.queued ? `Emailing ${data.queued} certificate${data.queued === 1 ? '' : 's'}…` : 'Nothing to email.', 'success');
+  renderCertificates();
+}
+async function resendCertificate(id) {
+  if (!(await showConfirm('Re-send the corrected certificate by email? It can be re-sent once.', 'Send', 'Cancel'))) return;
+  const data = await (await fetch(`/api/admin/certificates/${encodeURIComponent(id)}/resend`, { method: 'POST' })).json();
+  if (!data.success) return showToast(data.error || 'Could not re-send.');
+  showToast('Re-sending…', 'success');
+  renderCertificates();
 }
 
 function setCertWhy(w) {
@@ -17636,8 +17689,11 @@ function renderCertPerson() {
   document.getElementById('cert-person-body').innerHTML = certItems(x).map((it) => {
     const acts = [];
     if (it.issued) {
-      acts.push(`<a href="/api/admin/certificates/${encodeURIComponent(it.issued.id)}.pdf" target="_blank" rel="noopener" class="inline-flex items-center min-h-[40px] px-3.5 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-navy hover:bg-slate-50">Download</a>`);
-      if (mayIssue) acts.push(btn('Correct the name…', `correctCertificate(${Number(it.issued.id)})`), btn('Withdraw…', `revokeCertificate(${Number(it.issued.id)})`, 'risk'));
+      const c = it.issued;
+      acts.push(`<a href="/api/admin/certificates/${encodeURIComponent(c.id)}.pdf" target="_blank" rel="noopener" class="inline-flex items-center min-h-[40px] px-3.5 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-navy hover:bg-slate-50">Download</a>`);
+      if (mayIssue && (!c.email_status || c.email_status === 'FAILED')) acts.push(btn(c.email_status === 'FAILED' ? 'Retry the email' : 'Email it', `offerCertificateEmails([${Number(c.id)}])`, 'main'));
+      if (certState.superAdmin && c.email_status === 'SENT' && !c.resent_at && Number(c.updated_at) > Number(c.emailed_at)) acts.push(btn('Re-send the corrected one', `resendCertificate(${Number(c.id)})`));
+      if (mayIssue) acts.push(btn('Correct the name…', `correctCertificate(${Number(c.id)})`), btn('Withdraw…', `revokeCertificate(${Number(c.id)})`, 'risk'));
     } else {
       // Not issued yet: see it as it will be issued (21 Nov 2026).
       acts.push(`<a href="${certPreviewUrl(x.phone, it.cert)}" target="_blank" rel="noopener" class="inline-flex items-center min-h-[40px] px-3.5 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-navy hover:bg-slate-50">Preview</a>`);
@@ -17650,7 +17706,9 @@ function renderCertPerson() {
       if (it.notMarked && can('attendance.manage')) acts.push(btn('Mark present by hand…', "closeCertPerson(); switchBackendTab('attendance')"));
     }
     const when = it.issued ? `Issued ${fmtAuditTime(it.issued.issued_at)}${it.issued.issued_by ? ` by ${it.issued.issued_by}` : ''}.` : '';
-    const line = it.issued ? `${it.issued.cert_no} · ${when}${it.issued.forced_reason ? ` Forced: ${it.issued.forced_reason}` : ''}`
+    const mailed = !it.issued ? '' : it.issued.email_status === 'SENT' ? ` Emailed ${fmtAuditTime(it.issued.emailed_at)} to ${it.issued.emailed_to}${it.issued.resent_at ? `; the corrected one re-sent ${fmtAuditTime(it.issued.resent_at)}` : ''}.`
+      : it.issued.email_status === 'QUEUED' ? ' Emailing…' : it.issued.email_status === 'FAILED' ? ` Email failed: ${it.issued.email_error || 'unknown'}.` : ' Not emailed yet.';
+    const line = it.issued ? `${it.issued.cert_no} · ${when}${it.issued.forced_reason ? ` Forced: ${it.issued.forced_reason}` : ''}${mailed}`
       : it.override ? `${it.override.decision === 'INCLUDE' ? 'Included' : 'Excluded'} by ${it.override.by_name || 'hand'}: ${it.override.reason}`
         : it.status === 'due' ? 'Qualifies: it goes out with the next issue.' : (it.reason || 'Does not qualify yet.');
     return `<div class="py-4 space-y-1.5">
@@ -17671,7 +17729,8 @@ async function issueCertificatesFor(phone, scope) {
   })).json();
   if (!data.success) return showToast(data.error || 'Could not issue.');
   showToast(data.total ? `Issued ${data.total}.` : 'Nothing was due.', 'success');
-  renderCertificates();
+  await renderCertificates();
+  await offerCertificateEmails(data.ids);
 }
 
 // Force issue (a super admin): any certificate they do not have yet.
@@ -17724,7 +17783,8 @@ async function submitCertForce() {
   if (!data.success) return fail(data.error || 'Could not issue it.');
   closeCertForce();
   showToast(`Issued ${data.certNo}, marked Forced.`, 'success');
-  renderCertificates();
+  await renderCertificates();
+  if (data.id) await offerCertificateEmails([data.id]);
 }
 
 function openCertificateSettings() {
@@ -17766,7 +17826,8 @@ async function issueCertificates(scope) {
       : scope === 'workshop_faculty' ? `Issued ${i.WORKSHOP_FACULTY} workshop faculty certificates.`
         : scope === 'roles' ? `Issued ${i.SPEAKER} speaker, ${i.JUDGE} judge, ${i.CHAIR} chairperson, ${i.MODERATOR} moderator and ${i.PANELIST} panelist certificates.`
           : `Issued ${i.WORKSHOP} workshop certificates.`, 'success');
-  renderCertificates();
+  await renderCertificates();
+  await offerCertificateEmails(data.ids);
 }
 
 // An issued certificate on the list, by id.

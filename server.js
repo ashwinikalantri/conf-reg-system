@@ -642,6 +642,29 @@ async function sendEmail(to, subject, html) {
   }
 }
 
+// The same with files attached (certificates, 21 Nov 2026): { ok, error }.
+async function sendEmailWithAttachments(to, subject, html, attachments) {
+  if ((requestContext.getStore() || {}).volunteerTest) return { ok: true };
+  if (!emailEnabled() || !notifyToggle.email || !sesClient) return { ok: false, error: 'Email is switched off' };
+  if (!to) return { ok: false, error: 'No email address' };
+  try {
+    await sesClient.send(new SendEmailCommand({
+      FromEmailAddress: emailFromFormatted(),
+      Destination: { ToAddresses: [to] },
+      Content: { Simple: {
+        Subject: { Data: subject, Charset: 'UTF-8' }, Body: { Html: { Data: html, Charset: 'UTF-8' } },
+        Attachments: attachments.map((a) => ({ FileName: a.name, RawContent: a.data, ContentType: 'application/pdf', ContentDisposition: 'ATTACHMENT', ContentTransferEncoding: 'BASE64' })),
+      } },
+    }));
+    writeAuditRow('email', to, 'EMAIL_SENT', null, subject, null, null, null).catch(() => {});
+    return { ok: true };
+  } catch (err) {
+    console.error(`Email to ${to} failed:`, err.message);
+    writeAuditRow('email', to, 'EMAIL_FAILED', null, `${subject} — ${err.message}`.slice(0, 300), null, null, null).catch(() => {});
+    return { ok: false, error: String(err.message || 'Failed').slice(0, 200) };
+  }
+}
+
 // Look up a delegate's email and fire a notification (best-effort, async).
 async function notifyDelegate(phone, subject, html) {
   const u = await dbGet('SELECT email FROM users WHERE phone_number = ?', [phone]).catch(() => null);
@@ -2224,6 +2247,16 @@ db.serialize(() => {
   db.run('ALTER TABLE certificates ADD COLUMN detail TEXT', () => {});
   // Forced by a super admin, though they did not qualify (21 Nov 2026): why.
   db.run('ALTER TABLE certificates ADD COLUMN forced_reason TEXT', () => {});
+  // Emailed to the person, once (owner, 21 Nov 2026): QUEUED, SENT or
+  // FAILED; when, to which address, why not; and the one re-send a super
+  // admin may make of a corrected certificate.
+  db.run('ALTER TABLE certificates ADD COLUMN email_status TEXT', () => {});
+  db.run('ALTER TABLE certificates ADD COLUMN email_queued_at INTEGER', () => {});
+  db.run('ALTER TABLE certificates ADD COLUMN emailed_at INTEGER', () => {});
+  db.run('ALTER TABLE certificates ADD COLUMN emailed_to TEXT', () => {});
+  db.run('ALTER TABLE certificates ADD COLUMN email_error TEXT', () => {});
+  db.run('ALTER TABLE certificates ADD COLUMN email_resend INTEGER', () => {});
+  db.run('ALTER TABLE certificates ADD COLUMN resent_at INTEGER', () => {});
   db.run(`
     CREATE TABLE IF NOT EXISTS certificate_overrides (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -9262,7 +9295,7 @@ async function audienceMembers(key, filters = {}) {
     const rows = await dbAll(
       `SELECT c.phone_number, u.salutation, u.full_name, u.email, GROUP_CONCAT(c.cert_no, ', ') AS numbers
          FROM certificates c LEFT JOIN users u ON u.phone_number = c.phone_number
-        WHERE c.revoked_at IS NULL GROUP BY c.phone_number ORDER BY u.full_name`);
+        WHERE c.revoked_at IS NULL AND c.emailed_at IS NULL GROUP BY c.phone_number ORDER BY u.full_name`);
     return rows.map((r) => person(r.phone_number, reminderName(r.salutation, r.full_name), r.email, { detail: r.numbers || '' }));
   }
 
@@ -11014,7 +11047,8 @@ async function certificateCandidates() {
   const overrides = new Map((await dbAll('SELECT phone_number, scope, decision, reason, by_name, at FROM certificate_overrides'))
     .map((o) => [`${o.phone_number}|${o.scope}`, o]));
   const feedback = new Set((await dbAll('SELECT phone_number, option_id FROM workshop_feedback')).map((f) => `${f.phone_number}|${Number(f.option_id)}`));
-  const issued = await dbAll('SELECT id, phone_number, kind, option_id, guest_id, cert_no, name, issued_at, issued_by, forced_reason, revoked_at FROM certificates WHERE revoked_at IS NULL');
+  const issued = await dbAll(`SELECT id, phone_number, kind, option_id, guest_id, cert_no, name, issued_at, issued_by, forced_reason, revoked_at,
+      updated_at, email_status, emailed_at, emailed_to, email_error, resent_at FROM certificates WHERE revoked_at IS NULL`);
   const enrolment = new Map();
   for (const e of await dbAll('SELECT registration_id, option_id FROM registration_options')) {
     if (!enrolment.has(e.registration_id)) enrolment.set(e.registration_id, new Set());
@@ -11604,6 +11638,127 @@ app.post('/api/admin/certificates/override', requirePermission('certificates.iss
   }
 });
 
+// --- Certificates by email (owner, 21 Nov 2026) ---
+// Issued, then Send or Cancel; Send queues them (email_status QUEUED) and a
+// background sender emails each person once, their queued certificates as
+// PDFs in one email, at a steady pace. Once SENT a certificate is never
+// queued again -- save the one re-send a super admin may make after a
+// correction. A failure stays FAILED, to be retried.
+const CERT_EMAIL_GAP_MS = 400;
+let certEmailRunning = false;
+async function certificateEmailAddress(c) {
+  const fac = /^faculty-(\d+)$/.exec(String(c.phone_number || ''));
+  if (fac) {
+    const g = await dbGet('SELECT guest_email FROM guests WHERE id = ?', [fac[1]]);
+    return g && g.guest_email ? String(g.guest_email).trim() : null;
+  }
+  const u = await dbGet('SELECT email FROM users WHERE phone_number = ?', [c.phone_number]);
+  if (u && u.email) return u.email;
+  // Faculty linked to an account with no email of its own: the list's.
+  const g = c.guest_id ? await dbGet('SELECT guest_email FROM guests WHERE id = ?', [c.guest_id]) : null;
+  return g && g.guest_email ? String(g.guest_email).trim() : null;
+}
+function certificateEmailHtml(name, certs, hasPortal, resend) {
+  const list = certs.map((c) => `<li>${escapeHtml(certKindLabel(c))} &middot; ${escapeHtml(c.cert_no)}</li>`).join('');
+  const portal = portalHome();
+  return emailWrap(resend ? 'Your corrected certificate' : (certs.length > 1 ? 'Your certificates' : 'Your certificate'), `
+    <p>Dear ${escapeHtml(name || 'Colleague')},</p>
+    <p>${resend ? 'Your certificate has been corrected. The corrected copy is attached:' : `Thank you for being part of ${escapeHtml(CONFERENCE.acronym || CONFERENCE.name || 'the conference')}. Your ${certs.length > 1 ? 'certificates are' : 'certificate is'} attached:`}</p>
+    <ul>${list}</ul>
+    ${hasPortal ? `<p>You can download ${certs.length > 1 ? 'them' : 'it'} again at any time from the <a href="${portal}">delegate portal</a>.</p>` : ''}
+    <p>Each certificate carries a QR code: anyone can scan it to check that it is genuine.</p>`);
+}
+async function runCertificateEmails() {
+  if (certEmailRunning) return;
+  certEmailRunning = true;
+  try {
+    for (;;) {
+      const first = await dbGet("SELECT phone_number FROM certificates WHERE email_status = 'QUEUED' AND revoked_at IS NULL ORDER BY email_queued_at, id LIMIT 1");
+      if (!first) break;
+      const certs = await dbAll("SELECT * FROM certificates WHERE email_status = 'QUEUED' AND revoked_at IS NULL AND phone_number = ? ORDER BY id", [first.phone_number]);
+      const to = await certificateEmailAddress(certs[0]);
+      const resend = certs.every((c) => Number(c.email_resend) === 1);
+      const name = certs[0].name;
+      let result;
+      if (!to) result = { ok: false, error: 'No email address' };
+      else {
+        const files = [];
+        for (const c of certs) files.push({ name: certFileName(c), data: await certificatePdf(c) });
+        const hasPortal = !/^faculty-\d+$/.test(String(first.phone_number));
+        const what = certs.length > 1 ? 'certificates' : 'certificate';
+        result = await sendEmailWithAttachments(to, `${resend ? 'Your corrected' : 'Your'} ${CONFERENCE.acronym || 'conference'} ${what}`, certificateEmailHtml(name, certs, hasPortal, resend), files);
+      }
+      const now = Date.now();
+      for (const c of certs) {
+        if (result.ok) {
+          await dbRun(`UPDATE certificates SET email_status = 'SENT', emailed_at = COALESCE(emailed_at, ?), emailed_to = ?, email_error = NULL,
+              resent_at = CASE WHEN email_resend = 1 THEN ? ELSE resent_at END, email_resend = NULL WHERE id = ?`, [now, to, now, c.id]);
+        } else {
+          // A re-send that failed: back to SENT (the first one stands), the error kept.
+          await dbRun(`UPDATE certificates SET email_status = CASE WHEN email_resend = 1 THEN 'SENT' ELSE 'FAILED' END, email_error = ?, email_resend = NULL WHERE id = ?`, [result.error, c.id]);
+        }
+      }
+      await writeAuditRow('certificate', certs.map((c) => c.cert_no).join(', '), result.ok ? 'CERTIFICATE_EMAILED' : 'CERTIFICATE_EMAIL_FAILED',
+        null, result.ok ? `to ${to}${resend ? ' (corrected copy)' : ''}` : result.error, null, 'System', 'SYSTEM').catch(() => {});
+      await new Promise((r) => setTimeout(r, CERT_EMAIL_GAP_MS));
+    }
+  } catch (err) {
+    console.error('Certificate emails stopped:', err.message);
+  } finally {
+    certEmailRunning = false;
+  }
+}
+// Anything queued when the server last stopped carries on.
+setTimeout(() => { runCertificateEmails(); }, 15000);
+
+// Send (after Issue's popup): ids, or every issued one not yet emailed
+// (all: true; the failed included). Never one already SENT.
+app.post('/api/admin/certificates/email', requirePermission('certificates.issue'), async (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
+    if (!req.body.all && !ids.length) return res.status(400).json({ success: false, error: 'Which certificates?' });
+    const where = "revoked_at IS NULL AND (email_status IS NULL OR email_status = 'FAILED')";
+    const rows = req.body.all ? await dbAll(`SELECT id FROM certificates WHERE ${where}`)
+      : await dbAll(`SELECT id FROM certificates WHERE ${where} AND id IN (${ids.map(() => '?').join(',')})`, ids);
+    const now = Date.now();
+    for (const r of rows) await dbRun("UPDATE certificates SET email_status = 'QUEUED', email_queued_at = ?, email_error = NULL WHERE id = ?", [now, r.id]);
+    await recordAudit({ req, entityType: 'certificate', entityId: 'email', action: 'CERTIFICATE_EMAILS_QUEUED', oldValue: null, newValue: `${rows.length} queued` });
+    runCertificateEmails();
+    res.json({ success: true, queued: rows.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The one re-send of a corrected certificate (a super admin, the role).
+app.post('/api/admin/certificates/:id/resend', requirePermission('certificates.issue'), async (req, res, next) => {
+  try {
+    if (req.session.role !== 'SUPER_ADMIN') return res.status(403).json({ success: false, error: 'Only a super admin can re-send a certificate.' });
+    const c = await dbGet('SELECT * FROM certificates WHERE id = ? AND revoked_at IS NULL', [req.params.id]);
+    if (!c) return res.status(404).json({ success: false, error: 'Not found.' });
+    if (c.email_status !== 'SENT' || !c.emailed_at) return res.status(409).json({ success: false, error: 'It has not been emailed yet: send it, not re-send.' });
+    if (c.resent_at) return res.status(409).json({ success: false, error: 'It has been re-sent once already. It can be downloaded from the portal.' });
+    if (!(Number(c.updated_at) > Number(c.emailed_at))) return res.status(409).json({ success: false, error: 'It has not been corrected since it was emailed.' });
+    await dbRun("UPDATE certificates SET email_status = 'QUEUED', email_resend = 1, email_queued_at = ? WHERE id = ?", [Date.now(), c.id]);
+    await recordAudit({ req, entityType: 'certificate', entityId: c.id, action: 'CERTIFICATE_RESEND_QUEUED', oldValue: null, newValue: c.cert_no });
+    runCertificateEmails();
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Progress, for the page while emails go out.
+app.get('/api/admin/certificates/email-status', requirePermission('certificates.view'), async (req, res, next) => {
+  try {
+    const counts = Object.fromEntries((await dbAll("SELECT COALESCE(email_status, 'NONE') AS s, COUNT(*) AS n FROM certificates WHERE revoked_at IS NULL GROUP BY s")).map((r) => [r.s, r.n]));
+    const failed = await dbAll(`SELECT c.id, c.cert_no, c.name, c.email_error FROM certificates c WHERE c.revoked_at IS NULL AND c.email_status = 'FAILED' ORDER BY c.id LIMIT 50`);
+    res.json({ success: true, queued: counts.QUEUED || 0, sent: counts.SENT || 0, failed: counts.FAILED || 0, notEmailed: counts.NONE || 0, failedList: failed, running: certEmailRunning });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // One person's certificate as it will be issued (owner, 21 Nov 2026: "a
 // preview option to see the certificate that will be issued"): their name,
 // council number, workshop or sessions, on the current design, marked
@@ -11675,7 +11830,8 @@ app.post('/api/admin/certificates/force', requirePermission('certificates.issue'
     await dbRun('UPDATE certificates SET forced_reason = ? WHERE cert_no = ?', [reason, certNo]);
     await recordAudit({ req, entityType: 'certificate', entityId: certNo, action: 'CERTIFICATE_FORCED', oldValue: null,
       newValue: `${certNo} · ${CERT_KIND_LABEL[kind]}${workshop ? ` (${workshop.name})` : ''} · ${person.name} · ${reason}` });
-    res.json({ success: true, certNo });
+    const row = await dbGet('SELECT id FROM certificates WHERE cert_no = ?', [certNo]);
+    res.json({ success: true, certNo, id: row ? row.id : null });
   } catch (err) {
     next(err);
   }
@@ -11690,6 +11846,7 @@ app.post('/api/admin/certificates/issue', requirePermission('certificates.issue'
     if (!scope) return res.status(400).json({ success: false, error: 'Choose what to issue.' });
     const only = Array.isArray(req.body.phones) && req.body.phones.length ? new Set(req.body.phones.map(String)) : null;
     const counts = Object.fromEntries(CERT_KINDS.map((k) => [k, 0]));
+    const startedAt = Date.now();
     const doing = (s) => scope === 'all' || scope === s;
     for (const p of await certificateCandidates()) {
       if (only && !only.has(p.phone)) continue;
@@ -11723,7 +11880,9 @@ app.post('/api/admin/certificates/issue', requirePermission('certificates.issue'
         }
       }
     }
-    res.json({ success: true, issued: counts, total: Object.values(counts).reduce((a, b) => a + b, 0) });
+    // What was issued now, for the Send or Cancel that follows.
+    const ids = startedAt ? (await dbAll('SELECT id FROM certificates WHERE issued_at >= ? AND issued_by = ? ORDER BY id', [startedAt, req.session.name || req.session.phone])).map((r) => r.id) : [];
+    res.json({ success: true, issued: counts, total: Object.values(counts).reduce((a, b) => a + b, 0), ids });
   } catch (err) {
     next(err);
   }
@@ -11787,7 +11946,7 @@ app.post('/api/admin/certificates/:id/revoke', requirePermission('certificates.i
 // --- The delegate's own ---
 app.get('/api/certificates/mine', requireAuth, async (req, res, next) => {
   try {
-    const rows = await dbAll('SELECT id, cert_no, kind, workshop_name, issued_at FROM certificates WHERE phone_number = ? AND revoked_at IS NULL ORDER BY id', [req.session.phone]);
+    const rows = await dbAll('SELECT id, cert_no, kind, workshop_name, issued_at, emailed_at FROM certificates WHERE phone_number = ? AND revoked_at IS NULL ORDER BY id', [req.session.phone]);
     res.json({ certificates: rows.map((c) => ({ ...c, label: certKindLabel(c) })) });
   } catch (err) {
     next(err);
