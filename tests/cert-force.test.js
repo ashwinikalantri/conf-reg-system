@@ -76,6 +76,21 @@ const N = String(Date.now()).slice(-7);
     } else {
       check('the fixture has a workshop', false);
     }
+    // A registered delegate chosen as a judge on a poster screen (21 Nov 2026): a Judge certificate.
+    {
+      const hall2 = (await call('POST', '/api/admin/programme/halls', { name: `Judge Hall ${N}` }, admin)).body;
+      const ps = (await call('POST', '/api/admin/programme/sessions', { hallId: hall2.id, date: '2020-01-02', start: '12:00', end: '13:00', title: `Poster presentations ${N}`, label: 'Presentations', counts: true }, admin)).body;
+      await db.run('INSERT INTO poster_judges (session_id, screen_id, person_key, name, position, created_at) VALUES (?, 999999, ?, ?, 0, ?)', [ps.id, phone, `Force Test ${N}`, Date.now()]);
+      const j = ((await me()).roles || []).find((r) => r.kind === 'JUDGE');
+      check('a delegate judging a poster screen: a Judge certificate due, naming the session', j && j.eligible && j.sessions.includes(`Poster presentations ${N}`), (await me()).roles);
+      const iss = await call('POST', '/api/admin/certificates/issue', { scope: 'roles', phones: [phone] }, admin);
+      check('...issued with the role certificates', iss.body.issued.JUDGE === 1, iss.body);
+      await db.run('DELETE FROM poster_judges WHERE session_id = ?', [ps.id]);
+      await call('DELETE', `/api/admin/programme/sessions/${ps.id}`, null, admin);
+    }
+    const js0 = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
+    check('the chairs of papers and posters are called Judges where sessions are edited and listed', /const heading = judged \? 'Judges' : PS_ROLE_LABELS\[role\];/.test(js0)
+      && /\$\{progChairLabel\(s\)\}: \$\{s\.chairs\}/.test(js0));
     const view = fs.readFileSync(appFile('views', 'admin', 'sections', 'certificates.ejs'), 'utf8');
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
     check('the page: Ready to issue, Not yet and why, People with Open, the person panel and the force dialog', ['id="cert-ready"', 'id="cert-why"', 'id="cert-list"', 'id="cert-person"', 'id="cert-force"', 'id="cert-issue-all"']

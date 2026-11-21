@@ -11101,7 +11101,35 @@ async function certificateCandidates() {
     if (!byKind.has(kind)) byKind.set(kind, []);
     if (!byKind.get(kind).some((x) => x.id === ses.id)) byKind.get(kind).push(ses);
   }
+  // Judges chosen on the poster screens (owner, 21 Nov 2026: "they need to
+  // be given certificates for being judges"): a Judge certificate naming
+  // the poster session(s) -- faculty through their Faculty-list entry, a
+  // registered delegate under their own account.
+  const delegateJudging = new Map();   // phone -> [session]
+  for (const j of await dbAll('SELECT session_id, person_key FROM poster_judges ORDER BY session_id, position').catch(() => [])) {
+    const ses = sessionById.get(j.session_id);
+    if (!ses) continue;
+    const fac = /^faculty-(\d+)$/.exec(String(j.person_key));
+    const gid = fac ? Number(fac[1]) : (facultyByPhone.has(j.person_key) ? facultyByPhone.get(j.person_key).guestId : null);
+    if (gid != null && liveGuests.has(gid)) {
+      if (!rolesByGuest.has(gid)) rolesByGuest.set(gid, new Map());
+      const byKind = rolesByGuest.get(gid);
+      if (!byKind.has('JUDGE')) byKind.set('JUDGE', []);
+      if (!byKind.get('JUDGE').some((x) => x.id === ses.id)) byKind.get('JUDGE').push(ses);
+    } else if (!fac) {
+      if (!delegateJudging.has(j.person_key)) delegateJudging.set(j.person_key, []);
+      if (!delegateJudging.get(j.person_key).some((x) => x.id === ses.id)) delegateJudging.get(j.person_key).push(ses);
+    }
+  }
   const ordered = (list) => [...list].sort((a, b) => `${a.session_date} ${a.start_time}`.localeCompare(`${b.session_date} ${b.start_time}`));
+  const delegateJudgeRoles = (phone) => {
+    const list = delegateJudging.get(phone);
+    if (!list) return [];
+    const ov = overrides.get(`${phone}|role:JUDGE`) || null;
+    const excluded = !!(ov && ov.decision === 'EXCLUDE');
+    return [{ kind: 'JUDGE', key: phone, sessions: [...new Set(ordered(list).map((x) => x.title))], eligible: !excluded, whyNot: excluded ? `Excluded: ${ov.reason}` : null, override: ov,
+      issued: issued.find((c) => c.kind === 'JUDGE' && c.phone_number === phone && !c.guest_id) || null }];
+  };
   const rolesFor = (guestId) => {
     const byKind = rolesByGuest.get(guestId);
     if (!byKind) return [];
@@ -11196,7 +11224,7 @@ async function certificateCandidates() {
       conference: { kind: confKind, whyNot: confWhyNot, override: ov, facultyOnly, issued: myIssued.find((c) => ['MMC', 'NURSING', 'CONF'].includes(c.kind)) || null },
       nursingCategory: (nursing.categories || []).includes(r.category_key),
       workshops: ws, faculty: facultyByPhone.get(r.phone_number) || null,
-      roles: facultyByPhone.has(r.phone_number) ? rolesFor(facultyByPhone.get(r.phone_number).guestId) : [],
+      roles: facultyByPhone.has(r.phone_number) ? rolesFor(facultyByPhone.get(r.phone_number).guestId) : delegateJudgeRoles(r.phone_number),
       workshopFaculty: workshopFacultyFor(r.phone_number),
     };
   });
@@ -11611,7 +11639,11 @@ app.post('/api/admin/certificates/override', requirePermission('certificates.iss
     // A role or a workshop's faculty is earned by being in the programme or
     // on the roster: it can only be withheld.
     if ((roleScope || wfScope) && decision === 'INCLUDE') return res.status(400).json({ success: false, error: 'They receive it already, from the programme.' });
-    if (roleScope || (wfScope && /^faculty-\d+$/.test(phone))) {
+    // A delegate judging posters (not on the Faculty list) is kept under
+    // their own account (21 Nov 2026).
+    if (roleScope && !/^faculty-\d+$/.test(phone)) {
+      if (!(await attendingRegistration(phone))) return res.status(404).json({ success: false, error: 'No registration for that person.' });
+    } else if (roleScope || (wfScope && /^faculty-\d+$/.test(phone))) {
       const m = /^faculty-(\d+)$/.exec(phone);
       if (!m || !(await dbGet('SELECT id FROM guests WHERE id = ?', [m[1]]))) return res.status(404).json({ success: false, error: 'Not on the Faculty list.' });
     } else if (scope === 'FAC') {
@@ -17466,7 +17498,8 @@ async function guestRowsJoined(where = '', params = []) {
   theirs.sort(programmeOrder);
   for (const g of out) {
     g.sessions = theirs.filter((t) => t.guest_id === g.id)
-      .map((t) => ({ role: t.role === 'chair' ? 'Chair' : 'Speaker', title: t.title, date: t.date, start: t.start, end: t.end, hall: t.hall }));
+      // Named as on their certificates: Judge for papers and posters (21 Nov 2026).
+      .map((t) => ({ role: { CHAIR: 'Chair', JUDGE: 'Judge', MODERATOR: 'Moderator', PANELIST: 'Panelist' }[certRoleKind(t, t.role)] || 'Speaker', title: t.title, date: t.date, start: t.start, end: t.end, hall: t.hall }));
   }
   // A guest not yet linked whose typed phone or email belongs to a delegate
   // account: offered as the account to link, never linked by itself.

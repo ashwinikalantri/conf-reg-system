@@ -16948,7 +16948,7 @@ function renderProgrammeSessions() {
       <span class="w-28 shrink-0 text-xs text-slate-500 tabular-nums pt-0.5">${esc(sessionTimes(s))}</span>
       <span class="flex-1 min-w-0">
         <span class="block text-sm text-slate-800"><span class="text-[10px] bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full font-bold mr-1">${esc(s.hall)}</span>${esc(s.label ? `${s.label}: ` : '')}<b>${esc(s.title)}</b></span>
-        <span class="block text-xs text-slate-500 truncate">${esc([s.speakers, s.chairs ? `Chair: ${s.chairs}` : ''].filter(Boolean).join(' · '))}</span>
+        <span class="block text-xs text-slate-500 truncate">${esc([s.speakers, s.chairs ? `${progChairLabel(s)}: ${s.chairs}` : ''].filter(Boolean).join(' · '))}</span>
         <span class="block text-[11px] mt-0.5">${s.counts ? `<span class="text-emerald-700 font-semibold">Takes attendance · ${s.present} present</span>` : '<span class="text-slate-400">No attendance</span>'}${s.meal ? ' · <span class="text-gold-700 font-semibold">Meal: scanned at the counter</span>' : ''}${s.optionName ? ` · <span class="text-indigo-700">${s.workshop ? 'Workshop' : 'Practice'}: ${esc(s.optionName)}</span>` : ''}</span>
       </span>
       <button type="button" onclick="editProgrammeSession(${Number(s.id)})" class="shrink-0 px-2.5 py-1 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700">Edit</button>
@@ -17065,10 +17065,13 @@ function renderSessionPeople(role) {
       : `<span class="inline-flex items-center gap-1 rounded-full bg-navy text-white text-xs font-semibold pl-2.5 pr-1 py-1">${esc(p.name)}${x(i, p.name)}</span>`)
     : `<span class="inline-flex items-center gap-1 rounded-full border border-dashed border-slate-400 bg-slate-50 text-slate-700 text-xs pl-2.5 pr-1 py-1" title="Not on the faculty list">${esc(p.text)}${/^and\b/i.test(p.text) ? ''
       : ` <button type="button" onclick="startNewFaculty('${role}', ${i})" class="text-[11px] font-semibold text-indigo-700 underline">Add to faculty</button>`}${x(i, p.text)}</span>`);
-  box.innerHTML = `<p class="text-[11px] font-semibold text-slate-600 mb-1.5">${PS_ROLE_LABELS[role]}</p>
+  // Papers and posters are judged (21 Nov 2026): their chairs are Judges.
+  const judged = role === 'chairs' && /award|presentation/i.test(`${(document.getElementById('ps-label') || {}).value || ''} ${(document.getElementById('ps-title') || {}).value || ''}`);
+  const heading = judged ? 'Judges' : PS_ROLE_LABELS[role];
+  box.innerHTML = `<p class="text-[11px] font-semibold text-slate-600 mb-1.5">${heading}</p>
     <div class="flex flex-wrap gap-1.5 mb-2">${psPeople[role].map(chip).join('') || '<span class="text-xs text-slate-400">None yet</span>'}</div>
     <input id="ps-find-${role}" autocomplete="off" oninput="findSessionPerson('${role}')" onkeydown="if (event.key === 'Enter') event.preventDefault()"
-      placeholder="Search the faculty list" aria-label="Add to ${PS_ROLE_LABELS[role]}" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm outline-none">
+      placeholder="Search the faculty list" aria-label="Add to ${heading}" class="w-full h-9 px-2.5 border border-slate-300 rounded-lg text-sm outline-none">
     <div id="ps-found-${role}" class="mt-1.5 space-y-1"></div>`;
 }
 
