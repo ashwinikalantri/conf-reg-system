@@ -112,7 +112,9 @@ check('labels in sentence case, numbers bold not black', !/uppercase/.test(overv
   ] });
   const html = el('overview-now-halls').innerHTML;
   check('on the day: each hall open for attendance, how many marked', !el('overview-now').classList.contains('hidden') && /Main Auditorium · until/.test(html) && /41 <span[^>]*>marked present/.test(html));
-  check('...a door with nobody marked after ten minutes is flagged', /border-amber-300 bg-amber-50[\s\S]*?Hall B[\s\S]*?No one marked yet: check the door volunteer/.test(html));
+  // Just after midnight a session cannot have started 20 minutes earlier
+  // today: the check needs ten minutes gone, so it is only made after 00:20.
+  check('...a door with nobody marked after ten minutes is flagged', nowMin < 20 || /border-amber-300 bg-amber-50[\s\S]*?Hall B[\s\S]*?No one marked yet: check the door volunteer/.test(html));
   check('...sessions not open are left out', !/Later talk/.test(html));
   sb.__f.renderOverviewNow({ sessions: [] });
   check('...and with none open, no band', el('overview-now').classList.contains('hidden'));

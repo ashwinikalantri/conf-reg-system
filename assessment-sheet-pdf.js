@@ -68,16 +68,19 @@ function renderAssessmentSheets(sheets, meta = {}) {
         // Venue, session and the judge, as label and value, in a quiet card.
         // The judges' names are not printed (owner, 21 Nov 2026): each
         // writes their own.
-        const cardH = 50;
+        // Venue and session wrap, never cut short (owner, 21 Nov 2026).
+        const inner = W - 24;
+        const wV = inner * 0.24;
+        const wS = inner * 0.46;
+        doc.font('bold').fontSize(10.5);
+        const valH = Math.max(doc.heightOfString(sheet.venue || '', { width: wV - 10 }), doc.heightOfString(sheet.session || '', { width: wS - 10 }), 14);
+        const cardH = Math.max(50, 21 + valH + 12);
         doc.roundedRect(X0, y, W, cardH, 8).fillAndStroke(ZEBRA, LINE);
         const field = (label, value, x, yy, w, blank) => {
           doc.font('bold').fontSize(7.5).fillColor(MUTED).text(label.toUpperCase(), x, yy, { width: w, characterSpacing: 0.6, lineBreak: false });
           if (blank) doc.moveTo(x, yy + 26).lineTo(x + w - 10, yy + 26).lineWidth(0.8).strokeColor(NAVY).stroke();
-          else doc.font('bold').fontSize(10.5).fillColor(INK).text(value || '', x, yy + 11, { width: w - 10, height: 14, ellipsis: true, lineBreak: false });
+          else doc.font('bold').fontSize(10.5).fillColor(INK).text(value || '', x, yy + 11, { width: w - 10 });
         };
-        const inner = W - 24;
-        const wV = inner * 0.24;
-        const wS = inner * 0.46;
         field('Venue', sheet.venue, X0 + 12, y + 10, wV);
         field('Session', sheet.session, X0 + 12 + wV, y + 10, wS);
         field('Name of the judge', '', X0 + 12 + wV + wS, y + 10, inner - wV - wS, true);
