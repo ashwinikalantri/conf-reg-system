@@ -204,6 +204,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     // programme.manage (Super Admin only). New capability: nothing recorded
     // attendance before, beyond the one desk check-in.
     'GET /api/attendance/halls': 'Each hall and the session on there now, for the volunteer at its door. attendance.mark.',
+    'GET /api/attendance/search': 'People whose name or ID contains what the volunteer at the door is typing (name, ID, category only), to tap. attendance.mark.',
     'POST /api/attendance/scan': 'Marks a delegate present, by their badge, at the session on in the chosen hall; a workshop takes its enrolled, others only with a recorded reason. attendance.mark.',
     'GET /api/attendance/summary': 'How many were present at each session, and how many have completed. attendance.view.',
     'GET /api/attendance/roster': 'Who was present at one session (and, for a workshop, who enrolled was not). Names and registration numbers only. attendance.view.',

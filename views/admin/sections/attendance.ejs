@@ -12,27 +12,35 @@
           <p class="text-xs text-slate-500">Delegates scan the QR at a hall's door, or a volunteer scans their badge: they are marked present at the session on in that hall now.</p>
         </div>
 
-        <!-- At a door: the hall, what is on, then scan or type. -->
+        <!-- At a door, phone first (21 Nov 2026): the hall and what is on;
+             Scan badges, the big button; or find them by typing, the matches
+             listed as you type, one tap to mark. 16px inputs so a phone
+             does not zoom; 44px+ to tap. -->
         <div id="att-take" class="hidden bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
           <label for="att-hall" class="block text-xs font-semibold text-slate-600 mb-1">Hall</label>
-          <select id="att-hall" onchange="onAttendanceHallChange()" class="w-full h-11 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
+          <select id="att-hall" onchange="onAttendanceHallChange()" class="w-full h-12 px-3 border border-slate-300 rounded-xl text-base sm:text-sm bg-white"></select>
           <div id="att-now" class="mt-2 text-sm"></div>
-          <form onsubmit="event.preventDefault(); attendanceSignIn(document.getElementById('att-id').value)" class="mt-3 flex flex-col sm:flex-row gap-2">
-            <input id="att-id" autocomplete="off" placeholder="Name, ID, mobile or email" class="flex-1 min-w-0 h-11 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
-            <div class="flex gap-2">
-              <button type="submit" class="flex-1 sm:flex-none h-11 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Mark present</button>
-              <button type="button" onclick="openAttendanceScanner()" class="flex-1 sm:flex-none h-11 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Scan</button>
-            </div>
-          </form>
-          <!-- A name matching several people: pick one (showAttendancePicker). -->
-          <div id="att-pick" class="hidden mt-3"></div>
+          <button type="button" onclick="openAttendanceScanner()" class="mt-3 w-full h-14 inline-flex items-center justify-center gap-2 bg-navy hover:bg-indigo-700 text-white font-bold text-base rounded-xl">
+            <svg aria-hidden="true" class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 7V5a1 1 0 011-1h2M17 4h2a1 1 0 011 1v2M20 17v2a1 1 0 01-1 1h-2M7 20H5a1 1 0 01-1-1v-2M8 8h3v3H8zM13 13h3v3h-3zM13 8h3M8 13v3"/></svg>
+            Scan badges
+          </button>
           <!-- The last result, large enough to read at arm's length. -->
-          <div id="att-result" class="hidden mt-3 rounded-xl px-4 py-3 border"></div>
+          <div id="att-result" class="hidden mt-3 rounded-xl px-4 py-3 border" role="status" aria-live="polite"></div>
           <!-- A workshop: someone not enrolled is let in only with a reason. -->
           <form id="att-notenrolled" onsubmit="event.preventDefault(); attendanceLetIn()" class="hidden mt-2 flex flex-col sm:flex-row gap-2">
-            <input id="att-notenrolled-reason" maxlength="200" placeholder="Reason to let them in (e.g. swapped with a colleague)" class="flex-1 min-w-0 h-10 px-3 border border-amber-300 rounded-lg text-sm bg-white outline-none">
-            <button type="submit" class="h-10 px-4 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-sm rounded-lg">Let in</button>
+            <input id="att-notenrolled-reason" maxlength="200" placeholder="Reason to let them in (e.g. swapped with a colleague)" class="w-full sm:flex-1 min-w-0 h-12 px-3 border border-amber-300 rounded-xl text-base sm:text-sm bg-white outline-none">
+            <button type="submit" class="h-12 px-5 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-base sm:text-sm rounded-xl">Let in</button>
           </form>
+          <form onsubmit="event.preventDefault(); attendanceSignIn(document.getElementById('att-id').value)" class="mt-4">
+            <label for="att-id" class="block text-xs font-semibold text-slate-600 mb-1">Or find them</label>
+            <div class="flex gap-2">
+              <input id="att-id" type="search" oninput="onAttendanceTyping()" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"
+                placeholder="Name, ID or mobile" class="flex-1 min-w-0 h-12 px-3 border border-slate-300 rounded-xl text-base sm:text-sm bg-white outline-none focus:border-navy">
+              <button type="submit" class="shrink-0 h-12 px-5 border border-navy text-navy hover:bg-slate-50 font-semibold text-base sm:text-sm rounded-xl">Mark</button>
+            </div>
+          </form>
+          <!-- The matches as they type, or a name that is several people: tap one (showAttendancePicker). -->
+          <div id="att-pick" class="hidden mt-2"></div>
         </div>
 
         <!-- Counts per session. -->
@@ -41,7 +49,7 @@
             <h3 class="text-sm font-bold text-slate-800">Present, session by session</h3>
             <span id="att-completed" class="text-xs font-semibold text-emerald-700"></span>
           </div>
-          <select id="att-day" onchange="renderAttendanceSummary()" aria-label="Day" class="mb-3 h-10 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
+          <select id="att-day" onchange="renderAttendanceSummary()" aria-label="Day" class="mb-3 w-full sm:w-auto h-11 px-3 border border-slate-300 rounded-xl text-base sm:text-sm bg-white"></select>
           <div id="att-summary" class="divide-y divide-slate-100"></div>
         </div>
 
@@ -49,21 +57,24 @@
         <div id="att-roster-card" class="hidden bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
           <h3 class="text-sm font-bold text-slate-800 mb-3">Who was present</h3>
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
-            <select id="att-roster-session" onchange="loadAttendanceRoster()" aria-label="Session" class="sm:col-span-3 h-10 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
-            <select id="att-roster-filter" onchange="renderAttendanceRoster()" aria-label="Show" class="h-10 px-2 border border-slate-300 rounded-lg text-sm bg-white">
+            <select id="att-roster-session" onchange="loadAttendanceRoster()" aria-label="Session" class="sm:col-span-3 h-11 px-3 border border-slate-300 rounded-xl text-base sm:text-sm bg-white"></select>
+            <select id="att-roster-filter" onchange="renderAttendanceRoster()" aria-label="Show" class="h-11 px-3 border border-slate-300 rounded-xl text-base sm:text-sm bg-white">
               <option value="">Everyone</option>
               <option value="in">Present</option>
               <option value="out">Enrolled, not present</option>
             </select>
-            <input id="att-roster-search" type="search" oninput="renderAttendanceRoster()" placeholder="Search name or ID" class="sm:col-span-2 h-10 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+            <input id="att-roster-search" type="search" oninput="renderAttendanceRoster()" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Search name or ID" class="sm:col-span-2 h-11 px-3 border border-slate-300 rounded-xl text-base sm:text-sm bg-white outline-none">
           </div>
-          <form id="att-manual" onsubmit="event.preventDefault(); markAttendanceByHand()" class="hidden mb-3 flex flex-col sm:flex-row gap-2">
-            <input id="att-manual-id" autocomplete="off" placeholder="Mark someone present by hand: name, ID, mobile or email" class="flex-1 min-w-0 h-10 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
-            <button type="submit" class="h-10 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Mark present</button>
+          <form id="att-manual" onsubmit="event.preventDefault(); markAttendanceByHand()" class="hidden mb-3">
+            <label for="att-manual-id" class="block text-xs font-semibold text-slate-600 mb-1">Mark someone present by hand</label>
+            <div class="flex gap-2">
+              <input id="att-manual-id" type="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="Name, ID, mobile or email" class="flex-1 min-w-0 h-11 px-3 border border-slate-300 rounded-xl text-base sm:text-sm bg-white outline-none">
+              <button type="submit" class="shrink-0 h-11 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-base sm:text-sm rounded-xl">Mark</button>
+            </div>
           </form>
           <div id="att-manual-pick" class="hidden mb-3"></div>
           <p id="att-roster-count" class="text-xs text-slate-500 mb-2"></p>
-          <div id="att-roster" class="border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-[32rem] overflow-y-auto text-sm"></div>
+          <div id="att-roster" class="border border-slate-200 rounded-xl divide-y divide-slate-100 sm:max-h-[32rem] sm:overflow-y-auto text-sm"></div>
         </div>
       </div>
 
@@ -72,11 +83,11 @@
     <!-- The camera, for signing people in one after another. -->
     <div id="modal-att-scan" class="hidden fixed inset-0 bg-slate-900/80 flex justify-center items-stretch sm:items-center p-0 sm:p-4 z-50">
       <div class="bg-white max-w-md w-full sm:rounded-2xl shadow-card flex flex-col h-full sm:h-auto">
-        <div class="p-4 border-b border-slate-100 flex items-center gap-2">
-          <p id="att-scan-event" class="font-bold text-slate-800 text-sm flex-1"></p>
-          <button type="button" onclick="closeAttendanceScanner()" class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-semibold text-slate-700">Done</button>
+        <div class="p-3 border-b border-slate-100 flex items-center gap-2" style="padding-top: max(0.75rem, env(safe-area-inset-top))">
+          <p id="att-scan-event" class="font-bold text-slate-800 text-sm flex-1 min-w-0"></p>
+          <button type="button" onclick="closeAttendanceScanner()" class="shrink-0 h-11 px-5 bg-navy text-white rounded-xl text-base font-semibold">Done</button>
         </div>
         <div id="att-scan-reader" class="w-full bg-black flex-1 sm:flex-none sm:min-h-[18rem]"></div>
-        <div id="att-scan-result" class="p-4 text-center text-sm font-semibold text-slate-600">Point the camera at a desk pass.</div>
+        <div id="att-scan-result" role="status" aria-live="polite" class="p-4 text-center text-base font-semibold text-slate-600" style="padding-bottom: max(1rem, env(safe-area-inset-bottom))">Point the camera at a badge.</div>
       </div>
     </div>

@@ -16532,6 +16532,7 @@ async function attendanceSignIn(identifier, notEnrolledReason) {
     body: JSON.stringify({ identifier: id, hallId: Number(hallId), notEnrolledReason: notEnrolledReason || undefined }),
   });
   const data = await res.json();
+  attTypingSeq++;
   showAttendancePicker('att-pick', data.candidates, (key) => attendanceSignIn(key));
   if (data.candidates) return data;
   if (data.success) {
@@ -16610,8 +16611,8 @@ function renderAttendanceSummary() {
     <div class="py-2">
       <p class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">${esc(hall)}</p>
       ${list.filter((x) => x.hall === hall).map((x) => `
-        <button type="button" onclick="showAttendanceRoster(${Number(x.id)})" class="w-full text-left flex items-center gap-3 py-1.5 hover:bg-slate-50 rounded">
-          <span class="w-28 shrink-0 text-xs text-slate-500 tabular-nums">${esc(sessionTimes(x))}</span>
+        <button type="button" onclick="showAttendanceRoster(${Number(x.id)})" class="w-full text-left flex items-center gap-3 py-2.5 min-h-[44px] hover:bg-slate-50 rounded">
+          <span class="w-24 sm:w-28 shrink-0 text-xs text-slate-500 tabular-nums">${esc(sessionTimes(x))}</span>
           <span class="flex-1 min-w-0 truncate text-sm text-slate-800">${esc(x.label ? `${x.label}: ` : '')}${esc(x.title)}${x.window && x.window.open ? ' <span class="text-[10px] bg-emerald-100 text-emerald-700 border border-emerald-300 px-2 py-0.5 rounded-full font-bold">On now</span>' : ''}</span>
           <span class="shrink-0 text-sm font-bold tabular-nums text-slate-800">${x.present}${x.enrolled != null ? `<span class="font-normal text-slate-400"> / ${x.enrolled}</span>` : ''}</span>
         </button>`).join('')}
@@ -16647,31 +16648,49 @@ function renderAttendanceRoster() {
     : `${present} present · showing ${shown.length}`);
   box.innerHTML = shown.map((p) => {
     const a = p.attendance;
-    return `<div class="px-3 py-2 flex items-center gap-2">
+    return `<div class="px-3 py-2.5 flex items-center gap-2">
       <span class="w-5 text-center font-bold ${a ? 'text-emerald-600' : 'text-slate-300'}">${a ? '✓' : '○'}</span>
       <span class="min-w-0 flex-1">
         <span class="block font-semibold text-slate-700 truncate">${esc(p.name || p.phone)}${r.session.workshop && !p.expected ? ' <span class="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full font-bold">Not enrolled</span>' : ''}</span>
         <span class="block text-xs text-slate-400 truncate">${esc([p.registrationNumber, a ? `${fmtAuditTime(a.at)} · ${ATT_METHODS[a.method] || a.method}${a.by && a.method !== 'SELF' ? ` by ${a.by}` : ''}` : '', a && a.note ? a.note : ''].filter(Boolean).join(' · '))}</span>
       </span>
       ${mayManage ? (a
-        ? `<button type="button" onclick="removeAttendance(${Number(a.id)})" class="shrink-0 px-2.5 py-1 border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-lg text-xs font-semibold">Remove</button>`
-        : `<button type="button" onclick="markAttendanceByHand('${esc(p.phone)}')" class="shrink-0 px-2.5 py-1 border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-xs font-semibold">Mark present</button>`) : ''}
+        ? `<button type="button" onclick="removeAttendance(${Number(a.id)})" class="shrink-0 min-h-[40px] px-3 border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-lg text-sm font-semibold">Remove</button>`
+        : `<button type="button" onclick="markAttendanceByHand('${esc(p.phone)}')" class="shrink-0 min-h-[40px] px-3 border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-semibold">Mark present</button>`) : ''}
     </div>`;
   }).join('') || '<p class="px-3 py-6 text-center text-sm text-slate-400">Nobody yet.</p>';
 }
 
 // A name typed at the door or by hand that matches several people: a list
 // to pick from, under the box; picking acts on that person (21 Nov 2026).
-function showAttendancePicker(boxId, candidates, onPick) {
+function showAttendancePicker(boxId, candidates, onPick, heading = 'More than one person matches. Choose who:') {
   const box = document.getElementById(boxId);
   if (!box) return;
   attState.pick = attState.pick || {};
   attState.pick[boxId] = { candidates: candidates || [], onPick };
   box.classList.toggle('hidden', !(candidates && candidates.length));
-  box.innerHTML = (candidates || []).length ? `<p class="text-xs font-semibold text-slate-600 mb-1">More than one person matches. Choose who:</p>
-    <div class="border border-slate-200 rounded-xl divide-y divide-slate-100 bg-white max-h-72 overflow-y-auto">${candidates.map((c, i) => `
-      <button type="button" onclick="pickAttendancePerson('${boxId}', ${i})" class="w-full text-left px-3 py-2.5 min-h-[44px] hover:bg-slate-50">
-        <span class="block text-sm font-semibold text-slate-800">${esc(c.name)}</span>${c.detail ? `<span class="block text-xs text-slate-500">${esc(c.detail)}</span>` : ''}</button>`).join('')}</div>` : '';
+  box.innerHTML = (candidates || []).length ? `<p class="text-xs font-semibold text-slate-600 mb-1">${esc(heading)}</p>
+    <div class="border border-slate-200 rounded-xl divide-y divide-slate-100 bg-white">${candidates.map((c, i) => `
+      <button type="button" onclick="pickAttendancePerson('${boxId}', ${i})" class="w-full text-left px-3 py-3 min-h-[52px] flex items-center gap-3 hover:bg-slate-50 active:bg-slate-100">
+        <span class="flex-1 min-w-0"><span class="block text-base sm:text-sm font-semibold text-slate-800 truncate">${esc(c.name)}</span>${c.detail ? `<span class="block text-xs text-slate-500 truncate">${esc(c.detail)}</span>` : ''}</span>
+        <span class="shrink-0 text-sm font-semibold text-navy">Mark</span></button>`).join('')}</div>` : '';
+}
+
+// As they type at the door: the people whose name or ID it matches, to tap
+// (phone first, 21 Nov 2026). A mobile or email is left to Mark.
+let attTypingTimer = null;
+let attTypingSeq = 0;
+function onAttendanceTyping() {
+  clearTimeout(attTypingTimer);
+  const q = document.getElementById('att-id').value.trim();
+  if (q.length < 2 || q.includes('@') || q.replace(/\D/g, '').length >= 6) { attTypingSeq++; showAttendancePicker('att-pick', null); return; }
+  attTypingTimer = setTimeout(async () => {
+    const seq = ++attTypingSeq;
+    const res = await fetch(`/api/attendance/search?q=${encodeURIComponent(q)}`);
+    const data = res.ok ? await res.json() : { candidates: [] };
+    if (seq !== attTypingSeq) return;
+    showAttendancePicker('att-pick', data.candidates, (key) => attendanceSignIn(key), data.candidates.length ? 'Tap to mark present:' : '');
+  }, 250);
 }
 function pickAttendancePerson(boxId, i) {
   const p = attState.pick && attState.pick[boxId];

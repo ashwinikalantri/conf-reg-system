@@ -128,6 +128,11 @@ const S = (id, date, start, end, extra = {}) => ({ id, session_date: date, start
     check('a name that is several: a list to choose from, with ID and category, no mobile or email', several.status === 409 && Array.isArray(several.body.candidates)
       && several.body.candidates.some((c) => c.key === inP.phone && c.detail.includes(inP.registration_number)) && several.body.candidates.some((c) => c.key === outP.phone)
       && !JSON.stringify(several.body.candidates.map((c) => [c.name, c.detail])).includes('@'), several.body);
+    const typed = await call('GET', `/api/attendance/search?q=${encodeURIComponent(`Attendee out ${N}`)}`, null, desk);
+    check('as they type at the door (phone first, 21 Nov): the matches by name, to tap', typed.body.success && typed.body.candidates.length === 1 && typed.body.candidates[0].key === outP.phone
+      && !JSON.stringify(typed.body).includes('@'), typed.body);
+    check('...and by ID; under two letters, nothing', (await call('GET', `/api/attendance/search?q=${encodeURIComponent(inP.registration_number)}`, null, desk)).body.candidates.some((c) => c.key === inP.phone)
+      && (await call('GET', '/api/attendance/search?q=A', null, desk)).body.candidates.length === 0);
     const picked = await scan({ hallId: hall.id, identifier: inP.phone });
     check('...the one picked is marked (their account key)', picked.body.success === true && picked.body.name, picked.body);
     check('...and by hand the same: a list when several match', (await call('POST', '/api/attendance/manual', { sessionId: all.body.id, identifier: N, reason: 'Test' }, admin)).body.candidates.length >= 2);

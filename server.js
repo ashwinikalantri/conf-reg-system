@@ -10358,11 +10358,30 @@ app.get('/api/attendance/halls', requirePermission('attendance.mark'), async (re
   }
 });
 
+// As the volunteer types at the door (phone-first attendance, 21 Nov
+// 2026): up to eight people whose name or ID contains it, to tap. Name, ID
+// and category only.
+app.get('/api/attendance/search', requirePermission('attendance.mark'), async (req, res, next) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ success: true, candidates: [] });
+    const like = `%${q}%`;
+    const rows = await dbAll(
+      `SELECT u.phone_number, u.salutation, u.full_name, COALESCE(r.registration_number, u.registration_number) AS registration_number, r.category_label
+         FROM users u JOIN registrations r ON r.phone_number = u.phone_number AND COALESCE(r.bank_status, '') != 'REJECTED'
+        WHERE u.full_name LIKE ? OR UPPER(COALESCE(r.registration_number, u.registration_number, '')) LIKE UPPER(?)
+        ORDER BY (u.full_name LIKE ?) DESC, u.full_name LIMIT 8`, [like, like, `${q}%`]);
+    res.json({ success: true, candidates: attendanceCandidates(rows).candidates });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // A name that matches several people (owner, 21 Nov 2026: "allow search by
 // name too"): each with their ID and category, to pick from; the pick comes
 // back as the account key. No mobile or email shown.
 const attendanceCandidates = (rows) => ({ success: false, error: 'More than one person matches. Choose who.',
-  candidates: rows.map((r) => ({ key: r.phone_number, name: r.full_name || r.registration_number || 'Unnamed account',
+  candidates: rows.map((r) => ({ key: r.phone_number, name: reminderName(r.salutation, r.full_name) || r.registration_number || 'Unnamed account',
     detail: [r.registration_number, r.category_label].filter(Boolean).join(' · ') })) });
 
 // A volunteer at a hall door scans a badge (or types a name, ID, mobile or
