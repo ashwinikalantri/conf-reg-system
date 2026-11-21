@@ -138,14 +138,24 @@ function renderAssessmentSheets(sheets, meta = {}) {
     };
     const bottom = () => doc.page.height - M.bottom - 28;   // room for the signature
     startPage();
-    for (const p of sheet.papers) {
-      const c = Object.fromEntries(cols.map((x) => [x.key, x]));
+    // Each row as tall as it needs; roomy (36) when the whole session fits
+    // that way, else as tight as its words allow, so one session is one
+    // sheet whenever it can be (owner, 22 Nov 2026: 8 papers ran to a
+    // second page for one row).
+    const cAt = Object.fromEntries(cols.map((x) => [x.key, x]));
+    const need = sheet.papers.map((p) => {
       doc.font('bold').fontSize(9);
-      let whoH = doc.heightOfString(p.presenter || '', { width: c.who.w - pad * 2 });
-      doc.font('body').fontSize(7.5);
+      let whoH = doc.heightOfString(p.presenter || '', { width: cAt.who.w - pad * 2 });
       whoH += p.regNo || p.time ? 11 : 0;   // one line: reg no · time
-      const titleH = Math.min(doc.font('body').fontSize(8).heightOfString(p.title || '', { width: c.title.w - pad * 2 }), 30);
-      const rowH = Math.max(36, whoH + pad * 2, titleH + pad * 2);
+      const titleH = Math.min(doc.font('body').fontSize(8).heightOfString(p.title || '', { width: cAt.title.w - pad * 2 }), 30);
+      return Math.max(26, whoH + 8, titleH + 8);
+    });
+    const roomy = need.map((h) => Math.max(36, h + 2));
+    const fits = (hs) => y + hs.reduce((a, b) => a + b, 0) <= bottom();
+    const heights = fits(roomy) ? roomy : need;
+    sheet.papers.forEach((p, idx) => {
+      const c = cAt;
+      const rowH = heights[idx];
       if (y + rowH > bottom()) startPage();
       doc.lineWidth(1.1).strokeColor(LINE).rect(X0, y, W, rowH).stroke();
       for (const col of cols) if (col.x > X0) doc.moveTo(col.x, y).lineTo(col.x, y + rowH).stroke();
@@ -159,7 +169,7 @@ function renderAssessmentSheets(sheets, meta = {}) {
       if (meta2) doc.font('body').fontSize(7.5).fillColor(MUTED).text(meta2, c.who.x + pad, yy + 1, { width: c.who.w - pad * 2, lineBreak: false });
       doc.font('body').fontSize(8).fillColor(INK).text(p.title || '', c.title.x + pad, y + pad, { width: c.title.w - pad * 2, height: 30, ellipsis: true });
       y += rowH;
-    }
+    });
     const sy = Math.min(y + 12, doc.page.height - M.bottom - 18);
     doc.font('bold').fontSize(9.5).fillColor(NAVY).text('Signature of the judge', X0, sy, { lineBreak: false });
     doc.moveTo(X0 + 125, sy + 12).lineTo(X0 + 380, sy + 12).lineWidth(0.8).strokeColor(NAVY).stroke();
