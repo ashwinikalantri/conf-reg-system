@@ -192,6 +192,24 @@ const S = (id, date, start, end, extra = {}) => ({ id, session_date: date, start
     const sum = (await call('GET', '/api/attendance/summary', null, desk)).body;
     check('each session that takes attendance, with how many are present', sum.sessions.find((s) => s.id === all.body.id).present === 1 && !sum.sessions.some((s) => s.id === breakS.body.id));
     check('...a workshop\'s, of how many enrolled', sum.sessions.find((s) => s.id === ws.body.id).enrolled >= 1);
+    // One workshop a day (21 Nov 2026): present at one, not marked at another.
+    {
+      const option2 = (await db.get('SELECT id FROM program_options WHERE group_id = ? AND id != ? AND active = 1 ORDER BY id LIMIT 1', [option.group_id, option.id]));
+      const wsHall2 = (await call('POST', '/api/admin/programme/halls', { name: `Second WS Hall ${N}` }, admin)).body;
+      made.halls.push(wsHall2.id);
+      const ws2 = await post({ hallId: wsHall2.id, date: today, start: '00:00', end: '23:59', title: `Workshop two ${N}`, counts: true, optionId: option2.id });
+      made.sessions.push(ws2.body.id);
+      await db.run('INSERT INTO registration_options (registration_id, group_id, option_id, is_faculty) VALUES (?, (SELECT group_id FROM program_options WHERE id = ?), ?, 0)', [inP.regId, option2.id, option2.id]);
+      const inFirst = (await call('GET', `/api/attendance/roster?session=${ws.body.id}`, null, desk)).body.people.some((p) => p.phone === inP.phone && p.attendance);
+      if (!inFirst) await scan({ hallId: wsHall.id, identifier: inP.registration_number });
+      const second = await scan({ hallId: wsHall2.id, identifier: inP.registration_number });
+      check('one workshop a day: present at one, refused at another the same day', second.status === 409 && /another workshop today/.test(second.body.error), second.body);
+      const byHand = await call('POST', '/api/attendance/manual', { sessionId: ws2.body.id, phone: inP.phone, reason: 'Test' }, admin);
+      check('...by hand too', byHand.status === 409 && /One workshop a day/.test(byHand.body.error), byHand.body);
+      await db.run('DELETE FROM registration_options WHERE registration_id = ? AND option_id = ?', [inP.regId, option2.id]);
+      // Leave the record as the tests after this expect it.
+      if (!inFirst) await db.run('DELETE FROM attendance WHERE phone_number = ? AND event_key = ?', [inP.phone, `s:${ws.body.id}`]);
+    }
     check('...and how many gave feedback on it, a talk none (21 Nov)', typeof sum.sessions.find((s) => s.id === ws.body.id).feedback === 'number' && sum.sessions.find((s) => s.id === all.body.id).feedback === null
       && /feedback given\$\{quiet \? '' : ` of \$\{esc\(s\.present\)\} present`\}/.test(fs.readFileSync(appFile('public', 'app.js'), 'utf8')));
     const roster = (await call('GET', `/api/attendance/roster?session=${ws.body.id}`, null, desk)).body.people;

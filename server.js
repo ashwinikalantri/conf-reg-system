@@ -9786,6 +9786,22 @@ async function markPresent(req, phone, session, method, { notEnrolledReason = ''
       return { status: 409, notCheckedIn: true, error: 'Not checked in yet. Send them to the registration desk to check in first.' };
     }
   }
+  // One workshop a day (owner, 21 Nov 2026): present at a workshop already
+  // that day, they are not marked at another of the same group (the
+  // workshops; a field visit and a practice are their own) -- by any way
+  // in, the hand included. To move them, that record is removed first.
+  if (isWorkshopSession(session)) {
+    const other = await dbGet(
+      `SELECT COALESCE(o.name, s.title) AS name FROM attendance a
+         JOIN programme_sessions s ON a.event_key = 's:' || s.id JOIN program_options o ON o.id = s.option_id
+        WHERE a.phone_number = ? AND a.removed_at IS NULL AND s.session_date = ? AND s.option_id != ?
+          AND o.group_id = (SELECT group_id FROM program_options WHERE id = ?) LIMIT 1`,
+      [phone, session.session_date, session.option_id, session.option_id]);
+    if (other) {
+      return { status: 409, otherWorkshop: true,
+        error: `Already marked present at another workshop today (${other.name}). One workshop a day: to move them, remove that record first under Attendance › Who was present.` };
+    }
+  }
   let why = note;
   if (isWorkshopSession(session) && !(await enrolledIn(reg.id, session.option_id))) {
     const reason = String(notEnrolledReason || '').trim();
@@ -10430,6 +10446,7 @@ app.post('/api/attendance/hall', requireAuth, async (req, res, next) => {
       return res.status(done.status).json({ success: false,
         error: done.notCheckedIn ? 'Please check in at the registration desk first, then scan this code again.'
           : done.notEnrolled ? `You are not enrolled in ${session.option_name || session.title}. Please see the volunteer at the door.`
+          : done.otherWorkshop ? 'You are already marked present at another workshop today: one workshop a day. Please see the volunteer at the door.'
           : 'Only registered delegates can mark attendance. Please see the registration desk.' });
     }
     res.json({ success: true, hall: hall.name, session: publicSession(session), ...done });
