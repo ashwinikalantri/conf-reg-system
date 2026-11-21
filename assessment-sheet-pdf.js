@@ -28,6 +28,28 @@ const HEAD = '#d9d9d9';
 const CREAM = '#ececec';
 const CRITERIA = ['Relevance / Importance of topic', 'Contents of presentation', 'Presentation style / Confidence / Fluency', 'Discussion / Subject clarity'];
 
+// The logo in black and grey (owner, 22 Nov 2026: "the PDF is still
+// colour"): its colours turned to grey and darkened, the white kept, made
+// once.
+let greyLogo;
+function logoInGrey() {
+  if (greyLogo !== undefined) return greyLogo;
+  greyLogo = null;
+  try {
+    const { PNG } = require('pngjs');
+    const png = PNG.sync.read(fs.readFileSync(LOGO));
+    for (let i = 0; i < png.data.length; i += 4) {
+      const lum = 0.299 * png.data[i] + 0.587 * png.data[i + 1] + 0.114 * png.data[i + 2];
+      const g = lum >= 235 ? 255 : Math.round(lum * 0.35);
+      png.data[i] = g; png.data[i + 1] = g; png.data[i + 2] = g;
+    }
+    greyLogo = PNG.sync.write(png, { colorType: 4 });   // grey and alpha: no colour at all
+  } catch (e) {
+    greyLogo = null;
+  }
+  return greyLogo;
+}
+
 let PDFDocument = null;
 function loadPdfKit() {
   if (!PDFDocument) { ensureTextDecoders(); PDFDocument = require('pdfkit'); }
@@ -59,7 +81,7 @@ function renderAssessmentSheets(sheets, meta = {}) {
       y = M.top;
       // The portal's header: the logo, the sheet's name in navy, a gold rule.
       let logoOk = false;
-      try { if (fs.existsSync(LOGO)) { doc.image(LOGO, X0, y, { height: 26 }); logoOk = true; } } catch (e) { logoOk = false; }
+      try { const logo = logoInGrey(); if (logo) { doc.image(logo, X0, y, { height: 26 }); logoOk = true; } } catch (e) { logoOk = false; }
       if (!logoOk) doc.font('bold').fontSize(12).fillColor(NAVY).text(meta.acronym || '', X0, y + 6, { lineBreak: false });
       doc.font('bold').fontSize(15).fillColor(NAVY).text(sheet.heading, X0, y + 3, { width: W, align: 'right', lineBreak: false });
       doc.font('body').fontSize(8.5).fillColor(MUTED).text(page > 1 ? `${sheet.venue} · continued` : `${meta.acronym || ''} · Judges' assessment sheet`, X0, y + 20, { width: W, align: 'right', lineBreak: false });

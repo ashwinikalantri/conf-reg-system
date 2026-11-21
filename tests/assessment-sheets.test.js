@@ -19,6 +19,9 @@ const { renderAssessmentSheets, CRITERIA } = require('../assessment-sheet-pdf');
     check(`${url}: a PDF, or says why not`, (r.status === 200 && buf.slice(0, 4).toString() === '%PDF') || (r.status === 404 && r.body && r.body.error), r.status);
   }
   check('the judges\' names are not printed (21 Nov)', !/Judges for this session/.test(fs.readFileSync(appFile('assessment-sheet-pdf.js'), 'utf8')));
+  // Black and white (22 Nov): the logo a grey image, no colour image at all.
+  const pdf = (await renderAssessmentSheets([{ heading: 'ORAL PAPER ASSESSMENT', venue: 'Hall A', session: 'S', judges: [], papers: papers(1) }], { acronym: 'T' })).toString('latin1');
+  check('printed in black and white: the logo in grey, no colour image', /\/ColorSpace \/DeviceGray/.test(pdf) && !/\/ColorSpace \/DeviceRGB/.test(pdf));
   const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
   check('linked beside each running order', /oral-order\/assessment\.pdf\?format=/.test(js) && /poster-screens\/assessment\.pdf"/.test(js) && /poster-screens\/assessment\.pdf\?screen=/.test(js));
   report();
