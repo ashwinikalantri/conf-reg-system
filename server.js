@@ -10358,7 +10358,14 @@ app.get('/api/attendance/halls', requirePermission('attendance.mark'), async (re
   }
 });
 
-// A volunteer at a hall door scans a badge (or types an ID, mobile or
+// A name that matches several people (owner, 21 Nov 2026: "allow search by
+// name too"): each with their ID and category, to pick from; the pick comes
+// back as the account key. No mobile or email shown.
+const attendanceCandidates = (rows) => ({ success: false, error: 'More than one person matches. Choose who.',
+  candidates: rows.map((r) => ({ key: r.phone_number, name: r.full_name || r.registration_number || 'Unnamed account',
+    detail: [r.registration_number, r.category_label].filter(Boolean).join(' · ') })) });
+
+// A volunteer at a hall door scans a badge (or types a name, ID, mobile or
 // email): present at the session on in that hall now. A workshop takes those
 // enrolled; anyone else only with a reason.
 app.post('/api/attendance/scan', requirePermission('attendance.mark'), async (req, res, next) => {
@@ -10376,7 +10383,7 @@ app.post('/api/attendance/scan', requirePermission('attendance.mark'), async (re
     }
     const found = await deskFindDelegate(req.body.identifier);
     if (found.error) return res.status(404).json({ success: false, error: found.error });
-    if (found.candidates) return res.status(409).json({ success: false, error: 'That matches more than one person -- scan their badge or use their ID.' });
+    if (found.candidates) return res.status(409).json(attendanceCandidates(found.candidates));
     const name = reminderName(found.user.salutation, found.user.full_name) || found.user.phone_number;
     const done = await markPresent(req, found.user.phone_number, session, 'SCAN', { notEnrolledReason: req.body.notEnrolledReason });
     if (done.status !== 200) return res.status(done.status).json({ success: false, name, notEnrolled: !!done.notEnrolled, error: `${name}: ${done.error}` });
@@ -10611,7 +10618,8 @@ app.post('/api/attendance/manual', requirePermission('attendance.manage'), async
     let phone = String(req.body.phone || '');
     if (!phone && req.body.identifier) {
       const found = await deskFindDelegate(req.body.identifier);
-      if (found.error || found.candidates) return res.status(404).json({ success: false, error: found.error || 'That matches more than one person.' });
+      if (found.candidates) return res.status(409).json(attendanceCandidates(found.candidates));
+      if (found.error) return res.status(404).json({ success: false, error: found.error });
       phone = found.user.phone_number;
     }
     const done = await markPresent(req, phone, session, 'MANUAL', { note: reason.slice(0, 200), notEnrolledReason: reason });

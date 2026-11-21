@@ -121,6 +121,16 @@ const S = (id, date, start, end, extra = {}) => ({ id, session_date: date, start
     const again = await scan({ hallId: hall.id, identifier: inP.registration_number });
     check('...a second scan says they already are', again.body.already === true && again.body.at === first.body.at);
     check('nobody found: said', (await scan({ hallId: hall.id, identifier: 'NO-SUCH-PERSON' })).status === 404);
+    // By name too (owner, 21 Nov 2026).
+    const byName = await scan({ hallId: hall.id, identifier: `Attendee in ${N}` });
+    check('a name that is one person: marks them', byName.body.success === true && byName.body.already === true, byName.body);
+    const several = await scan({ hallId: hall.id, identifier: N });
+    check('a name that is several: a list to choose from, with ID and category, no mobile or email', several.status === 409 && Array.isArray(several.body.candidates)
+      && several.body.candidates.some((c) => c.key === inP.phone && c.detail.includes(inP.registration_number)) && several.body.candidates.some((c) => c.key === outP.phone)
+      && !JSON.stringify(several.body.candidates.map((c) => [c.name, c.detail])).includes('@'), several.body);
+    const picked = await scan({ hallId: hall.id, identifier: inP.phone });
+    check('...the one picked is marked (their account key)', picked.body.success === true && picked.body.name, picked.body);
+    check('...and by hand the same: a list when several match', (await call('POST', '/api/attendance/manual', { sessionId: all.body.id, identifier: N, reason: 'Test' }, admin)).body.candidates.length >= 2);
     const notEnrolled = await scan({ hallId: wsHall.id, identifier: outP.registration_number });
     check('a workshop: someone not enrolled is refused, and asked about', notEnrolled.status === 409 && notEnrolled.body.notEnrolled === true);
     const letIn = await scan({ hallId: wsHall.id, identifier: outP.registration_number, notEnrolledReason: 'Swapped with a colleague' });

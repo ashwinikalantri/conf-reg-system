@@ -18,12 +18,14 @@
           <select id="att-hall" onchange="onAttendanceHallChange()" class="w-full h-11 px-2 border border-slate-300 rounded-lg text-sm bg-white"></select>
           <div id="att-now" class="mt-2 text-sm"></div>
           <form onsubmit="event.preventDefault(); attendanceSignIn(document.getElementById('att-id').value)" class="mt-3 flex flex-col sm:flex-row gap-2">
-            <input id="att-id" autocomplete="off" placeholder="ID, mobile or email" class="flex-1 min-w-0 h-11 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+            <input id="att-id" autocomplete="off" placeholder="Name, ID, mobile or email" class="flex-1 min-w-0 h-11 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
             <div class="flex gap-2">
               <button type="submit" class="flex-1 sm:flex-none h-11 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Mark present</button>
               <button type="button" onclick="openAttendanceScanner()" class="flex-1 sm:flex-none h-11 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Scan</button>
             </div>
           </form>
+          <!-- A name matching several people: pick one (showAttendancePicker). -->
+          <div id="att-pick" class="hidden mt-3"></div>
           <!-- The last result, large enough to read at arm's length. -->
           <div id="att-result" class="hidden mt-3 rounded-xl px-4 py-3 border"></div>
           <!-- A workshop: someone not enrolled is let in only with a reason. -->
@@ -56,9 +58,10 @@
             <input id="att-roster-search" type="search" oninput="renderAttendanceRoster()" placeholder="Search name or ID" class="sm:col-span-2 h-10 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
           </div>
           <form id="att-manual" onsubmit="event.preventDefault(); markAttendanceByHand()" class="hidden mb-3 flex flex-col sm:flex-row gap-2">
-            <input id="att-manual-id" autocomplete="off" placeholder="Mark someone present by hand: ID, mobile or email" class="flex-1 min-w-0 h-10 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+            <input id="att-manual-id" autocomplete="off" placeholder="Mark someone present by hand: name, ID, mobile or email" class="flex-1 min-w-0 h-10 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
             <button type="submit" class="h-10 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg">Mark present</button>
           </form>
+          <div id="att-manual-pick" class="hidden mb-3"></div>
           <p id="att-roster-count" class="text-xs text-slate-500 mb-2"></p>
           <div id="att-roster" class="border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-[32rem] overflow-y-auto text-sm"></div>
         </div>

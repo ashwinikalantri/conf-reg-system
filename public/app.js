@@ -16504,6 +16504,7 @@ function onAttendanceHallChange() {
     : `<div class="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-900">Nothing is on in ${esc(h.name)} now.${h.next
       ? ` Next: <b>${esc(h.next.title)}</b>, ${esc(shortDateRange(h.next.date, h.next.date))} ${esc(guestTime12(h.next.start))}.` : ''}</div>`;
   hideAttendanceLetIn();
+  showAttendancePicker('att-pick', null);
 }
 
 function showAttendanceResult(kind, title, detail) {
@@ -16524,13 +16525,15 @@ function hideAttendanceLetIn() {
 async function attendanceSignIn(identifier, notEnrolledReason) {
   const id = String(identifier || '').trim();
   const hallId = document.getElementById('att-hall').value;
-  if (!id) return showToast('Scan a badge, or type an ID, mobile or email.');
+  if (!id) return showToast('Scan a badge, or type a name, ID, mobile or email.');
   if (!hallId) return showToast('Choose the hall.');
   const res = await fetch('/api/attendance/scan', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ identifier: id, hallId: Number(hallId), notEnrolledReason: notEnrolledReason || undefined }),
   });
   const data = await res.json();
+  showAttendancePicker('att-pick', data.candidates, (key) => attendanceSignIn(key));
+  if (data.candidates) return data;
   if (data.success) {
     hideAttendanceLetIn();
     document.getElementById('att-id').value = '';
@@ -16657,18 +16660,41 @@ function renderAttendanceRoster() {
   }).join('') || '<p class="px-3 py-6 text-center text-sm text-slate-400">Nobody yet.</p>';
 }
 
-// By hand: a row's "Mark present" (phone), or the box above the roster (an
-// ID, mobile or email).
-async function markAttendanceByHand(phone) {
+// A name typed at the door or by hand that matches several people: a list
+// to pick from, under the box; picking acts on that person (21 Nov 2026).
+function showAttendancePicker(boxId, candidates, onPick) {
+  const box = document.getElementById(boxId);
+  if (!box) return;
+  attState.pick = attState.pick || {};
+  attState.pick[boxId] = { candidates: candidates || [], onPick };
+  box.classList.toggle('hidden', !(candidates && candidates.length));
+  box.innerHTML = (candidates || []).length ? `<p class="text-xs font-semibold text-slate-600 mb-1">More than one person matches. Choose who:</p>
+    <div class="border border-slate-200 rounded-xl divide-y divide-slate-100 bg-white max-h-72 overflow-y-auto">${candidates.map((c, i) => `
+      <button type="button" onclick="pickAttendancePerson('${boxId}', ${i})" class="w-full text-left px-3 py-2.5 min-h-[44px] hover:bg-slate-50">
+        <span class="block text-sm font-semibold text-slate-800">${esc(c.name)}</span>${c.detail ? `<span class="block text-xs text-slate-500">${esc(c.detail)}</span>` : ''}</button>`).join('')}</div>` : '';
+}
+function pickAttendancePerson(boxId, i) {
+  const p = attState.pick && attState.pick[boxId];
+  const c = p && p.candidates[i];
+  if (!c) return;
+  showAttendancePicker(boxId, null);
+  p.onPick(c.key);
+}
+
+// By hand: a row's "Mark present" (phone), or the box above the roster (a
+// name, ID, mobile or email). reason: already given, for a pick from a list.
+async function markAttendanceByHand(phone, givenReason) {
   const sessionId = document.getElementById('att-roster-session').value;
   const identifier = phone ? null : document.getElementById('att-manual-id').value.trim();
-  if (!phone && !identifier) return showToast('Type their ID, mobile or email.');
-  const reason = await showPrompt('Why is this being marked by hand? The reason is kept with the record.');
+  if (!phone && !identifier) return showToast('Type their name, ID, mobile or email.');
+  const reason = givenReason || await showPrompt('Why is this being marked by hand? The reason is kept with the record.');
   if (!reason) return;
   const data = await (await fetch('/api/attendance/manual', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessionId: Number(sessionId), phone: phone || undefined, identifier: identifier || undefined, reason }),
   })).json();
+  showAttendancePicker('att-manual-pick', data.candidates, (key) => markAttendanceByHand(key, reason));
+  if (data.candidates) return;
   if (!data.success) return showToast(data.error || 'Could not mark them present.');
   showToast(data.already ? 'Already marked present.' : 'Marked present.', 'success');
   document.getElementById('att-manual-id').value = '';
