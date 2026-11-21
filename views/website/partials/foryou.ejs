@@ -1,0 +1,94 @@
+<%# Signed in with a registration (owner, 21 Nov 2026): their pass -- the
+    badge QR, checked in or not -- and "For you", what they need to do now.
+    The pages are cached for everyone, so this is asked for by the browser
+    (GET /api/site/for-you) and drawn here; nobody else ever sees it. With
+    a pass shown, the page's general "Check in first" and portal boxes hide
+    (.has-pass .if-guest). %>
+<section id="you" class="you" aria-labelledby="you-h" hidden data-base="<%= base %>" data-portal="<%= portal %>">
+  <div class="wrap">
+    <div class="you-pass">
+      <img class="you-qr" id="you-qr" alt="Your badge QR code" width="168" height="168">
+      <div class="you-id">
+        <p id="you-h" class="kicker">Your pass</p>
+        <p class="you-name" id="you-name"></p>
+        <p class="you-meta" id="you-meta"></p>
+        <p class="you-status" id="you-status"></p>
+        <p class="you-hint" id="you-hint"></p>
+      </div>
+      <div class="you-actions">
+        <%# The badge QR is the meal pass too: one code for the desk, counters and doors. %>
+        <a class="btn btn-navy" href="<%= portal %>">Open your badge</a>
+      </div>
+    </div>
+    <div class="you-notes" id="you-notes-box" hidden>
+      <div class="you-notes-head"><h2>For you</h2><span class="count" id="you-count"></span></div>
+      <ul id="you-notes"></ul>
+    </div>
+  </div>
+</section>
+<script>
+(function () {
+  var box = document.getElementById('you');
+  if (!box || !window.fetch) return;
+  var base = box.getAttribute('data-base') || '';
+  var portal = box.getAttribute('data-portal') || '/portal';
+  var where = { portal: portal, visit: base + '/visit', programme: base + '/programme' };
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  fetch('/api/site/for-you', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+    if (!d || !d.pass) return;
+    var p = d.pass;
+    document.getElementById('you-qr').src = p.qr;
+    document.getElementById('you-name').textContent = p.name;
+    document.getElementById('you-meta').textContent = [p.regNo, p.category].filter(Boolean).join(' · ');
+    var status = document.getElementById('you-status');
+    var hint = document.getElementById('you-hint');
+    if (p.checkedIn) {
+      status.className = 'you-status ok';
+      status.textContent = 'Checked in at ' + p.checkedInAt;
+      hint.textContent = 'Show this QR at the meal counters and at the hall doors.';
+    } else if (p.conferenceDay) {
+      status.className = 'you-status todo';
+      status.textContent = 'Not checked in yet';
+      hint.textContent = 'Show this QR at the registration desk first.';
+    } else {
+      status.hidden = true;
+      hint.textContent = 'Show this QR at the registration desk, the meal counters and the hall doors.';
+    }
+    var list = document.getElementById('you-notes');
+    (d.notes || []).forEach(function (n) {
+      var li = el('li', 'tone-' + n.tone);
+      li.appendChild(el('span', 'dot'));
+      var body = el('div', 'body');
+      var top = el('div', 'top');
+      top.appendChild(el('span', 'tag', n.tag));
+      top.appendChild(el('span', 'title', n.title));
+      body.appendChild(top);
+      body.appendChild(el('span', 'text', n.text));
+      li.appendChild(body);
+      if (n.action && where[n.action.to]) {
+        var a = el('a', n.tone === 'act' ? 'btn btn-navy' : 'btn btn-outline', n.action.label);
+        a.href = where[n.action.to];
+        li.appendChild(a);
+      }
+      list.appendChild(li);
+    });
+    var todo = (d.notes || []).filter(function (n) { return n.tone !== 'ok'; }).length;
+    if ((d.notes || []).length) {
+      document.getElementById('you-notes-box').hidden = false;
+      var count = document.getElementById('you-count');
+      count.textContent = todo ? todo + ' to do' : 'All done';
+      if (!todo) count.className = 'count done';
+    }
+    // Their workshop's card in Happening now: marked Yours.
+    (d.mine || []).forEach(function (id) {
+      Array.prototype.forEach.call(document.querySelectorAll('[data-option="' + Number(id) + '"]'), function (card) {
+        card.classList.add('is-yours');
+        var h = card.querySelector('h3');
+        if (h && !card.querySelector('.yours')) h.parentNode.insertBefore(el('span', 'yours', 'Yours'), h);
+      });
+    });
+    box.hidden = false;
+    document.documentElement.classList.add('has-pass');
+  }).catch(function () {});
+})();
+</script>

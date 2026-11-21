@@ -96,13 +96,12 @@ function build(sessions, { days, now, isBreak }) {
   const usualWs = (() => { const m = day.workshops.reduce((acc, s) => acc.set(`${s.a}|${s.b}`, (acc.get(`${s.a}|${s.b}`) || 0) + 1), new Map()); const top = [...m.entries()].sort((x, y) => y[1] - x[1])[0]; return top ? top[0] : ''; })();
   let nowBlock;
   if (ws.length) {
-    const [ua, ub] = usualWs.split('|').map(Number);
-    nowBlock = { kind: 'workshops', heading: 'Happening now', note: `${ws.length === 1 ? 'One workshop' : `${ws.length} workshops`}, ${span(ua, ub)} unless noted. Find yours and its room.`,
-      items: day.workshops.filter((s) => running.includes(s)).map((s) => ({ no: num(s) === 999 ? '' : num(s), title: s.title, where: s.hall, time: `${s.a}|${s.b}` === usualWs ? '' : span(s.a, s.b) })) };
+    nowBlock = { kind: 'workshops', heading: 'Happening now', note: 'Find yours and its room.',
+      items: day.workshops.filter((s) => running.includes(s)).map((s) => ({ no: num(s) === 999 ? '' : num(s), title: s.title, where: s.hall, optionId: s.option_id || null, time: `${s.a}|${s.b}` === usualWs ? '' : span(s.a, s.b) })) };
   } else if (running.length) {
     nowBlock = { kind: 'halls', heading: 'Happening now', note: running.length === 1 ? 'On now.' : `In ${new Set(running.map((s) => s.hall)).size} places.`,
       items: running.sort((x, y) => (Number(x.hall_sort) || 999) - (Number(y.hall_sort) || 999) || x.a - y.a)
-        .map((s) => ({ label: s.label || '', title: s.title, where: s.hall, speakers: s.speakers || '', time: `until ${t12(s.b)}` })) };
+        .map((s) => ({ label: s.label || '', title: s.title, where: s.hall, speakers: s.speakers || '', optionId: s.option_id || null, time: `until ${t12(s.b)}` })) };
   } else {
     const later = day.talks.filter((s) => s.a > min);
     const first = later.length ? Math.min(...later.map((s) => s.a)) : null;
@@ -110,7 +109,7 @@ function build(sessions, { days, now, isBreak }) {
       ? { kind: 'none', heading: n < confDays.length - 1 ? "Today's sessions are over" : 'The conference has ended', note: '', items: [] }
       : { kind: 'next', heading: `Coming up at ${t12(first)}`, note: 'Where to be.', items: later.filter((s) => s.a === first)
         .sort((x, y) => (Number(x.hall_sort) || 999) - (Number(y.hall_sort) || 999))
-        .map((s) => ({ label: s.label || '', title: s.title, where: s.hall, speakers: s.speakers || '', time: span(s.a, s.b) })) };
+        .map((s) => ({ label: s.label || '', title: s.title, where: s.hall, speakers: s.speakers || '', optionId: s.option_id || null, time: span(s.a, s.b) })) };
   }
 
   // Next up: the next moments of the day (a meal only if nothing else).
@@ -155,7 +154,7 @@ function build(sessions, { days, now, isBreak }) {
     headline = 'Thank you for joining us';
     lead = 'Certificates are issued in the delegate portal.';
   }
-  if (nextOne && (ws.length || running.length)) lead += ` Next: ${nextOne.title}, ${t12(nextOne.a)}${nextOne.where ? `, ${nextOne.where}` : ''}.`;
+  // What comes next is the Next up card's, not said here again.
 
   // Meals: the next one today, else tomorrow's first.
   const mealsToday = mergedBreaks(day.breaks).filter((x) => x.meal && x.b > min);

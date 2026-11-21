@@ -1,7 +1,7 @@
 // The home page while the conference is on (owner, 21 Nov 2026): what is
 // happening and what is next, from the programme, at the time asked.
 const fs = require('fs');
-const { call, check, report, appFile, adminLogin } = require('./harness');
+const { call, check, report, appFile, adminLogin, loginOtp, openDb } = require('./harness');
 const L = require('../website-live');
 
 const isBreak = (s) => Number(s.meal) === 1 || (!s.label && /\b(break|breakfast|lunch|tea|registration|dinner)\b/i.test(s.title || ''));
@@ -67,6 +67,29 @@ const build = (date, hm) => L.build(sessions, { days, now: at(date, hm), isBreak
   } else {
     check('a session could be added on the conference\'s first day', false, made);
   }
+  console.log('\n== Signed in: the pass and For you ==');
+  check('not signed in: nothing', (await call('GET', '/api/site/for-you')).status === 401);
+  const db = await openDb();
+  const r = await db.get("SELECT r.id, r.phone_number, r.registration_number, r.bank_status, r.checked_in_at FROM registrations r JOIN users u ON u.phone_number = r.phone_number WHERE r.bank_status = 'BANK_VERIFIED' AND r.registration_number IS NOT NULL ORDER BY r.id LIMIT 1");
+  if (r) {
+    const me = await loginOtp(r.phone_number);
+    const mine = (await call('GET', '/api/site/for-you', null, me)).body;
+    check('a delegate: their pass, with the badge QR and check-in', mine.success && mine.pass && mine.pass.regNo === r.registration_number
+      && mine.pass.qr === `/api/qr/${encodeURIComponent(r.registration_number)}.png` && mine.pass.checkedIn === !!r.checked_in_at, mine);
+    await db.run("UPDATE registrations SET bank_status = 'PARTIAL_PAYMENT' WHERE id = ?", [r.id]);
+    const owing = (await call('GET', '/api/site/for-you', null, me)).body;
+    await db.run('UPDATE registrations SET bank_status = ? WHERE id = ?', [r.bank_status, r.id]);
+    check('...a balance due comes first, as something to do', owing.notes[0] && owing.notes[0].tag === 'Balance due' && owing.notes[0].tone === 'act' && owing.notes[0].action.to === 'portal', owing.notes);
+    check('...never another person\'s phone or email in it', !/@|\d{10}/.test(JSON.stringify(mine.notes)));
+  } else {
+    check('the fixture has a confirmed registration', false);
+  }
+  const home = await call('GET', '/website');
+  const live = fs.readFileSync(appFile('views/website/partials/live.ejs'), 'utf8');
+  check('the home page asks for it; with a pass the general check-in and portal boxes hide; no weather box', /id="you"/.test(home.raw) && /\/api\/site\/for-you/.test(home.raw)
+    && (live.match(/if-guest/g) || []).length === 2 && !/Mornings are cool/.test(live));
+  check('one fact once: no "Next:" in the banner text, no second PDF button under Tomorrow', !/lead \+= ` Next:/.test(fs.readFileSync(appFile('website-live.js'), 'utf8'))
+    && (live.match(/glancePdf/g) || []).length === 1);
   const foot = fs.readFileSync(appFile('views/website/partials/foot.ejs'), 'utf8');
   check('the footer says Sevagram once', /addrParts\.slice\(1\)\.join/.test(foot));
   report();

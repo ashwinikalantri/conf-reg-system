@@ -9750,7 +9750,7 @@ const publicSession = (s) => ({
 
 // The registration someone attends under: any not rejected.
 const attendingRegistration = (phone) => dbGet(
-  "SELECT id, phone_number, delegate_name, category_key, category_label, bank_status, checked_in_at FROM registrations WHERE phone_number = ? AND COALESCE(bank_status, '') != 'REJECTED'",
+  "SELECT id, phone_number, delegate_name, category_key, category_label, bank_status, checked_in_at, registration_number FROM registrations WHERE phone_number = ? AND COALESCE(bank_status, '') != 'REJECTED'",
   [phone]);
 const enrolledIn = async (regId, optionId) => !!(await dbGet(
   'SELECT 1 AS yes FROM registration_options WHERE registration_id = ? AND option_id = ?', [regId, optionId]));
@@ -10480,6 +10480,100 @@ app.get('/api/attendance/me', requireAuth, async (req, res, next) => {
         // Issued: the details are fixed; corrections go through the organisers.
         locked: !!(await dbGet('SELECT 1 AS yes FROM certificates WHERE phone_number = ? AND revoked_at IS NULL', [req.session.phone])),
       },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The website's front page, for whoever is signed in (owner, 21 Nov 2026):
+// their pass -- the badge QR, checked in or not -- and what they need to do
+// now, most urgent first: act (amber), due (blue), ok (green). Personal, so
+// the page asks for it; it is never cached with the page. No registration:
+// no pass, nothing shown.
+app.get('/api/site/for-you', requireAuth, async (req, res, next) => {
+  try {
+    const phone = req.session.phone;
+    res.set('Cache-Control', 'private, no-store');
+    const reg = await attendingRegistration(phone);
+    if (!reg || !reg.registration_number) return res.json({ success: true, pass: null, notes: [], mine: [] });
+    const u = await dbGet('SELECT salutation, full_name FROM users WHERE phone_number = ?', [phone]);
+    const now = Date.now();
+    const { date: today, minutes: nowMin } = attendanceLib.istParts(now);
+    const clock = (min) => `${Math.floor(min / 60) % 12 || 12}:${String(min % 60).padStart(2, '0')} ${min < 720 ? 'am' : 'pm'}`;
+    const toMin = (hm) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(hm || '')); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+    const atText = (ms) => { const p = attendanceLib.istParts(ms); return `${clock(p.minutes)}${p.date === today ? '' : `, ${attendanceLib.shortDate(p.date)}`}`; };
+    const conferenceDay = !!CONFERENCE.startDate && today >= CONFERENCE.startDate && today <= (CONFERENCE.endDate || CONFERENCE.startDate);
+    const checkedIn = !!reg.checked_in_at;
+    const notes = [];
+    const note = (tone, tag, title, text, action = null) => notes.push({ tone, tag, title, text, action });
+
+    // Payment first: nothing else opens without it.
+    if (reg.bank_status === 'PENDING') note('act', 'Payment pending', 'Your payment is being checked', 'The organisers are confirming it. If you are at the venue, the registration desk can help.', { label: 'Open the portal', to: 'portal' });
+    if (reg.bank_status === 'PARTIAL_PAYMENT') note('act', 'Balance due', 'Part of your fee is still due', 'Pay the balance at the registration desk or in the delegate portal.', { label: 'Open the portal', to: 'portal' });
+    if (reg.bank_status === 'BANK_VERIFIED' && !checkedIn && conferenceDay) {
+      note('act', 'Check-in due', 'Check in at the registration desk', 'Show the QR above to collect your badge and kit. Meals and session attendance open after that.', { label: 'Where is the desk?', to: 'visit' });
+    }
+
+    // Their workshops: on now and not marked; over and no feedback yet.
+    const sessions = await programmeSessions();
+    const enrolled = new Set((await dbAll('SELECT option_id FROM registration_options WHERE registration_id = ?', [reg.id])).map((r) => Number(r.option_id)));
+    const marked = new Set((await dbAll("SELECT event_key FROM attendance WHERE phone_number = ? AND removed_at IS NULL AND event_key LIKE 's:%'", [phone])).map((r) => Number(r.event_key.slice(2))));
+    const given = new Set((await dbAll('SELECT option_id FROM workshop_feedback WHERE phone_number = ?', [phone])).map((r) => Number(r.option_id)));
+    const { earlyMinutes } = (await certificateSettings()).attendance;
+    const mine = sessions.filter((x) => isWorkshopSession(x) && enrolled.has(Number(x.option_id)));
+    for (const x of mine.filter((y) => y.session_date === today)) {
+      const a = toMin(x.start_time);
+      const b = toMin(x.end_time);
+      if (a == null || b == null || marked.has(x.id) || nowMin < a - earlyMinutes || nowMin >= b) continue;
+      const name = x.option_name || x.title;
+      note('act', 'Attendance due', nowMin < a ? `${name} starts at ${clock(a)}` : `${name} is on now`,
+        checkedIn ? `Scan the QR at the ${x.hall} door, or let the volunteer there scan your badge. Open until ${clock(b)}.`
+          : `After check-in, scan the QR at the ${x.hall} door. Open until ${clock(b)}.`);
+    }
+    const byOption = new Map();
+    for (const x of sessions.filter((y) => isWorkshopSession(y) && (enrolled.has(Number(y.option_id)) || marked.has(y.id)))) {
+      if (!byOption.has(x.option_id)) byOption.set(x.option_id, []);
+      byOption.get(x.option_id).push(x);
+    }
+    for (const [optionId, list] of byOption) {
+      if (given.has(Number(optionId)) || !list.some((x) => marked.has(x.id))) continue;
+      const over = list.every((x) => x.session_date < today || (x.session_date === today && toMin(x.end_time) <= nowMin));
+      if (over) note('due', 'Feedback due', `Workshop feedback: ${list[0].option_name || list[0].title}`, 'Three quick ratings, in the delegate portal.', { label: 'Give feedback', to: 'portal' });
+    }
+
+    // A presenter: the file, and the slot once the organisers publish it.
+    const abs = await dbGet(`SELECT a.id, a.allocation, p.file_name FROM abstracts a LEFT JOIN presentations p ON p.abstract_id = a.id
+      WHERE a.phone_number = ? AND a.status = 'ACCEPTED' AND a.decision_sent_at IS NOT NULL AND a.allocation IN ('POSTER', 'ORAL', 'AWARD') ORDER BY a.id LIMIT 1`, [phone]);
+    if (abs) {
+      const kind = { POSTER: 'e-poster', ORAL: 'oral paper', AWARD: 'award paper' }[abs.allocation];
+      if (!abs.file_name) {
+        if (presentationsLib.isOpen(CONFERENCE.presentationsDue)) note('due', 'Upload due', `Your ${kind}, by ${presentationsLib.dueText(CONFERENCE.presentationsDue) || 'the last date'}`, 'Upload the file in the delegate portal.', { label: 'Upload', to: 'portal' });
+        else note('act', 'File not received', `Your ${kind} has not been uploaded`, 'The last date has passed. Speak to the registration desk.');
+      }
+      const place = await placeFor(abs.id, abs.allocation);
+      if (place && place.published) note('ok', 'Your slot', `You present: ${place.line}`, abs.file_name ? 'Your file is uploaded. Be there a few minutes early.' : 'Be there a few minutes early.');
+    }
+
+    // After it: certificates ready.
+    const certs = (await dbGet('SELECT COUNT(*) AS n FROM certificates WHERE phone_number = ? AND revoked_at IS NULL', [phone])).n;
+    if (certs) note('ok', 'Certificate ready', certs === 1 ? 'Your certificate is ready' : `Your ${certs} certificates are ready`, 'Download it from the delegate portal.', { label: 'Download', to: 'portal' });
+
+    const order = { act: 0, due: 1, ok: 2 };
+    notes.sort((x, y) => order[x.tone] - order[y.tone]);
+    const workshop = [...new Set(mine.map((x) => x.option_name || x.title))];
+    res.json({
+      success: true,
+      pass: {
+        name: reminderName(u && u.salutation, u && u.full_name) || reg.delegate_name || reg.registration_number,
+        regNo: reg.registration_number, category: reg.category_label || '', workshop: workshop.join(', '),
+        qr: `/api/qr/${encodeURIComponent(reg.registration_number)}.png`,
+        checkedIn, checkedInAt: checkedIn ? atText(reg.checked_in_at) : null,
+        conferenceDay,
+      },
+      notes,
+      // Their workshops' options, to mark "Yours" on the page.
+      mine: [...enrolled],
     });
   } catch (err) {
     next(err);

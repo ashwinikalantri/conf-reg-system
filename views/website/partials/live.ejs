@@ -37,6 +37,8 @@
   </div>
 </section>
 
+<%- include('foryou') %>
+
 <section class="live-today" aria-labelledby="today-h">
   <div class="wrap">
     <h2 id="today-h" class="kicker">Today</h2>
@@ -65,7 +67,7 @@
     <% if (live.now.items.length) { %>
     <div class="live-now">
       <% live.now.items.forEach((x) => { %>
-        <article>
+        <article<% if (x.optionId) { %> data-option="<%= x.optionId %>"<% } %>>
           <% if (x.no) { %><span class="no"><%= x.no %></span><% } %>
           <div class="stack" style="gap: 6px; min-width: 0">
             <% if (x.label) { %><p class="label"><%= x.label %></p><% } %>
@@ -86,14 +88,13 @@
 <% if (live.tomorrow) { %>
 <section class="band-tint" aria-labelledby="tomorrow-h">
   <div class="wrap section live-tomorrow">
-    <div class="stack" style="gap: 12px">
-      <p class="kicker">Tomorrow · <%= live.tomorrow.label %></p>
-      <h2 id="tomorrow-h" class="h2"><%= live.tomorrow.workshopDay ? 'The workshop day' : live.tomorrow.halls > 1 ? `The conference day, in ${live.tomorrow.halls === 3 ? 'three' : live.tomorrow.halls} halls` : 'The conference day' %></h2>
-      <p class="lead">Check in at the registration desk first: it opens your meals and sessions.</p>
-      <div class="hero-actions">
-        <a class="btn btn-navy" href="<%= base %>/programme?day=<%= live.tomorrow.date %>">The full programme</a>
-        <a class="btn btn-outline" href="<%= glancePdf %>" target="_blank" rel="noopener">Download the PDF</a>
+    <div class="live-tomorrow-head">
+      <div class="stack" style="gap: 10px; min-width: 0">
+        <p class="kicker">Tomorrow · <%= live.tomorrow.label %></p>
+        <h2 id="tomorrow-h" class="h2"><%= live.tomorrow.workshopDay ? 'The workshop day' : live.tomorrow.halls > 1 ? `The conference day, in ${live.tomorrow.halls === 3 ? 'three' : live.tomorrow.halls} halls` : 'The conference day' %></h2>
+        <% if (live.tomorrow.rows[0]) { %><p class="lead">It begins at <%= live.tomorrow.rows[0].time %> with <%= live.tomorrow.rows[0].title.toLowerCase() %>.</p><% } %>
       </div>
+      <a class="btn btn-navy" href="<%= base %>/programme?day=<%= live.tomorrow.date %>">Tomorrow’s full programme</a>
     </div>
     <ol class="live-rows">
       <% live.tomorrow.rows.forEach((r) => { %>
@@ -108,7 +109,7 @@
   <div class="wrap section stack" style="gap: 22px">
     <h2 id="venue-h" class="h2" style="font-size: 28px">At the venue</h2>
     <div class="live-cards">
-      <article class="card card-gold">
+      <article class="card card-gold if-guest">
         <svg aria-hidden="true" width="28" height="28" fill="none" stroke="var(--gold-700)" stroke-width="1.8" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"></rect><path d="M9 7h6M9 11h6M9 15h3"></path></svg>
         <h3>Check in first</h3>
         <p>Collect your badge and kit at the registration desk. Meals and session attendance open once you are checked in.</p>
@@ -124,13 +125,8 @@
         <p>Every hall and seminar room on the campus map, with directions from your phone.</p>
         <a class="arrow-link" href="<%= base %>/visit" style="margin-top: auto">Open the map →</a>
       </article>
-      <article class="card">
-        <svg aria-hidden="true" width="28" height="28" fill="none" stroke="var(--steel)" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
-        <h3>Mornings are cool</h3>
-        <p>Around 13–15°C at dawn, pleasant by afternoon.<% if (live.tomorrow) { %> A light woollen for tomorrow’s early start.<% } %></p>
-      </article>
     </div>
-    <div class="live-portal">
+    <div class="live-portal if-guest">
       <div class="stack" style="gap: 2px; min-width: 0; flex: 1 1 360px">
         <p class="what">Your badge, meal pass and certificates</p>
         <p>In the delegate portal. Certificates are issued there after the conference.</p>
