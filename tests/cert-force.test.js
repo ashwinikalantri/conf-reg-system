@@ -50,6 +50,28 @@ const N = String(Date.now()).slice(-7);
     const mmc = await call('POST', '/api/admin/certificates/force', { phone, cert: 'MMC', reason: 'x' }, admin);
     check('MMC without a council number: refused, and why', mmc.status !== 200 && !mmc.body.success);
 
+    // A workshop's own faculty (21 Nov 2026): its faculty certificate, not
+    // the participant one too, even marked present at it.
+    const opt = await db.get("SELECT o.id FROM program_options o JOIN program_groups g ON g.id = o.group_id WHERE g.name = 'Workshops' AND o.active = 1 LIMIT 1");
+    const hall = opt ? (await call('POST', '/api/admin/programme/halls', { name: `Force WS Hall ${N}` }, admin)).body : null;
+    const made = hall ? (await call('POST', '/api/admin/programme/sessions', { hallId: hall.id, date: '2020-01-01', start: '09:00', end: '10:00', title: `Force WS ${N}`, counts: true, optionId: opt.id }, admin)).body : null;
+    const ws = made && made.id ? { optionId: opt.id } : null;
+    if (ws) {
+      const reg = await db.get('SELECT id FROM registrations WHERE phone_number = ?', [phone]);
+      await db.run('INSERT INTO registration_options (registration_id, group_id, option_id, is_faculty) VALUES (?, (SELECT group_id FROM program_options WHERE id = ?), ?, 1)', [reg.id, ws.optionId, ws.optionId]);
+      const sess = await db.get('SELECT id FROM programme_sessions WHERE option_id = ? LIMIT 1', [ws.optionId]);
+      await db.run("INSERT INTO attendance (phone_number, event_key, at, method) VALUES (?, ?, ?, 'MANUAL')", [phone, `s:${sess.id}`, Date.now()]);
+      const fac = await me();
+      const part = fac.workshops.find((w) => w.optionId === ws.optionId);
+      const theirs = (fac.workshopFaculty || []).find((w) => w.optionId === ws.optionId);
+      check('workshop faculty, marked present: the faculty certificate due, not the participant one', part && !part.eligible && part.facultyOfIt && /Workshop faculty/.test(part.whyNot)
+        && theirs && theirs.eligible, { part, theirs });
+      await db.run('DELETE FROM attendance WHERE phone_number = ? AND event_key = ?', [phone, `s:${sess.id}`]);
+      await db.run('DELETE FROM registration_options WHERE registration_id = ? AND option_id = ?', [reg.id, ws.optionId]);
+      await call('DELETE', `/api/admin/programme/sessions/${made.id}`, null, admin);
+    } else {
+      check('the fixture has a workshop', false);
+    }
     const view = fs.readFileSync(appFile('views', 'admin', 'sections', 'certificates.ejs'), 'utf8');
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
     check('the page: Ready to issue, Not yet and why, People with Open, the person panel and the force dialog', ['id="cert-ready"', 'id="cert-why"', 'id="cert-list"', 'id="cert-person"', 'id="cert-force"', 'id="cert-issue-all"']

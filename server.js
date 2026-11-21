@@ -11103,7 +11103,12 @@ async function certificateCandidates() {
       if (!signed && !enrolled && !(wov && wov.decision === 'INCLUDE')) return null;
       let eligible = false;
       let whyNot = null;
-      if (wov && wov.decision === 'EXCLUDE') whyNot = `Excluded: ${wov.reason}`;
+      // A workshop's own faculty get its workshop faculty certificate, not
+      // the participant one as well (owner, 21 Nov 2026) -- not even
+      // "included anyway"; only a super admin's force issue gives it.
+      const facultyOfIt = (wsFacilitators.get(w.optionId) || new Set()).has(r.phone_number);
+      if (facultyOfIt) whyNot = 'Workshop faculty: gets the faculty certificate';
+      else if (wov && wov.decision === 'EXCLUDE') whyNot = `Excluded: ${wov.reason}`;
       else if (wov && wov.decision === 'INCLUDE') eligible = true;
       else if (!signed) whyNot = 'Not marked present';
       else if (!paid) whyNot = 'Payment not complete';
@@ -11111,7 +11116,7 @@ async function certificateCandidates() {
       // no longer waited for.
       else eligible = true;
       const cert = myIssued.find((c) => c.kind === 'WORKSHOP' && Number(c.option_id) === w.optionId) || null;
-      return { optionId: w.optionId, e: w.e, name: w.name, date: w.date, signed, enrolled, eligible, whyNot, override: wov, issued: cert,
+      return { optionId: w.optionId, e: w.e, name: w.name, date: w.date, signed, enrolled, eligible, whyNot, override: wov, issued: cert, facultyOfIt,
         feedback: feedback.has(`${r.phone_number}|${w.optionId}`) };
     }).filter(Boolean);
     return {

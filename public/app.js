@@ -17496,7 +17496,7 @@ function certItems(x) {
       issued: c.issued, issueScope: 'conference', ovKey: x.phone, ovScope: 'CONF', override: c.override, include: !c.kind, kind: kind || 'CONF', cert: would });
   }
   x.workshops.forEach((w) => items.push({ title: `Workshop · ${w.name}`, status: st(w.issued, w.eligible, w.override), reason: w.whyNot || '', issued: w.issued,
-    issueScope: 'workshops', ovKey: x.phone, ovScope: w.e, override: w.override, include: !w.eligible, kind: 'WORKSHOP', notMarked: w.whyNot === 'Not marked present', cert: `WORKSHOP:${w.optionId}` }));
+    issueScope: 'workshops', ovKey: x.phone, ovScope: w.e, override: w.override, include: !w.eligible && !w.facultyOfIt, kind: 'WORKSHOP', notMarked: w.whyNot === 'Not marked present', cert: `WORKSHOP:${w.optionId}` }));
   (x.workshopFaculty || []).forEach((w) => items.push({ title: `Workshop faculty · ${w.name}`, status: st(w.issued, w.eligible, w.override), reason: w.whyNot || '', issued: w.issued,
     issueScope: 'workshop_faculty', ovKey: x.phone, ovScope: w.scope, override: w.override, include: false, kind: 'WORKSHOP_FACULTY', cert: `WORKSHOP_FACULTY:${w.optionId}` }));
   (x.roles || []).forEach((r) => items.push({ title: `${CERT_ROLE_WORD[r.kind]} · ${r.sessions.join('; ')}`, status: st(r.issued, r.eligible, r.override), reason: r.whyNot || '', issued: r.issued,
