@@ -68,8 +68,7 @@ const N = String(Date.now()).slice(-7);
       // Nor the conference's certificate of participation (21 Nov 2026), checked in and paid or not.
       await db.run('UPDATE registrations SET checked_in_at = ? WHERE id = ?', [Date.now(), reg.id]);
       const facConf = (await me()).conference;
-      check('...nor the certificate of participation for the conference: not due, saying why, no Include anyway', !facConf.kind && facConf.facultyOnly === true
-        && /Workshop faculty/.test(facConf.whyNot), facConf);
+      check('...but the conference certificate as anyone checked in and paid (the participation one here)', facConf.kind === 'CONF' && !facConf.whyNot, facConf);
       await db.run('UPDATE registrations SET checked_in_at = NULL WHERE id = ?', [reg.id]);
       await db.run('DELETE FROM attendance WHERE phone_number = ? AND event_key = ?', [phone, `s:${sess.id}`]);
       await db.run('DELETE FROM registration_options WHERE registration_id = ? AND option_id = ?', [reg.id, ws.optionId]);

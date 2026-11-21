@@ -11153,15 +11153,11 @@ async function certificateCandidates() {
       if (nursingReady) confKind = 'NURSING';
       else confWhyNot = 'Waiting for the Nursing points details (Certificate settings)';
     } else confKind = 'CONF';
-    // A workshop's faculty are not given the certificate of participation
-    // (owner, 21 Nov 2026): their workshop faculty certificate is theirs.
-    // Only a super admin's force issue gives it.
-    let facultyOnly = false;
-    if (confKind === 'CONF' && [...wsFacilitators.values()].some((set) => set.has(r.phone_number))) {
-      confKind = null;
-      confWhyNot = 'Workshop faculty: gets the workshop faculty certificate, not participation';
-      facultyOnly = true;
-    }
+    // (21 Nov 2026: withholding this from workshop faculty was a misreading
+    // and is undone -- registered, checked in and paid, they get it as
+    // everyone does. Their own workshop's participant certificate is the
+    // one they do not get.)
+    const facultyOnly = false;
     const myIssued = issued.filter((c) => c.phone_number === r.phone_number);
     const ws = [...workshops.values()].map((w) => {
       const wov = overrides.get(`${r.phone_number}|${w.e}`) || null;
