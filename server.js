@@ -16938,7 +16938,7 @@ app.get('/api/admin/poster-screens/assessment.pdf', requirePermission('abstracts
         const s = x.screens.find((y) => y.id === screen.id);
         if (!s || !s.posters.length) continue;
         sheets.push({ heading: 'E-POSTER ASSESSMENT', venue: [x.hall, s.name].filter(Boolean).join(' · '), session: [x.title, x.day, `${x.startTime}–${x.endTime}`].filter(Boolean).join(' · '),
-          judges: (s.judges || []).map((j) => j.name), papers: s.posters.map((p) => ({ place: p.place, time: p.time || '', presenter: p.presenter, regNo: p.regNo || '', title: p.title })) });
+          judges: [], papers: s.posters.map((p) => ({ place: p.place, time: p.time || '', presenter: p.presenter, regNo: p.regNo || '', title: p.title })) });
       }
     }
     const pdf = await require('./assessment-sheet-pdf').renderAssessmentSheets(sheets, { acronym: CONFERENCE.acronym });
@@ -17227,7 +17227,7 @@ app.get('/api/admin/oral-order/assessment.pdf', requirePermission('abstracts.vie
     const b = await oralBoard(format);
     const sheets = b.sessions.filter((x) => x.items.length).map((x) => ({
       heading: format === 'AWARD' ? 'AWARD PAPER ASSESSMENT' : 'ORAL PAPER ASSESSMENT', venue: x.hall,
-      session: [x.title, x.day, `${x.startTime}–${x.endTime}`].filter(Boolean).join(' · '), judges: x.judges,
+      session: [x.title, x.day, `${x.startTime}–${x.endTime}`].filter(Boolean).join(' · '), judges: [],
       papers: x.items.map((p) => ({ place: p.place, time: p.time || '', presenter: p.presenter, regNo: p.regNo || '', title: p.title })),
     }));
     if (!sheets.length) return res.status(404).json({ success: false, error: 'No papers placed in a session yet.' });

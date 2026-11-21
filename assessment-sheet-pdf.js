@@ -66,7 +66,9 @@ function renderAssessmentSheets(sheets, meta = {}) {
       y += 10;
       if (page === 1) {
         // Venue, session and the judge, as label and value, in a quiet card.
-        const cardH = sheet.judges && sheet.judges.length ? 70 : 58;
+        // The judges' names are not printed (owner, 21 Nov 2026): each
+        // writes their own.
+        const cardH = 50;
         doc.roundedRect(X0, y, W, cardH, 8).fillAndStroke(ZEBRA, LINE);
         const field = (label, value, x, yy, w, blank) => {
           doc.font('bold').fontSize(7.5).fillColor(MUTED).text(label.toUpperCase(), x, yy, { width: w, characterSpacing: 0.6, lineBreak: false });
@@ -79,9 +81,6 @@ function renderAssessmentSheets(sheets, meta = {}) {
         field('Venue', sheet.venue, X0 + 12, y + 10, wV);
         field('Session', sheet.session, X0 + 12 + wV, y + 10, wS);
         field('Name of the judge', '', X0 + 12 + wV + wS, y + 10, inner - wV - wS, true);
-        if (sheet.judges && sheet.judges.length) {
-          doc.font('body').fontSize(8.5).fillColor(MUTED).text(`Judges for this session: ${sheet.judges.join(', ')}`, X0 + 12, y + 44, { width: W - 24, lineBreak: false });
-        }
         y += cardH + 8;
         doc.font('body').fontSize(9.5).fillColor(INK).text('Each criterion is worth 25 marks; the total is out of 100.', X0, y, { lineBreak: false });
         y += 18;

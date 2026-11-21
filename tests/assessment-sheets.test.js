@@ -18,6 +18,7 @@ const { renderAssessmentSheets, CRITERIA } = require('../assessment-sheet-pdf');
     const buf = r.buf || Buffer.from(r.raw || '', 'binary');
     check(`${url}: a PDF, or says why not`, (r.status === 200 && buf.slice(0, 4).toString() === '%PDF') || (r.status === 404 && r.body && r.body.error), r.status);
   }
+  check('the judges\' names are not printed (21 Nov)', !/Judges for this session/.test(fs.readFileSync(appFile('assessment-sheet-pdf.js'), 'utf8')));
   const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
   check('linked beside each running order', /oral-order\/assessment\.pdf\?format=/.test(js) && /poster-screens\/assessment\.pdf"/.test(js) && /poster-screens\/assessment\.pdf\?screen=/.test(js));
   report();
