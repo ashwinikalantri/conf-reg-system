@@ -14,16 +14,17 @@ const { ensureTextDecoders } = require('./report-pdf');
 const fs = require('fs');
 const FONT_DIR = path.join(__dirname, 'assets', 'fonts');
 const LOGO = path.join(__dirname, 'public', 'website', 'img', 'nqocn-mgims-logo.png');
-// The portal's own colours (owner, 21 Nov 2026: "as per the design of our
-// portal"): navy and gold, slate for lines and quiet text.
-const NAVY = '#1c3549';
-const GOLD = '#b08d3c';
-const GOLD_50 = '#faf5e8';
-const INK = '#1e293b';
-const MUTED = '#64748b';
-const LINE = '#cbd5e1';
-const ZEBRA = '#f8fafc';
-const CREAM = GOLD_50;
+// The portal's layout (owner, 21 Nov 2026: "as per the design of our
+// portal"), printed in black and white (owner, 22 Nov): black text and
+// rules, light grey only where a band helps, nothing dark to waste toner
+// or hide what is written.
+const NAVY = '#000000';
+const GOLD = '#000000';
+const INK = '#000000';
+const MUTED = '#404040';
+const LINE = '#555555';
+const HEAD = '#e6e6e6';
+const CREAM = '#f2f2f2';
 const CRITERIA = ['Relevance / Importance of topic', 'Contents of presentation', 'Presentation style / Confidence / Fluency', 'Discussion / Subject clarity'];
 
 let PDFDocument = null;
@@ -62,7 +63,7 @@ function renderAssessmentSheets(sheets, meta = {}) {
       doc.font('bold').fontSize(15).fillColor(NAVY).text(sheet.heading, X0, y + 3, { width: W, align: 'right', lineBreak: false });
       doc.font('body').fontSize(8.5).fillColor(MUTED).text(page > 1 ? `${sheet.venue} · continued` : `${meta.acronym || ''} · Judges' assessment sheet`, X0, y + 20, { width: W, align: 'right', lineBreak: false });
       y += 34;
-      doc.rect(X0, y, W, 2).fill(GOLD);
+      doc.rect(X0, y, W, 1.5).fill(GOLD);
       y += 10;
       if (page === 1) {
         // Venue, session and the judge, as label and value, in a quiet card.
@@ -75,7 +76,7 @@ function renderAssessmentSheets(sheets, meta = {}) {
         doc.font('bold').fontSize(10.5);
         const valH = Math.max(doc.heightOfString(sheet.venue || '', { width: wV - 10 }), doc.heightOfString(sheet.session || '', { width: wS - 10 }), 14);
         const cardH = Math.max(50, 21 + valH + 12);
-        doc.roundedRect(X0, y, W, cardH, 8).fillAndStroke(ZEBRA, LINE);
+        doc.lineWidth(0.8).roundedRect(X0, y, W, cardH, 6).stroke(LINE);
         const field = (label, value, x, yy, w, blank) => {
           doc.font('bold').fontSize(7.5).fillColor(MUTED).text(label.toUpperCase(), x, yy, { width: w, characterSpacing: 0.6, lineBreak: false });
           if (blank) doc.moveTo(x, yy + 26).lineTo(x + w - 10, yy + 26).lineWidth(0.8).strokeColor(NAVY).stroke();
@@ -103,11 +104,12 @@ function renderAssessmentSheets(sheets, meta = {}) {
       // The heading row, cream as the template's.
       doc.font('bold').fontSize(8.5);
       const headH = Math.max(36, ...cols.map((c) => doc.heightOfString(c.head, { width: c.w - pad * 2 }) + (c.sub ? 11 : 0))) + pad * 2;
-      doc.rect(X0, y, W, headH).fill(NAVY);
+      doc.rect(X0, y, W, headH).fill(HEAD);
+      doc.lineWidth(0.9).strokeColor(LINE).rect(X0, y, W, headH).stroke();
       for (const c of cols) {
-        if (c.x > X0) doc.moveTo(c.x, y).lineTo(c.x, y + headH).lineWidth(0.7).strokeColor('#34506a').stroke();
-        doc.font('bold').fontSize(8.5).fillColor('#ffffff').text(c.head, c.x + pad, y + pad, { width: c.w - pad * 2 });
-        if (c.sub) doc.font('body').fontSize(7.5).fillColor('#d6b46a').text(c.sub, c.x + pad, doc.y, { width: c.w - pad * 2 });
+        if (c.x > X0) doc.moveTo(c.x, y).lineTo(c.x, y + headH).lineWidth(0.9).strokeColor(LINE).stroke();
+        doc.font('bold').fontSize(8.5).fillColor(INK).text(c.head, c.x + pad, y + pad, { width: c.w - pad * 2 });
+        if (c.sub) doc.font('body').fontSize(7.5).fillColor(MUTED).text(c.sub, c.x + pad, doc.y, { width: c.w - pad * 2 });
       }
       y += headH;
     };
@@ -122,11 +124,10 @@ function renderAssessmentSheets(sheets, meta = {}) {
       const titleH = Math.min(doc.font('body').fontSize(8).heightOfString(p.title || '', { width: c.title.w - pad * 2 }), 30);
       const rowH = Math.max(36, whoH + pad * 2, titleH + pad * 2);
       if (y + rowH > bottom()) startPage();
-      if (Number(p.place) % 2 === 0) doc.rect(X0, y, W, rowH).fill(ZEBRA);
-      doc.lineWidth(0.7).strokeColor(LINE).rect(X0, y, W, rowH).stroke();
+      doc.lineWidth(0.9).strokeColor(LINE).rect(X0, y, W, rowH).stroke();
       for (const col of cols) if (col.x > X0) doc.moveTo(col.x, y).lineTo(col.x, y + rowH).stroke();
-      doc.rect(c.total.x, y, c.total.w, rowH).fillOpacity(0.6).fill(CREAM).fillOpacity(1);
-      doc.lineWidth(0.7).strokeColor(LINE).rect(c.total.x, y, c.total.w, rowH).stroke();
+      doc.rect(c.total.x, y, c.total.w, rowH).fill(CREAM);
+      doc.lineWidth(0.9).strokeColor(LINE).rect(c.total.x, y, c.total.w, rowH).stroke();
       doc.font('bold').fontSize(10).fillColor(NAVY).text(String(p.place), c.no.x + pad, y + pad, { width: c.no.w - pad * 2, lineBreak: false });
       let yy = y + pad;
       doc.font('bold').fontSize(9).fillColor(INK).text(p.presenter || '', c.who.x + pad, yy, { width: c.who.w - pad * 2 });
