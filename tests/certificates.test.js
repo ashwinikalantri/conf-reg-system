@@ -171,6 +171,12 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     check('...and lists each response by registration number, never a name', !!responses && responses.columns[0] === 'Reg No'
       && responses.rows.some((r) => r[4] === 'More time for the hands-on part <b>please</b>')
       && !JSON.stringify(rep).includes(`Cert doc ${N}`), responses);
+    // Its own view (21 Nov 2026): each workshop's rate, averages, spread and suggestions, by reg no only.
+    const fbw = (rep.feedback && rep.feedback.workshops || []).find((w) => w.optionId === ws.optionId);
+    check('the report\'s own view: each workshop with its response rate, averages, spread and suggestions', !!fbw && fbw.responses >= 1 && fbw.present >= 1
+      && fbw.questions.length === 3 && fbw.questions[0].mean === 5 && fbw.questions[0].counts[4] >= 1
+      && fbw.suggestions.some((x) => x.regNo === `CD${N}` && /hands-on/.test(x.text)) && !JSON.stringify(rep.feedback).includes(`Cert doc ${N}`), fbw);
+    check('...drawn as its own page, not tables', /if \(type === 'workshop-feedback' && rep\.feedback\) return renderFeedbackReport\(box, rep\);/.test(fs.readFileSync(appFile('public', 'app.js'), 'utf8')));
     const html = (await call('GET', '/api/admin/reports/workshop-feedback', null, admin)).raw;
     check('...with a suggestion shown as text, not markup', html.includes('&lt;b&gt;please&lt;/b&gt;') && !html.includes('<b>please</b>'));
     await db.run("UPDATE registrations SET bank_status = 'PARTIAL_PAYMENT' WHERE id = ?", [worker.regId]);

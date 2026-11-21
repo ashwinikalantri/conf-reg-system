@@ -15538,10 +15538,25 @@ async function buildReport(type, opts = {}) {
     const when = (ms) => new Date(Number(ms)).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
     const scale = workshopFeedbackLib.SCALE.map((s) => `${s.value} ${s.label}`);
     const sections = [];
+    // For the report's own view (21 Nov 2026): every workshop's response
+    // rate and averages, each question's spread, the suggestions -- by
+    // registration number only. The sections stay for the CSV and PDF.
+    const sessionsAll = await programmeSessions();
+    const facultyKeys = await workshopFacultyKeys();
+    const feedback = { questions: workshopFeedbackLib.QUESTIONS.map((q) => q.label), scale: workshopFeedbackLib.SCALE, workshops: [] };
     for (const w of workshops) {
       const keys = new Set([...w.sessionIds].map((id) => `s:${id}`));
-      const present = new Set(presentRows.filter((a) => keys.has(a.event_key)).map((a) => a.phone_number)).size;
+      // Those asked: present, not the workshop's own faculty.
+      const present = new Set(presentRows.filter((a) => keys.has(a.event_key) && !facultyKeys.has(`${a.phone_number}|${w.optionId}`)).map((a) => a.phone_number)).size;
       const mine = responses.filter((f) => Number(f.option_id) === w.optionId);
+      const first = sessionsAll.find((s) => w.sessionIds.has(s.id)) || {};
+      const summary = workshopFeedbackLib.summarise(mine);
+      feedback.workshops.push({
+        optionId: w.optionId, label: first.label || '', no: Number((/\d+/.exec(first.label || '') || [0])[0]) || null, name: w.name, hall: first.hall || '',
+        present, responses: mine.length,
+        questions: summary.map((q) => ({ label: q.label, n: q.n, mean: q.mean, counts: q.counts })),
+        suggestions: mine.filter((f) => f.suggestions).map((f) => ({ regNo: f.registration_number || '', text: f.suggestions, at: Number(f.submitted_at) })),
+      });
       sections.push({
         name: `${w.name}: ratings (${mine.length} of ${present} present responded)`,
         columns: ['Question', 'Responses', 'Average', ...scale],
@@ -15553,7 +15568,8 @@ async function buildReport(type, opts = {}) {
         rows: mine.map((f) => [f.registration_number || '', ...workshopFeedbackLib.QUESTIONS.map((q) => f[q.key]), f.suggestions || '', when(f.submitted_at)]),
       });
     }
-    return { title: 'Workshop Feedback', sections };
+    feedback.workshops.sort((a, b) => (a.no || 999) - (b.no || 999) || a.name.localeCompare(b.name));
+    return { title: 'Workshop Feedback', sections, feedback };
   }
   if (type === 'users') {
     // Every column the users table actually has, plus the registration

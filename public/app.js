@@ -11060,6 +11060,7 @@ async function viewReport(type, extraQuery) {
   if (currentReport && currentReport !== type) return;
 
   const rep = data.report;
+  if (type === 'workshop-feedback' && rep.feedback) return renderFeedbackReport(box, rep);
   const totalRows = rep.sections.reduce((n, s) => n + s.rows.length, 0);
   const extra = esc(JSON.stringify(extraQuery || ''));
   const summary = rep.kind === 'summary';
@@ -11100,6 +11101,89 @@ async function viewReport(type, extraQuery) {
     </div>
     ${summary ? reportSummaryHtml(rep) : `<div class="pb-1">${rep.sections.map(table).join('')}</div>`}`;
   watchFitTables();
+}
+
+// The Workshop Feedback report's own view (redesigned 21 Nov 2026): the
+// totals, every workshop's response rate and three averages on one screen,
+// then one workshop open -- each question's spread from Poor to Excellent
+// and its suggestions, by registration number only. Excel and PDF as before.
+const fbState = { rep: null, open: null };
+const FB_COLOURS = ['#dc2626', '#f59e0b', '#94a3b8', '#34d399', '#047857'];
+const fbTone = (v) => (v == null ? 'bg-slate-100 text-slate-500' : v >= 4.5 ? 'bg-emerald-100 text-emerald-800' : v >= 3.5 ? 'bg-slate-100 text-slate-800' : 'bg-amber-100 text-amber-900');
+function renderFeedbackReport(box, rep) {
+  fbState.rep = rep;
+  const f = rep.feedback;
+  const ws = f.workshops;
+  if (fbState.open == null || !ws.some((w) => w.optionId === fbState.open)) {
+    const first = ws.find((w) => w.responses) || ws[0];
+    fbState.open = first ? first.optionId : null;
+  }
+  const responses = ws.reduce((n, w) => n + w.responses, 0);
+  const present = ws.reduce((n, w) => n + w.present, 0);
+  let sum = 0;
+  let cnt = 0;
+  ws.forEach((w) => w.questions.forEach((q) => { if (q.mean != null) { sum += q.mean * q.n; cnt += q.n; } }));
+  const avg = cnt ? Math.round((sum / cnt) * 10) / 10 : null;
+  const suggestions = ws.reduce((n, w) => n + w.suggestions.length, 0);
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const tile = (label, big, small) => `<div class="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3"><p class="text-sm text-slate-600">${esc(label)}</p>
+    <p class="text-2xl font-bold text-slate-900 tabular-nums">${big} <span class="text-sm font-normal text-slate-500">${small}</span></p></div>`;
+  const chip = (v) => `<span class="inline-block min-w-[2.5rem] text-center text-sm font-bold px-1.5 py-0.5 rounded-md tabular-nums ${fbTone(v)}">${v == null ? '—' : v.toFixed(1)}</span>`;
+  const btnCls = 'inline-flex items-center gap-1.5 h-10 px-3.5 rounded-xl text-sm font-semibold';
+  const dl = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>';
+  const open = ws.find((w) => w.optionId === fbState.open);
+  box.innerHTML = `
+    <div class="p-4 sm:p-5 border-b border-slate-200 space-y-4">
+      <div class="flex justify-between items-start flex-wrap gap-3">
+        <div class="min-w-0"><h3 class="text-lg font-bold text-slate-900">Workshop feedback</h3>
+          <p class="text-sm text-slate-600 mt-0.5">Responses by registration number, never by name. Asked of those marked present, not the workshop’s own faculty.</p></div>
+        <div class="flex gap-2">
+          <button type="button" onclick='downloadReport("workshop-feedback", "csv", "")' class="${btnCls} border border-slate-300 bg-white text-navy hover:bg-slate-50">${dl}Excel</button>
+          <button type="button" onclick='downloadReport("workshop-feedback", null, "")' class="${btnCls} bg-navy hover:bg-indigo-700 text-white">${dl}PDF</button>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        ${tile('Responses', responses, `of ${present} present · ${pct(responses, present)}%`)}
+        ${tile('Average, all questions', avg == null ? '—' : avg.toFixed(1), 'out of 5')}
+        ${tile('Suggestions written', suggestions, '')}
+      </div>
+    </div>
+    <div class="p-4 sm:p-5 border-b border-slate-200">
+      <div class="hidden sm:grid grid-cols-[minmax(0,1fr)_9rem_11rem] gap-4 text-xs font-semibold text-slate-500 pb-1"><span>Workshop</span><span>Responded</span><span class="text-right">Relevance · Facilitation · Use</span></div>
+      <div class="divide-y divide-slate-100">${ws.map((w) => {
+    const on = w.optionId === fbState.open;
+    return `<button type="button" onclick="openFeedbackWorkshop(${Number(w.optionId)})" aria-pressed="${on}" class="w-full text-left grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_9rem_11rem] gap-x-4 gap-y-1.5 items-center py-3 px-2 -mx-2 rounded-lg ${on ? 'bg-indigo-50' : 'hover:bg-slate-50'} ${w.present ? '' : 'opacity-60'}">
+        <span class="min-w-0 text-[15px] text-slate-900 break-words">${w.no ? `<span class="text-slate-500">${w.no}.</span> ` : ''}${esc(w.name)}</span>
+        <span>${w.present ? `<span class="block h-2.5 rounded-full bg-slate-100 overflow-hidden"><span class="block h-full bg-navy" style="width:${pct(w.responses, w.present)}%"></span></span>
+          <span class="block text-xs text-slate-500 mt-1 tabular-nums">${w.responses} of ${w.present} · ${pct(w.responses, w.present)}%</span>` : '<span class="text-xs text-slate-500">No one marked present yet</span>'}</span>
+        <span class="sm:text-right space-x-1">${w.questions.map((q) => chip(q.mean)).join('')}</span>
+      </button>`;
+  }).join('')}</div>
+    </div>
+    ${open ? `<div class="p-4 sm:p-5">
+      <div class="flex justify-between items-end flex-wrap gap-2">
+        <div class="min-w-0"><p class="text-xs font-bold tracking-wide text-indigo-700 uppercase">${esc([open.label, open.hall].filter(Boolean).join(' · '))}</p>
+          <h4 class="text-lg font-bold text-slate-900 break-words">${esc(open.name)}</h4></div>
+        <p class="text-sm text-slate-600">${open.responses} of ${open.present} present responded${open.present ? ` · ${pct(open.responses, open.present)}%` : ''}</p>
+      </div>
+      <div class="mt-3 divide-y divide-slate-100">${open.questions.map((q) => {
+    const total = q.counts.reduce((a, b) => a + b, 0);
+    return `<div class="py-3 grid grid-cols-[minmax(0,1fr)_3.5rem] gap-x-3 gap-y-2 items-center">
+        <p class="text-[15px] text-slate-800">${esc(q.label)}</p><p class="text-right text-xl font-bold text-slate-900 tabular-nums">${q.mean == null ? '—' : q.mean.toFixed(1)}</p>
+        <div class="col-span-2 flex h-4 rounded overflow-hidden bg-slate-100" role="img" aria-label="${f.scale.map((s, i) => `${s.label}: ${q.counts[i]}`).join(', ')}">
+          ${total ? q.counts.map((c, i) => (c ? `<span class="block h-full text-[10px] leading-4 text-center text-white font-bold" style="width:${(c / total) * 100}%;background:${FB_COLOURS[i]}">${c}</span>` : '')).join('') : ''}
+        </div></div>`;
+  }).join('')}</div>
+      <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 mt-1">${f.scale.map((s, i) => `<span class="inline-flex items-center gap-1.5"><i class="inline-block w-2.5 h-2.5 rounded-sm" style="background:${FB_COLOURS[i]}"></i>${s.value} ${esc(s.label)}</span>`).join('')}</div>
+      <h5 class="mt-5 mb-1 text-[15px] font-bold text-slate-900">Suggestions · ${open.suggestions.length}</h5>
+      <div class="divide-y divide-slate-100">${open.suggestions.map((s) => `<div class="py-2.5"><p class="text-[15px] text-slate-800 whitespace-pre-line break-words">“${esc(s.text)}”</p>
+        <p class="text-xs text-slate-500 mt-0.5">${esc(s.regNo || 'No reg no')} · ${esc(fmtAuditTime(s.at))}</p></div>`).join('') || '<p class="py-3 text-sm text-slate-500">None yet.</p>'}</div>
+    </div>` : ''}`;
+}
+function openFeedbackWorkshop(id) {
+  fbState.open = id;
+  const box = document.getElementById('report-view-container');
+  if (box && fbState.rep) renderFeedbackReport(box, fbState.rep);
 }
 
 // Filters every row across the currently-viewed report's sections by a
