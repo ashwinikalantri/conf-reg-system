@@ -234,6 +234,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'GET /api/admin/certificates/candidates': 'Who qualifies for which certificate and why not. Names, numbers, categories and council numbers. certificates.view.',
     'POST /api/admin/certificates/override': 'Includes or excludes someone, with a reason kept. certificates.issue.',
     'POST /api/admin/certificates/issue': 'Issues every certificate due. certificates.issue.',
+    'GET /api/admin/certificates/person-preview.pdf': 'One person\'s certificate as it will be issued, marked PREVIEW; nothing issued. certificates.view.',
     'POST /api/admin/certificates/force': 'Issues one certificate to one person who does not qualify, with a reason, marked Forced. certificates.issue, and the Super Admin role itself.',
     'GET /api/admin/certificates/issued': 'Every certificate issued. certificates.view.',
     'GET /api/admin/certificates/:id.pdf': 'Downloads one. certificates.view.',

@@ -11562,6 +11562,39 @@ app.post('/api/admin/certificates/override', requirePermission('certificates.iss
   }
 });
 
+// One person's certificate as it will be issued (owner, 21 Nov 2026: "a
+// preview option to see the certificate that will be issued"): their name,
+// council number, workshop or sessions, on the current design, marked
+// PREVIEW and numbered ----. Nothing is issued or stored. cert as for
+// Force issue; any certificate, whether or not they qualify yet.
+app.get('/api/admin/certificates/person-preview.pdf', requirePermission('certificates.view'), async (req, res, next) => {
+  try {
+    const person = (await certificateCandidates()).find((p) => p.phone === String(req.query.phone || ''));
+    if (!person) return res.status(404).json({ success: false, error: 'Nobody found.' });
+    const m = /^([A-Z_]+)(?::(\d+))?$/.exec(String(req.query.cert || ''));
+    const kind = m && m[1];
+    if (!kind || !CERT_KIND_CODE[kind] || kind === 'FACULTY') return res.status(400).json({ success: false, error: 'Which certificate?' });
+    let workshop = null;
+    let detail = null;
+    if (kind === 'WORKSHOP' || kind === 'WORKSHOP_FACULTY') {
+      const w = (await certificateWorkshops()).get(Number(m[2]));
+      if (!w) return res.status(400).json({ success: false, error: 'Which workshop?' });
+      workshop = w;
+    } else if (CERT_ROLE_KINDS.includes(kind)) {
+      const role = (person.roles || []).find((r) => r.kind === kind);
+      detail = role ? certSessionList(role.sessions) : null;
+    }
+    const pdf = await certificatePdf({
+      kind, name: person.name, council_name: kind === 'MMC' ? person.councilName : null, council_reg_no: kind === 'MMC' ? person.councilRegNo : null,
+      category_label: person.category, workshop_name: workshop ? workshop.name : null, workshop_date: workshop ? workshop.date : null,
+      option_id: workshop ? workshop.optionId : null, detail, cert_no: `${certPrefix()}/${CERT_KIND_CODE[kind]}/----`, verify_code: 'PREVIEW000',
+    }, { specimen: 'PREVIEW' });
+    sendPdf(res, pdf, `preview-${kind}.pdf`);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Force issue (owner, 21 Nov 2026): a super admin -- the role itself, not
 // a permission anyone can be given -- issues one certificate to one person
 // now, though they do not qualify, with a reason kept on it and in the log.

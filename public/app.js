@@ -17489,15 +17489,18 @@ function certItems(x) {
   const c = x.conference;
   if (!x.notRegistered || c.issued) {
     const kind = (c.issued && c.issued.kind) || c.kind;
+    // Not qualifying yet, it would print as theirs will: MMC with a council
+    // number, Nursing in a nursing category, else participation.
+    const would = kind || (x.mmcCategory && x.councilRegNo ? 'MMC' : x.nursingCategory ? 'NURSING' : 'CONF');
     items.push({ title: `Conference${kind ? ` · ${CERT_CONF_WORD[kind] || 'Participation'}` : ''}`, status: st(c.issued, !!c.kind, c.override), reason: c.whyNot || '',
-      issued: c.issued, issueScope: 'conference', ovKey: x.phone, ovScope: 'CONF', override: c.override, include: !c.kind, kind: kind || 'CONF' });
+      issued: c.issued, issueScope: 'conference', ovKey: x.phone, ovScope: 'CONF', override: c.override, include: !c.kind, kind: kind || 'CONF', cert: would });
   }
   x.workshops.forEach((w) => items.push({ title: `Workshop · ${w.name}`, status: st(w.issued, w.eligible, w.override), reason: w.whyNot || '', issued: w.issued,
-    issueScope: 'workshops', ovKey: x.phone, ovScope: w.e, override: w.override, include: !w.eligible, kind: 'WORKSHOP', notMarked: w.whyNot === 'Not marked present' }));
+    issueScope: 'workshops', ovKey: x.phone, ovScope: w.e, override: w.override, include: !w.eligible, kind: 'WORKSHOP', notMarked: w.whyNot === 'Not marked present', cert: `WORKSHOP:${w.optionId}` }));
   (x.workshopFaculty || []).forEach((w) => items.push({ title: `Workshop faculty · ${w.name}`, status: st(w.issued, w.eligible, w.override), reason: w.whyNot || '', issued: w.issued,
-    issueScope: 'workshop_faculty', ovKey: x.phone, ovScope: w.scope, override: w.override, include: false, kind: 'WORKSHOP_FACULTY' }));
+    issueScope: 'workshop_faculty', ovKey: x.phone, ovScope: w.scope, override: w.override, include: false, kind: 'WORKSHOP_FACULTY', cert: `WORKSHOP_FACULTY:${w.optionId}` }));
   (x.roles || []).forEach((r) => items.push({ title: `${CERT_ROLE_WORD[r.kind]} · ${r.sessions.join('; ')}`, status: st(r.issued, r.eligible, r.override), reason: r.whyNot || '', issued: r.issued,
-    issueScope: 'roles', ovKey: r.key, ovScope: `role:${r.kind}`, override: r.override, include: false, kind: r.kind }));
+    issueScope: 'roles', ovKey: r.key, ovScope: `role:${r.kind}`, override: r.override, include: false, kind: r.kind, cert: r.kind }));
   return items;
 }
 const CERT_TAG = {
@@ -17632,7 +17635,11 @@ function renderCertPerson() {
     if (it.issued) {
       acts.push(`<a href="/api/admin/certificates/${encodeURIComponent(it.issued.id)}.pdf" target="_blank" rel="noopener" class="inline-flex items-center min-h-[40px] px-3.5 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-navy hover:bg-slate-50">Download</a>`);
       if (mayIssue) acts.push(btn('Correct the name…', `correctCertificate(${Number(it.issued.id)})`), btn('Withdraw…', `revokeCertificate(${Number(it.issued.id)})`, 'risk'));
-    } else if (mayIssue) {
+    } else {
+      // Not issued yet: see it as it will be issued (21 Nov 2026).
+      acts.push(`<a href="${certPreviewUrl(x.phone, it.cert)}" target="_blank" rel="noopener" class="inline-flex items-center min-h-[40px] px-3.5 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-navy hover:bg-slate-50">Preview</a>`);
+    }
+    if (!it.issued && mayIssue) {
       if (it.status === 'due') acts.push(btn('Issue now', `issueCertificatesFor(${esc(JSON.stringify(x.phone))}, '${it.issueScope}')`, 'main'));
       if (it.override) acts.push(btn(it.override.decision === 'INCLUDE' ? 'Undo “include anyway”' : 'Undo the exclusion', ov(it, null)));
       else if (it.status === 'due') acts.push(btn('Exclude…', ov(it, 'EXCLUDE')));
@@ -17652,6 +17659,8 @@ function renderCertPerson() {
   }).join('') || '<p class="py-6 text-sm text-slate-500">No certificates for them.</p>';
   document.getElementById('cert-person-force').classList.toggle('hidden', !(certState.superAdmin && mayIssue));
 }
+
+const certPreviewUrl = (phone, cert) => `/api/admin/certificates/person-preview.pdf?phone=${encodeURIComponent(phone)}&cert=${encodeURIComponent(cert)}`;
 
 async function issueCertificatesFor(phone, scope) {
   const data = await (await fetch('/api/admin/certificates/issue', {
@@ -17693,6 +17702,8 @@ function certForceWhy() {
   const [kind, opt] = v.split(':');
   const it = ['MMC', 'NURSING', 'CONF'].includes(kind) ? items.find((i) => i.issueScope === 'conference')
     : kind === 'WORKSHOP' ? items.find((i) => i.issueScope === 'workshops' && i.ovScope === `ws:${opt}`) : items.find((i) => i.kind === kind);
+  const prev = document.getElementById('cert-force-preview');
+  if (prev) { prev.href = v ? certPreviewUrl(certState.open, v) : '#'; prev.classList.toggle('hidden', !v); }
   setText('cert-force-why', it ? (it.status === 'due' ? 'They qualify already: Issue now does it without forcing.' : `Why they don’t qualify now: ${it.reason || 'not in the rule for it'}.`)
     : 'Why they don’t qualify now: not registered for it or not in the programme for it.');
 }

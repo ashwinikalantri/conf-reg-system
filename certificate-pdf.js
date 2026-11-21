@@ -166,9 +166,11 @@ function renderCertificatePdf(opts) {
       } else {
         generated(doc, opts);
       }
+      // A specimen, or one person's not-yet-issued certificate (specimen:
+      // 'PREVIEW', 21 Nov 2026): marked across, never mistaken for the real one.
       if (opts.specimen) {
         doc.save().fillOpacity(0.12).fillColor('#b91c1c').font('Times-Bold').fontSize(110)
-          .rotate(-24, { origin: [W / 2, PH / 2] }).text('SPECIMEN', 0, PH / 2 - 60, { width: W, align: 'center', lineBreak: false }).restore();
+          .rotate(-24, { origin: [W / 2, PH / 2] }).text(opts.specimen === true ? 'SPECIMEN' : String(opts.specimen), 0, PH / 2 - 60, { width: W, align: 'center', lineBreak: false }).restore();
       }
       doc.end();
     } catch (err) {

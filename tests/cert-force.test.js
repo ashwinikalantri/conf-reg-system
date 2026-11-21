@@ -25,6 +25,14 @@ const N = String(Date.now()).slice(-7);
     const cand = (await call('GET', '/api/admin/certificates/candidates', null, admin)).body;
     check('the page is told who may force, and every workshop to offer', cand.superAdmin === true && Array.isArray(cand.workshops));
 
+    // Preview (21 Nov 2026): theirs as it will be issued, marked, nothing stored.
+    const prev = await call('GET', `/api/admin/certificates/person-preview.pdf?phone=${encodeURIComponent(phone)}&cert=CONF`, null, admin);
+    const pbuf = prev.buf || Buffer.from(prev.raw || '', 'binary');
+    check('a preview of the certificate they would get: a PDF, nothing issued', prev.status === 200 && pbuf.slice(0, 4).toString() === '%PDF'
+      && !(await db.get('SELECT 1 AS y FROM certificates WHERE phone_number = ?', [phone])), prev.status);
+    check('...a workshop\'s too; a certificate that is not one, refused', (await call('GET', `/api/admin/certificates/person-preview.pdf?phone=${encodeURIComponent(phone)}&cert=NOPE`, null, admin)).status === 400);
+    check('...each certificate not yet issued has Preview in the person panel', /Not issued yet: see it as it will be issued/.test(fs.readFileSync(appFile('public', 'app.js'), 'utf8'))
+      && /id="cert-force-preview"/.test(fs.readFileSync(appFile('views', 'admin', 'sections', 'certificates.ejs'), 'utf8')));
     const noReason = await call('POST', '/api/admin/certificates/force', { phone, cert: 'CONF', reason: ' ' }, admin);
     check('a reason is required', noReason.status === 400 && /reason/i.test(noReason.body.error));
     const other = await call('POST', '/api/admin/certificates/force', { phone, cert: 'CONF', reason: 'Test' }, desk);
