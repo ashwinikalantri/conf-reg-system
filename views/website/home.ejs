@@ -1,5 +1,10 @@
 <%- include('partials/head', { title: '' }) %>
 
+<%# While the conference is on, the page is live (21 Nov 2026): partials/live.ejs, from website-live.js. %>
+<% if (live) { %>
+<%- include('partials/live') %>
+<% } else { %>
+
 <section class="band-navy hero">
   <div class="wrap">
     <div class="hero-main">
@@ -87,6 +92,8 @@
     </div>
   </div>
 </section>
+
+<% } %>
 
 <section aria-labelledby="partners-h">
   <div class="wrap section stack" style="gap: 20px">

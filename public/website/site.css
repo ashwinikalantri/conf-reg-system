@@ -298,4 +298,64 @@ table.fees thead .past { text-decoration: none; }
 .site-footer .links { display: flex; flex-direction: column; gap: 6px; }
 .site-footer .legal { border-top: 1px solid rgba(255, 255, 255, 0.15); padding-top: 16px; padding-bottom: 28px; font-size: 14px; }
 
+/* The home page while the conference is on (partials/live.ejs, 21 Nov 2026). */
+.live-hero .wrap { padding-top: 36px; padding-bottom: 44px; display: flex; flex-wrap: wrap; gap: 28px 48px; align-items: stretch; }
+.live-conf { flex: 1 1 100%; display: flex; flex-direction: column; gap: 10px; padding-bottom: 26px; border-bottom: 1px solid rgba(214, 180, 106, 0.45); }
+.live-conf h1 { font-weight: 800; font-size: 28px; line-height: 1.12; letter-spacing: -0.01em; }
+@media (min-width: 720px) { .live-conf h1 { font-size: 40px; line-height: 1.1; } }
+.live-main { flex: 1 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.live-main h2 { font-weight: 700; font-size: 26px; line-height: 1.15; }
+@media (min-width: 720px) { .live-main h2 { font-size: 32px; } }
+.live-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.live-pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px; background: rgba(214, 180, 106, 0.16); border: 1px solid var(--gold-300); color: #f3e2b8; font-size: 13px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.live-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #f0dc4f; box-shadow: 0 0 0 4px rgba(240, 220, 79, 0.25); animation: live-pulse 2s ease-in-out infinite; }
+@keyframes live-pulse { 50% { box-shadow: 0 0 0 7px rgba(240, 220, 79, 0.05); } }
+.live-lead { font-size: 18px; color: #dbe4ec; max-width: 620px; }
+.live-next { flex: 1 1 300px; max-width: 420px; border: 1px solid var(--gold); border-radius: 16px; padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; }
+.live-next .big { font-family: var(--display); font-weight: 800; font-size: 40px; line-height: 1; letter-spacing: -0.02em; color: #fff; }
+.live-next .what { font-family: var(--display); font-weight: 700; font-size: 21px; line-height: 1.25; color: #fff; }
+.live-next .where { color: var(--on-navy); }
+.live-next .then { display: flex; gap: 14px; align-items: baseline; color: #e6ecf1; }
+.live-next .then b { color: var(--gold-300); white-space: nowrap; }
+.live-today { background: var(--tint); border-bottom: 1px solid var(--line); }
+.live-today .wrap { padding-top: 20px; padding-bottom: 22px; display: flex; flex-direction: column; gap: 12px; }
+.live-today ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.live-today li { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 12px; background: #fff; border: 1px solid var(--line-2); }
+.live-today .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.live-today .row b { color: var(--navy); font-variant-numeric: tabular-nums; }
+.live-today .state { font-size: 12px; font-weight: 700; color: var(--steel); }
+.live-today .what { font-weight: 700; line-height: 1.3; }
+.live-today .where { font-size: 14px; line-height: 1.35; color: var(--muted); }
+.live-today li.is-done { border-color: var(--line); opacity: 0.72; }
+.live-today li.is-done .row b, .live-today li.is-done .state { color: var(--muted); }
+.live-today li.is-now { background: var(--gold-50); border: 2px solid var(--gold); }
+.live-today li.is-now .row b { color: var(--gold-700); }
+.live-today li.is-now .state { color: #fff; background: var(--gold-700); padding: 2px 8px; border-radius: 999px; letter-spacing: 0.06em; text-transform: uppercase; }
+@media (max-width: 719px) { .live-today ol { grid-template-columns: minmax(0, 1fr); } .live-today li { display: grid; grid-template-columns: 78px minmax(0, 1fr); column-gap: 12px; } .live-today .row { grid-row: span 2; flex-direction: column; align-items: flex-start; } .live-today .where { grid-column: 2; } }
+.live-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.live-head .muted { font-size: 15px; }
+.live-now { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
+.live-now article { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; display: flex; gap: 14px; align-items: flex-start; }
+.live-now .no { flex: none; width: 36px; height: 36px; border-radius: 10px; background: var(--gold-50); border: 1px solid var(--gold-300); color: var(--gold-700); font-family: var(--display); font-weight: 800; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+.live-now h3 { font-size: 17px; font-weight: 700; line-height: 1.3; }
+.live-now .label { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--steel); }
+.live-now .place { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ink); }
+.live-now .place svg { color: var(--gold-700); flex: none; }
+.live-now .who { font-size: 15px; color: var(--muted); }
+.live-now .time { font-size: 14px; font-weight: 700; color: var(--gold-700); }
+.live-tomorrow { display: flex; flex-wrap: wrap; gap: 32px 48px; }
+.live-tomorrow > .stack { flex: 1 1 340px; min-width: 0; }
+.live-rows { flex: 2 1 520px; min-width: 0; list-style: none; margin: 0; padding: 0; background: #fff; border: 1px solid var(--line); border-radius: 16px; }
+.live-rows li { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 14px; padding: 13px 20px; border-bottom: 1px solid #eef1f4; }
+.live-rows li:last-child { border-bottom: 0; }
+.live-rows b { color: var(--navy); font-variant-numeric: tabular-nums; }
+.live-rows > li > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.live-rows .what { font-weight: 700; line-height: 1.35; }
+.live-rows .where { font-size: 15px; color: var(--muted); line-height: 1.4; }
+.live-cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); }
+.live-cards p { color: var(--text); }
+.live-portal { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px; border: 1px solid var(--line); border-radius: 16px; padding: 20px 22px; }
+.live-portal .what { font-family: var(--display); font-weight: 700; font-size: 19px; color: var(--navy); }
+@media (prefers-reduced-motion: reduce) { .live-pill .dot { animation: none; } }
+
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }

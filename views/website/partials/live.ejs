@@ -1,0 +1,141 @@
+<%# The home page while the conference is on (owner, 21 Nov 2026; the canvas
+    design "Live Conference Home"): the conference at the top, then what is
+    happening and what is next, today at a glance, what is on now and where,
+    tomorrow, and the practical things. live: website-live.js build(). %>
+<section class="band-navy live-hero">
+  <div class="wrap">
+    <div class="live-conf">
+      <p class="kicker"><%= conf.acronym || 'NQOCN 2026' %> · <%= conf.location || 'MGIMS, Sevagram, Wardha' %> · <%= conf.dates %></p>
+      <h1><%= conf.name %></h1>
+    </div>
+    <div class="live-main">
+      <div class="live-tags">
+        <% if (!live.last || live.now.kind !== 'none') { %><span class="live-pill"><span class="dot" aria-hidden="true"></span>Live now</span><% } %>
+        <span class="kicker">Day <%= live.dayN %> of <%= live.dayCount %> · <%= live.dayLabel %></span>
+      </div>
+      <h2><%= live.headline %></h2>
+      <p class="live-lead"><%= live.lead %></p>
+      <div class="hero-actions">
+        <% if (live.now.items.length) { %><a class="btn btn-gold" href="#now"><%= live.now.kind === 'workshops' ? 'Find your workshop' : 'What’s on now' %></a><% } %>
+        <a class="btn btn-ghost" href="<%= glancePdf %>" target="_blank" rel="noopener"><svg aria-hidden="true" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="margin-right: 8px"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 20h14"></path></svg>Programme (PDF)</a>
+      </div>
+    </div>
+    <% if (live.next.length) { const n0 = live.next[0]; %>
+    <aside class="live-next" aria-label="Next up">
+      <p class="kicker">Next up · <%= n0.in %></p>
+      <div class="stack" style="gap: 4px">
+        <p class="big"><%= n0.time %></p>
+        <p class="what"><%= n0.title %></p>
+        <p class="where"><%= [n0.where, n0.until].filter(Boolean).join(' · ') %></p>
+      </div>
+      <div class="petals" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+      <% live.next.slice(1).forEach((x) => { %>
+        <p class="then"><b><%= x.time %></b><span><%= x.title %><%= x.where ? `, ${x.where}` : '' %></span></p>
+      <% }) %>
+    </aside>
+    <% } %>
+  </div>
+</section>
+
+<section class="live-today" aria-labelledby="today-h">
+  <div class="wrap">
+    <h2 id="today-h" class="kicker">Today</h2>
+    <ol>
+      <% live.strip.forEach((x) => { %>
+        <li class="is-<%= x.state %>">
+          <span class="row"><b><%= x.time %></b><span class="state"><%= x.state === 'done' ? 'Done' : x.state === 'now' ? 'Now' : 'Later' %></span></span>
+          <span class="what"><%= x.title %></span>
+          <% if (x.where) { %><span class="where"><%= x.where %></span><% } %>
+        </li>
+      <% }) %>
+    </ol>
+  </div>
+</section>
+
+<section id="now" aria-labelledby="now-h">
+  <div class="wrap section stack" style="gap: 24px">
+    <div class="live-head">
+      <div class="stack" style="gap: 10px">
+        <div class="petals" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+        <h2 id="now-h" class="h2"><%= live.now.heading %></h2>
+        <% if (live.now.note) { %><p class="lead"><%= live.now.note %></p><% } %>
+      </div>
+      <p class="muted">Updated as the day goes · <%= live.updated %></p>
+    </div>
+    <% if (live.now.items.length) { %>
+    <div class="live-now">
+      <% live.now.items.forEach((x) => { %>
+        <article>
+          <% if (x.no) { %><span class="no"><%= x.no %></span><% } %>
+          <div class="stack" style="gap: 6px; min-width: 0">
+            <% if (x.label) { %><p class="label"><%= x.label %></p><% } %>
+            <h3><%= x.title %></h3>
+            <p class="place"><svg aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0119 9.5C19 14.8 12 21 12 21z"></path><circle cx="12" cy="9.5" r="2.5"></circle></svg><%= x.where %></p>
+            <% if (x.speakers) { %><p class="who"><%= x.speakers %></p><% } %>
+            <% if (x.time) { %><p class="time"><%= x.time %></p><% } %>
+          </div>
+        </article>
+      <% }) %>
+    </div>
+    <% } else if (!live.tomorrow) { %>
+    <p class="lead">Thank you for being part of <%= conf.acronym || 'the conference' %>. Your certificate will be in the <a href="<%= portal %>">delegate portal</a>.</p>
+    <% } %>
+  </div>
+</section>
+
+<% if (live.tomorrow) { %>
+<section class="band-tint" aria-labelledby="tomorrow-h">
+  <div class="wrap section live-tomorrow">
+    <div class="stack" style="gap: 12px">
+      <p class="kicker">Tomorrow · <%= live.tomorrow.label %></p>
+      <h2 id="tomorrow-h" class="h2"><%= live.tomorrow.workshopDay ? 'The workshop day' : live.tomorrow.halls > 1 ? `The conference day, in ${live.tomorrow.halls === 3 ? 'three' : live.tomorrow.halls} halls` : 'The conference day' %></h2>
+      <p class="lead">Check in at the registration desk first: it opens your meals and sessions.</p>
+      <div class="hero-actions">
+        <a class="btn btn-navy" href="<%= base %>/programme?day=<%= live.tomorrow.date %>">The full programme</a>
+        <a class="btn btn-outline" href="<%= glancePdf %>" target="_blank" rel="noopener">Download the PDF</a>
+      </div>
+    </div>
+    <ol class="live-rows">
+      <% live.tomorrow.rows.forEach((r) => { %>
+        <li><b><%= r.time %></b><span><span class="what"><%= r.title %></span><% if (r.where) { %><span class="where"><%= r.where %></span><% } %></span></li>
+      <% }) %>
+    </ol>
+  </div>
+</section>
+<% } %>
+
+<section aria-labelledby="venue-h">
+  <div class="wrap section stack" style="gap: 22px">
+    <h2 id="venue-h" class="h2" style="font-size: 28px">At the venue</h2>
+    <div class="live-cards">
+      <article class="card card-gold">
+        <svg aria-hidden="true" width="28" height="28" fill="none" stroke="var(--gold-700)" stroke-width="1.8" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"></rect><path d="M9 7h6M9 11h6M9 15h3"></path></svg>
+        <h3>Check in first</h3>
+        <p>Collect your badge and kit at the registration desk. Meals and session attendance open once you are checked in.</p>
+      </article>
+      <article class="card">
+        <svg aria-hidden="true" width="28" height="28" fill="none" stroke="var(--steel)" stroke-width="1.8" viewBox="0 0 24 24"><path d="M7 3v8M5 3v5a2 2 0 004 0V3M7 11v10M17 3c-2 2-2 6 0 8v10"></path></svg>
+        <h3>Meals</h3>
+        <p>Show your badge or meal pass at the counter.<% if (live.meal) { %> Next: <%= live.meal %><% } %></p>
+      </article>
+      <article class="card">
+        <svg aria-hidden="true" width="28" height="28" fill="none" stroke="var(--steel)" stroke-width="1.8" viewBox="0 0 24 24"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"></path></svg>
+        <h3>Finding a hall</h3>
+        <p>Every hall and seminar room on the campus map, with directions from your phone.</p>
+        <a class="arrow-link" href="<%= base %>/visit" style="margin-top: auto">Open the map →</a>
+      </article>
+      <article class="card">
+        <svg aria-hidden="true" width="28" height="28" fill="none" stroke="var(--steel)" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+        <h3>Mornings are cool</h3>
+        <p>Around 13–15°C at dawn, pleasant by afternoon.<% if (live.tomorrow) { %> A light woollen for tomorrow’s early start.<% } %></p>
+      </article>
+    </div>
+    <div class="live-portal">
+      <div class="stack" style="gap: 2px; min-width: 0; flex: 1 1 360px">
+        <p class="what">Your badge, meal pass and certificates</p>
+        <p>In the delegate portal. Certificates are issued there after the conference.</p>
+      </div>
+      <a class="btn btn-navy" href="<%= portal %>">Open the delegate portal</a>
+    </div>
+  </div>
+</section>

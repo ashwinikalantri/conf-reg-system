@@ -3,7 +3,9 @@
   <div class="wrap cols">
     <div class="stack" style="gap: 8px">
       <b style="font-family: var(--display); font-size: 20px"><%= conf.acronym || 'NQOCN 2026' %></b>
-      <p><%= conf.dates %><br><%= content.venue.name %>, <%= content.venue.address %></p>
+      <%# The address's first part is often already in the venue's name ("…, Sevagram" then "Sevagram, Wardha…"): said once. %>
+      <% const addrParts = content.venue.address.split(/,\s*/); const addr = content.venue.name.toLowerCase().endsWith(addrParts[0].toLowerCase()) ? addrParts.slice(1).join(', ') : content.venue.address; %>
+      <p><%= conf.dates %><br><%= content.venue.name %>, <%= addr %></p>
     </div>
     <nav class="links" aria-label="Footer">
       <a href="<%= base %>/programme">Programme</a>

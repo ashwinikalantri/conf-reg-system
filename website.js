@@ -16,6 +16,7 @@ const crypto = require('crypto');
 const content = require('./website-content');
 const peopleLib = require('./programme-people');
 const presentationsLib = require('./presentations');
+const liveLib = require('./website-live');
 
 // The menu: three groups that open to their pages, and two plain links.
 // [page, label, what it is] -- the last shown in the desktop drop-downs.
@@ -302,7 +303,16 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
         };
       });
       const pick = (re) => { const s = all.find((x) => re.test(x.label || '')); return s ? { ...s, when: `${dayLong(s.session_date)}, ${time12(s.start_time)}` } : null; };
-      return { days, oration: pick(/oration/i), plenary: pick(/plenary/i), fee: await feeState() };
+      // On a conference day the page is live (21 Nov 2026): what is on now
+      // and next. ?at=2026-11-21T14:30 (India time) shows it as at then,
+      // to check before the day; a live page reloads itself every 5 minutes.
+      const at = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/.exec(String(req.query.at || ''));
+      const now = at ? Date.parse(`${at[1]}T${at[2]}:${at[3]}:00+05:30`) : Date.now();
+      const liveDays = [...new Set(all.map((s) => s.session_date))].filter((x) => x >= (C.startDate || '') && x <= (C.endDate || C.startDate || ''));
+      const live = liveLib.build(all, { days: liveDays.length ? liveDays : confDays, now, isBreak });
+      return { days, oration: pick(/oration/i), plenary: pick(/plenary/i), fee: await feeState(), live,
+        glancePdf: `${base}/programme-at-a-glance.pdf`,
+        extraHead: live && !at ? '<meta http-equiv="refresh" content="300">' : undefined };
     },
 
     async programme(req) {
