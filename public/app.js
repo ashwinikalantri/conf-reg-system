@@ -12463,6 +12463,7 @@ async function renderBackendAbstracts(local) {
     renderZenodo();
     renderPresentations();
     renderPosterScreens();
+    renderPrizes();
     const res = await fetch('/api/abstracts');
     if (!approvalBox || !assignBox) return;
     if (!res.ok) {

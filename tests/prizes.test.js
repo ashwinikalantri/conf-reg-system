@@ -86,7 +86,7 @@ const N = String(Date.now()).slice(-7);
     console.log('\n== The pages ==');
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
     const ejs = fs.readFileSync(appFile('views', 'admin', 'sections', 'abstracts.ejs'), 'utf8');
-    check('Step 4 has the Prizes panel, drawn with the running order', ejs.includes('id="order-prizes"') && /renderOralOrder\(\);\n  renderPrizes\(\);/.test(js));
+    check('Step 4 has the Prizes panel, drawn with the running order', ejs.includes('id="order-prizes"') && /renderOralOrder\(\);\n  renderPrizes\(\);/.test(js) && /renderPosterScreens\(\);\n    renderPrizes\(\);\n    const res = await fetch\('\/api\/abstracts'\)/.test(js));
     check('Ready to issue has a Prizes row; settings have its wording', /\['prizes', 'Prizes'/.test(js) && /\['Prizes', \['PRIZE'\]\]/.test(js));
   } finally {
     if (phone) {
