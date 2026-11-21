@@ -11147,7 +11147,10 @@ async function certificateCandidates() {
     if (ov && ov.decision === 'EXCLUDE') confWhyNot = `Excluded: ${ov.reason}`;
     else if (!included && !done.complete) confWhyNot = 'Not checked in at the registration desk';
     else if (!included && !paid) confWhyNot = 'Payment not complete';
-    else if (mmcCategory && r.council_reg_no) confKind = 'MMC';
+    // Every Doctor and Medical PG gets the MMC certificate (owner, 21 Nov
+    // 2026) -- a council number is no longer needed; it prints where the
+    // wording asks for it and they gave one.
+    else if (mmcCategory) confKind = 'MMC';
     else if ((nursing.categories || []).includes(r.category_key)) {
       // Nursing points: held until the council's details are set.
       if (nursingReady) confKind = 'NURSING';
@@ -11807,8 +11810,8 @@ app.post('/api/admin/certificates/force', requirePermission('certificates.issue'
     let detail = null;
     if (['MMC', 'NURSING', 'CONF'].includes(kind)) {
       if (person.notRegistered) return res.status(400).json({ success: false, error: 'A conference certificate needs a registration.' });
+      if (kind === 'MMC' && !person.mmcCategory) return res.status(400).json({ success: false, error: 'The MMC certificate is for Doctors and Medical PGs: choose participation.' });
       if (person.conference.issued) return res.status(409).json({ success: false, error: `They have one already: ${person.conference.issued.cert_no}.` });
-      if (kind === 'MMC' && !person.councilRegNo) return res.status(400).json({ success: false, error: 'No council number to print: add it to their profile, or choose participation.' });
     } else if (kind === 'WORKSHOP' || kind === 'WORKSHOP_FACULTY') {
       const w = (await certificateWorkshops()).get(Number(m[2]));
       if (!w) return res.status(400).json({ success: false, error: 'Choose the workshop.' });
@@ -11914,7 +11917,8 @@ app.put('/api/admin/certificates/:id', requirePermission('certificates.issue'), 
     const name = req.body.name !== undefined ? String(req.body.name).replace(/\s+/g, ' ').trim() : c.name;
     if (name.length < 3 || name.length > 120 || /[<>{}]/.test(name)) return res.status(400).json({ success: false, error: 'Enter the name as it should be printed.' });
     const regNo = req.body.councilRegNo !== undefined ? String(req.body.councilRegNo).replace(/\s+/g, '').toUpperCase() : c.council_reg_no;
-    if (c.kind === 'MMC' && !/^[A-Z0-9/.-]{3,30}$/.test(regNo || '')) return res.status(400).json({ success: false, error: 'Enter a valid registration number.' });
+    // A council number is optional on the MMC certificate (21 Nov 2026); when given, a real one.
+    if (c.kind === 'MMC' && regNo && !/^[A-Z0-9/.-]{3,30}$/.test(regNo)) return res.status(400).json({ success: false, error: 'Enter a valid registration number.' });
     await dbRun('UPDATE certificates SET name = ?, council_reg_no = ?, updated_at = ? WHERE id = ?', [name, c.kind === 'MMC' ? regNo : null, Date.now(), c.id]);
     await recordAudit({ req, entityType: 'certificate', entityId: c.id, action: 'CERTIFICATE_CORRECTED',
       oldValue: `${c.name}${c.council_reg_no ? ` · ${c.council_reg_no}` : ''}`, newValue: `${name}${c.kind === 'MMC' ? ` · ${regNo}` : ''}` });

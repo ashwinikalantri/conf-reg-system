@@ -110,7 +110,8 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
     const of = (p) => list.find((x) => x.phone === p.phone);
     check('a doctor who completed, with a council number: MMC', of(doctor).conference.kind === 'MMC');
     check('a health worker who completed: participation', of(worker).conference.kind === 'CONF');
-    check('a doctor without a council number: participation, flagged -- and no session attended, checked in is enough', of(nocouncil).conference.kind === 'CONF' && of(nocouncil).mmcCategory && !of(nocouncil).councilRegNo
+    // Every Doctor and Medical PG gets MMC (owner, 21 Nov 2026): no council number needed.
+    check('a doctor without a council number: MMC all the same -- and no session attended, checked in is enough', of(nocouncil).conference.kind === 'MMC' && of(nocouncil).mmcCategory && !of(nocouncil).councilRegNo
       && of(nocouncil).attended.length === 0);
     console.log('\n== The settings page: live preview and who qualifies (20 Nov) ==');
     const sd = (await call('GET', '/api/admin/certificates/settings', null, admin)).body;

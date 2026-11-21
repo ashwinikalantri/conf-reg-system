@@ -17497,7 +17497,7 @@ function certItems(x) {
     const kind = (c.issued && c.issued.kind) || c.kind;
     // Not qualifying yet, it would print as theirs will: MMC with a council
     // number, Nursing in a nursing category, else participation.
-    const would = kind || (x.mmcCategory && x.councilRegNo ? 'MMC' : x.nursingCategory ? 'NURSING' : 'CONF');
+    const would = kind || (x.mmcCategory ? 'MMC' : x.nursingCategory ? 'NURSING' : 'CONF');
     items.push({ title: `Conference${kind ? ` · ${CERT_CONF_WORD[kind] || 'Participation'}` : ''}`, status: st(c.issued, !!c.kind, c.override), reason: c.whyNot || '',
       issued: c.issued, issueScope: 'conference', ovKey: x.phone, ovScope: 'CONF', override: c.override, include: !c.kind && !c.facultyOnly, kind: kind || 'CONF', cert: would });
   }
@@ -17654,7 +17654,7 @@ function renderCertificateList() {
   const LIMIT = 200;
   document.getElementById('cert-list').innerHTML = shown.slice(0, LIMIT).map((a) => {
     const x = a.x;
-    const meta = [x.registrationNumber, x.category, x.councilRegNo ? `${x.councilName || 'Council'} ${x.councilRegNo}` : (x.mmcCategory ? 'no council number' : '')].filter(Boolean).join(' · ');
+    const meta = [x.registrationNumber, x.category, x.councilRegNo ? `${x.councilName || 'Council'} ${x.councilRegNo}` : ''].filter(Boolean).join(' · ');
     return `<div class="px-3 py-3 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 items-center">
       <div class="min-w-0">
         <p><span class="font-semibold text-slate-800">${esc(x.name)}</span> <span class="text-sm text-slate-500">${esc(meta)}</span></p>
@@ -17741,7 +17741,7 @@ function openCertForce() {
   const has = (kind, title) => items.some((i) => (i.status === 'issued' || i.status === 'forced') && i.kind === kind && (!title || i.title === title));
   const opts = [];
   if (!x.notRegistered && !x.conference.issued) {
-    if (x.councilRegNo) opts.push(['MMC', 'Conference · MMC points']);
+    if (x.mmcCategory) opts.push(['MMC', 'Conference · MMC points']);
     if (x.nursingCategory) opts.push(['NURSING', 'Conference · Nursing points']);
     opts.push(['CONF', 'Conference · participation']);
   }
@@ -17892,7 +17892,7 @@ const CS_RETIRED = ['FACULTY'];
 const CS_SHORT = { MMC: 'With MMC points', NURSING: 'With Nursing points', CONF: 'Participation', WORKSHOP: 'Workshop', WORKSHOP_FACULTY: 'Workshop faculty',
   FACULTY: 'Faculty', SPEAKER: 'Speaker', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist', JUDGE: 'Judge' };
 const CS_WHO = {
-  MMC: 'Doctors and Medical PGs who gave a council number, registered, paid and checked in at the desk.',
+  MMC: 'Every Doctor and Medical PG registered, paid and checked in at the desk (a council number is not needed).',
   NURSING: 'Nurses in the categories that earn Nursing points, registered, paid and checked in at the desk.',
   CONF: 'Everyone else registered, paid and checked in at the desk.',
   WORKSHOP: 'Marked present at the workshop, and its feedback given.',

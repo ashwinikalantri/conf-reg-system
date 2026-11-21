@@ -48,7 +48,7 @@ const N = String(Date.now()).slice(-7);
     const again = await call('POST', '/api/admin/certificates/force', { phone, cert: 'CONF', reason: 'Again' }, admin);
     check('never a second of the same', again.status === 409 && /already/.test(again.body.error));
     const mmc = await call('POST', '/api/admin/certificates/force', { phone, cert: 'MMC', reason: 'x' }, admin);
-    check('MMC without a council number: refused, and why', mmc.status !== 200 && !mmc.body.success);
+    check('MMC for someone who is not a Doctor or Medical PG: refused, and why', mmc.status !== 200 && !mmc.body.success && /Doctors and Medical PGs/.test(mmc.body.error || ''), mmc.body);
 
     // A workshop's own faculty (21 Nov 2026): its faculty certificate, not
     // the participant one too, even marked present at it.
