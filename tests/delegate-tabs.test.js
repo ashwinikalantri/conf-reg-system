@@ -106,6 +106,24 @@ console.log('\n== The conference day ==');
   check('...its hall, on the map, with the building', /onclick="openMapPage\(1\)"/.test(hero) && /Main Auditorium<\/span><span class="block text-sm text-slate-600">New Auditorium Complex · Map and directions/.test(hero));
   check('...one badge button, navy, and whether they are checked in', (hero.match(/openBadgeFullScreen\(\)/g) || []).length === 1 && /bg-navy[^"]*">Show my badge to mark attendance/.test(hero)
     && /✓ Checked in at the registration desk</.test(hero) && !/Full programme/.test(hero));
+  // Everything on now, none dropped (21 Nov 2026): ten workshops at once.
+  {
+    const many = Array.from({ length: 6 }, (_, i) => ({ id: 100 + i, hallId: 1, hall: `Room ${i + 1}`, date: '2026-11-22', start: '10:00', end: '16:30',
+      label: `Workshop ${i + 1}`, title: `Workshop topic ${i + 1}`, speakers: 'Faculty', counts: true, optionId: 200 + i }));
+    const vale = { id: 120, hallId: 1, hall: 'Main Auditorium', date: '2026-11-22', start: '10:20', end: '10:50', label: 'Valedictory', title: 'Closing and Valedictory', counts: false };
+    sb.__set({ ...prog, sessions: [...many, vale] }, confirmed, [], { completion: { parts: [] }, workshops: [{ optionId: 205 }] });
+    sb.__f.renderHomeHero();
+    const all = el('home-hero').innerHTML;
+    check('every session on now is shown, none dropped; the rest as a list', many.every((x) => all.includes(x.title)) && /Also on now · 4/.test(all) && /On now · 7/.test(all), all.slice(0, 400));
+    check('...theirs first, marked Yours, with its label', all.indexOf('Workshop topic 6') < all.indexOf('Workshop topic 1') && /Workshop 6 · <span class="text-gold-700">Yours/.test(all));
+    check('...a session with no speakers is not a break (the Valedictory)', all.includes('Closing and Valedictory'));
+    sb.__set({ ...prog, sessions: [{ ...vale, start: '10:00', end: '10:30' }, { ...vale, id: 121, title: 'Next thing', label: 'Session 2', start: '10:30', end: '11:00' }] }, confirmed, [], { completion: { parts: [] } });
+    sb.__f.renderHomeHero();
+    const edge = el('home-hero').innerHTML;
+    check('...at a session\'s end minute it is over and the next is on', !edge.includes('Closing and Valedictory') && edge.includes('Next thing'));
+    sb.__set(prog, confirmed, [], { completion: { parts: [{ label: 'Checked in at the registration desk', done: true }] } });
+    sb.__f.renderHomeHero();
+  }
   const next = el('home-next').innerHTML;
   check('then the next talk, breaks aside', !el('home-next').classList.contains('hidden') && /Next · 11:30 AM/.test(next) && /Transforming Healthcare/.test(next) && /Hall A · Dr Amit Shah/.test(next));
   check('registration shrinks to one line', !el('registration-row').classList.contains('hidden') && el('registration-card').classList.contains('hidden')

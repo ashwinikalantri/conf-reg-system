@@ -1363,10 +1363,26 @@ let programmeData = null;
 let programmeDay = null;
 let programmeHall = '';
 const progToMin = (t) => { const [h, m] = String(t || '0:0').split(':').map(Number); return h * 60 + m; };
+// On from its start until its end, not at its end: at 9:50 the 9:30-9:50
+// talk is over and the 9:50 one on (21 Nov 2026).
 const progIsNow = (s) => programmeData && s.date === programmeData.now.date
-  && progToMin(s.start) <= programmeData.now.minutes && programmeData.now.minutes <= progToMin(s.end);
-// A break, a meal, registration: no speakers, no chairs, no attendance.
-const progIsBreak = (s) => !s.counts && !s.speakers && !s.chairs && !s.optionId;
+  && progToMin(s.start) <= programmeData.now.minutes && programmeData.now.minutes < progToMin(s.end);
+// A break: a meal, or something with no label named as a break, tea, a
+// meal or registration -- as the website reads it. Not anything that merely
+// has no speakers (that hid the Valedictory, 21 Nov 2026).
+const progIsBreak = (s) => !!s.meal || (!s.label && /\b(break|breakfast|lunch|tea|registration|dinner)\b/i.test(s.title || ''));
+// Who sits with a session: judges for papers and posters, a moderator for a
+// panel, else chairs -- as the website says it.
+const progChairLabel = (s) => (/award|presentation/i.test(`${s.label} ${s.title}`) ? 'Judges' : /panel/i.test(s.label || '') ? 'Moderator' : 'Chairs');
+// The delegate's own: a workshop, visit or other option they are in.
+const progIsMine = (it) => !!it.optionId && (attendanceMeData && attendanceMeData.workshops || []).some((w) => w.optionId === it.optionId);
+// What is on now, everything, theirs first, then in hall order.
+function progLiveItems(sessions) {
+  const order = (programmeData.halls || []).map((h) => h.id);
+  const rank = (it) => Math.min(...it.hallIds.map((id) => ((order.indexOf(id) + 1) || 1e9)));
+  return programmeItems(sessions.filter((s) => progIsNow(s) && !progIsBreak(s)))
+    .sort((a, b) => (progIsMine(b) - progIsMine(a)) || rank(a) - rank(b) || progToMin(a.start) - progToMin(b.start));
+}
 
 // The same session in several halls (an oration common to all) as one item,
 // naming its halls.
@@ -1400,21 +1416,22 @@ async function loadProgrammeCard() {
   const days = [...new Set(sessions.map((s) => s.date))].sort();
   if (!days.includes(programmeDay)) programmeDay = days.includes(programmeData.now.date) ? programmeData.now.date : days[0];
   // On now; else the next talks; else when it all happens.
-  const live = programmeItems(sessions.filter((s) => progIsNow(s) && !progIsBreak(s)));
+  const live = progLiveItems(sessions);
   const upcoming = sessions.filter((s) => !progIsBreak(s) && (s.date > programmeData.now.date
     || (s.date === programmeData.now.date && progToMin(s.start) > programmeData.now.minutes)))
     .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
   const nextSlot = upcoming.length ? programmeItems(upcoming.filter((s) => s.date === upcoming[0].date && s.start === upcoming[0].start)) : [];
   const allHalls = [...new Set(sessions.map((s) => s.hall))];
-  const line = (it) => `<div class="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2">
-      <p class="text-xs font-semibold text-indigo-700">${esc(hallsLabel(it.halls, allHalls))} · ${esc(guestTime12(it.start))}</p>
+  const line = (it) => `<div class="rounded-lg ${progIsMine(it) ? 'bg-gold-50 border-gold-500' : 'bg-slate-50 border-slate-200'} border px-3 py-2">
+      <p class="text-xs font-semibold text-indigo-700">${esc(hallsLabel(it.halls, allHalls))} · ${esc(guestTime12(it.start))}${it.label ? ` · ${esc(it.label)}` : ''}${progIsMine(it) ? ' · <span class="text-gold-700">Yours</span>' : ''}</p>
       <p class="font-semibold text-slate-900 leading-snug">${esc(it.title)}</p>
       ${it.speakers ? `<p class="text-sm text-slate-600">${esc(it.speakers)}</p>` : ''}</div>`;
+  const more = (n, words) => `<button type="button" onclick="openProgrammePage()" class="min-h-[44px] text-sm font-semibold text-navy underline">and ${n} more${words} →</button>`;
   const dayList = days.map((d, i) => `Day ${i + 1}: ${shortDateRange(d, d)}`).join(' · ');
   document.getElementById('programme-now').innerHTML = live.length
-    ? `<p class="text-xs font-bold text-gold-700 uppercase tracking-wide">On now</p>${live.slice(0, 3).map(line).join('')}${live.length > 3 ? `<p class="text-sm text-slate-500">and ${live.length - 3} more</p>` : ''}`
+    ? `<p class="text-xs font-bold text-gold-700 uppercase tracking-wide">On now</p>${live.slice(0, 3).map(line).join('')}${live.length > 3 ? more(live.length - 3, ' on now') : ''}`
     : nextSlot.length
-      ? `<p class="text-xs font-bold text-slate-500 uppercase tracking-wide">Next${nextSlot[0].date !== programmeData.now.date ? ` · ${esc(shortDateRange(nextSlot[0].date, nextSlot[0].date))}` : ''}</p>${nextSlot.slice(0, 2).map(line).join('')}${nextSlot.length > 2 ? `<p class="text-sm text-slate-500">and ${nextSlot.length - 2} more at the same time</p>` : ''}`
+      ? `<p class="text-xs font-bold text-slate-500 uppercase tracking-wide">Next${nextSlot[0].date !== programmeData.now.date ? ` · ${esc(shortDateRange(nextSlot[0].date, nextSlot[0].date))}` : ''}</p>${nextSlot.slice(0, 2).map(line).join('')}${nextSlot.length > 2 ? more(nextSlot.length - 2, ' at the same time') : ''}`
       : `<p class="text-slate-600">${esc(dayList)}</p>`;
 }
 
@@ -1460,10 +1477,11 @@ function renderProgrammePage() {
   // On the day: what is on now, pinned above the list, with how far it has run.
   const nowBox = document.getElementById('prog-page-now');
   if (nowBox) {
-    const live = programmeDay === programmeData.now.date ? programmeItems(day.filter((s) => progIsNow(s) && !progIsBreak(s))) : [];
+    const live = programmeDay === programmeData.now.date ? progLiveItems(day) : [];
     nowBox.classList.toggle('hidden', !live.length);
     nowBox.innerHTML = live.length ? `<div class="rounded-2xl border-2 border-gold-500 bg-white px-4 py-3 shadow-sm space-y-3">${live.map((it, i) => `<div>
-        <div class="flex items-center justify-between gap-2">${i === 0 ? '<p class="text-xs font-bold tracking-[0.15em] text-gold-700 uppercase">On now</p>' : '<span></span>'}<p class="text-sm text-slate-600">${esc(hallsLabel(it.halls, allHalls))} · until ${esc(guestTime12(it.end))}</p></div>
+        <div class="flex items-center justify-between gap-2">${i === 0 ? `<p class="text-xs font-bold tracking-[0.15em] text-gold-700 uppercase">On now · ${live.length}</p>` : '<span></span>'}<p class="text-sm text-slate-600">${esc(hallsLabel(it.halls, allHalls))} · until ${esc(guestTime12(it.end))}</p></div>
+        ${it.label || progIsMine(it) ? `<p class="text-xs font-bold tracking-wide text-navy uppercase mt-0.5">${esc(it.label || '')}${progIsMine(it) ? `${it.label ? ' · ' : ''}<span class="text-gold-700">Yours</span>` : ''}</p>` : ''}
         <p class="font-bold text-slate-900 leading-snug mt-0.5">${esc(it.title)}</p>
         <div class="mt-1.5 h-1.5 rounded-full bg-gold-100 overflow-hidden" role="img" aria-label="${progElapsed(it)}% of the session gone"><div class="h-1.5 bg-gold-500" style="width:${progElapsed(it)}%"></div></div></div>`).join('')}</div>` : '';
   }
@@ -1495,7 +1513,7 @@ function renderProgrammePage() {
           ${now ? `<p class="text-xs font-bold text-gold-700 mt-0.5">On now${was ? ' · you are marked present' : ''}</p>` : (was ? '<p class="text-xs font-bold text-emerald-700 mt-0.5">✓ You were marked present</p>' : '')}
           <h4 class="text-[17px] font-semibold text-slate-900 leading-snug mt-1">${esc(it.title)}</h4>
           ${it.speakers ? `<p class="text-[15px] text-slate-700 mt-1 leading-snug">${esc(it.speakers)}</p>` : ''}
-          ${it.chairs ? `<p class="text-sm text-slate-500 mt-1">Chair: ${esc(it.chairs)}</p>` : ''}
+          ${it.chairs ? `<p class="text-sm text-slate-500 mt-1">${progChairLabel(it)}: ${esc(it.chairs)}</p>` : ''}
           <p class="text-xs text-slate-400 mt-1.5 tabular-nums">${esc(guestTime12(it.start))} – ${esc(guestTime12(it.end))}</p>
         </article>`;
   };
@@ -1807,10 +1825,16 @@ function renderHomeHero() {
       <div class="mt-3 flex flex-col sm:flex-row sm:flex-wrap gap-2">${myCertificates.map((m) => `<a href="/api/certificates/mine/${encodeURIComponent(m.id)}.pdf" class="px-5 py-3 bg-navy hover:bg-indigo-700 text-white font-semibold rounded-lg text-center">Download: ${esc(m.label)}</a>`).join('')}</div>`;
   } else if (reg.bank_status === 'BANK_VERIFIED' && first && today >= first && today <= last) {
     const sessions = programmeData ? programmeData.sessions || [] : [];
-    const live = programmeItems(sessions.filter((s) => progIsNow(s) && !progIsBreak(s)));
+    const live = progLiveItems(sessions);
     const allHalls = [...new Set(sessions.map((s) => s.hall))];
     const parts = attendanceMeData && attendanceMeData.completion ? attendanceMeData.completion.parts : [];
-    html = `${live.length ? live.slice(0, 3).map((it, i) => homeLiveHtml(it, allHalls, i === 0)).join('<div class="my-4 border-t border-gold-100"></div>')
+    // Everything on now (21 Nov 2026): theirs and the first few in full, the
+    // rest as a list -- none left out.
+    const full = live.slice(0, live.length > 4 ? 3 : 4);
+    const rest = live.slice(full.length);
+    html = `${live.length ? full.map((it, i) => homeLiveHtml(it, allHalls, i === 0, live.length)).join('<div class="my-4 border-t border-gold-100"></div>')
+        + (rest.length ? `<div class="mt-4 pt-3 border-t border-gold-100"><p class="text-xs font-bold tracking-[0.12em] text-slate-500 uppercase">Also on now · ${rest.length}</p>
+          <ul class="mt-1 divide-y divide-gold-100">${rest.map((it) => homeLiveRow(it, allHalls)).join('')}</ul></div>` : '')
         : `${kicker('Today')}<h3 class="text-xl font-bold text-slate-900 mt-1">Nothing is on right now</h3>`}
       ${primary('Show my badge to mark attendance', 'openBadgeFullScreen()').replace('sm:w-auto ', '')}
       ${parts.length ? `<div class="mt-3 flex flex-wrap gap-2">${parts.map((p) => `<span class="text-sm font-semibold px-3 py-1 rounded-full border ${p.done ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-white border-slate-300 text-slate-600'}">${p.done ? '✓' : '○'} ${esc(p.label)}</span>`).join('')}</div>` : ''}
@@ -1835,19 +1859,36 @@ function progElapsed(it) {
   const b = progToMin(it.end);
   return Math.max(0, Math.min(100, Math.round(((programmeData.now.minutes - a) / Math.max(1, b - a)) * 100)));
 }
-function homeLiveHtml(it, allHalls, first) {
-  const places = new Map(campusPlaces(programmeData.halls).flatMap((p) => p.halls.map((h) => [h.id, { place: p, hall: h }])));
-  const loc = it.hallIds && it.hallIds.length === 1 ? places.get(it.hallIds[0]) : null;
-  const where = loc
-    ? `<button type="button" onclick="openMapPage(${Number(it.hallIds[0])})" class="mt-3 w-full flex items-center gap-2.5 text-left rounded-xl bg-gold-50 hover:bg-gold-100 px-3 py-2.5 text-navy">${MAP_PIN_SVG}
-        <span class="min-w-0"><span class="block font-bold">${esc(it.halls[0])}</span><span class="block text-sm text-slate-600">${esc([loc.place.building, loc.hall.floor].filter(Boolean).join(' · ') || 'Campus map')} · Map and directions</span></span></button>`
-    : `<p class="mt-2 text-sm font-semibold text-navy">${esc(hallsLabel(it.halls, allHalls))}</p>`;
-  return `<div class="flex items-center justify-between gap-2">${first ? '<p class="text-xs font-bold tracking-[0.15em] text-gold-700 uppercase">On now</p>' : '<span></span>'}
+const progPlaces = () => new Map(campusPlaces(programmeData.halls).flatMap((p) => p.halls.map((h) => [h.id, { place: p, hall: h }])));
+function homeLiveHtml(it, allHalls, first, count) {
+  const places = progPlaces();
+  // Every hall it is in, each with the map where the hall is on it.
+  const where = (it.hallIds || []).map((id, i) => {
+    const loc = places.get(id);
+    return loc
+      ? `<button type="button" onclick="openMapPage(${Number(id)})" class="mt-2 w-full flex items-center gap-2.5 text-left rounded-xl bg-gold-50 hover:bg-gold-100 px-3 py-2.5 text-navy">${MAP_PIN_SVG}
+        <span class="min-w-0"><span class="block font-bold">${esc(it.halls[i])}</span><span class="block text-sm text-slate-600">${esc([loc.place.building, loc.hall.floor].filter(Boolean).join(' · ') || 'Campus map')} · Map and directions</span></span></button>`
+      : `<p class="mt-2 text-sm font-semibold text-navy">${esc(it.halls[i])}</p>`;
+  }).join('');
+  return `<div class="flex items-center justify-between gap-2">${first ? `<p class="text-xs font-bold tracking-[0.15em] text-gold-700 uppercase">On now${count > 1 ? ` · ${count}` : ''}</p>` : '<span></span>'}
       <p class="text-sm text-slate-600">until ${esc(guestTime12(it.end))}</p></div>
+    ${it.label || progIsMine(it) ? `<p class="text-xs font-bold tracking-wide text-navy uppercase mt-1">${esc(it.label || '')}${progIsMine(it) ? `${it.label ? ' · ' : ''}<span class="text-gold-700">Yours</span>` : ''}</p>` : ''}
     <p class="text-lg font-bold text-slate-900 leading-snug mt-1">${esc(it.title)}</p>
     ${it.speakers ? `<p class="text-[15px] text-slate-600">${esc(it.speakers)}</p>` : ''}
+    ${it.chairs ? `<p class="text-sm text-slate-500">${progChairLabel(it)}: ${esc(it.chairs)}</p>` : ''}
     <div class="mt-2 h-1.5 rounded-full bg-gold-100 overflow-hidden" role="img" aria-label="${progElapsed(it)}% of the session gone"><div class="h-1.5 bg-gold-500" style="width:${progElapsed(it)}%"></div></div>
     ${where}`;
+}
+// One more on now, in a line: what, where (its map), until when.
+function homeLiveRow(it, allHalls) {
+  const places = progPlaces();
+  const id = it.hallIds && it.hallIds.length === 1 ? it.hallIds[0] : null;
+  const hall = id != null && places.get(id)
+    ? `<button type="button" onclick="openMapPage(${Number(id)})" class="inline-flex items-center gap-1 min-h-[32px] text-sm font-semibold text-navy underline">${esc(it.halls[0])}</button>`
+    : `<span class="text-sm font-semibold text-navy">${esc(hallsLabel(it.halls, allHalls))}</span>`;
+  return `<li class="py-2.5">
+      <p class="text-[15px] font-semibold text-slate-900 leading-snug">${it.label ? `<span class="text-xs font-bold tracking-wide text-navy uppercase">${esc(it.label)}</span> ` : ''}${esc(it.title)}</p>
+      <p class="flex flex-wrap items-center gap-x-2 text-sm text-slate-600">${hall}<span>until ${esc(guestTime12(it.end))}</span></p></li>`;
 }
 // The next talk today, if any: when, what, where.
 function homeNextHtml(sessions, allHalls) {
@@ -1856,12 +1897,13 @@ function homeNextHtml(sessions, allHalls) {
   const upcoming = sessions.filter((s) => s.date === now.date && !progIsBreak(s) && progToMin(s.start) > now.minutes)
     .sort((a, b) => progToMin(a.start) - progToMin(b.start));
   if (!upcoming.length) return '';
-  const slot = programmeItems(upcoming.filter((s) => s.start === upcoming[0].start));
-  const it = slot[0];
-  return `<p class="text-xs font-bold tracking-[0.12em] text-slate-500 uppercase">Next · ${esc(guestTime12(it.start))}</p>
-    <p class="text-base font-semibold text-slate-900 leading-snug mt-0.5">${esc(it.title)}</p>
-    <p class="text-sm text-slate-600">${esc([hallsLabel(it.halls, allHalls), it.speakers].filter(Boolean).join(' · '))}</p>
-    ${slot.length > 1 ? `<button type="button" onclick="openProgrammePage()" class="mt-1 text-sm font-semibold text-navy underline">and ${slot.length - 1} more at the same time</button>` : ''}`;
+  const slot = programmeItems(upcoming.filter((s) => s.start === upcoming[0].start))
+    .sort((a, b) => progIsMine(b) - progIsMine(a));
+  // The whole next slot, each in a line (21 Nov 2026).
+  return `<p class="text-xs font-bold tracking-[0.12em] text-slate-500 uppercase">Next · ${esc(guestTime12(slot[0].start))}${slot.length > 1 ? ` · ${slot.length} at once` : ''}</p>
+    <ul class="divide-y divide-slate-100">${slot.map((it) => `<li class="py-2">
+      <p class="text-base font-semibold text-slate-900 leading-snug">${it.label ? `<span class="text-xs font-bold tracking-wide text-navy uppercase">${esc(it.label)}</span> ` : ''}${esc(it.title)}${progIsMine(it) ? ' <span class="text-xs font-bold text-gold-700 uppercase">Yours</span>' : ''}</p>
+      <p class="text-sm text-slate-600">${esc([hallsLabel(it.halls, allHalls), it.speakers].filter(Boolean).join(' · '))}</p></li>`).join('')}</ul>`;
 }
 
 // Registration as one line (the conference is on, or over): the number and
