@@ -66,6 +66,12 @@ const N = String(Date.now()).slice(-7);
       const theirs = (fac.workshopFaculty || []).find((w) => w.optionId === ws.optionId);
       check('workshop faculty, marked present: the faculty certificate due, not the participant one', part && !part.eligible && part.facultyOfIt && /Workshop faculty/.test(part.whyNot)
         && theirs && theirs.eligible, { part, theirs });
+      // Nor the conference's certificate of participation (21 Nov 2026), checked in and paid or not.
+      await db.run('UPDATE registrations SET checked_in_at = ? WHERE id = ?', [Date.now(), reg.id]);
+      const facConf = (await me()).conference;
+      check('...nor the certificate of participation for the conference: not due, saying why, no Include anyway', !facConf.kind && facConf.facultyOnly === true
+        && /Workshop faculty/.test(facConf.whyNot), facConf);
+      await db.run('UPDATE registrations SET checked_in_at = NULL WHERE id = ?', [reg.id]);
       await db.run('DELETE FROM attendance WHERE phone_number = ? AND event_key = ?', [phone, `s:${sess.id}`]);
       await db.run('DELETE FROM registration_options WHERE registration_id = ? AND option_id = ?', [reg.id, ws.optionId]);
       await call('DELETE', `/api/admin/programme/sessions/${made.id}`, null, admin);

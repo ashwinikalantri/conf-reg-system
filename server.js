@@ -9232,6 +9232,8 @@ async function audienceMembers(key, filters = {}) {
     const workshops = [...(await certificateWorkshops()).values()];
     const bySession = new Map(workshops.flatMap((w) => [...w.sessionIds].map((id) => [`s:${id}`, w])));
     const given = new Set((await dbAll('SELECT phone_number, option_id FROM workshop_feedback')).map((f) => `${f.phone_number}|${Number(f.option_id)}`));
+    // A workshop's own faculty are not asked (21 Nov 2026).
+    for (const k of await workshopFacultyKeys()) given.add(k);
     const rows = await dbAll(
       `SELECT DISTINCT a.phone_number, a.event_key, u.salutation, u.full_name, u.email, r.registration_number, r.delegate_name
          FROM attendance a
@@ -10473,9 +10475,12 @@ app.get('/api/attendance/me', requireAuth, async (req, res, next) => {
     const enrolled = reg ? (await dbAll('SELECT option_id FROM registration_options WHERE registration_id = ?', [reg.id])).map((r) => Number(r.option_id)) : [];
     const given = new Map((await dbAll('SELECT option_id, submitted_at FROM workshop_feedback WHERE phone_number = ?', [req.session.phone]))
       .map((f) => [Number(f.option_id), f.submitted_at]));
+    const facultyOf = await workshopFacultyKeys();
     const workshops = [...new Map(sessions.filter((s) => isWorkshopSession(s) && (enrolled.includes(Number(s.option_id)) || at.has(s.id)))
       .map((s) => [s.option_id, s])).values()]
       .map((s) => ({ optionId: s.option_id, name: s.option_name || s.title, date: s.session_date,
+        // Its faculty: the faculty certificate, no feedback asked (21 Nov 2026).
+        faculty: facultyOf.has(`${req.session.phone}|${Number(s.option_id)}`),
         present: sessions.some((x) => x.option_id === s.option_id && at.has(x.id)),
         // Asked for once they are marked present; given once.
         feedbackAt: given.get(Number(s.option_id)) || null }));
@@ -10540,7 +10545,10 @@ app.get('/api/site/for-you', requireAuth, async (req, res, next) => {
     const marked = new Set((await dbAll("SELECT event_key FROM attendance WHERE phone_number = ? AND removed_at IS NULL AND event_key LIKE 's:%'", [phone])).map((r) => Number(r.event_key.slice(2))));
     const given = new Set((await dbAll('SELECT option_id FROM workshop_feedback WHERE phone_number = ?', [phone])).map((r) => Number(r.option_id)));
     const { earlyMinutes } = (await certificateSettings()).attendance;
-    const mine = sessions.filter((x) => isWorkshopSession(x) && enrolled.has(Number(x.option_id)));
+    // Their own workshop as its faculty: no attendance or feedback asked.
+    const facultyOf = await workshopFacultyKeys();
+    const asFaculty = (optionId) => facultyOf.has(`${phone}|${Number(optionId)}`);
+    const mine = sessions.filter((x) => isWorkshopSession(x) && enrolled.has(Number(x.option_id)) && !asFaculty(x.option_id));
     for (const x of mine.filter((y) => y.session_date === today)) {
       const a = toMin(x.start_time);
       const b = toMin(x.end_time);
@@ -10554,7 +10562,7 @@ app.get('/api/site/for-you', requireAuth, async (req, res, next) => {
     // registered for, once it is over, they were marked present (the form
     // takes it only then) and have not given it.
     const byOption = new Map();
-    for (const x of sessions.filter((y) => isWorkshopSession(y) && enrolled.has(Number(y.option_id)))) {
+    for (const x of sessions.filter((y) => isWorkshopSession(y) && enrolled.has(Number(y.option_id)) && !asFaculty(y.option_id))) {
       if (!byOption.has(x.option_id)) byOption.set(x.option_id, []);
       byOption.get(x.option_id).push(x);
     }
@@ -10615,6 +10623,7 @@ app.post('/api/attendance/me/workshop-feedback', requireAuth, async (req, res, n
       `SELECT 1 AS yes FROM attendance WHERE phone_number = ? AND removed_at IS NULL AND event_key IN (${[...w.sessionIds].map(() => '?').join(', ')})`,
       [req.session.phone, ...[...w.sessionIds].map((id) => `s:${id}`)]);
     if (!present) return res.status(400).json({ success: false, error: 'Feedback opens once you are marked present at the workshop.' });
+    if ((await workshopFacultyKeys()).has(`${req.session.phone}|${optionId}`)) return res.status(400).json({ success: false, error: 'You are this workshop\'s faculty: no feedback is asked of you.' });
     const checked = workshopFeedbackLib.check(req.body);
     if (checked.error) return res.status(400).json({ success: false, error: checked.error });
     const v = checked.values;
@@ -10971,6 +10980,21 @@ function conferenceCompletion(checkedInAt) {
 // -- the Speaker certificate (and the other roles') is theirs.
 const FACULTY_CERTIFICATE = false;
 
+// Who is a workshop's own faculty, as "<phone>|<option id>": on its roster
+// as faculty, or named in its sessions in the programme (a faculty member
+// with an account). They get its workshop faculty certificate, so they are
+// not its participants -- no participant certificate, no feedback asked
+// (owner, 21 Nov 2026).
+async function workshopFacultyKeys() {
+  const keys = new Set();
+  for (const r of await dbAll(`SELECT ro.option_id, r.phone_number FROM registration_options ro JOIN registrations r ON r.id = ro.registration_id
+      WHERE ro.is_faculty = 1 AND COALESCE(r.bank_status, '') != 'REJECTED'`)) keys.add(`${r.phone_number}|${Number(r.option_id)}`);
+  for (const r of await dbAll(`SELECT DISTINCT g.phone_number, s.option_id FROM programme_session_faculty f
+      JOIN programme_sessions s ON s.id = f.session_id JOIN guests g ON g.id = f.guest_id
+     WHERE s.option_id IS NOT NULL AND g.phone_number IS NOT NULL AND COALESCE(g.overall_status, '') != ?`, [guestLib.CANCELLED])) keys.add(`${r.phone_number}|${Number(r.option_id)}`);
+  return keys;
+}
+
 async function certificateCandidates() {
   const settings = await certificateSettings();
   const sessions = await programmeSessions();
@@ -11095,6 +11119,15 @@ async function certificateCandidates() {
       if (nursingReady) confKind = 'NURSING';
       else confWhyNot = 'Waiting for the Nursing points details (Certificate settings)';
     } else confKind = 'CONF';
+    // A workshop's faculty are not given the certificate of participation
+    // (owner, 21 Nov 2026): their workshop faculty certificate is theirs.
+    // Only a super admin's force issue gives it.
+    let facultyOnly = false;
+    if (confKind === 'CONF' && [...wsFacilitators.values()].some((set) => set.has(r.phone_number))) {
+      confKind = null;
+      confWhyNot = 'Workshop faculty: gets the workshop faculty certificate, not participation';
+      facultyOnly = true;
+    }
     const myIssued = issued.filter((c) => c.phone_number === r.phone_number);
     const ws = [...workshops.values()].map((w) => {
       const wov = overrides.get(`${r.phone_number}|${w.e}`) || null;
@@ -11124,7 +11157,7 @@ async function certificateCandidates() {
       phone: r.phone_number, registrationNumber: r.registration_number, name, category: r.category_label, categoryKey: r.category_key,
       councilName: r.council_name || null, councilRegNo: r.council_reg_no || null, mmcCategory, paid,
       attended: [...ids], parts: done.parts.map((p) => ({ label: p.label, done: p.done })), missing: done.missing, complete: done.complete,
-      conference: { kind: confKind, whyNot: confWhyNot, override: ov, issued: myIssued.find((c) => ['MMC', 'NURSING', 'CONF'].includes(c.kind)) || null },
+      conference: { kind: confKind, whyNot: confWhyNot, override: ov, facultyOnly, issued: myIssued.find((c) => ['MMC', 'NURSING', 'CONF'].includes(c.kind)) || null },
       nursingCategory: (nursing.categories || []).includes(r.category_key),
       workshops: ws, faculty: facultyByPhone.get(r.phone_number) || null,
       roles: facultyByPhone.has(r.phone_number) ? rolesFor(facultyByPhone.get(r.phone_number).guestId) : [],

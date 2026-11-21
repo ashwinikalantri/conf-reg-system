@@ -1262,8 +1262,10 @@ async function loadAttendanceCard() {
   setText('attendance-title', showAtt ? 'Attendance & certificate' : 'Certificate');
   document.getElementById('attendance-list').innerHTML = [
     ...data.completion.parts.map((p) => tick(p.done, `Conference: ${p.label}`, p.session ? `${p.session.title}, ${p.session.hall}` : '')),
-    ...data.workshops.map((w) => tick(w.present, `Workshop: ${w.name}`,
-      !w.present ? formatFullDate(w.date) : w.feedbackAt ? 'Feedback given' : 'Your feedback is welcome: on your home screen')),
+    // A workshop they are faculty of: the faculty certificate, nothing to do.
+    ...data.workshops.map((w) => (w.faculty ? tick(true, `Workshop faculty: ${w.name}`, 'You receive the workshop faculty certificate')
+      : tick(w.present && !!w.feedbackAt, `Workshop: ${w.name}`,
+        !w.present ? formatFullDate(w.date) : w.feedbackAt ? 'Marked present and feedback given' : 'Marked present: give your feedback on your home screen for the certificate'))),
   ].join('') || '<li class="text-slate-500">The programme is not out yet.</li>';
   document.getElementById('attendance-sessions').classList.toggle('hidden', !showAtt || !data.attended.length);
   document.getElementById('attendance-session-list').innerHTML = data.attended.map((s) => `<li>${esc(shortDateRange(s.date, s.date))}, ${esc(time(s.at))} · ${esc(s.hall)} · ${esc(s.title)}</li>`).join('');
@@ -1302,7 +1304,7 @@ function renderWorkshopFeedback() {
   const box = document.getElementById('workshop-feedback');
   const data = attendanceMeData;
   if (!box) return;
-  const due = data && data.registered && data.feedbackForm ? (data.workshops || []).filter((w) => w.present && !w.feedbackAt) : [];
+  const due = data && data.registered && data.feedbackForm ? (data.workshops || []).filter((w) => w.present && !w.feedbackAt && !w.faculty) : [];
   box.classList.toggle('hidden', !due.length);
   if (!due.length) { box.innerHTML = ''; return; }
   const f = data.feedbackForm;
@@ -17494,7 +17496,7 @@ function certItems(x) {
     // number, Nursing in a nursing category, else participation.
     const would = kind || (x.mmcCategory && x.councilRegNo ? 'MMC' : x.nursingCategory ? 'NURSING' : 'CONF');
     items.push({ title: `Conference${kind ? ` · ${CERT_CONF_WORD[kind] || 'Participation'}` : ''}`, status: st(c.issued, !!c.kind, c.override), reason: c.whyNot || '',
-      issued: c.issued, issueScope: 'conference', ovKey: x.phone, ovScope: 'CONF', override: c.override, include: !c.kind, kind: kind || 'CONF', cert: would });
+      issued: c.issued, issueScope: 'conference', ovKey: x.phone, ovScope: 'CONF', override: c.override, include: !c.kind && !c.facultyOnly, kind: kind || 'CONF', cert: would });
   }
   x.workshops.forEach((w) => items.push({ title: `Workshop · ${w.name}`, status: st(w.issued, w.eligible, w.override), reason: w.whyNot || '', issued: w.issued,
     issueScope: 'workshops', ovKey: x.phone, ovScope: w.e, override: w.override, include: !w.eligible && !w.facultyOfIt, kind: 'WORKSHOP', notMarked: w.whyNot === 'Not marked present', cert: `WORKSHOP:${w.optionId}` }));
