@@ -64,8 +64,7 @@ const N = String(Date.now()).slice(-7);
       const fac = await me();
       const part = fac.workshops.find((w) => w.optionId === ws.optionId);
       const theirs = (fac.workshopFaculty || []).find((w) => w.optionId === ws.optionId);
-      check('workshop faculty, marked present: the faculty certificate due, not the participant one', part && !part.eligible && part.facultyOfIt && /Workshop faculty/.test(part.whyNot)
-        && theirs && theirs.eligible, { part, theirs });
+      check('workshop faculty, marked present: the faculty certificate due, and no participant line for that workshop at all', !part && theirs && theirs.eligible, { part, theirs });
       // Nor the conference's certificate of participation (21 Nov 2026), checked in and paid or not.
       await db.run('UPDATE registrations SET checked_in_at = ? WHERE id = ?', [Date.now(), reg.id]);
       const facConf = (await me()).conference;

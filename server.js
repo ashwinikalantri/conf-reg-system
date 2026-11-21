@@ -11152,7 +11152,10 @@ async function certificateCandidates() {
       const cert = myIssued.find((c) => c.kind === 'WORKSHOP' && Number(c.option_id) === w.optionId) || null;
       return { optionId: w.optionId, e: w.e, name: w.name, date: w.date, signed, enrolled, eligible, whyNot, override: wov, issued: cert, facultyOfIt,
         feedback: feedback.has(`${r.phone_number}|${w.optionId}`) };
-    }).filter(Boolean);
+    // Their own workshop as its faculty: not listed as a participant at all
+    // (owner, 21 Nov 2026) -- its Workshop faculty line is theirs. One
+    // already issued (forced) stays, to be seen.
+    }).filter((w) => w && (!w.facultyOfIt || w.issued));
     return {
       phone: r.phone_number, registrationNumber: r.registration_number, name, category: r.category_label, categoryKey: r.category_key,
       councilName: r.council_name || null, councilRegNo: r.council_reg_no || null, mmcCategory, paid,
