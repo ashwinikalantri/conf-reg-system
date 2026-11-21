@@ -5028,6 +5028,7 @@ function renderOverviewNow(summary, onDay) {
       <p class="font-semibold text-slate-900 leading-snug mt-0.5">${esc(s.title)}</p>
       ${quiet ? '<p class="text-sm font-bold text-amber-900 mt-1.5">No one marked yet: check the door volunteer</p>'
         : `<p class="mt-1.5 text-2xl font-bold text-navy tabular-nums">${esc(s.present)} <span class="text-sm font-semibold text-slate-600">marked present${s.enrolled != null ? ` of ${esc(s.enrolled)} enrolled` : ''}</span></p>`}
+      ${s.feedback != null ? `<p class="mt-0.5 text-2xl font-bold text-emerald-700 tabular-nums">${esc(s.feedback)} <span class="text-sm font-semibold text-slate-600">feedback given${quiet ? '' : ` of ${esc(s.present)} present`}</span></p>` : ''}
     </div>`;
   }).join('');
 }

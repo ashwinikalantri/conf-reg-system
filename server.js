@@ -10679,10 +10679,14 @@ app.get('/api/attendance/summary', requirePermission('attendance.view'), async (
     const enrolled = new Map((await dbAll(
       `SELECT ro.option_id, COUNT(*) AS n FROM registration_options ro JOIN registrations r ON r.id = ro.registration_id
         WHERE COALESCE(r.bank_status, '') != 'REJECTED' GROUP BY ro.option_id`)).map((r) => [Number(r.option_id), r.n]));
+    // Workshop feedback given, by workshop (owner, 21 Nov 2026: beside the
+    // attendance on the Overview's halls).
+    const feedback = new Map((await dbAll('SELECT option_id, COUNT(*) AS n FROM workshop_feedback GROUP BY option_id')).map((r) => [Number(r.option_id), r.n]));
     res.json({
       registered, completed, presentToday, badgesCollected, kitsGiven, settings: settings.attendance,
       sessions: sessions.filter(attendanceLib.takesAttendance).map((s) => ({
         ...publicSession(s), present: counts.get(s.id) || 0, enrolled: isWorkshopSession(s) ? (enrolled.get(Number(s.option_id)) || 0) : null,
+        feedback: isWorkshopSession(s) ? (feedback.get(Number(s.option_id)) || 0) : null,
         window: attendanceLib.sessionWindow(s, now, settings.attendance.earlyMinutes, settings.attendance.lateMinutes),
       })),
     });

@@ -192,6 +192,8 @@ const S = (id, date, start, end, extra = {}) => ({ id, session_date: date, start
     const sum = (await call('GET', '/api/attendance/summary', null, desk)).body;
     check('each session that takes attendance, with how many are present', sum.sessions.find((s) => s.id === all.body.id).present === 1 && !sum.sessions.some((s) => s.id === breakS.body.id));
     check('...a workshop\'s, of how many enrolled', sum.sessions.find((s) => s.id === ws.body.id).enrolled >= 1);
+    check('...and how many gave feedback on it, a talk none (21 Nov)', typeof sum.sessions.find((s) => s.id === ws.body.id).feedback === 'number' && sum.sessions.find((s) => s.id === all.body.id).feedback === null
+      && /feedback given\$\{quiet \? '' : ` of \$\{esc\(s\.present\)\} present`\}/.test(fs.readFileSync(appFile('public', 'app.js'), 'utf8')));
     const roster = (await call('GET', `/api/attendance/roster?session=${ws.body.id}`, null, desk)).body.people;
     check('a workshop\'s roster: who enrolled is not present, who came without enrolling', roster.some((p) => p.phone === inP.phone && !p.attendance && p.expected)
       && roster.some((p) => p.phone === outP.phone && p.attendance && !p.expected));
