@@ -17,14 +17,15 @@ const LOGO = path.join(__dirname, 'public', 'website', 'img', 'nqocn-mgims-logo.
 // The portal's layout (owner, 21 Nov 2026: "as per the design of our
 // portal"), printed in black and white (owner, 22 Nov): black text and
 // rules, light grey only where a band helps, nothing dark to waste toner
-// or hide what is written.
+// or hide what is written; every word and line in full black, for contrast
+// (owner, 22 Nov).
 const NAVY = '#000000';
 const GOLD = '#000000';
 const INK = '#000000';
-const MUTED = '#404040';
-const LINE = '#555555';
-const HEAD = '#e6e6e6';
-const CREAM = '#f2f2f2';
+const MUTED = '#000000';
+const LINE = '#000000';
+const HEAD = '#d9d9d9';
+const CREAM = '#ececec';
 const CRITERIA = ['Relevance / Importance of topic', 'Contents of presentation', 'Presentation style / Confidence / Fluency', 'Discussion / Subject clarity'];
 
 let PDFDocument = null;
@@ -105,9 +106,9 @@ function renderAssessmentSheets(sheets, meta = {}) {
       doc.font('bold').fontSize(8.5);
       const headH = Math.max(36, ...cols.map((c) => doc.heightOfString(c.head, { width: c.w - pad * 2 }) + (c.sub ? 11 : 0))) + pad * 2;
       doc.rect(X0, y, W, headH).fill(HEAD);
-      doc.lineWidth(0.9).strokeColor(LINE).rect(X0, y, W, headH).stroke();
+      doc.lineWidth(1.1).strokeColor(LINE).rect(X0, y, W, headH).stroke();
       for (const c of cols) {
-        if (c.x > X0) doc.moveTo(c.x, y).lineTo(c.x, y + headH).lineWidth(0.9).strokeColor(LINE).stroke();
+        if (c.x > X0) doc.moveTo(c.x, y).lineTo(c.x, y + headH).lineWidth(1.1).strokeColor(LINE).stroke();
         doc.font('bold').fontSize(8.5).fillColor(INK).text(c.head, c.x + pad, y + pad, { width: c.w - pad * 2 });
         if (c.sub) doc.font('body').fontSize(7.5).fillColor(MUTED).text(c.sub, c.x + pad, doc.y, { width: c.w - pad * 2 });
       }
@@ -124,10 +125,10 @@ function renderAssessmentSheets(sheets, meta = {}) {
       const titleH = Math.min(doc.font('body').fontSize(8).heightOfString(p.title || '', { width: c.title.w - pad * 2 }), 30);
       const rowH = Math.max(36, whoH + pad * 2, titleH + pad * 2);
       if (y + rowH > bottom()) startPage();
-      doc.lineWidth(0.9).strokeColor(LINE).rect(X0, y, W, rowH).stroke();
+      doc.lineWidth(1.1).strokeColor(LINE).rect(X0, y, W, rowH).stroke();
       for (const col of cols) if (col.x > X0) doc.moveTo(col.x, y).lineTo(col.x, y + rowH).stroke();
       doc.rect(c.total.x, y, c.total.w, rowH).fill(CREAM);
-      doc.lineWidth(0.9).strokeColor(LINE).rect(c.total.x, y, c.total.w, rowH).stroke();
+      doc.lineWidth(1.1).strokeColor(LINE).rect(c.total.x, y, c.total.w, rowH).stroke();
       doc.font('bold').fontSize(10).fillColor(NAVY).text(String(p.place), c.no.x + pad, y + pad, { width: c.no.w - pad * 2, lineBreak: false });
       let yy = y + pad;
       doc.font('bold').fontSize(9).fillColor(INK).text(p.presenter || '', c.who.x + pad, yy, { width: c.who.w - pad * 2 });
