@@ -81,6 +81,26 @@ const build = (date, hm) => L.build(sessions, { days, now: at(date, hm), isBreak
     await db.run('UPDATE registrations SET bank_status = ? WHERE id = ?', [r.bank_status, r.id]);
     check('...a balance due comes first, as something to do', owing.notes[0] && owing.notes[0].tag === 'Balance due' && owing.notes[0].tone === 'act' && owing.notes[0].action.to === 'portal', owing.notes);
     check('...never another person\'s phone or email in it', !/@|\d{10}/.test(JSON.stringify(mine.notes)));
+    // Feedback due (21 Nov 2026): only for a workshop they are registered for,
+    // once it is over and they were present; not for one they are not in.
+    const progAll = (await call('GET', '/api/admin/programme', null, admin)).body;
+    const enrolled = (await db.all('SELECT option_id FROM registration_options WHERE registration_id = ?', [r.id])).map((x) => Number(x.option_id));
+    const hallId = ((progAll.halls || []).find((h) => h.active) || (progAll.halls || [])[0] || {}).id;
+    const mk = async (optionId, title) => (await call('POST', '/api/admin/programme/sessions', { hallId, date: '2020-01-01', start: '09:00', end: '10:00', title, counts: true, optionId }, admin)).body.id;
+    const listed = async () => (await call('GET', '/api/admin/programme', null, admin)).body.sessions;
+    const theirs = enrolled[0] ? await mk(enrolled[0], `Feedback test theirs ${Date.now()}`) : null;
+    const other = (progAll.options || []).find((o) => !enrolled.includes(Number(o.id)));
+    const notTheirs = other ? await mk(other.id, `Feedback test other ${Date.now()}`) : null;
+    const flags = await listed();
+    if (theirs && notTheirs && flags.find((x) => x.id === theirs).workshop && flags.find((x) => x.id === notTheirs).workshop) {
+      for (const id of [theirs, notTheirs]) await db.run("INSERT INTO attendance (phone_number, event_key, at, method) VALUES (?, ?, ?, 'MANUAL')", [r.phone_number, `s:${id}`, Date.now()]);
+      const fb = (await call('GET', '/api/site/for-you', null, me)).body.notes.filter((n) => n.tag === 'Feedback due');
+      check('feedback due: their workshop, over, present, not given -- and not one they are not registered for', fb.length === 1 && fb[0].action.to === 'portal', fb);
+      await db.run("DELETE FROM attendance WHERE event_key IN (?, ?)", [`s:${theirs}`, `s:${notTheirs}`]);
+    } else {
+      check('the fixture has a registered workshop and another to test feedback with', false, { enrolled, other: !!other });
+    }
+    for (const id of [theirs, notTheirs].filter(Boolean)) await call('DELETE', `/api/admin/programme/sessions/${id}`, null, admin);
   } else {
     check('the fixture has a confirmed registration', false);
   }

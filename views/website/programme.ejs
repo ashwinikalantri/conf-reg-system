@@ -40,10 +40,9 @@
         <div class="talks">
           <% r.items.forEach((it) => { %>
             <article class="talk">
-              <div class="talk-top">
-                <p class="kicker"><%= it.label || 'Ceremony' %></p>
-                <span class="hall"><%= it.hall %></span>
-              </div>
+              <%# The hall on a line of its own, wrapping: a long name ran out of the card beside the label (21 Nov 2026). %>
+              <p class="kicker"><%= it.label || 'Ceremony' %></p>
+              <p class="hall"><svg aria-hidden="true" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"></path><circle cx="12" cy="10" r="2.3"></circle></svg><span><%= it.hall %></span></p>
               <h2><%= it.title %></h2>
               <% if (it.speakers) { %><p class="who"><%= it.speakers %></p><% } %>
               <% if (it.chairs) { %><p class="chairs"><%= it.chairLabel %>: <%= it.chairs %></p><% } %>

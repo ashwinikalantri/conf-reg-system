@@ -10531,8 +10531,11 @@ app.get('/api/site/for-you', requireAuth, async (req, res, next) => {
         checkedIn ? `Scan the QR at the ${x.hall} door, or let the volunteer there scan your badge. Open until ${clock(b)}.`
           : `After check-in, scan the QR at the ${x.hall} door. Open until ${clock(b)}.`);
     }
+    // Feedback due (owner, 21 Nov 2026): only for a workshop they are
+    // registered for, once it is over, they were marked present (the form
+    // takes it only then) and have not given it.
     const byOption = new Map();
-    for (const x of sessions.filter((y) => isWorkshopSession(y) && (enrolled.has(Number(y.option_id)) || marked.has(y.id)))) {
+    for (const x of sessions.filter((y) => isWorkshopSession(y) && enrolled.has(Number(y.option_id)))) {
       if (!byOption.has(x.option_id)) byOption.set(x.option_id, []);
       byOption.get(x.option_id).push(x);
     }
