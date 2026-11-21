@@ -265,6 +265,7 @@ const ROUTE_PERMISSIONS = {
   'GET /api/admin/certificates/candidates': 'certificates.view',
   'POST /api/admin/certificates/override': 'certificates.issue',
   'POST /api/admin/certificates/issue': 'certificates.issue',
+  'POST /api/admin/certificates/force': 'certificates.issue',
   'GET /api/admin/certificates/issued': 'certificates.view',
   'GET /api/admin/certificates/:id.pdf': 'certificates.view',
   'PUT /api/admin/certificates/:id': 'certificates.issue',

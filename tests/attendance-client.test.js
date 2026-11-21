@@ -112,9 +112,10 @@ function page(cookie, perms) {
     console.log('\n== Certificates (their own tab) and their settings (a Settings page) ==');
     const C = page(admin, ['certificates.view', 'certificates.issue', 'certificates.manage']);
     await C.f.renderCertificates();
-    check('the certificates view: the counts, the list, the issue buttons', /MMC points/.test(C.el('cert-stats').innerHTML)
-      && /Showing \d+ of \d+/.test(C.el('cert-count').textContent) && /Issue conference certificates \(\d+ due\)/.test(C.el('cert-issue-conf').textContent)
-      && /Issue faculty certificates \(\d+ due\)/.test(C.el('cert-issue-fac').textContent));
+    // Redesigned 21 Nov 2026: Ready to issue, a row per kind; People with tabs.
+    check('the certificates view: ready to issue by kind, Issue all due, the people with their tabs', /Conference/.test(C.el('cert-ready').innerHTML) && /MMC \d+/.test(C.el('cert-ready').innerHTML)
+      && /Showing \d+ of \d+/.test(C.el('cert-count').textContent) && /Issue all due · \d+/.test(C.el('cert-issue-all').textContent)
+      && /setCertTab\('all'\)/.test(C.el('cert-tabs').innerHTML));
     await C.f.renderCertificateSettings();
     // Redesigned 20 Nov 2026: a "Ready to issue?" line, the parts and the
     // eleven kinds on the left, one at a time on the right.

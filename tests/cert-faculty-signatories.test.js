@@ -160,9 +160,8 @@ const images = (pdf) => (pdf.toString('latin1').match(/\/Subtype \/Image/g) || [
       const view = fs.readFileSync(appFile('views', 'admin', 'sections', 'certificates.ejs'), 'utf8');
       const client = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
       const listFn = client.slice(client.indexOf('function renderCertificateList()'), client.indexOf('async function setCertificateOverride'));
-      check('...shown in the list from the start (31 Oct); no Issue faculty certificates button',
-        /<option value="">Everyone: delegates and faculty<\/option>\s*<option value="registered">Registered delegates<\/option>/.test(view)
-        && /if \(filter === 'registered'\) return !x\.notRegistered;/.test(listFn) && /return true;\n  \}\);/.test(listFn) && !view.includes('id="cert-issue-fac"'));
+      check('...shown in the list (Everyone, and Due when due; 21 Nov redesign); no Issue faculty certificates button',
+        /\['all', 'Everyone'\]/.test(listFn) && /all: \(\) => true/.test(listFn) && !view.includes('id="cert-issue-fac"'));
     }
     check('issuing "faculty" issues nothing', (await call('POST', '/api/admin/certificates/issue', { scope: 'faculty', phones: [key] }, admin)).body.issued.FACULTY === 0);
     const issued = await call('POST', '/api/admin/certificates/issue', { scope: 'roles', phones: [key] }, admin);

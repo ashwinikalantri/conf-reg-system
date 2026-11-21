@@ -2222,6 +2222,8 @@ db.serialize(() => {
   // judged, chaired, moderated or sat on the panel of (owner, 20 Nov 2026),
   // as it read when issued.
   db.run('ALTER TABLE certificates ADD COLUMN detail TEXT', () => {});
+  // Forced by a super admin, though they did not qualify (21 Nov 2026): why.
+  db.run('ALTER TABLE certificates ADD COLUMN forced_reason TEXT', () => {});
   db.run(`
     CREATE TABLE IF NOT EXISTS certificate_overrides (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -10988,7 +10990,7 @@ async function certificateCandidates() {
   const overrides = new Map((await dbAll('SELECT phone_number, scope, decision, reason, by_name, at FROM certificate_overrides'))
     .map((o) => [`${o.phone_number}|${o.scope}`, o]));
   const feedback = new Set((await dbAll('SELECT phone_number, option_id FROM workshop_feedback')).map((f) => `${f.phone_number}|${Number(f.option_id)}`));
-  const issued = await dbAll('SELECT id, phone_number, kind, option_id, guest_id, cert_no, name, issued_at, revoked_at FROM certificates WHERE revoked_at IS NULL');
+  const issued = await dbAll('SELECT id, phone_number, kind, option_id, guest_id, cert_no, name, issued_at, issued_by, forced_reason, revoked_at FROM certificates WHERE revoked_at IS NULL');
   const enrolment = new Map();
   for (const e of await dbAll('SELECT registration_id, option_id FROM registration_options')) {
     if (!enrolment.has(e.registration_id)) enrolment.set(e.registration_id, new Set());
@@ -11507,7 +11509,10 @@ app.get('/api/admin/certificates/candidates', requirePermission('certificates.vi
   try {
     const people = await certificateCandidates();
     const issued = await dbAll('SELECT kind, COUNT(*) AS n FROM certificates WHERE revoked_at IS NULL GROUP BY kind');
-    res.json({ people, issued: Object.fromEntries(issued.map((r) => [r.kind, r.n])), kinds: CERT_KIND_LABEL });
+    res.json({ people, issued: Object.fromEntries(issued.map((r) => [r.kind, r.n])), kinds: CERT_KIND_LABEL,
+      // For Force issue: every workshop, and whether this is a super admin.
+      workshops: [...(await certificateWorkshops()).values()].map((w) => ({ optionId: w.optionId, name: w.name })),
+      superAdmin: req.session.role === 'SUPER_ADMIN' });
   } catch (err) {
     next(err);
   }
@@ -11552,6 +11557,50 @@ app.post('/api/admin/certificates/override', requirePermission('certificates.iss
     await recordAudit({ req, entityType: 'certificate_override', entityId: `${phone}|${scope}`, action: 'CERTIFICATE_OVERRIDE',
       oldValue: before ? `${before.decision}: ${before.reason}` : null, newValue: decision ? `${decision}: ${reason}` : 'cleared' });
     res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Force issue (owner, 21 Nov 2026): a super admin -- the role itself, not
+// a permission anyone can be given -- issues one certificate to one person
+// now, though they do not qualify, with a reason kept on it and in the log.
+// cert: MMC | NURSING | CONF | WORKSHOP:<option> | WORKSHOP_FACULTY:<option>
+// | a role (SPEAKER, CHAIR, ...). Never a second of the same.
+app.post('/api/admin/certificates/force', requirePermission('certificates.issue'), async (req, res, next) => {
+  try {
+    if (req.session.role !== 'SUPER_ADMIN') return res.status(403).json({ success: false, error: 'Only a super admin can force issue a certificate.' });
+    const reason = String(req.body.reason || '').trim().slice(0, 300);
+    if (!reason) return res.status(400).json({ success: false, error: 'Give the reason -- it is kept with the certificate.' });
+    const person = (await certificateCandidates()).find((p) => p.phone === String(req.body.phone || ''));
+    if (!person) return res.status(404).json({ success: false, error: 'Nobody found to issue it to.' });
+    const m = /^(MMC|NURSING|CONF|WORKSHOP|WORKSHOP_FACULTY|[A-Z]+)(?::(\d+))?$/.exec(String(req.body.cert || ''));
+    const kind = m && m[1];
+    if (!kind || !CERT_KIND_CODE[kind] || kind === 'FACULTY') return res.status(400).json({ success: false, error: 'Choose the certificate.' });
+    let workshop = null;
+    let detail = null;
+    if (['MMC', 'NURSING', 'CONF'].includes(kind)) {
+      if (person.notRegistered) return res.status(400).json({ success: false, error: 'A conference certificate needs a registration.' });
+      if (person.conference.issued) return res.status(409).json({ success: false, error: `They have one already: ${person.conference.issued.cert_no}.` });
+      if (kind === 'MMC' && !person.councilRegNo) return res.status(400).json({ success: false, error: 'No council number to print: add it to their profile, or choose participation.' });
+    } else if (kind === 'WORKSHOP' || kind === 'WORKSHOP_FACULTY') {
+      const w = (await certificateWorkshops()).get(Number(m[2]));
+      if (!w) return res.status(400).json({ success: false, error: 'Choose the workshop.' });
+      const already = await dbGet('SELECT cert_no FROM certificates WHERE phone_number = ? AND kind = ? AND option_id = ? AND revoked_at IS NULL', [person.phone, kind, w.optionId]);
+      if (already) return res.status(409).json({ success: false, error: `They have one already: ${already.cert_no}.` });
+      workshop = { optionId: w.optionId, name: w.name, date: w.date };
+    } else {
+      if (!CERT_ROLE_KINDS.includes(kind)) return res.status(400).json({ success: false, error: 'Choose the certificate.' });
+      if (!person.faculty) return res.status(400).json({ success: false, error: 'A role certificate is for someone on the Faculty list.' });
+      const role = (person.roles || []).find((r) => r.kind === kind);
+      if (role && role.issued) return res.status(409).json({ success: false, error: `They have one already: ${role.issued.cert_no}.` });
+      detail = role ? certSessionList(role.sessions) : null;
+    }
+    const certNo = await issueCertificate(req, person, kind, workshop, detail);
+    await dbRun('UPDATE certificates SET forced_reason = ? WHERE cert_no = ?', [reason, certNo]);
+    await recordAudit({ req, entityType: 'certificate', entityId: certNo, action: 'CERTIFICATE_FORCED', oldValue: null,
+      newValue: `${certNo} · ${CERT_KIND_LABEL[kind]}${workshop ? ` (${workshop.name})` : ''} · ${person.name} · ${reason}` });
+    res.json({ success: true, certNo });
   } catch (err) {
     next(err);
   }

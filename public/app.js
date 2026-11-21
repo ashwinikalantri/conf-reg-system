@@ -17470,7 +17470,7 @@ async function mealServeWalkin(e) {
 }
 
 // --- CERTIFICATES (admin) ---
-const certState = { people: [], issued: {}, kinds: {}, settings: null };
+const certState = { people: [], issued: {}, kinds: {}, settings: null, workshops: [], superAdmin: false, tab: 'due', why: '', open: null };
 const CERT_BADGE = {
   MMC: 'bg-indigo-100 text-indigo-800 border-indigo-300', NURSING: 'bg-teal-100 text-teal-800 border-teal-300', CONF: 'bg-emerald-100 text-emerald-800 border-emerald-300',
   WORKSHOP: 'bg-sky-100 text-sky-800 border-sky-300', WORKSHOP_FACULTY: 'bg-sky-100 text-sky-900 border-sky-400', FACULTY: 'bg-amber-100 text-amber-800 border-amber-300',
@@ -17480,6 +17480,35 @@ const CERT_BADGE = {
 const CERT_CONF_WORD = { MMC: 'MMC points', NURSING: 'Nursing points', CONF: 'Participation' };
 const CERT_ROLE_WORD = { SPEAKER: 'Speaker', JUDGE: 'Judge', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist' };
 
+// Redesigned 21 Nov 2026: Ready to issue (a row per kind), Not yet and why
+// (the reasons, each a filter), People (a tag per certificate, Open for one
+// person's panel). certItems() is each person's certificates in one shape.
+function certItems(x) {
+  const items = [];
+  const st = (issued, due, ov) => (issued ? (issued.forced_reason ? 'forced' : 'issued') : ov && ov.decision === 'EXCLUDE' ? 'excluded' : due ? 'due' : 'not');
+  const c = x.conference;
+  if (!x.notRegistered || c.issued) {
+    const kind = (c.issued && c.issued.kind) || c.kind;
+    items.push({ title: `Conference${kind ? ` · ${CERT_CONF_WORD[kind] || 'Participation'}` : ''}`, status: st(c.issued, !!c.kind, c.override), reason: c.whyNot || '',
+      issued: c.issued, issueScope: 'conference', ovKey: x.phone, ovScope: 'CONF', override: c.override, include: !c.kind, kind: kind || 'CONF' });
+  }
+  x.workshops.forEach((w) => items.push({ title: `Workshop · ${w.name}`, status: st(w.issued, w.eligible, w.override), reason: w.whyNot || '', issued: w.issued,
+    issueScope: 'workshops', ovKey: x.phone, ovScope: w.e, override: w.override, include: !w.eligible, kind: 'WORKSHOP', notMarked: w.whyNot === 'Not marked present' }));
+  (x.workshopFaculty || []).forEach((w) => items.push({ title: `Workshop faculty · ${w.name}`, status: st(w.issued, w.eligible, w.override), reason: w.whyNot || '', issued: w.issued,
+    issueScope: 'workshop_faculty', ovKey: x.phone, ovScope: w.scope, override: w.override, include: false, kind: 'WORKSHOP_FACULTY' }));
+  (x.roles || []).forEach((r) => items.push({ title: `${CERT_ROLE_WORD[r.kind]} · ${r.sessions.join('; ')}`, status: st(r.issued, r.eligible, r.override), reason: r.whyNot || '', issued: r.issued,
+    issueScope: 'roles', ovKey: r.key, ovScope: `role:${r.kind}`, override: r.override, include: false, kind: r.kind }));
+  return items;
+}
+const CERT_TAG = {
+  due: 'bg-indigo-50 text-navy border-indigo-200', issued: 'bg-emerald-50 text-emerald-800 border-emerald-200', forced: 'bg-rose-50 text-rose-800 border-rose-200',
+  not: 'bg-slate-50 text-slate-600 border-slate-200', excluded: 'bg-amber-50 text-amber-900 border-amber-200',
+};
+const certTagText = (it) => (it.status === 'due' ? `${it.title} · due` : it.status === 'issued' ? `${it.title} · ${it.issued.cert_no}`
+  : it.status === 'forced' ? `${it.title} · forced` : it.status === 'excluded' ? `${it.title} · excluded` : `${it.title} · ${it.reason || 'not yet'}`);
+// Short, for a tag: the long reasons cut to their point.
+const certShortTitle = (t) => (t.length > 60 ? `${t.slice(0, 57)}…` : t);
+
 async function renderCertificates() {
   const res = await fetch('/api/admin/certificates/candidates');
   if (!res.ok) return;
@@ -17487,110 +17516,206 @@ async function renderCertificates() {
   certState.people = data.people || [];
   certState.issued = data.issued || {};
   certState.kinds = data.kinds || {};
+  certState.workshops = data.workshops || [];
+  certState.superAdmin = !!data.superAdmin;
+  certState.tab = certState.tab || 'due';
   const p = certState.people;
-  const dueConf = p.filter((x) => x.conference.kind && !x.conference.issued).length;
-  const dueWs = p.reduce((n, x) => n + x.workshops.filter((w) => w.eligible && !w.issued).length, 0);
-  const dueFac = p.filter((x) => x.faculty && x.faculty.eligible && !x.faculty.issued).length;
-  const dueWf = p.reduce((n, x) => n + (x.workshopFaculty || []).filter((w) => w.eligible && !w.issued).length, 0);
-  const dueRoles = p.reduce((n, x) => n + (x.roles || []).filter((r) => r.eligible && !r.issued).length, 0);
-  const issuedRoles = ['SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST'].reduce((n, k) => n + (certState.issued[k] || 0), 0);
-  const stat = (label, value, note) => `<div class="bg-white rounded-xl border border-slate-200 p-3"><p class="text-[11px] font-bold text-slate-500 uppercase tracking-wide">${esc(label)}</p>
-    <p class="text-2xl font-extrabold text-slate-800 tabular-nums">${value}</p><p class="text-[11px] text-slate-500">${esc(note)}</p></div>`;
-  document.getElementById('cert-stats').innerHTML = [
-    stat('MMC points', p.filter((x) => x.conference.kind === 'MMC').length, `${certState.issued.MMC || 0} issued`),
-    stat('Nursing points', p.filter((x) => x.conference.kind === 'NURSING').length, `${certState.issued.NURSING || 0} issued`),
-    stat('Participation', p.filter((x) => x.conference.kind === 'CONF').length, `${certState.issued.CONF || 0} issued`),
-    stat('Workshops', p.reduce((n, x) => n + x.workshops.filter((w) => w.eligible).length, 0), `${certState.issued.WORKSHOP || 0} issued`),
-    stat('Workshop faculty', p.reduce((n, x) => n + (x.workshopFaculty || []).filter((w) => w.eligible).length, 0), `${certState.issued.WORKSHOP_FACULTY || 0} issued`),
-    stat('Roles', p.reduce((n, x) => n + (x.roles || []).filter((r) => r.eligible).length, 0), `speaker, judge, chair… · ${issuedRoles} issued`),
-    stat('Not yet', p.filter((x) => !x.conference.kind && !x.notRegistered).length, 'for the conference'),
-  ].join('');
+  const all = p.map((x) => ({ x, items: certItems(x) }));
+  const due = (scope) => all.reduce((n, a) => n + a.items.filter((i) => i.issueScope === scope && i.status === 'due').length, 0);
+  const issuedOf = (kinds) => kinds.reduce((n, k) => n + (certState.issued[k] || 0), 0);
+  const confDue = (k) => p.filter((x) => x.conference.kind === k && !x.conference.issued).length;
   const mayIssue = can('certificates.issue');
-  document.getElementById('cert-issue-btns').classList.toggle('hidden', !mayIssue);
-  const confBtn = document.getElementById('cert-issue-conf');
-  const wsBtn = document.getElementById('cert-issue-ws');
-  confBtn.textContent = `Issue conference certificates (${dueConf} due)`;
-  confBtn.disabled = !dueConf;
-  wsBtn.textContent = `Issue workshop certificates (${dueWs} due)`;
-  wsBtn.disabled = !dueWs;
-  // The Faculty certificate is retired (20 Nov 2026): no button.
-  const facBtn = document.getElementById('cert-issue-fac');
-  if (facBtn) { facBtn.textContent = `Issue faculty certificates (${dueFac} due)`; facBtn.disabled = !dueFac; }
-  const wfBtn = document.getElementById('cert-issue-wf');
-  if (wfBtn) { wfBtn.textContent = `Issue workshop faculty certificates (${dueWf} due)`; wfBtn.disabled = !dueWf; }
-  const rolesBtn = document.getElementById('cert-issue-roles');
-  if (rolesBtn) { rolesBtn.textContent = `Issue speaker, judge, chair, moderator and panelist certificates (${dueRoles} due)`; rolesBtn.disabled = !dueRoles; }
+  const rows = [
+    ['conference', 'Conference', `Checked in and paid · MMC ${confDue('MMC')} · Nursing ${confDue('NURSING')} · Participation ${confDue('CONF')}`, issuedOf(['MMC', 'NURSING', 'CONF'])],
+    ['workshops', 'Workshops', 'Marked present at the workshop', issuedOf(['WORKSHOP'])],
+    ['workshop_faculty', 'Workshop faculty', 'On a workshop’s roster, or named in its sessions', issuedOf(['WORKSHOP_FACULTY'])],
+    ['roles', 'Speaker, judge, chair, moderator, panelist', 'From the programme, one per role naming the sessions', issuedOf(['SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST'])],
+  ];
+  let total = 0;
+  document.getElementById('cert-ready').innerHTML = rows.map(([scope, name, rule, issued]) => {
+    const n = due(scope);
+    total += n;
+    return `<div class="py-3 grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_7rem_10rem] gap-x-4 gap-y-1 items-center">
+      <div class="min-w-0"><p class="font-semibold text-slate-800">${esc(name)}</p><p class="text-sm text-slate-500">${esc(rule)}</p></div>
+      <p class="hidden sm:block text-sm text-slate-500 tabular-nums">${issued} issued</p>
+      ${mayIssue ? `<button type="button" onclick="issueCertificates('${scope}')" ${n ? '' : 'disabled'} class="min-h-[44px] px-3 rounded-lg text-sm font-semibold ${n ? 'bg-navy hover:bg-indigo-700 text-white' : 'border border-slate-200 bg-slate-50 text-slate-400'}">${n ? `Issue ${n}` : 'None due'}</button>`
+        : `<p class="text-sm font-semibold text-slate-700 tabular-nums">${n} due</p>`}
+    </div>`;
+  }).join('');
+  const allBtn = document.getElementById('cert-issue-all');
+  allBtn.classList.toggle('hidden', !mayIssue);
+  allBtn.textContent = `Issue all due · ${total}`;
+  allBtn.disabled = !total;
+  // Not yet, and why: the conference's reasons, counted.
+  const why = new Map();
+  for (const x of p) {
+    if (x.notRegistered || x.conference.kind || x.conference.issued || !x.conference.whyNot) continue;
+    const key = /^Excluded/.test(x.conference.whyNot) ? 'Excluded by hand' : x.conference.whyNot;
+    why.set(key, (why.get(key) || 0) + 1);
+  }
+  document.getElementById('cert-why-card').classList.toggle('hidden', !why.size);
+  document.getElementById('cert-why').innerHTML = [...why.entries()].sort((a, b) => b[1] - a[1]).map(([w, n]) => {
+    const on = certState.why === w;
+    return `<button type="button" onclick="setCertWhy(${esc(JSON.stringify(w))})" aria-pressed="${on}" class="inline-flex items-center gap-2 min-h-[40px] px-3.5 rounded-full border text-sm font-semibold ${on ? 'bg-amber-700 border-amber-700 text-white' : 'bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100'}">${esc(w)} <b class="tabular-nums">${n}</b></button>`;
+  }).join('');
   renderCertificateList();
+  if (certState.open) renderCertPerson();
+}
+
+function setCertWhy(w) {
+  certState.why = certState.why === w ? '' : w;
+  if (certState.why) certState.tab = 'not';
+  renderCertificates();
+}
+function setCertTab(t) {
+  certState.tab = t;
+  certState.why = '';
+  renderCertificates();
 }
 
 function renderCertificateList() {
-  const filter = document.getElementById('cert-filter').value;
   const term = document.getElementById('cert-search').value.trim().toLowerCase();
-  const mayIssue = can('certificates.issue');
-  const shown = certState.people.filter((x) => {
-    if (term && ![x.name, x.registrationNumber].some((v) => String(v || '').toLowerCase().includes(term))) return false;
-    if (filter === 'due') return (x.conference.kind && !x.conference.issued) || x.workshops.some((w) => w.eligible && !w.issued) || !!(x.faculty && x.faculty.eligible && !x.faculty.issued)
-      || (x.workshopFaculty || []).some((w) => w.eligible && !w.issued) || (x.roles || []).some((r) => r.eligible && !r.issued);
-    if (filter === 'roles') return (x.roles || []).length > 0;
-    if (filter === 'wf') return (x.workshopFaculty || []).length > 0;
-    if (filter === 'nursingwait') return !!x.nursingCategory && /Nursing points details/.test(x.conference.whyNot || '');
-    if (filter === 'faculty') return !!x.faculty;
-    // Everyone by default: faculty who have not registered too, as they have
-    // a Faculty certificate due.
-    if (filter === 'registered') return !x.notRegistered;
-    if (filter === 'MMC' || filter === 'NURSING' || filter === 'CONF') return x.conference.kind === filter;
-    if (filter === 'nocouncil') return x.mmcCategory && !x.councilRegNo;
-    if (filter === 'not') return !x.conference.kind && !x.notRegistered;
-    if (filter === 'issued') return !!x.conference.issued || x.workshops.some((w) => w.issued) || !!(x.faculty && x.faculty.issued)
-      || (x.workshopFaculty || []).some((w) => w.issued) || (x.roles || []).some((r) => r.issued);
-    return true;
-  });
-  setText('cert-count', `Showing ${shown.length} of ${certState.people.length}`);
-  const badge = (kind, text) => `<span class="text-[10px] px-2 py-0.5 rounded-full border font-bold ${CERT_BADGE[kind]}">${esc(text)}</span>`;
-  const issuedLink = (c) => `<a href="/api/admin/certificates/${encodeURIComponent(c.id)}.pdf" target="_blank" rel="noopener" class="text-indigo-700 hover:underline font-semibold">${esc(c.cert_no)}</a>`
-    + (mayIssue ? ` <button type="button" onclick="correctCertificate(${Number(c.id)})" class="text-xs text-slate-500 hover:underline">Correct name</button>`
-      + ` <button type="button" onclick="revokeCertificate(${Number(c.id)})" class="text-xs text-rose-600 hover:underline">Withdraw</button>` : '');
-  document.getElementById('cert-list').innerHTML = shown.map((x) => {
-    const c = x.conference;
-    const conf = c.issued ? `${badge(c.issued.kind, CERT_CONF_WORD[c.issued.kind] || 'Participation')} ${issuedLink(c.issued)}`
-      : c.kind ? `${badge(c.kind, `${CERT_CONF_WORD[c.kind] || 'Participation'} · due`)}`
-        : `<span class="text-xs text-slate-500">${esc(c.whyNot || '')}</span>`;
-    const confOv = mayIssue && !c.issued && !x.notRegistered ? (c.override
-      ? ` <button type="button" onclick="setCertificateOverride('${esc(x.phone)}', 'CONF', null)" class="text-xs text-amber-700 hover:underline">${c.override.decision === 'INCLUDE' ? 'Included' : 'Excluded'} by hand — undo</button>`
-      : ` <button type="button" onclick="setCertificateOverride('${esc(x.phone)}', 'CONF', '${c.kind ? 'EXCLUDE' : 'INCLUDE'}')" class="text-xs text-slate-500 hover:underline">${c.kind ? 'Exclude' : 'Include anyway'}</button>`) : '';
-    const ws = x.workshops.map((w) => `<div class="text-xs mt-1">
-        <span class="font-semibold text-slate-700">${esc(w.name)}</span>:
-        ${w.issued ? `${badge('WORKSHOP', 'Issued')} ${issuedLink(w.issued)}` : w.eligible ? badge('WORKSHOP', 'Due') : `<span class="text-slate-500">${esc(w.whyNot || '')}</span>`}
-        ${mayIssue && !w.issued ? (w.override
-          ? ` <button type="button" onclick="setCertificateOverride('${esc(x.phone)}', '${esc(w.e)}', null)" class="text-amber-700 hover:underline">${w.override.decision === 'INCLUDE' ? 'Included' : 'Excluded'} by hand — undo</button>`
-          : ` <button type="button" onclick="setCertificateOverride('${esc(x.phone)}', '${esc(w.e)}', '${w.eligible ? 'EXCLUDE' : 'INCLUDE'}')" class="text-slate-500 hover:underline">${w.eligible ? 'Exclude' : 'Include anyway'}</button>`) : ''}
-      </div>`).join('');
-    const f = x.faculty;
-    const fac = !f || (f.retired && !f.issued) ? '' : `<div class="text-xs mt-1">Faculty:
-        ${f.issued ? `${badge('FACULTY', 'Issued')} ${issuedLink(f.issued)}` : f.eligible ? badge('FACULTY', 'Due') : `<span class="text-slate-500">${esc(f.whyNot || '')}</span>`}
-        ${mayIssue && !f.issued ? (f.override
-          ? ` <button type="button" onclick="setCertificateOverride('${esc(f.key)}', 'FAC', null)" class="text-amber-700 hover:underline">Excluded by hand — undo</button>`
-          : ` <button type="button" onclick="setCertificateOverride('${esc(f.key)}', 'FAC', 'EXCLUDE')" class="text-slate-500 hover:underline">Exclude</button>`) : ''}
-      </div>`;
-    // A workshop's faculty, and each programme role: withheld by hand only.
-    const exclusion = (key, scope, ov) => (!mayIssue ? '' : ov
-      ? ` <button type="button" onclick="setCertificateOverride('${esc(key)}', '${esc(scope)}', null)" class="text-amber-700 hover:underline">Excluded by hand — undo</button>`
-      : ` <button type="button" onclick="setCertificateOverride('${esc(key)}', '${esc(scope)}', 'EXCLUDE')" class="text-slate-500 hover:underline">Exclude</button>`);
-    const wf = (x.workshopFaculty || []).map((w) => `<div class="text-xs mt-1">Workshop faculty, <span class="font-semibold text-slate-700">${esc(w.name)}</span>:
-        ${w.issued ? `${badge('WORKSHOP_FACULTY', 'Issued')} ${issuedLink(w.issued)}` : w.eligible ? badge('WORKSHOP_FACULTY', 'Due') : `<span class="text-slate-500">${esc(w.whyNot || '')}</span>`}
-        ${w.issued ? '' : exclusion(x.phone, w.scope, w.override)}</div>`).join('');
-    const roles = (x.roles || []).map((r) => `<div class="text-xs mt-1">${esc(CERT_ROLE_WORD[r.kind])}: <span class="text-slate-600">${esc(r.sessions.join('; '))}</span>
-        ${r.issued ? `${badge(r.kind, 'Issued')} ${issuedLink(r.issued)}` : r.eligible ? badge(r.kind, 'Due') : `<span class="text-slate-500">${esc(r.whyNot || '')}</span>`}
-        ${r.issued ? '' : exclusion(r.key, `role:${r.kind}`, r.override)}</div>`).join('');
-    return `<div class="px-3 py-2.5">
-      <div class="flex flex-wrap items-baseline gap-x-2">
-        <span class="font-semibold text-slate-800">${esc(x.name)}</span>
-        <span class="text-xs text-slate-400">${esc([x.registrationNumber, x.category, x.councilRegNo ? `${x.councilName || 'Council'} ${x.councilRegNo}` : (x.mmcCategory ? 'no council number' : '')].filter(Boolean).join(' · '))}</span>
+  const all = certState.people.map((x) => ({ x, items: certItems(x) }));
+  const is = {
+    due: (a) => a.items.some((i) => i.status === 'due'),
+    issued: (a) => a.items.some((i) => i.status === 'issued' || i.status === 'forced'),
+    not: (a) => !a.x.notRegistered && !a.x.conference.kind && !a.x.conference.issued,
+    all: () => true,
+  };
+  const tabs = [['due', 'Due'], ['issued', 'Issued'], ['not', 'Not yet'], ['all', 'Everyone']];
+  document.getElementById('cert-tabs').innerHTML = tabs.map(([k, label]) => {
+    const on = certState.tab === k;
+    return `<button type="button" onclick="setCertTab('${k}')" aria-pressed="${on}" class="min-h-[44px] px-3.5 rounded-full border text-sm font-semibold ${on ? 'bg-navy border-navy text-white' : 'bg-white border-slate-300 text-navy hover:bg-slate-50'}">${label} · ${all.filter(is[k]).length}</button>`;
+  }).join('');
+  const whyOf = (a) => (/^Excluded/.test(a.x.conference.whyNot || '') ? 'Excluded by hand' : a.x.conference.whyNot);
+  const shown = all.filter((a) => is[certState.tab || 'due'](a)
+    && (!certState.why || whyOf(a) === certState.why)
+    && (!term || [a.x.name, a.x.registrationNumber].some((v) => String(v || '').toLowerCase().includes(term))));
+  setText('cert-count', `Showing ${shown.length} of ${all.filter(is[certState.tab || 'due']).length}${certState.why ? ` · ${certState.why}` : ''}`);
+  const LIMIT = 200;
+  document.getElementById('cert-list').innerHTML = shown.slice(0, LIMIT).map((a) => {
+    const x = a.x;
+    const meta = [x.registrationNumber, x.category, x.councilRegNo ? `${x.councilName || 'Council'} ${x.councilRegNo}` : (x.mmcCategory ? 'no council number' : '')].filter(Boolean).join(' · ');
+    return `<div class="px-3 py-3 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 items-center">
+      <div class="min-w-0">
+        <p><span class="font-semibold text-slate-800">${esc(x.name)}</span> <span class="text-sm text-slate-500">${esc(meta)}</span></p>
+        <div class="flex flex-wrap gap-1.5 mt-1">${a.items.map((i) => `<span class="text-xs font-semibold px-2 py-0.5 rounded-md border break-words ${CERT_TAG[i.status]}">${esc(certShortTitle(certTagText(i)))}</span>`).join('')}</div>
       </div>
-      <div class="text-xs mt-1">Conference: ${conf}${confOv}</div>
-      ${ws}${wf}${roles}${fac}
+      <button type="button" onclick="openCertPerson(${esc(JSON.stringify(x.phone))})" class="min-h-[44px] px-3.5 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-navy hover:bg-slate-50">Open</button>
     </div>`;
-  }).join('') || '<p class="px-3 py-6 text-center text-sm text-slate-400">Nobody to show.</p>';
+  }).join('') + (shown.length > LIMIT ? `<p class="px-3 py-3 text-sm text-slate-500">And ${shown.length - LIMIT} more: search to find one.</p>` : '')
+    || '<p class="px-3 py-6 text-center text-sm text-slate-400">Nobody to show.</p>';
+}
+
+// One person's panel.
+function openCertPerson(phone) {
+  certState.open = phone;
+  document.getElementById('cert-person').classList.remove('hidden');
+  renderCertPerson();
+}
+function closeCertPerson() {
+  certState.open = null;
+  document.getElementById('cert-person').classList.add('hidden');
+}
+function renderCertPerson() {
+  const x = certState.people.find((y) => y.phone === certState.open);
+  if (!x) return closeCertPerson();
+  const mayIssue = can('certificates.issue');
+  setText('cert-person-name', x.name);
+  setText('cert-person-meta', [x.registrationNumber, x.category, x.notRegistered ? 'not registered' : x.paid ? 'paid' : 'payment not complete', x.complete ? 'checked in' : ''].filter(Boolean).join(' · '));
+  const btn = (label, onclick, tone = 'plain') => `<button type="button" onclick="${onclick}" class="min-h-[40px] px-3.5 rounded-lg text-sm font-semibold ${tone === 'main' ? 'bg-navy hover:bg-indigo-700 text-white'
+    : tone === 'risk' ? 'border border-rose-200 bg-white text-rose-800 hover:bg-rose-50' : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}">${esc(label)}</button>`;
+  const ov = (it, decision) => `setCertificateOverride(${esc(JSON.stringify(it.ovKey))}, ${esc(JSON.stringify(it.ovScope))}, ${decision ? `'${decision}'` : 'null'})`;
+  const chip = { due: 'Due', issued: 'Issued', forced: 'Forced', not: 'Not yet', excluded: 'Excluded' };
+  document.getElementById('cert-person-body').innerHTML = certItems(x).map((it) => {
+    const acts = [];
+    if (it.issued) {
+      acts.push(`<a href="/api/admin/certificates/${encodeURIComponent(it.issued.id)}.pdf" target="_blank" rel="noopener" class="inline-flex items-center min-h-[40px] px-3.5 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-navy hover:bg-slate-50">Download</a>`);
+      if (mayIssue) acts.push(btn('Correct the name…', `correctCertificate(${Number(it.issued.id)})`), btn('Withdraw…', `revokeCertificate(${Number(it.issued.id)})`, 'risk'));
+    } else if (mayIssue) {
+      if (it.status === 'due') acts.push(btn('Issue now', `issueCertificatesFor(${esc(JSON.stringify(x.phone))}, '${it.issueScope}')`, 'main'));
+      if (it.override) acts.push(btn(it.override.decision === 'INCLUDE' ? 'Undo “include anyway”' : 'Undo the exclusion', ov(it, null)));
+      else if (it.status === 'due') acts.push(btn('Exclude…', ov(it, 'EXCLUDE')));
+      else if (it.include) acts.push(btn('Include anyway…', ov(it, 'INCLUDE')));
+      if (it.notMarked && can('attendance.manage')) acts.push(btn('Mark present by hand…', "closeCertPerson(); switchBackendTab('attendance')"));
+    }
+    const when = it.issued ? `Issued ${fmtAuditTime(it.issued.issued_at)}${it.issued.issued_by ? ` by ${it.issued.issued_by}` : ''}.` : '';
+    const line = it.issued ? `${it.issued.cert_no} · ${when}${it.issued.forced_reason ? ` Forced: ${it.issued.forced_reason}` : ''}`
+      : it.override ? `${it.override.decision === 'INCLUDE' ? 'Included' : 'Excluded'} by ${it.override.by_name || 'hand'}: ${it.override.reason}`
+        : it.status === 'due' ? 'Qualifies: it goes out with the next issue.' : (it.reason || 'Does not qualify yet.');
+    return `<div class="py-4 space-y-1.5">
+      <div class="flex items-start justify-between gap-3"><p class="font-semibold text-slate-800 min-w-0 break-words">${esc(it.title)}</p>
+        <span class="shrink-0 text-xs font-bold px-2 py-0.5 rounded-md border ${CERT_TAG[it.status]}">${chip[it.status]}</span></div>
+      <p class="text-sm text-slate-600">${esc(line)}</p>
+      ${acts.length ? `<div class="flex flex-wrap gap-2 pt-1">${acts.join('')}</div>` : ''}
+    </div>`;
+  }).join('') || '<p class="py-6 text-sm text-slate-500">No certificates for them.</p>';
+  document.getElementById('cert-person-force').classList.toggle('hidden', !(certState.superAdmin && mayIssue));
+}
+
+async function issueCertificatesFor(phone, scope) {
+  const data = await (await fetch('/api/admin/certificates/issue', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope, phones: [phone] }),
+  })).json();
+  if (!data.success) return showToast(data.error || 'Could not issue.');
+  showToast(data.total ? `Issued ${data.total}.` : 'Nothing was due.', 'success');
+  renderCertificates();
+}
+
+// Force issue (a super admin): any certificate they do not have yet.
+function openCertForce() {
+  const x = certState.people.find((y) => y.phone === certState.open);
+  if (!x) return;
+  const items = certItems(x);
+  const has = (kind, title) => items.some((i) => (i.status === 'issued' || i.status === 'forced') && i.kind === kind && (!title || i.title === title));
+  const opts = [];
+  if (!x.notRegistered && !x.conference.issued) {
+    if (x.councilRegNo) opts.push(['MMC', 'Conference · MMC points']);
+    if (x.nursingCategory) opts.push(['NURSING', 'Conference · Nursing points']);
+    opts.push(['CONF', 'Conference · participation']);
+  }
+  certState.workshops.forEach((w) => { if (!has('WORKSHOP', `Workshop · ${w.name}`)) opts.push([`WORKSHOP:${w.optionId}`, `Workshop · ${w.name}`]); });
+  if (x.faculty) {
+    Object.entries(CERT_ROLE_WORD).forEach(([k, word]) => { if (!has(k)) opts.push([k, word]); });
+    certState.workshops.forEach((w) => { if (!has('WORKSHOP_FACULTY', `Workshop faculty · ${w.name}`)) opts.push([`WORKSHOP_FACULTY:${w.optionId}`, `Workshop faculty · ${w.name}`]); });
+  }
+  setText('cert-force-who', [x.name, x.registrationNumber, x.category].filter(Boolean).join(' · '));
+  document.getElementById('cert-force-what').innerHTML = opts.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('');
+  document.getElementById('cert-force-reason').value = '';
+  document.getElementById('cert-force-error').classList.add('hidden');
+  certForceWhy();
+  document.getElementById('cert-force').classList.remove('hidden');
+}
+function certForceWhy() {
+  const x = certState.people.find((y) => y.phone === certState.open);
+  const v = document.getElementById('cert-force-what').value || '';
+  const items = x ? certItems(x) : [];
+  const [kind, opt] = v.split(':');
+  const it = ['MMC', 'NURSING', 'CONF'].includes(kind) ? items.find((i) => i.issueScope === 'conference')
+    : kind === 'WORKSHOP' ? items.find((i) => i.issueScope === 'workshops' && i.ovScope === `ws:${opt}`) : items.find((i) => i.kind === kind);
+  setText('cert-force-why', it ? (it.status === 'due' ? 'They qualify already: Issue now does it without forcing.' : `Why they don’t qualify now: ${it.reason || 'not in the rule for it'}.`)
+    : 'Why they don’t qualify now: not registered for it or not in the programme for it.');
+}
+function closeCertForce() { document.getElementById('cert-force').classList.add('hidden'); }
+async function submitCertForce() {
+  const err = document.getElementById('cert-force-error');
+  const reason = document.getElementById('cert-force-reason').value.trim();
+  const cert = document.getElementById('cert-force-what').value;
+  const fail = (m) => { err.textContent = m; err.classList.remove('hidden'); };
+  if (!cert) return fail('Choose the certificate.');
+  if (!reason) return fail('Give the reason: it’s kept with the certificate.');
+  const data = await (await fetch('/api/admin/certificates/force', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: certState.open, cert, reason }),
+  })).json();
+  if (!data.success) return fail(data.error || 'Could not issue it.');
+  closeCertForce();
+  showToast(`Issued ${data.certNo}, marked Forced.`, 'success');
+  renderCertificates();
+}
+
+function openCertificateSettings() {
+  selectSettingsTab('general');
+  setTimeout(() => { const c = document.getElementById('gs-card-certificates'); if (c && c.scrollIntoView) c.scrollIntoView({ block: 'start' }); }, 300);
 }
 
 async function setCertificateOverride(phone, scope, decision) {
@@ -17610,8 +17735,8 @@ async function setCertificateOverride(phone, scope, decision) {
 
 function issueCertificatesQuestion(scope) {
   const what = { conference: 'conference certificate', workshops: 'workshop certificate', faculty: 'faculty certificate',
-    workshop_faculty: 'workshop faculty certificate', roles: 'speaker, judge, chairperson, moderator and panelist certificate' }[scope];
-  const who = ['faculty', 'roles', 'workshop_faculty'].includes(scope) ? 'Faculty with an account can download theirs from the portal; for the rest, download it here.' : 'The delegate can download it from the portal.';
+    workshop_faculty: 'workshop faculty certificate', roles: 'speaker, judge, chairperson, moderator and panelist certificate', all: 'certificate' }[scope];
+  const who = scope === 'all' ? 'Delegates and faculty with an account can download theirs from the portal.' : ['faculty', 'roles', 'workshop_faculty'].includes(scope) ? 'Faculty with an account can download theirs from the portal; for the rest, download it here.' : 'The delegate can download it from the portal.';
   return `Issue every ${what} now due? Each gets its number. ${who}`;
 }
 
@@ -17622,7 +17747,7 @@ async function issueCertificates(scope) {
   })).json();
   if (!data.success) return showToast(data.error || 'Could not issue.');
   const i = data.issued;
-  showToast(scope === 'conference' ? `Issued ${i.MMC} with MMC points, ${i.NURSING} with Nursing points and ${i.CONF} participation certificates.`
+  showToast(scope === 'all' ? `Issued ${data.total} certificates.` : scope === 'conference' ? `Issued ${i.MMC} with MMC points, ${i.NURSING} with Nursing points and ${i.CONF} participation certificates.`
     : scope === 'faculty' ? `Issued ${i.FACULTY} faculty certificates.`
       : scope === 'workshop_faculty' ? `Issued ${i.WORKSHOP_FACULTY} workshop faculty certificates.`
         : scope === 'roles' ? `Issued ${i.SPEAKER} speaker, ${i.JUDGE} judge, ${i.CHAIR} chairperson, ${i.MODERATOR} moderator and ${i.PANELIST} panelist certificates.`

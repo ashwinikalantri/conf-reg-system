@@ -1,42 +1,83 @@
-    <!-- SETTINGS › CONFERENCE › CERTIFICATES (certificates.view). Who qualifies for
-         which certificate and why not, issuing them, and those issued --
-         delegates' (MMC points or participation, workshops) and faculty's.
-         Their wording, signatories and design are in Conference setup
+    <!-- SETTINGS › CONFERENCE › CERTIFICATES (certificates.view), redesigned
+         21 Nov 2026: Ready to issue, a row per kind with its rule and its
+         own Issue; Not yet, and why, as tappable reasons; People, one row
+         each with a tag per certificate, Open for one person's panel. A
+         super admin (the role) can force issue from that panel. Wording,
+         signatories and design are in Conference setup
          (partials/certificate-settings.ejs). renderCertificates() in app.js. -->
-    <section id="section-certificates" class="hidden space-y-5">
+    <section id="section-certificates" class="hidden space-y-4">
       <div class="flex flex-wrap items-end justify-between gap-3">
-        <div>
+        <div class="min-w-0">
           <h2 class="text-lg font-bold text-slate-800">Certificates</h2>
-          <p class="text-xs text-slate-500">The conference: checked in at the registration desk, and paid; with MMC points for doctors and medical postgraduates who have given a council number, with Nursing points for the nursing categories. A workshop: marked present at it; its faculty: on its roster or in its sessions. Speaker, judge, chairperson, moderator and panelist: from the programme, one per role naming the sessions.</p>
+          <p class="text-sm text-slate-600">Issue what is due, see why the rest is not, and put right one person at a time.</p>
         </div>
-        <div id="cert-issue-btns" class="hidden flex flex-wrap gap-2 w-full sm:w-auto">
-          <button type="button" onclick="issueCertificates('conference')" id="cert-issue-conf" class="flex-1 sm:flex-none px-4 py-2 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Issue conference certificates</button>
-          <button type="button" onclick="issueCertificates('workshops')" id="cert-issue-ws" class="flex-1 sm:flex-none px-4 py-2 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Issue workshop certificates</button>
-          <button type="button" onclick="issueCertificates('workshop_faculty')" id="cert-issue-wf" class="flex-1 sm:flex-none px-4 py-2 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Issue workshop faculty certificates</button>
-          <button type="button" onclick="issueCertificates('roles')" id="cert-issue-roles" class="flex-1 sm:flex-none px-4 py-2 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md">Issue role certificates</button>
-        </div>
+        <button type="button" onclick="openCertificateSettings()" class="min-h-[44px] px-4 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-navy hover:bg-slate-50">Wording and signatures →</button>
       </div>
-      <div id="cert-stats" class="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3"></div>
-      <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
-          <select id="cert-filter" onchange="renderCertificateList()" aria-label="Show" class="h-10 px-2 border border-slate-300 rounded-lg text-sm bg-white">
-            <option value="">Everyone: delegates and faculty</option>
-            <option value="registered">Registered delegates</option>
-            <option value="due">Due, not yet issued</option>
-            <option value="MMC">Qualifies: MMC points</option>
-            <option value="NURSING">Qualifies: Nursing points</option>
-            <option value="CONF">Qualifies: participation</option>
-            <option value="nursingwait">Nursing: waiting for the points details</option>
-            <option value="wf">Workshop faculty</option>
-            <option value="roles">Speakers, judges, chairs, moderators, panelists</option>
-            <option value="not">Does not qualify yet</option>
-            <option value="nocouncil">Doctor or PG without a council number</option>
-            <option value="faculty">On the Faculty list</option>
-            <option value="issued">Issued</option>
-          </select>
-          <input id="cert-search" type="search" oninput="renderCertificateList()" placeholder="Search name or ID" class="sm:col-span-2 h-10 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none">
+
+      <!-- Ready to issue: a row per kind. -->
+      <section aria-labelledby="cert-ready-h" class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+          <h3 id="cert-ready-h" class="text-base font-bold text-slate-800">Ready to issue</h3>
+          <button type="button" id="cert-issue-all" onclick="issueCertificates('all')" class="hidden min-h-[44px] px-4 bg-navy hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm rounded-lg">Issue all due</button>
         </div>
-        <p id="cert-count" class="text-xs text-slate-500 mb-2"></p>
+        <div id="cert-ready" class="divide-y divide-slate-100"></div>
+      </section>
+
+      <!-- Not yet, and why: each reason a filter. -->
+      <section id="cert-why-card" aria-labelledby="cert-why-h" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5">
+        <h3 id="cert-why-h" class="text-base font-bold text-slate-800 mb-2">Not yet, and why</h3>
+        <div id="cert-why" class="flex flex-wrap gap-2"></div>
+        <p class="text-sm text-slate-500 mt-2">Tap one to list those people below.</p>
+      </section>
+
+      <!-- People. -->
+      <section aria-labelledby="cert-people-h" class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5">
+        <h3 id="cert-people-h" class="text-base font-bold text-slate-800 mb-2">People</h3>
+        <div class="flex flex-wrap items-center gap-2 mb-2">
+          <label class="flex-1 min-w-[14rem]"><span class="sr-only">Search name or ID</span>
+            <input id="cert-search" type="search" oninput="renderCertificateList()" autocomplete="off" placeholder="Search name or ID" class="w-full h-11 px-3 border border-slate-300 rounded-lg text-base sm:text-sm bg-white outline-none"></label>
+          <div id="cert-tabs" class="flex flex-wrap gap-2" role="group" aria-label="Show"></div>
+        </div>
+        <p id="cert-count" class="text-sm text-slate-500 mb-2"></p>
         <div id="cert-list" class="border border-slate-200 rounded-xl divide-y divide-slate-100 text-sm"></div>
-      </div>
+      </section>
     </section>
+
+    <!-- One person: each certificate, its state, why, and what can be done. -->
+    <div id="cert-person" class="hidden fixed inset-0 z-50 bg-slate-900/50 flex justify-end" onclick="if (event.target === this) closeCertPerson()">
+      <div role="dialog" aria-modal="true" aria-labelledby="cert-person-name" class="bg-white w-full max-w-md h-full flex flex-col shadow-xl">
+        <div class="p-4 border-b border-slate-100 flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <h3 id="cert-person-name" class="text-lg font-bold text-slate-800"></h3>
+            <p id="cert-person-meta" class="text-sm text-slate-500"></p>
+          </div>
+          <button type="button" onclick="closeCertPerson()" aria-label="Close" class="shrink-0 w-11 h-11 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">✕</button>
+        </div>
+        <div id="cert-person-body" class="flex-1 overflow-y-auto px-4 divide-y divide-slate-100"></div>
+        <div id="cert-person-force" class="hidden p-4 border-t border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
+          <span class="text-sm font-semibold text-slate-500">Super admin only</span>
+          <button type="button" onclick="openCertForce()" class="min-h-[44px] px-4 rounded-lg border border-rose-300 bg-white text-rose-800 font-semibold text-sm hover:bg-rose-50">Force issue a certificate…</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Force issue (super admin): a certificate, a reason, then issued now. -->
+    <div id="cert-force" class="hidden fixed inset-0 z-[60] bg-slate-900/55 flex items-center justify-center p-4" onclick="if (event.target === this) closeCertForce()">
+      <form role="dialog" aria-modal="true" aria-labelledby="cert-force-h" onsubmit="event.preventDefault(); submitCertForce()" class="bg-white w-full max-w-md rounded-2xl p-5 space-y-3">
+        <div>
+          <h3 id="cert-force-h" class="text-lg font-bold text-slate-800">Force issue a certificate</h3>
+          <p id="cert-force-who" class="text-sm text-slate-500"></p>
+        </div>
+        <label class="block"><span class="block text-sm font-semibold text-slate-700 mb-1">Certificate</span>
+          <select id="cert-force-what" onchange="certForceWhy()" class="w-full h-11 px-3 border border-slate-300 rounded-lg text-base sm:text-sm bg-white"></select></label>
+        <p id="cert-force-why" class="text-sm text-slate-500 -mt-1"></p>
+        <label class="block"><span class="block text-sm font-semibold text-slate-700 mb-1">Reason, kept with the certificate</span>
+          <textarea id="cert-force-reason" rows="3" maxlength="300" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-base sm:text-sm"></textarea></label>
+        <p class="rounded-lg bg-amber-50 text-amber-900 text-sm px-3 py-2">Issues it now, though they don’t qualify. It’s marked <b>Forced</b> on the list and in the activity log, with your name and this reason.</p>
+        <p id="cert-force-error" class="hidden text-sm font-semibold text-rose-700"></p>
+        <div class="flex justify-end gap-2">
+          <button type="button" onclick="closeCertForce()" class="min-h-[44px] px-4 rounded-lg border border-slate-300 bg-white text-slate-700 font-semibold text-sm">Cancel</button>
+          <button type="submit" class="min-h-[44px] px-4 rounded-lg bg-rose-800 hover:bg-rose-900 text-white font-semibold text-sm">Force issue</button>
+        </div>
+      </form>
+    </div>
