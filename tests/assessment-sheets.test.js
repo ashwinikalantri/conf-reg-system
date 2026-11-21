@@ -10,8 +10,8 @@ const { renderAssessmentSheets, CRITERIA } = require('../assessment-sheet-pdf');
   check('the four criteria of the template', CRITERIA.length === 4 && /Relevance/.test(CRITERIA[0]) && /Discussion/.test(CRITERIA[3]));
   const papers = (n) => Array.from({ length: n }, (_, i) => ({ place: i + 1, time: '8:00 AM', presenter: `Dr P${i}`, regNo: `R${i}`, title: 'A title' }));
   const pages = async (sheets) => (await renderAssessmentSheets(sheets, { acronym: 'T' })).toString('latin1').match(/\/Type \/Page\b/g).length;
-  check('a row per presenter: seven on one page, the eighth on carries over', await pages([{ heading: 'ORAL PAPER ASSESSMENT', venue: 'Hall A', session: 'S', judges: [], papers: papers(7) }]) === 1
-    && await pages([{ heading: 'ORAL PAPER ASSESSMENT', venue: 'Hall A', session: 'S', judges: ['J'], papers: papers(9) }]) === 2);
+  check('a row per presenter: a session on one page; a much longer one carries over', await pages([{ heading: 'ORAL PAPER ASSESSMENT', venue: 'Hall A', session: 'S', judges: [], papers: papers(7) }]) === 1
+    && await pages([{ heading: 'ORAL PAPER ASSESSMENT', venue: 'Hall A', session: 'S', judges: [], papers: papers(16) }]) === 2);
   check('eight presenters (the most in any hall or screen) still one sheet, signature included', await pages([{ heading: 'E-POSTER ASSESSMENT', venue: 'Screen 1', session: 'S', judges: [], papers: papers(8) }]) === 1);
   check('...one sheet per session: two sessions, two pages', await pages([1, 2].map((k) => ({ heading: 'E-POSTER ASSESSMENT', venue: `Screen ${k}`, session: 'S', judges: [], papers: papers(5) }))) === 2);
   for (const url of ['/api/admin/oral-order/assessment.pdf?format=ORAL', '/api/admin/oral-order/assessment.pdf?format=AWARD', '/api/admin/poster-screens/assessment.pdf']) {
