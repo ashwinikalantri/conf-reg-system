@@ -124,6 +124,8 @@ console.log('\n== The conference day ==');
     sb.__set(prog, confirmed, [], { completion: { parts: [{ label: 'Checked in at the registration desk', done: true }] } });
     sb.__f.renderHomeHero();
   }
+  check('a long hall name gets a line of its own that wraps, never squeezed beside the label', /const cls = 'mt-1 w-full flex items-start gap-1\.5 text-left text-sm font-semibold text-navy break-words';/.test(js)
+    && !/shrink-0 text-xs font-semibold rounded-md px-2 py-0\.5 bg-indigo-50 text-navy/.test(js));
   const next = el('home-next').innerHTML;
   check('then the next talk, breaks aside', !el('home-next').classList.contains('hidden') && /Next · 11:30 AM/.test(next) && /Transforming Healthcare/.test(next) && /Hall A · Dr Amit Shah/.test(next));
   check('registration shrinks to one line', !el('registration-row').classList.contains('hidden') && el('registration-card').classList.contains('hidden')

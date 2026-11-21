@@ -1474,13 +1474,27 @@ function renderProgrammePage() {
     : `<select id="prog-page-hall-select" aria-label="Hall" onchange="programmeHall=this.value; renderProgrammePage()"
       class="w-full sm:w-auto sm:min-w-[16rem] h-11 px-3 rounded-xl border bg-white text-navy text-[15px] font-semibold ${programmeHall ? 'border-navy ring-1 ring-navy' : 'border-slate-300'}">
       ${['', ...hallsWithTalks].map((h) => `<option value="${esc(h)}"${h === programmeHall ? ' selected' : ''}>${esc(h || `All halls (${hallsWithTalks.length})`)}</option>`).join('')}</select>`;
+  // A talk in one hall that is on the campus map: its hall opens the map there.
+  const onMap = new Set(campusPlaces(programmeData.halls).flatMap((p) => p.halls.map((h) => h.id)));
+  // The hall on a line of its own, the card's full width, wrapping when it
+  // is long ("Obstetrics and Gynaecology Seminar Hall" ran out of the card
+  // beside the label, 21 Nov 2026); on the map, the whole line opens it.
+  const hallTag = (it) => {
+    const label = esc(hallsLabel(it.halls, allHalls));
+    const pin = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg>';
+    const cls = 'mt-1 w-full flex items-start gap-1.5 text-left text-sm font-semibold text-navy break-words';
+    return it.hallIds.length === 1 && onMap.has(it.hallIds[0])
+      ? `<button type="button" onclick="openMapPage(${Number(it.hallIds[0])})" aria-label="${label} on the campus map" class="${cls} min-h-[44px] -my-1 py-1 rounded-lg hover:bg-indigo-50">${pin}<span class="min-w-0">${label}</span></button>`
+      : `<p class="${cls}">${pin}<span class="min-w-0">${label}</span></p>`;
+  };
   // On the day: what is on now, pinned above the list, with how far it has run.
   const nowBox = document.getElementById('prog-page-now');
   if (nowBox) {
     const live = programmeDay === programmeData.now.date ? progLiveItems(day) : [];
     nowBox.classList.toggle('hidden', !live.length);
     nowBox.innerHTML = live.length ? `<div class="rounded-2xl border-2 border-gold-500 bg-white px-4 py-3 shadow-sm space-y-3">${live.map((it, i) => `<div>
-        <div class="flex items-center justify-between gap-2">${i === 0 ? `<p class="text-xs font-bold tracking-[0.15em] text-gold-700 uppercase">On now · ${live.length}</p>` : '<span></span>'}<p class="text-sm text-slate-600">${esc(hallsLabel(it.halls, allHalls))} · until ${esc(guestTime12(it.end))}</p></div>
+        <div class="flex items-center justify-between gap-2">${i === 0 ? `<p class="text-xs font-bold tracking-[0.15em] text-gold-700 uppercase">On now · ${live.length}</p>` : '<span></span>'}<p class="shrink-0 text-sm text-slate-600">until ${esc(guestTime12(it.end))}</p></div>
+        ${hallTag(it)}
         ${it.label || progIsMine(it) ? `<p class="text-xs font-bold tracking-wide text-navy uppercase mt-0.5">${esc(it.label || '')}${progIsMine(it) ? `${it.label ? ' · ' : ''}<span class="text-gold-700">Yours</span>` : ''}</p>` : ''}
         <p class="font-bold text-slate-900 leading-snug mt-0.5">${esc(it.title)}</p>
         <div class="mt-1.5 h-1.5 rounded-full bg-gold-100 overflow-hidden" role="img" aria-label="${progElapsed(it)}% of the session gone"><div class="h-1.5 bg-gold-500" style="width:${progElapsed(it)}%"></div></div></div>`).join('')}</div>` : '';
@@ -1490,15 +1504,6 @@ function renderProgrammePage() {
   const items = programmeItems(shown);
   const myWorkshops = new Set((attendanceMeData && attendanceMeData.workshops || []).map((w) => w.optionId));
   const slots = [...new Set(items.map((it) => it.start))].sort();
-  // A talk in one hall that is on the campus map: its hall opens the map there.
-  const onMap = new Set(campusPlaces(programmeData.halls).flatMap((p) => p.halls.map((h) => h.id)));
-  const hallTag = (it) => {
-    const label = esc(hallsLabel(it.halls, allHalls));
-    const cls = 'shrink-0 text-xs font-semibold rounded-md px-2 py-0.5 bg-indigo-50 text-navy';
-    return it.hallIds.length === 1 && onMap.has(it.hallIds[0])
-      ? `<button type="button" onclick="openMapPage(${Number(it.hallIds[0])})" aria-label="${label} on the campus map" class="${cls} inline-flex items-center gap-1 hover:bg-indigo-100"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg>${label}</button>`
-      : `<span class="${cls}">${label}</span>`;
-  };
   // A talk's card. On a desktop the talks that start together sit side by
   // side, two or three to a row, each the row's height.
   const card = (it, showHall = true) => {
@@ -1506,10 +1511,8 @@ function renderProgrammePage() {
     const was = it.ids.some((id) => mine.has(id));
     const yours = myWorkshops.has(it.optionId);
     return `<article data-now="${now ? 1 : 0}" class="bg-white rounded-xl border ${now ? 'border-2 border-gold-500' : 'border-slate-200'} px-4 py-3 h-full">
-          <div class="flex items-start justify-between gap-2">
-            <p class="text-xs font-bold tracking-wide text-navy uppercase">${esc(it.label || '')}${yours ? ' · <span class="text-gold-700">Your workshop</span>' : ''}</p>
-            ${showHall ? hallTag(it) : ''}
-          </div>
+          ${it.label || yours ? `<p class="text-xs font-bold tracking-wide text-navy uppercase">${esc(it.label || '')}${yours ? `${it.label ? ' · ' : ''}<span class="text-gold-700">Your workshop</span>` : ''}</p>` : ''}
+          ${showHall ? hallTag(it) : ''}
           ${now ? `<p class="text-xs font-bold text-gold-700 mt-0.5">On now${was ? ' · you are marked present' : ''}</p>` : (was ? '<p class="text-xs font-bold text-emerald-700 mt-0.5">✓ You were marked present</p>' : '')}
           <h4 class="text-[17px] font-semibold text-slate-900 leading-snug mt-1">${esc(it.title)}</h4>
           ${it.speakers ? `<p class="text-[15px] text-slate-700 mt-1 leading-snug">${esc(it.speakers)}</p>` : ''}
@@ -1884,11 +1887,11 @@ function homeLiveRow(it, allHalls) {
   const places = progPlaces();
   const id = it.hallIds && it.hallIds.length === 1 ? it.hallIds[0] : null;
   const hall = id != null && places.get(id)
-    ? `<button type="button" onclick="openMapPage(${Number(id)})" class="inline-flex items-center gap-1 min-h-[32px] text-sm font-semibold text-navy underline">${esc(it.halls[0])}</button>`
-    : `<span class="text-sm font-semibold text-navy">${esc(hallsLabel(it.halls, allHalls))}</span>`;
+    ? `<button type="button" onclick="openMapPage(${Number(id)})" class="min-w-0 max-w-full min-h-[44px] text-left text-sm font-semibold text-navy underline break-words">${esc(it.halls[0])}</button>`
+    : `<span class="min-w-0 max-w-full text-sm font-semibold text-navy break-words">${esc(hallsLabel(it.halls, allHalls))}</span>`;
   return `<li class="py-2.5">
       <p class="text-[15px] font-semibold text-slate-900 leading-snug">${it.label ? `<span class="text-xs font-bold tracking-wide text-navy uppercase">${esc(it.label)}</span> ` : ''}${esc(it.title)}</p>
-      <p class="flex flex-wrap items-center gap-x-2 text-sm text-slate-600">${hall}<span>until ${esc(guestTime12(it.end))}</span></p></li>`;
+      <p class="flex flex-wrap items-center gap-x-2 text-sm text-slate-600">${hall}<span class="shrink-0">until ${esc(guestTime12(it.end))}</span></p></li>`;
 }
 // The next talk today, if any: when, what, where.
 function homeNextHtml(sessions, allHalls) {
