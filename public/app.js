@@ -11575,7 +11575,8 @@ function drawOralOrder() {
     <div class="flex flex-wrap items-center gap-2 mb-3">
       <p class="text-sm text-slate-700"><b>${esc(placed)}</b> of ${esc(placed + d.unallotted.length)} placed.</p>
       ${assign && d.unallotted.length && d.sessions.length ? `<button type="button" onclick="allotOrals()" class="h-9 px-3 rounded-lg bg-navy hover:bg-indigo-700 text-white text-sm font-semibold">Place the rest (${esc(d.unallotted.length)})</button>` : ''}
-      ${d.sessions.length ? `<a href="/api/admin/oral-order/order.pdf?format=${esc(d.format)}" download class="text-sm font-semibold text-indigo-700 underline">Running order (PDF)</a>` : ''}
+      ${d.sessions.length ? `<a href="/api/admin/oral-order/order.pdf?format=${esc(d.format)}" download class="text-sm font-semibold text-indigo-700 underline">Running order (PDF)</a>
+        <a href="/api/admin/oral-order/assessment.pdf?format=${esc(d.format)}" download class="text-sm font-semibold text-indigo-700 underline">Judges’ assessment sheets (PDF)</a>` : ''}
       ${can('comms.reminders_view') && placed ? `<button type="button" onclick="emailSlots('${esc(d.format)}')" class="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-700">Email presenters their slots</button>` : ''}
       ${assign ? `<label class="sm:ml-auto inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer min-h-[44px]">
           <input type="checkbox" ${d.published ? 'checked' : ''} onchange="saveOralSetting({ published: this.checked })" class="w-5 h-5 accent-[#1c3549]">
@@ -11707,7 +11708,8 @@ function drawPosterScreens() {
     actions.innerHTML = `
       ${assign && d.unallotted.length && d.sessions.length && d.screens.length ? `<button type="button" onclick="allotPosterScreens()" class="h-9 px-4 bg-navy hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg whitespace-nowrap">Allot the rest evenly (${esc(d.unallotted.length)})</button>` : ''}
       <span class="text-sm text-slate-600"><b class="tabular-nums">${esc(placed)}</b> of ${esc(all)} allotted · <b class="tabular-nums">${esc(files)}</b> ${files === 1 ? 'file' : 'files'} in · <b class="tabular-nums">${esc(all - files)}</b> awaited</span>
-      ${d.screens.length && d.sessions.length ? `<a href="/api/admin/poster-screens/order.pdf" download class="${btn}">Running order, all screens (PDF)</a>` : ''}
+      ${d.screens.length && d.sessions.length ? `<a href="/api/admin/poster-screens/order.pdf" download class="${btn}">Running order, all screens (PDF)</a>
+        <a href="/api/admin/poster-screens/assessment.pdf" download class="${btn}">Judges’ assessment sheets, all screens (PDF)</a>` : ''}
       ${can('comms.reminders_view') && placed ? `<button type="button" onclick="emailSlots('POSTER')" class="${btn}">Email presenters their slots</button>` : ''}
       ${assign ? `<label class="sm:ml-auto inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer min-h-[44px]">
           <input type="checkbox" ${d.settings.published ? 'checked' : ''} onchange="savePosterSetting({ published: this.checked })" class="w-5 h-5 accent-[#1c3549]">
@@ -11763,6 +11765,7 @@ function drawPosterScreens() {
         <span class="text-slate-500 font-normal">For each screen, both sessions:</span>
         ${d.screens.map((s) => `<span class="inline-flex gap-2"><span class="text-slate-700">${esc(s.name)}</span>
           <a href="/api/admin/poster-screens/order.pdf?screen=${esc(s.id)}" download class="text-indigo-700 underline">Running order (PDF)</a>
+          <a href="/api/admin/poster-screens/assessment.pdf?screen=${esc(s.id)}" download class="text-indigo-700 underline">Assessment sheets (PDF)</a>
           ${d.sessions.some((x) => x.screens.find((y) => y.id === s.id).posters.some((p) => p.file)) ? `<a href="/api/admin/poster-screens/${esc(s.id)}/files.zip" download class="text-indigo-700 underline">Files (zip)</a>` : ''}</span>`).join('')}
       </div>` : `<p class="text-sm text-slate-500">${d.screens.length ? 'Add the poster sessions first.' : 'No screens yet: add one.'}</p>`;
   }

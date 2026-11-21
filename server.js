@@ -16925,6 +16925,31 @@ app.get('/api/admin/poster-screens/order.pdf', requirePermission('abstracts.view
   }
 });
 
+// The judges' assessment sheets (owner, 21 Nov 2026): one for each poster
+// session on each screen, its posters in running order, prefilled.
+app.get('/api/admin/poster-screens/assessment.pdf', requirePermission('abstracts.view'), async (req, res, next) => {
+  try {
+    const b = await posterBoard();
+    const which = req.query.screen ? b.screens.filter((s) => s.id === Number(req.query.screen)) : b.screens;
+    if (!which.length) return res.status(404).json({ success: false, error: 'No such screen.' });
+    const sheets = [];
+    for (const screen of which) {
+      for (const x of b.sessions) {
+        const s = x.screens.find((y) => y.id === screen.id);
+        if (!s || !s.posters.length) continue;
+        sheets.push({ heading: 'E-POSTER ASSESSMENT', venue: [x.hall, s.name].filter(Boolean).join(' · '), session: [x.title, x.day, `${x.startTime}–${x.endTime}`].filter(Boolean).join(' · '),
+          judges: (s.judges || []).map((j) => j.name), papers: s.posters.map((p) => ({ place: p.place, time: p.time || '', presenter: p.presenter, regNo: p.regNo || '', title: p.title })) });
+      }
+    }
+    const pdf = await require('./assessment-sheet-pdf').renderAssessmentSheets(sheets, { acronym: CONFERENCE.acronym });
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `attachment; filename="${reportFilePrefix()}-eposter-assessment.pdf"`);
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // One screen's poster files for every session, named by time and place
 // (1200-01_<file>), to load onto it in order.
 app.get('/api/admin/poster-screens/:id/files.zip', requirePermission('abstracts.view'), async (req, res, next) => {
@@ -17189,6 +17214,27 @@ app.post('/api/admin/oral-order/move', requirePermission('abstracts.assign'), as
     const name = (x) => (x ? `${x.day} ${x.startTime}, ${x.hall}` : null);
     await recordAudit({ req, entityType: 'abstract', entityId: abstractId, action: 'ORAL_ORDER_SET', oldValue: name(from), newValue: name(to) });
     res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The judges' assessment sheets (owner, 21 Nov 2026): one for each oral or
+// award session (each hall), its papers in running order, prefilled.
+app.get('/api/admin/oral-order/assessment.pdf', requirePermission('abstracts.view'), async (req, res, next) => {
+  try {
+    const format = oralFormat(req.query.format) || 'ORAL';
+    const b = await oralBoard(format);
+    const sheets = b.sessions.filter((x) => x.items.length).map((x) => ({
+      heading: format === 'AWARD' ? 'AWARD PAPER ASSESSMENT' : 'ORAL PAPER ASSESSMENT', venue: x.hall,
+      session: [x.title, x.day, `${x.startTime}–${x.endTime}`].filter(Boolean).join(' · '), judges: x.judges,
+      papers: x.items.map((p) => ({ place: p.place, time: p.time || '', presenter: p.presenter, regNo: p.regNo || '', title: p.title })),
+    }));
+    if (!sheets.length) return res.status(404).json({ success: false, error: 'No papers placed in a session yet.' });
+    const pdf = await require('./assessment-sheet-pdf').renderAssessmentSheets(sheets, { acronym: CONFERENCE.acronym });
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `attachment; filename="${reportFilePrefix()}-${format === 'AWARD' ? 'award' : 'oral'}-assessment.pdf"`);
+    res.send(pdf);
   } catch (err) {
     next(err);
   }
