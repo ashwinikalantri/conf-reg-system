@@ -1296,7 +1296,8 @@ async function loadAttendanceCard() {
 // --- Workshop feedback ---
 // A card on the home screen for each workshop they were marked present at
 // and have not yet given feedback on: three ratings, 1 to 5, and optional
-// suggestions. Given once. (Until 20 Nov 2026 the certificate waited for it.)
+// suggestions. Given once. The workshop certificate waits for it (again
+// from 21 Nov 2026, after a day without).
 function renderWorkshopFeedback() {
   const box = document.getElementById('workshop-feedback');
   const data = attendanceMeData;
@@ -1309,7 +1310,7 @@ function renderWorkshopFeedback() {
     <form onsubmit="submitWorkshopFeedback(event, ${Number(w.optionId)})" class="rounded-2xl border-2 border-gold-500 bg-white p-5 shadow-card">
       <p class="text-xs font-bold tracking-[0.15em] text-gold-700 uppercase">Workshop feedback</p>
       <h3 class="text-xl font-bold text-slate-900 mt-1 leading-snug">${esc(w.name)}</h3>
-      <p class="text-[15px] text-slate-600 mt-1">It takes a minute, and helps us improve the workshop. It can be given once.</p>
+      <p class="text-[15px] text-slate-600 mt-1">It takes a minute, and helps us improve the workshop. Your workshop certificate is issued once it is in. It can be given once.</p>
       ${f.questions.map((q, i) => `
       <fieldset class="mt-5">
         <legend class="text-[15px] font-semibold text-slate-900">${i + 1}. ${esc(q.label)}</legend>
@@ -13840,7 +13841,7 @@ async function renderWaivers() {
 
 // Their choices, one per programme group, each changeable here; a workshop
 // with when and where it is, whether they were marked present, and their
-// feedback (asked for; the certificate does not wait for it since 20 Nov 2026).
+// feedback (the workshop certificate waits for it, from 21 Nov 2026).
 function deskProgrammeCard(selections, cd) {
   const chosen = new Map((selections || []).map((s) => [s.group_id, s]));
   const workshops = new Map(((cd && cd.workshops) || []).map((w) => [Number(w.optionId), w]));
@@ -17530,7 +17531,7 @@ async function renderCertificates() {
   const mayIssue = can('certificates.issue');
   const rows = [
     ['conference', 'Conference', `Checked in and paid · MMC ${confDue('MMC')} · Nursing ${confDue('NURSING')} · Participation ${confDue('CONF')}`, issuedOf(['MMC', 'NURSING', 'CONF'])],
-    ['workshops', 'Workshops', 'Marked present at the workshop', issuedOf(['WORKSHOP'])],
+    ['workshops', 'Workshops', 'Marked present at the workshop, and its feedback given', issuedOf(['WORKSHOP'])],
     ['workshop_faculty', 'Workshop faculty', 'On a workshop’s roster, or named in its sessions', issuedOf(['WORKSHOP_FACULTY'])],
     ['roles', 'Speaker, judge, chair, moderator, panelist', 'From the programme, one per role naming the sessions', issuedOf(['SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST'])],
   ];
@@ -17831,7 +17832,7 @@ const CS_WHO = {
   MMC: 'Doctors and Medical PGs who gave a council number, registered, paid and checked in at the desk.',
   NURSING: 'Nurses in the categories that earn Nursing points, registered, paid and checked in at the desk.',
   CONF: 'Everyone else registered, paid and checked in at the desk.',
-  WORKSHOP: 'Marked present at the workshop.',
+  WORKSHOP: 'Marked present at the workshop, and its feedback given.',
   WORKSHOP_FACULTY: 'A workshop\'s faculty: on its roster as faculty, or named in its sessions.',
   FACULTY: 'Everyone on the Faculty list who is not Cancelled.',
   SPEAKER: 'Speakers in the programme (panels aside).', CHAIR: 'Chairpersons in the programme.', MODERATOR: 'Chairs of panel discussions.',

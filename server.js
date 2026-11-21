@@ -10561,7 +10561,7 @@ app.get('/api/site/for-you', requireAuth, async (req, res, next) => {
     for (const [optionId, list] of byOption) {
       if (given.has(Number(optionId)) || !list.some((x) => marked.has(x.id))) continue;
       const over = list.every((x) => x.session_date < today || (x.session_date === today && toMin(x.end_time) <= nowMin));
-      if (over) note('due', 'Feedback due', `Workshop feedback: ${list[0].option_name || list[0].title}`, 'Three quick ratings, in the delegate portal.', { label: 'Give feedback', to: 'portal' });
+      if (over) note('due', 'Feedback due', `Workshop feedback: ${list[0].option_name || list[0].title}`, 'Three quick ratings, in the delegate portal. Your workshop certificate is issued once it is in.', { label: 'Give feedback', to: 'portal' });
     }
 
     // A presenter: the file, and the slot once the organisers publish it.
@@ -11112,8 +11112,9 @@ async function certificateCandidates() {
       else if (wov && wov.decision === 'INCLUDE') eligible = true;
       else if (!signed) whyNot = 'Not marked present';
       else if (!paid) whyNot = 'Payment not complete';
-      // Attendance alone (owner, 20 Nov 2026): the feedback is asked for,
-      // no longer waited for.
+      // Present, paid, and its feedback given (owner, 21 Nov 2026: "only due
+      // if feedback is given" -- back, after a day of attendance alone).
+      else if (!feedback.has(`${r.phone_number}|${w.optionId}`)) whyNot = 'Feedback not given yet';
       else eligible = true;
       const cert = myIssued.find((c) => c.kind === 'WORKSHOP' && Number(c.option_id) === w.optionId) || null;
       return { optionId: w.optionId, e: w.e, name: w.name, date: w.date, signed, enrolled, eligible, whyNot, override: wov, issued: cert, facultyOfIt,
