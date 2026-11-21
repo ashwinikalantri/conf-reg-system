@@ -384,6 +384,8 @@ const ROUTE_PERMISSIONS = {
   'POST /api/admin/oral-order/move': 'abstracts.assign',
   'GET /api/admin/oral-order/order.pdf': 'abstracts.view',
   'GET /api/admin/oral-order/assessment.pdf': 'abstracts.view',
+  'GET /api/admin/prizes': 'abstracts.view',
+  'PUT /api/admin/prizes': 'abstracts.assign',
   'GET /api/admin/poster-screens/judge-candidates': 'abstracts.assign',
   'POST /api/admin/poster-screens/:id/judges': 'abstracts.assign',
   'DELETE /api/admin/poster-screens/judges/:judgeId': 'abstracts.assign',

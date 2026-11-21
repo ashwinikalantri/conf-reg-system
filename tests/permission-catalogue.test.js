@@ -163,6 +163,8 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'POST /api/admin/oral-order/allot': 'Places the oral or award papers not yet placed. abstracts.assign.',
     'POST /api/admin/oral-order/move': 'Moves one oral or award paper in or between sessions. abstracts.assign.',
     'GET /api/admin/oral-order/order.pdf': 'The oral or award running order as a PDF. abstracts.view.',
+    'GET /api/admin/prizes': 'The 1st, 2nd and 3rd prizes for oral, e-poster and award papers, and the papers to choose from. abstracts.view.',
+    'PUT /api/admin/prizes': 'Sets or clears one prize; refused once its certificate is issued. abstracts.assign.',
     'GET /api/admin/oral-order/assessment.pdf': 'Judges\' assessment sheets, one per oral or award session, prefilled. abstracts.view.',
     'POST /api/meals/walkin': 'Serves someone not signed up at a meal counter, with their name (and mobile and institution if given) kept. meals.scan -- the counter volunteers who already serve.',
     'POST /api/guests/:id/arrangements-email': 'Holds an email to one faculty member saying what has been arranged for their travel and stay; the Send / Cancel popup decides whether it goes. guests.edit -- the coordinators who already mark faculty and edit their status.',

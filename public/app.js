@@ -11513,6 +11513,41 @@ function setOrderView(view) {
   orderView = ['POSTER', 'ORAL', 'AWARD'].includes(view) ? view : 'POSTER';
   styleOrderView();
   if (orderView === 'POSTER') renderPosterScreens(); else renderOralOrder();
+  renderPrizes();
+}
+
+// The winners (owner, 21 Nov 2026): 1st, 2nd and 3rd for oral, e-poster
+// and award papers, overall; each presenter gets a Prize certificate,
+// issued on the Certificates page.
+async function renderPrizes() {
+  const box = document.getElementById('order-prizes');
+  if (!box) return;
+  const data = await (await fetch('/api/admin/prizes')).json().catch(() => ({}));
+  if (!data.success) { box.innerHTML = ''; return; }
+  const assign = can('abstracts.assign');
+  box.innerHTML = `<div class="flex flex-wrap items-end justify-between gap-2 mb-3">
+      <div><h3 id="order-prizes-h" class="text-lg font-bold text-slate-900">Prizes</h3>
+        <p class="text-sm text-slate-600">1st, 2nd and 3rd for each, overall. Their presenters get a Prize certificate: issue it on the Certificates page.</p></div>
+      ${can('certificates.view') ? '<button type="button" onclick="selectSettingsTab(\'certificates\')" class="min-h-[40px] px-3.5 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-navy hover:bg-slate-50">Certificates →</button>' : ''}
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">${data.formats.map((f) => `<div class="rounded-xl border border-slate-200 p-3">
+      <p class="font-bold text-slate-800 mb-2">${esc(f.label)}</p>
+      ${f.places.map((pl) => {
+    const chosen = f.papers.find((x) => x.id === pl.abstractId);
+    return `<label class="block mb-2.5"><span class="block text-xs font-bold tracking-wide uppercase ${pl.rank === 1 ? 'text-gold-700' : 'text-slate-600'}">${esc(pl.label)}</span>
+        ${assign ? `<select onchange="setPrize('${esc(f.format)}', ${pl.rank}, this.value)" class="mt-1 w-full h-11 px-2 border border-slate-300 rounded-lg text-sm bg-white">
+          <option value="">Not chosen</option>
+          ${f.papers.map((x) => `<option value="${x.id}"${x.id === pl.abstractId ? ' selected' : ''}>${esc(x.presenter)}${x.regNo ? ` · ${esc(x.regNo)}` : ''} · ${esc(x.title.length > 70 ? `${x.title.slice(0, 67)}…` : x.title)}</option>`).join('')}
+        </select>` : `<span class="block text-sm text-slate-800 mt-1">${chosen ? `${esc(chosen.presenter)} · ${esc(chosen.title)}` : 'Not chosen'}</span>`}</label>`;
+  }).join('')}
+    </div>`).join('')}</div>`;
+}
+async function setPrize(format, rank, abstractId) {
+  const data = await (await fetch('/api/admin/prizes', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format, rank, abstractId: abstractId ? Number(abstractId) : null }),
+  })).json();
+  if (!data.success) showToast(data.error || 'Could not save.'); else showToast('Saved.', 'success');
+  renderPrizes();
 }
 function styleOrderView() {
   document.querySelectorAll('.order-view').forEach((b) => {
@@ -17595,6 +17630,8 @@ function certItems(x) {
     issueScope: 'workshops', ovKey: x.phone, ovScope: w.e, override: w.override, include: !w.eligible && !w.facultyOfIt, kind: 'WORKSHOP', notMarked: w.whyNot === 'Not marked present', cert: `WORKSHOP:${w.optionId}` }));
   (x.workshopFaculty || []).forEach((w) => items.push({ title: `Workshop faculty · ${w.name}`, status: st(w.issued, w.eligible, w.override), reason: w.whyNot || '', issued: w.issued,
     issueScope: 'workshop_faculty', ovKey: x.phone, ovScope: w.scope, override: w.override, include: false, kind: 'WORKSHOP_FACULTY', cert: `WORKSHOP_FACULTY:${w.optionId}` }));
+  (x.prizes || []).forEach((r) => items.push({ title: `${r.label} · ${r.title}`, status: st(r.issued, r.eligible, null), reason: r.whyNot || '', issued: r.issued,
+    issueScope: 'prizes', ovKey: x.phone, ovScope: '', override: null, include: false, kind: 'PRIZE', cert: `PRIZE:${r.abstractId}`, noExclude: true }));
   (x.roles || []).forEach((r) => items.push({ title: `${CERT_ROLE_WORD[r.kind]} · ${r.sessions.join('; ')}`, status: st(r.issued, r.eligible, r.override), reason: r.whyNot || '', issued: r.issued,
     issueScope: 'roles', ovKey: r.key, ovScope: `role:${r.kind}`, override: r.override, include: false, kind: r.kind, cert: r.kind }));
   return items;
@@ -17629,6 +17666,7 @@ async function renderCertificates() {
     ['workshops', 'Workshops', 'Marked present at the workshop, and its feedback given', issuedOf(['WORKSHOP'])],
     ['workshop_faculty', 'Workshop faculty', 'On a workshop’s roster, or named in its sessions', issuedOf(['WORKSHOP_FACULTY'])],
     ['roles', 'Speaker, judge, chair, moderator, panelist', 'From the programme, one per role naming the sessions', issuedOf(['SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST'])],
+    ['prizes', 'Prizes', '1st, 2nd and 3rd for oral, e-poster and award papers, chosen in Abstracts › Step 4', issuedOf(['PRIZE'])],
   ];
   let total = 0;
   const emailedOf = (scope) => all.reduce((n, a) => n + a.items.filter((i) => i.issueScope === scope && i.issued && i.issued.email_status === 'SENT').length, 0);
@@ -17791,7 +17829,7 @@ function renderCertPerson() {
     if (!it.issued && mayIssue) {
       if (it.status === 'due') acts.push(btn('Issue now', `issueCertificatesFor(${esc(JSON.stringify(x.phone))}, '${it.issueScope}')`, 'main'));
       if (it.override) acts.push(btn(it.override.decision === 'INCLUDE' ? 'Undo “include anyway”' : 'Undo the exclusion', ov(it, null)));
-      else if (it.status === 'due') acts.push(btn('Exclude…', ov(it, 'EXCLUDE')));
+      else if (it.status === 'due' && !it.noExclude) acts.push(btn('Exclude…', ov(it, 'EXCLUDE')));
       else if (it.include) acts.push(btn('Include anyway…', ov(it, 'INCLUDE')));
       if (it.notMarked && can('attendance.manage')) acts.push(btn('Mark present by hand…', "closeCertPerson(); switchBackendTab('attendance')"));
     }
@@ -17899,7 +17937,7 @@ async function setCertificateOverride(phone, scope, decision) {
 
 function issueCertificatesQuestion(scope) {
   const what = { conference: 'conference certificate', workshops: 'workshop certificate', faculty: 'faculty certificate',
-    workshop_faculty: 'workshop faculty certificate', roles: 'speaker, judge, chairperson, moderator and panelist certificate', all: 'certificate' }[scope];
+    workshop_faculty: 'workshop faculty certificate', roles: 'speaker, judge, chairperson, moderator and panelist certificate', prizes: 'prize certificate', all: 'certificate' }[scope];
   const who = scope === 'all' ? 'Delegates and faculty with an account can download theirs from the portal.' : ['faculty', 'roles', 'workshop_faculty'].includes(scope) ? 'Faculty with an account can download theirs from the portal; for the rest, download it here.' : 'The delegate can download it from the portal.';
   return `Issue every ${what} now due? Each gets its number. ${who}`;
 }
@@ -17911,7 +17949,7 @@ async function issueCertificates(scope) {
   })).json();
   if (!data.success) return showToast(data.error || 'Could not issue.');
   const i = data.issued;
-  showToast(scope === 'all' ? `Issued ${data.total} certificates.` : scope === 'conference' ? `Issued ${i.MMC} with MMC points, ${i.NURSING} with Nursing points and ${i.CONF} participation certificates.`
+  showToast(scope === 'all' ? `Issued ${data.total} certificates.` : scope === 'prizes' ? `Issued ${i.PRIZE} prize certificates.` : scope === 'conference' ? `Issued ${i.MMC} with MMC points, ${i.NURSING} with Nursing points and ${i.CONF} participation certificates.`
     : scope === 'faculty' ? `Issued ${i.FACULTY} faculty certificates.`
       : scope === 'workshop_faculty' ? `Issued ${i.WORKSHOP_FACULTY} workshop faculty certificates.`
         : scope === 'roles' ? `Issued ${i.SPEAKER} speaker, ${i.JUDGE} judge, ${i.CHAIR} chairperson, ${i.MODERATOR} moderator and ${i.PANELIST} panelist certificates.`
@@ -17977,11 +18015,12 @@ function loadCertificateSettingsCard() {
 const CS_PARTS = [['points', 'Points and who earns them'], ['signatories', 'Signatories'], ['design', 'Design'], ['rules', 'Who qualifies']];
 const CS_GROUPS = [['Conference', ['MMC', 'NURSING', 'CONF']], ['Workshops', ['WORKSHOP', 'WORKSHOP_FACULTY']],
   // The Faculty certificate is retired (20 Nov 2026): Speaker is theirs.
-  ['Session roles', ['SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE']]];
+  ['Session roles', ['SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE']], ['Prizes', ['PRIZE']]];
 const CS_RETIRED = ['FACULTY'];
 const CS_SHORT = { MMC: 'With MMC points', NURSING: 'With Nursing points', CONF: 'Participation', WORKSHOP: 'Workshop', WORKSHOP_FACULTY: 'Workshop faculty',
-  FACULTY: 'Faculty', SPEAKER: 'Speaker', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist', JUDGE: 'Judge' };
+  FACULTY: 'Faculty', SPEAKER: 'Speaker', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist', JUDGE: 'Judge', PRIZE: 'Prize' };
 const CS_WHO = {
+  PRIZE: 'The presenters of the papers chosen 1st, 2nd and 3rd for oral, e-poster and award papers (Abstracts › Step 4).',
   MMC: 'Every Doctor and Medical PG registered, paid and checked in at the desk (a council number is not needed).',
   NURSING: 'Nurses in the categories that earn Nursing points, registered, paid and checked in at the desk.',
   CONF: 'Everyone else registered, paid and checked in at the desk.',
@@ -17995,10 +18034,11 @@ const CS_WHO = {
 const CS_FIELDS = { name: 'Name', conference: 'Conference', acronym: 'Short name', venue: 'Venue', dates: 'Dates', category: 'Category',
   council: 'Council', council_reg_no: 'Council reg. no.', mmc_accreditation_no: 'MMC accreditation no.', mmc_points: 'MMC points',
   nursing_council: 'Nursing council', nursing_accreditation_no: 'Nursing accreditation no.', nursing_points: 'Nursing points',
-  workshop: 'Workshop', workshop_date: 'Workshop date', sessions: 'Their sessions', cert_no: 'Certificate no.' };
+  workshop: 'Workshop', workshop_date: 'Workshop date', sessions: 'Their sessions', prize: 'Prize', presentation: 'Presentation', paper: 'Paper title', cert_no: 'Certificate no.' };
 const csFieldsFor = (kind) => Object.keys(CS_FIELDS).filter((k) => !((/^mmc_|^council/.test(k) && kind !== 'MMC')
   || (/^nursing_/.test(k) && kind !== 'NURSING') || (/^workshop/.test(k) && !/^WORKSHOP/.test(kind))
-  || (k === 'sessions' && !['SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE'].includes(kind))));
+  || (k === 'sessions' && !['SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE'].includes(kind))
+  || (['prize', 'presentation', 'paper'].includes(k) && kind !== 'PRIZE')));
 const csState = { d: null, view: 'MMC', drafts: {}, points: null, timer: null, url: null, seq: 0, shownFor: {} };
 // "XXX", "MMC/…/XXXXX", "—", blank: not a real value yet.
 const csPlaceholder = (v) => { const t = String(v == null ? '' : v).trim(); return !t || /x{3,}/i.test(t) || /^x+$/i.test(t) || /^[-—–?]+$/.test(t); };
