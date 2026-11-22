@@ -88,6 +88,7 @@ module.exports = {
     { name: 'Maharashtra University of Health Sciences (MUHS)', file: 'partners/muhs-logo.png' },
     { name: 'PCI India', file: 'partners/pci-india-logo.png' },
     { name: 'Centre for Catalyzing Change (C3)', file: 'partners/c3.png' },
+    { name: 'Jhpiego', file: 'partners/jhpiego.png' },
   ],
 
   // Field visits and on-campus practice, by programme option id: what each
