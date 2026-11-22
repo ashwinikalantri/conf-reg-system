@@ -11907,6 +11907,43 @@ app.get('/api/admin/certificates/person-preview.pdf', requirePermission('certifi
   }
 });
 
+// One person's certificates as lines for the Front Desk (22 Nov 2026), in the
+// Certificates page's order: the conference's, each workshop's, a
+// workshop's faculty, prizes, programme roles. status: issued | due |
+// excluded | not; reason says why one is not due.
+const CERT_CONF_WORDS = { MMC: 'MMC points', NURSING: 'Nursing points', CONF: 'Participation', VOLUNTEER: 'Volunteer' };
+function certificateLines(p) {
+  if (!p) return [];
+  const lines = [];
+  const line = (title, issued, due, override, reason) => {
+    const excluded = override && override.decision === 'EXCLUDE';
+    lines.push(issued ? { title, status: 'issued', id: issued.id, certNo: issued.cert_no, at: issued.issued_at }
+      : { title, status: excluded ? 'excluded' : due ? 'due' : 'not', reason: excluded ? `Excluded: ${override.reason}` : due ? null : (reason || 'Does not qualify yet') });
+  };
+  const c = p.conference;
+  if (!p.notRegistered || c.issued) {
+    const kind = (c.issued && c.issued.kind) || c.kind || (p.volunteer ? 'VOLUNTEER' : p.mmcCategory ? 'MMC' : p.nursingCategory ? 'NURSING' : 'CONF');
+    line(`Conference · ${CERT_CONF_WORDS[kind] || 'Participation'}`, c.issued, !!c.kind, c.override, c.whyNot);
+  }
+  (p.workshops || []).forEach((w) => line(`Workshop · ${w.name}`, w.issued, w.eligible, w.override, w.whyNot));
+  (p.workshopFaculty || []).forEach((w) => line(`Workshop faculty · ${w.name}`, w.issued, w.eligible, w.override, w.whyNot));
+  (p.prizes || []).forEach((x) => line(`${x.label} · ${x.title}`, x.issued, x.eligible, null, x.whyNot));
+  (p.roles || []).forEach((r) => line(`${CERT_KIND_LABEL[r.kind]} · ${r.sessions.join('; ')}`, r.issued, r.eligible, r.override, r.whyNot));
+  return lines;
+}
+
+// An issued certificate, downloaded at the Front Desk (desk.view; 22 Nov
+// 2026) -- to hand over or print for the person at the counter.
+app.get('/api/desk/certificates/:id.pdf', requirePermission('desk.view'), async (req, res, next) => {
+  try {
+    const c = await dbGet('SELECT * FROM certificates WHERE id = ? AND revoked_at IS NULL', [req.params.id]);
+    if (!c) return res.status(404).json({ success: false, error: 'Not found, or withdrawn.' });
+    sendPdf(res, await certificatePdf(c), certFileName(c));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Force issue (owner, 21 Nov 2026): a super admin -- the role itself, not
 // a permission anyone can be given -- issues one certificate to one person
 // now, though they do not qualify, with a reason kept on it and in the log.
@@ -12619,6 +12656,9 @@ app.get('/api/desk/delegate/:identifier', requirePermission('desk.view'), async 
         : null,
       // The delegate kit: given (when, by whom), or not yet.
       kit: reg && reg.kit_given_at ? { at: reg.kit_given_at, by: reg.kit_given_by } : null,
+      // Their certificates (owner, 22 Nov 2026): issued (to download), due,
+      // or not yet and why -- as the Certificates page has them.
+      certificates: certificateLines((await certificateCandidates()).find((p) => p.phone === user.phone_number)),
       // A fee waiver waiting for approval, or the latest one decided.
       waiver: reg ? waiverView(await dbGet(`${WAIVER_VIEW_SQL} WHERE w.registration_id = ? ORDER BY (w.status = 'PENDING') DESC, w.requested_at DESC LIMIT 1`, [reg.id])) : null,
     });

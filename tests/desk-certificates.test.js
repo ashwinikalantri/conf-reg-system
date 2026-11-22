@@ -1,0 +1,53 @@
+// Certificates on the Front Desk (owner, 22 Nov 2026): the person's
+// certificates in their desk record -- each issued one to download, the rest
+// due, or not yet and why -- and the download open to the desk.
+const { call, check, report, ADMIN_PW, adminLogin, loginPassword, appFile, openDb } = require('./harness');
+const fs = require('fs');
+
+const N = String(Date.now()).slice(-7);
+
+(async () => {
+  const admin = await adminLogin();
+  const desk = await loginPassword('9000000006', ADMIN_PW);
+  const db = openDb();
+  let phone = null;
+  try {
+    const email = `deskcert-${N}@example.test`;
+    const otp = await call('POST', '/api/otp/request', { destination: email });
+    const r = await call('POST', '/api/auth/register', { salutation: 'Mr', age: '30', gender: 'Male', designation: 'Health worker', institute: 'Test College', pincode: '442102',
+      state: 'Maharashtra', district: 'Wardha', name: `Desk Cert ${N}`, country: 'United Kingdom', email, emailOtp: otp.body.devOtp, password: 'testpass123' });
+    phone = r.body.user.phone_number;
+    await db.run(`INSERT INTO registrations (phone_number, delegate_name, category_key, category_label, bank_status, registration_number)
+      VALUES (?, ?, 'chw', 'Frontline Health Worker', 'BANK_VERIFIED', ?)`, [phone, `Desk Cert ${N}`, `DSK${N}`]);
+    const record = async () => (await call('GET', `/api/desk/delegate/${encodeURIComponent(`DSK${N}`)}`, null, desk)).body;
+
+    const before = await record();
+    const conf = (before.certificates || [])[0];
+    check('the desk record lists their certificates', before.success && Array.isArray(before.certificates) && !!conf, before.certificates);
+    check('...not yet, and why: not checked in', conf && conf.title === 'Conference · Participation' && conf.status === 'not' && /Not checked in/.test(conf.reason), conf);
+
+    await db.run('UPDATE registrations SET checked_in_at = ? WHERE phone_number = ?', [Date.now(), phone]);
+    const due = (await record()).certificates[0];
+    check('checked in: due, going out with the next issue', due.status === 'due' && !due.reason, due);
+
+    await call('POST', '/api/admin/certificates/issue', { scope: 'conference', phones: [phone] }, admin);
+    const issued = (await record()).certificates[0];
+    check('issued: its number, to download', issued.status === 'issued' && /\/P\/\d{4}$/.test(issued.certNo) && issued.id > 0, issued);
+    const pdf = await call('GET', `/api/desk/certificates/${issued.id}.pdf`, null, desk);
+    check('...the desk downloads it', pdf.status === 200 && (pdf.buf || Buffer.from('')).slice(0, 4).toString() === '%PDF', pdf.status);
+    check('...not without the desk', (await call('GET', `/api/desk/certificates/${issued.id}.pdf`, null, null)).status >= 400);
+    await call('POST', `/api/admin/certificates/${issued.id}/revoke`, { reason: 'Test' }, admin);
+    check('a withdrawn one is not handed out', (await call('GET', `/api/desk/certificates/${issued.id}.pdf`, null, desk)).status === 404);
+
+    const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
+    check('the record has a Certificates card, with Download for an issued one', /deskCertificatesCard\(d\.certificates\)/.test(js)
+      && /\/api\/desk\/certificates\/\$\{encodeURIComponent\(c\.id\)\}\.pdf/.test(js));
+  } finally {
+    if (phone) {
+      await db.run('DELETE FROM certificates WHERE phone_number = ?', [phone]);
+      await db.run('DELETE FROM registrations WHERE phone_number = ?', [phone]);
+    }
+    db.close();
+  }
+  report();
+})();

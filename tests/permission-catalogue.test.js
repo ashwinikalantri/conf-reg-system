@@ -165,6 +165,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'GET /api/admin/oral-order/order.pdf': 'The oral or award running order as a PDF. abstracts.view.',
     'GET /api/admin/prizes': 'The 1st, 2nd and 3rd prizes for oral, e-poster and award papers, and the papers to choose from. abstracts.view.',
     'PUT /api/admin/prizes': 'Sets or clears one prize; refused once its certificate is issued. abstracts.assign.',
+    'GET /api/desk/certificates/:id.pdf': 'An issued certificate, downloaded at the Front Desk to hand over or print. desk.view, as the desk record that lists it.',
     'GET /api/admin/workshop-feedback/ai': 'Whether AI summaries of workshop feedback are set up, and whether this person may make them. reports.programs, as the report.',
     'PUT /api/admin/workshop-feedback/ai-key': 'Sets or clears the Anthropic API key (never read back). reports.programs, and a super admin only.',
     'POST /api/admin/workshop-feedback/:optionId/summary': 'Makes one workshop\'s AI summary of its feedback. reports.programs, and a super admin only.',

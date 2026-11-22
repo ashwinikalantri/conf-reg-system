@@ -387,6 +387,7 @@ const ROUTE_PERMISSIONS = {
   'GET /api/admin/prizes': 'abstracts.view',
   'PUT /api/admin/prizes': 'abstracts.assign',
   'GET /api/admin/workshop-feedback/ai': 'reports.programs',
+  'GET /api/desk/certificates/:id.pdf': 'desk.view',
   'PUT /api/admin/workshop-feedback/ai-key': 'reports.programs',
   'POST /api/admin/workshop-feedback/:optionId/summary': 'reports.programs',
   'GET /api/admin/poster-screens/judge-candidates': 'abstracts.assign',

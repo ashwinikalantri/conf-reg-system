@@ -13692,7 +13692,7 @@ function renderDeskRecord() {
   // What the counter acts on goes across the top (deskWhoCard). Below it, on
   // a laptop: where they have been beside what they paid, presented and gave
   // as their details; on a phone, the same in that order.
-  const left = [deskDaysCard(conferenceDays, reg), reg ? deskProgrammeCard(selections, conferenceDays) : '', deskFacultyCard(guest)].filter(Boolean);
+  const left = [deskDaysCard(conferenceDays, reg), reg ? deskProgrammeCard(selections, conferenceDays) : '', deskCertificatesCard(d.certificates), deskFacultyCard(guest)].filter(Boolean);
   const right = [reg ? deskMoneyCard(reg, payment, waiver) : '', deskAbstractCard(abstracts, abstractWindow, abstractExtension, presentationDue),
     deskContactCard(user), deskMoreActions(guest)].filter(Boolean);
   box.innerHTML = `${deskWhoCard(d)}
@@ -13705,6 +13705,26 @@ function renderDeskRecord() {
   box.classList.remove('hidden');
   empty.classList.add('hidden');
   document.getElementById('desk-candidates').classList.add('hidden');
+}
+
+// Their certificates (22 Nov 2026): each issued one to download; the rest
+// due, or not yet and why (e.g. "Feedback not given yet").
+function deskCertificatesCard(list) {
+  if (!list || !list.length) return '';
+  const chip = { issued: ['Issued', 'ok'], due: ['Due', 'gold'], not: ['Not yet', 'due'], excluded: ['Excluded', 'off'] };
+  const rows = list.map((c) => {
+    const [label, tone] = chip[c.status] || chip.not;
+    const note = c.status === 'issued' ? `${c.certNo} · issued ${deskWhen(c.at)}`
+      : c.status === 'due' ? 'Qualifies: it goes out with the next issue.' : c.reason;
+    const action = c.status === 'issued'
+      ? `<a href="/api/desk/certificates/${encodeURIComponent(c.id)}.pdf" target="_blank" rel="noopener" class="h-9 px-3 inline-flex items-center rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-[13px] font-semibold text-navy whitespace-nowrap">Download</a>` : '';
+    return `<li class="py-2.5 flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="text-sm font-semibold text-slate-800 break-words">${esc(c.title)} ${deskChip(label, tone)}</p>
+        <p class="text-[13px] text-slate-500 break-words">${esc(note || '')}</p>
+      </div>${action}</li>`;
+  }).join('');
+  return deskCard('Certificates', `<ul class="divide-y divide-slate-100">${rows}</ul>`);
 }
 
 function deskCard(title, bodyHtml, actionsHtml) {
