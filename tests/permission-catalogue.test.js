@@ -165,6 +165,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
     'GET /api/admin/oral-order/order.pdf': 'The oral or award running order as a PDF. abstracts.view.',
     'GET /api/admin/prizes': 'The 1st, 2nd and 3rd prizes for oral, e-poster and award papers, and the papers to choose from. abstracts.view.',
     'PUT /api/admin/prizes': 'Sets or clears one prize; refused once its certificate is issued. abstracts.assign.',
+    'PUT /api/admin/registration-open': 'Opens or closes registration from the portal and the website (the desk still registers). system.settings_edit, as the rest of Conference setup.',
     'PUT /api/admin/prizes/public': 'Shows or hides the winners on the website\'s page after the conference. abstracts.assign, as choosing them.',
     'GET /api/admin/presentation-attendance': 'Step 6: each oral, e-poster or award paper in running order with Presented / Absent, and whether that kind is finalised. abstracts.view, as the running orders.',
     'PUT /api/admin/presentation-attendance': 'Marks one paper Presented or Absent (or clears it) until its kind is finalised. abstracts.assign, as the running orders.',

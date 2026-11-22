@@ -145,6 +145,8 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
         // The day after the last day (owner, 22 Nov 2026): the site thanks
         // people rather than asking them to register.
         over: !!C.endDate && today > C.endDate,
+        // Registration closed in Conference setup (22 Nov 2026).
+        registrationOpen: d.registrationIsOpen ? await d.registrationIsOpen().catch(() => true) : true,
       },
     };
   }

@@ -38,7 +38,7 @@ const fs = require('fs');
     const head = fs.readFileSync(appFile('views', 'website', 'partials', 'head.ejs'), 'utf8');
     const foryou = fs.readFileSync(appFile('views', 'website', 'partials', 'foryou.ejs'), 'utf8');
     const src = fs.readFileSync(appFile('server.js'), 'utf8');
-    check('the header has no Register once the conference is over', /<% if \(!conf\.over\) \{ %><a class="btn btn-navy register"/.test(head));
+    check('the header has no Register once the conference is over', /<% if \(!conf\.over && conf\.registrationOpen\) \{ %><a class="btn btn-navy register"/.test(head));
     check('For you, after it: each certificate, ready or on its way, and no badge', /for \(const c of certificateLines\(me\)\)/.test(src) && /note\('ok', 'Ready', c\.title/.test(src)
       && /if \(d\.after\) \{ var passBox = box\.querySelector\('\.you-pass'\)/.test(foryou));
   } finally {

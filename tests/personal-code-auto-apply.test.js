@@ -127,7 +127,7 @@ const ymd = (days) => new Date(Date.now() + 5.5 * 3600e3 + days * 864e5).toISOSt
     check('choosing a category on the payment form applies their code',
       /if \(catKey && !appliedPromo\) autoApplyPersonalCode\(catKey\);/.test(js));
     check('removing it is their choice, and it is not put back', /function removeAppliedPromo\(\) \{[\s\S]{0,200}personalCodeState\.dismissed = true;/.test(js));
-    check('...until the form is opened afresh', /async function openPaymentModal\(\) \{\n  personalCodeState = \{ dismissed: false, checked: \{\} \};/.test(js));
+    check('...until the form is opened afresh', /async function openPaymentModal\(\) \{\n(  if \([^\n]*\n)?  personalCodeState = \{ dismissed: false, checked: \{\} \};/.test(js));
     check('the walk-in fee takes the priced discount off', /const total = Math\.max\(0, base - discount\) \+ optionsFee;/.test(js));
     check('...and one person\'s code is cleared when the form moves to another',
       /if \(rdPromoAuto\) \{\n    const promo = document\.getElementById\('rd-discount-code'\);\n    if \(promo\) promo\.value = '';/.test(js));

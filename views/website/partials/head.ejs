@@ -38,7 +38,7 @@
     </nav>
     <div class="header-actions">
       <a class="signin" href="<%= portal %>">Sign in</a>
-      <% if (!conf.over) { %><a class="btn btn-navy register" href="<%= portal %>#register">Register</a><% } %>
+      <% if (!conf.over && conf.registrationOpen) { %><a class="btn btn-navy register" href="<%= portal %>#register">Register</a><% } %>
       <!-- Signed in to the portal: their button instead (filled in by the
            script below, from /api/auth/whoami). It opens the same account
            menu the delegate portal and the admin panel have: "Go to" the

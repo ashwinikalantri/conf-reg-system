@@ -26,6 +26,11 @@
       <div id="gs-card-conference" class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
         <h3 class="text-lg font-bold text-slate-800 mb-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 inline align-[-3px] mr-1.5"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="8" r="0.6" fill="currentColor" stroke="none"/></svg>Conference Details</h3>
         <p class="text-xs text-slate-500 mb-3">Shown across confirmation emails, reports, and printable pages.</p>
+        <!-- Registration open or closed (22 Nov 2026); saves at once. -->
+        <label class="mb-4 flex items-start gap-3 rounded-xl border border-slate-200 p-3 cursor-pointer">
+          <input id="gs-reg-open" type="checkbox" class="mt-1" onchange="setRegistrationOpen(this)">
+          <span class="text-sm text-slate-700"><b>Registration is open</b> <span id="gs-reg-open-state" class="font-semibold"></span><span class="block text-slate-500">When off, nobody can start a new registration from the delegate portal or the website. Registrations already made can still be paid for or corrected, and the desk can still register people.</span></span>
+        </label>
         <form onsubmit="saveGeneralSettings(event, 'conference')" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div class="sm:col-span-2"><label class="block text-[10px] font-semibold text-slate-600 mb-1">Full Name</label><input id="gs-conf-name" required class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>
           <div><label class="block text-[10px] font-semibold text-slate-600 mb-1">Acronym <span class="font-normal text-slate-400">(optional)</span></label><input id="gs-conf-acronym" class="w-full h-9 px-3 border border-slate-300 rounded-lg text-sm bg-white outline-none"></div>

@@ -37,6 +37,10 @@ async function loadConferenceInfo() {
     /* keep the fallback defaults above */
   }
   applyConferenceInfoToDom();
+  // A delegate not yet registered, drawn before this arrived: say it is
+  // closed if it is (22 Nov 2026).
+  if (conferenceInfo.registrationOpen === false && typeof currentRegistration !== 'undefined' && currentRegistration === null
+    && document.getElementById('payment-status-tag')) applyRegistrationState(null);
 }
 
 // Full month name, e.g. "22 November 2026" -- matches the wording already on
@@ -2020,6 +2024,11 @@ function applyRegistrationState(reg) {
       : '<b>Note:</b> Registration remains <b>Pending</b> until payment is verified manually by the finance admin.';
   }
   // One panel through every stage: what it says at the top, by status.
+  // Registration closed (22 Nov 2026): the card is simply not shown to
+  // someone with no registration -- no message (owner).
+  const closed = !reg && conferenceInfo.registrationOpen === false;
+  const regCard = document.getElementById('registration-card');
+  if (regCard) regCard.classList.toggle('hidden', closed);
   const stage = !reg ? ['Next step', 'Register for the conference', null]
     : verified ? ['You are registered', '', null]
       : reg.bank_status === 'REJECTED' ? ['Action needed', 'Your registration needs a correction', 'See the note above, then update your registration.']
@@ -3057,6 +3066,7 @@ async function loadFees() {
 
 // Refresh capacity + fees then open the payment modal.
 async function openPaymentModal() {
+  if (!currentRegistration && conferenceInfo.registrationOpen === false) return;
   personalCodeState = { dismissed: false, checked: {} };
   await Promise.all([loadProgramOptions(), loadFees()]);
   clearAppliedPromo();
@@ -9279,6 +9289,29 @@ function openSetupPage(page) {
   switchBackendTab('general');
 }
 
+// Conference setup: registration open or closed (22 Nov 2026).
+async function loadRegistrationOpen() {
+  const box = document.getElementById('gs-reg-open');
+  if (!box) return;
+  const data = await (await fetch('/api/conference')).json().catch(() => ({}));
+  box.checked = data.registrationOpen !== false;
+  box.disabled = !can('system.settings_edit');
+  setText('gs-reg-open-state', box.checked ? '· open' : '· closed');
+}
+async function setRegistrationOpen(box) {
+  const open = box.checked;
+  if (!(await showConfirm(open ? 'Open registration again? Anyone can register from the portal and the website.' : 'Close registration? Nobody can start a new registration from the portal or the website.', open ? 'Open' : 'Close'))) {
+    box.checked = !open;
+    return;
+  }
+  const data = await (await fetch('/api/admin/registration-open', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ open }),
+  })).json().catch(() => ({}));
+  if (!data.success) { box.checked = !open; return showToast(data.error || 'Could not save.'); }
+  showToast(open ? 'Registration is open.' : 'Registration is closed.', 'success');
+  loadRegistrationOpen();
+}
+
 async function renderGeneralSettings() {
   // Halls, Certificates and Zenodo are shown by their own permissions; a role that
   // holds one of those but not the settings sees just that card.
@@ -9296,6 +9329,7 @@ async function renderGeneralSettings() {
   loadZenodoSetupCard();
   loadAiSetupCard();   // shown or hidden at once; the key's state follows
   showSetupPage();
+  if (full) loadRegistrationOpen();
   if (!full) return;
   // Independent of the settings fetch below, so a backup-status hiccup can't
   // stop the rest of the tab rendering.

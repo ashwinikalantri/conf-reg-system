@@ -4146,7 +4146,7 @@ app.use(maintenanceGate);
 // WEBSITE_HOST, once that address is pointed at this server -- mounted this
 // early so that address's / is the website, not the portal.
 const website = require('./website')(app, {
-  dbAll, dbGet, CONFERENCE, programmeSessions, fetchProgramGroups, getFeeConfig, currentPhase,
+  dbAll, dbGet, CONFERENCE, registrationIsOpen: () => registrationIsOpen(), programmeSessions, fetchProgramGroups, getFeeConfig, currentPhase,
   istDateString, abstractSubmissionOpen, formatConferenceDates,
 }, { host: WEBSITE_HOST });
 
@@ -4925,6 +4925,10 @@ app.post('/api/registrations', requireAuth, async (req, res, next) => {
     // re-submission, and the old filenames for cleanup.
     const prev = await dbGet('SELECT id, screenshot, id_card, bank_status, category_key, category_locked, discount_code FROM registrations WHERE phone_number = ?', [phone]);
     const ownRegId = prev ? prev.id : null;
+    // Closed: no new registration; one already made can still be corrected.
+    if (!prev && !(await registrationIsOpen())) {
+      return res.status(403).json({ success: false, error: `Registration for ${CONFERENCE.acronym || 'the conference'} has closed.` });
+    }
 
     // If an admin has locked this delegate's category, the client's choice is
     // ignored -- the fee is fixed to the locked category.
@@ -5512,8 +5516,28 @@ app.get('/help/group-registration', async (req, res, next) => {
 // landing page and the admin header -- deliberately public (no requireAuth):
 // none of this is sensitive, and the landing page needs it before anyone has
 // logged in. Settings → General is the only way to change it.
-app.get('/api/conference', (req, res) => {
+// Registration open or closed (owner, 22 Nov 2026: "Close registrations").
+// Closed: nobody starts a new registration from the portal or the website;
+// one already made can still be paid for or corrected, and staff still
+// register at the desk. Set in Conference setup.
+async function registrationIsOpen() {
+  const r = await dbGet("SELECT value FROM schema_meta WHERE key = 'registration_closed'");
+  return !(r && r.value === '1');
+}
+app.put('/api/admin/registration-open', requirePermission('system.settings_edit'), async (req, res, next) => {
+  try {
+    const open = req.body && req.body.open === true;
+    await dbRun("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('registration_closed', ?)", [open ? '0' : '1']);
+    await recordAudit({ req, entityType: 'settings', entityId: 'registration', action: open ? 'REGISTRATION_OPENED' : 'REGISTRATION_CLOSED', oldValue: null, newValue: open ? 'open' : 'closed' });
+    res.json({ success: true, open });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/conference', async (req, res) => {
   res.json({
+    registrationOpen: await registrationIsOpen().catch(() => true),
     name: CONFERENCE.name,
     acronym: CONFERENCE.acronym,
     startDate: CONFERENCE.startDate,

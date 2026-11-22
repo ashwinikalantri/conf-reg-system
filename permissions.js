@@ -387,6 +387,7 @@ const ROUTE_PERMISSIONS = {
   'GET /api/admin/prizes': 'abstracts.view',
   'PUT /api/admin/prizes': 'abstracts.assign',
   'PUT /api/admin/prizes/public': 'abstracts.assign',
+  'PUT /api/admin/registration-open': 'system.settings_edit',
   'GET /api/admin/presentation-attendance': 'abstracts.view',
   'PUT /api/admin/presentation-attendance': 'abstracts.assign',
   'POST /api/admin/presentation-attendance/finalise': 'abstracts.assign',
