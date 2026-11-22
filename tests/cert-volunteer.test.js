@@ -34,8 +34,10 @@ const N = String(Date.now()).slice(-7);
     check('...and a specimen, from the settings', (spec.buf || Buffer.from('')).slice(0, 4).toString() === '%PDF');
     check('the delegates\' certificate cannot be forced on a volunteer', (await call('POST', '/api/admin/certificates/force', { phone, cert: 'CONF', reason: 'x' }, admin)).status === 400);
 
-    const iss = await call('POST', '/api/admin/certificates/issue', { scope: 'conference', phones: [phone] }, admin);
-    check('issued with the conference certificates', iss.body.success && iss.body.issued.VOLUNTEER === 1 && !iss.body.issued.CONF, iss.body);
+    const conf = await call('POST', '/api/admin/certificates/issue', { scope: 'conference', phones: [phone] }, admin);
+    check('the Conference row leaves volunteers out', conf.body.success && conf.body.total === 0, conf.body);
+    const iss = await call('POST', '/api/admin/certificates/issue', { scope: 'volunteers', phones: [phone] }, admin);
+    check('issued from a Volunteers row of its own', iss.body.success && iss.body.issued.VOLUNTEER === 1 && !iss.body.issued.CONF, iss.body);
     const row = await db.get("SELECT cert_no, kind FROM certificates WHERE phone_number = ? AND revoked_at IS NULL", [phone]);
     check('...numbered V', row && row.kind === 'VOLUNTEER' && /\/V\/\d{4}$/.test(row.cert_no), row);
     const again = await me();
@@ -46,8 +48,9 @@ const N = String(Date.now()).slice(-7);
     const src = fs.readFileSync(appFile('server.js'), 'utf8');
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
     check('its own wording: a Certificate of Appreciation, editable in Certificate settings', /VOLUNTEER: \{\n\s*title: 'Certificate', subtitle: 'of Appreciation'/.test(src)
-      && /\['Conference', \['MMC', 'NURSING', 'CONF', 'VOLUNTEER'\]\]/.test(js));
-    check('Ready to issue counts it with the conference ones', /Volunteer \$\{confDue\('VOLUNTEER'\)\}/.test(js));
+      && /\['Volunteers', \['VOLUNTEER'\]\]/.test(js));
+    check('Ready to issue has a Volunteers row; the person panel issues it from there', /\['volunteers', 'Volunteers', /.test(js)
+      && /issueScope: x\.volunteer \? 'volunteers' : 'conference'/.test(js) && !/Volunteer \$\{confDue\('VOLUNTEER'\)\}/.test(js));
   } finally {
     if (phone) {
       await db.run('DELETE FROM certificates WHERE phone_number = ?', [phone]);

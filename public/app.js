@@ -17769,7 +17769,7 @@ function certItems(x) {
     // number, Nursing in a nursing category, else participation.
     const would = kind || (x.volunteer ? 'VOLUNTEER' : x.mmcCategory ? 'MMC' : x.nursingCategory ? 'NURSING' : 'CONF');
     items.push({ title: `Conference${kind ? ` · ${CERT_CONF_WORD[kind] || 'Participation'}` : ''}`, status: st(c.issued, !!c.kind, c.override), reason: c.whyNot || '',
-      issued: c.issued, issueScope: 'conference', ovKey: x.phone, ovScope: 'CONF', override: c.override, include: !c.kind && !c.facultyOnly, kind: kind || 'CONF', cert: would });
+      issued: c.issued, issueScope: x.volunteer ? 'volunteers' : 'conference', ovKey: x.phone, ovScope: 'CONF', override: c.override, include: !c.kind && !c.facultyOnly, kind: kind || 'CONF', cert: would });
   }
   x.workshops.forEach((w) => items.push({ title: `Workshop · ${w.name}`, status: st(w.issued, w.eligible, w.override), reason: w.whyNot || '', issued: w.issued,
     issueScope: 'workshops', ovKey: x.phone, ovScope: w.e, override: w.override, include: !w.eligible && !w.facultyOfIt, kind: 'WORKSHOP', notMarked: w.whyNot === 'Not marked present', cert: `WORKSHOP:${w.optionId}` }));
@@ -17808,7 +17808,8 @@ async function renderCertificates() {
   const confDue = (k) => p.filter((x) => x.conference.kind === k && !x.conference.issued).length;
   const mayIssue = can('certificates.issue');
   const rows = [
-    ['conference', 'Conference', `Checked in and paid · MMC ${confDue('MMC')} · Nursing ${confDue('NURSING')} · Participation ${confDue('CONF')} · Volunteer ${confDue('VOLUNTEER')}`, issuedOf(['MMC', 'NURSING', 'CONF', 'VOLUNTEER'])],
+    ['conference', 'Conference', `Checked in and paid · MMC ${confDue('MMC')} · Nursing ${confDue('NURSING')} · Participation ${confDue('CONF')}`, issuedOf(['MMC', 'NURSING', 'CONF'])],
+    ['volunteers', 'Volunteers', 'Volunteer category, checked in at the desk · a Certificate of Appreciation', issuedOf(['VOLUNTEER'])],
     ['workshops', 'Workshops', 'Marked present at the workshop, and its feedback given', issuedOf(['WORKSHOP'])],
     ['workshop_faculty', 'Workshop faculty', 'On a workshop’s roster, or named in its sessions', issuedOf(['WORKSHOP_FACULTY'])],
     ['roles', 'Speaker, judge, chair, moderator, panelist', 'From the programme, one per role naming the sessions', issuedOf(['SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST'])],
@@ -18089,7 +18090,7 @@ async function setCertificateOverride(phone, scope, decision) {
 
 function issueCertificatesQuestion(scope) {
   const what = { conference: 'conference certificate', workshops: 'workshop certificate', faculty: 'faculty certificate',
-    workshop_faculty: 'workshop faculty certificate', roles: 'speaker, judge, chairperson, moderator and panelist certificate', prizes: 'prize certificate', all: 'certificate' }[scope];
+    workshop_faculty: 'workshop faculty certificate', roles: 'speaker, judge, chairperson, moderator and panelist certificate', prizes: 'prize certificate', volunteers: 'volunteer certificate', all: 'certificate' }[scope];
   const who = scope === 'all' ? 'Delegates and faculty with an account can download theirs from the portal.' : ['faculty', 'roles', 'workshop_faculty'].includes(scope) ? 'Faculty with an account can download theirs from the portal; for the rest, download it here.' : 'The delegate can download it from the portal.';
   return `Issue every ${what} now due? Each gets its number. ${who}`;
 }
@@ -18101,7 +18102,7 @@ async function issueCertificates(scope) {
   })).json();
   if (!data.success) return showToast(data.error || 'Could not issue.');
   const i = data.issued;
-  showToast(scope === 'all' ? `Issued ${data.total} certificates.` : scope === 'prizes' ? `Issued ${i.PRIZE} prize certificates.` : scope === 'conference' ? `Issued ${i.MMC} with MMC points, ${i.NURSING} with Nursing points and ${i.CONF} participation certificates.`
+  showToast(scope === 'all' ? `Issued ${data.total} certificates.` : scope === 'prizes' ? `Issued ${i.PRIZE} prize certificates.` : scope === 'volunteers' ? `Issued ${i.VOLUNTEER} volunteer certificates.` : scope === 'conference' ? `Issued ${i.MMC} with MMC points, ${i.NURSING} with Nursing points and ${i.CONF} participation certificates.`
     : scope === 'faculty' ? `Issued ${i.FACULTY} faculty certificates.`
       : scope === 'workshop_faculty' ? `Issued ${i.WORKSHOP_FACULTY} workshop faculty certificates.`
         : scope === 'roles' ? `Issued ${i.SPEAKER} speaker, ${i.JUDGE} judge, ${i.CHAIR} chairperson, ${i.MODERATOR} moderator and ${i.PANELIST} panelist certificates.`
@@ -18165,7 +18166,7 @@ function loadCertificateSettingsCard() {
 // wording typed and not saved is kept per kind (drafts) and shown in the
 // live preview, which renders it on the server without saving.
 const CS_PARTS = [['points', 'Points and who earns them'], ['signatories', 'Signatories'], ['design', 'Design'], ['rules', 'Who qualifies']];
-const CS_GROUPS = [['Conference', ['MMC', 'NURSING', 'CONF', 'VOLUNTEER']], ['Workshops', ['WORKSHOP', 'WORKSHOP_FACULTY']],
+const CS_GROUPS = [['Conference', ['MMC', 'NURSING', 'CONF']], ['Volunteers', ['VOLUNTEER']], ['Workshops', ['WORKSHOP', 'WORKSHOP_FACULTY']],
   // The Faculty certificate is retired (20 Nov 2026): Speaker is theirs.
   ['Session roles', ['SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE']], ['Prizes', ['PRIZE']]];
 const CS_RETIRED = ['FACULTY'];

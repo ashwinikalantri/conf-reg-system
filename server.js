@@ -11958,7 +11958,7 @@ app.post('/api/admin/certificates/force', requirePermission('certificates.issue'
 // ('faculty'), or all of them ('all').
 app.post('/api/admin/certificates/issue', requirePermission('certificates.issue'), async (req, res, next) => {
   try {
-    const scope = ['conference', 'workshops', 'workshop_faculty', 'faculty', 'roles', 'prizes', 'all'].includes(req.body.scope) ? req.body.scope : null;
+    const scope = ['conference', 'volunteers', 'workshops', 'workshop_faculty', 'faculty', 'roles', 'prizes', 'all'].includes(req.body.scope) ? req.body.scope : null;
     if (!scope) return res.status(400).json({ success: false, error: 'Choose what to issue.' });
     const only = Array.isArray(req.body.phones) && req.body.phones.length ? new Set(req.body.phones.map(String)) : null;
     const counts = Object.fromEntries(CERT_KINDS.map((k) => [k, 0]));
@@ -11966,7 +11966,9 @@ app.post('/api/admin/certificates/issue', requirePermission('certificates.issue'
     const doing = (s) => scope === 'all' || scope === s;
     for (const p of await certificateCandidates()) {
       if (only && !only.has(p.phone)) continue;
-      if (doing('conference') && p.conference.kind && !p.conference.issued) {
+      // Volunteers' certificates are a row of their own (22 Nov 2026):
+      // 'conference' issues the delegates', 'volunteers' the volunteers'.
+      if (doing(p.conference.kind === 'VOLUNTEER' ? 'volunteers' : 'conference') && p.conference.kind && !p.conference.issued) {
         await issueCertificate(req, p, p.conference.kind);
         counts[p.conference.kind]++;
       }
