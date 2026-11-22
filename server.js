@@ -15781,14 +15781,18 @@ async function buildReport(type, opts = {}) {
           l.forced ? `Forced: ${l.forced}` : (l.reason || '')]);
       }
     }
+    // Only one status, when asked (owner, 22 Nov 2026: Issued, Due, Not yet,
+    // Excluded): the list, and so its Excel and PDF; the counts stay whole.
+    const only = STATUS[opts.status] ? STATUS[opts.status] : null;
+    const listed = only ? rows.filter((r) => r[4] === only || (only === 'Issued' && r[4] === 'Issued (forced)')) : rows;
     const order = ['Conference · MMC points', 'Conference · Nursing points', 'Conference · Participation', 'Volunteer', 'Workshop', 'Workshop faculty', 'Prize'];
     const types = [...byType.keys()].sort((a, b) => ((order.indexOf(a) + 1) || 99) - ((order.indexOf(b) + 1) || 99) || a.localeCompare(b));
     return {
-      title: 'Certificates',
+      title: only ? `Certificates: ${only}` : 'Certificates',
       sections: [
         { name: 'By certificate', columns: ['Certificate', 'Issued', 'Due', 'Not yet', 'Excluded', 'Total'],
           rows: types.map((t) => { const c = byType.get(t); return [t, c.issued, c.due, c.not, c.excluded, c.issued + c.due + c.not + c.excluded]; }) },
-        { name: 'Every certificate', columns: ['Reg No', 'Name', 'Category', 'Certificate', 'Status', 'Certificate No', 'Issued on', 'Issued by', 'Email', 'Why not yet / note'], rows },
+        { name: only ? `${only} certificates` : 'Every certificate', columns: ['Reg No', 'Name', 'Category', 'Certificate', 'Status', 'Certificate No', 'Issued on', 'Issued by', 'Email', 'Why not yet / note'], rows: listed },
       ],
     };
   }
@@ -16004,7 +16008,7 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
     if (type === 'workshops' && !req.query.optionId) {
       return res.status(400).json({ success: false, error: 'Select a workshop or QI practice first.' });
     }
-    const rep = await buildReport(type, { optionId: req.query.optionId, role: req.session.role, roles: req.session.roles });
+    const rep = await buildReport(type, { optionId: req.query.optionId, status: req.query.status, role: req.session.role, roles: req.session.roles });
     res.set('Cache-Control', 'private, no-store');
     if (req.query.format === 'csv') {
       res.set('Content-Type', 'text/csv; charset=utf-8');
@@ -16017,7 +16021,8 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
     // A real PDF, drawn here -- Safari printed the HTML page below blank
     // (see report-pdf.js for why this is no longer left to the browser).
     const pdfHref = `/api/admin/reports/${encodeURIComponent(type)}?format=pdf`
-      + (req.query.optionId ? `&optionId=${encodeURIComponent(req.query.optionId)}` : '');
+      + (req.query.optionId ? `&optionId=${encodeURIComponent(req.query.optionId)}` : '')
+      + (req.query.status ? `&status=${encodeURIComponent(req.query.status)}` : '');
     if (req.query.format === 'pdf') {
       // The QR images, made here as the /api/qr route makes them.
       for (const sec of rep.sections) {

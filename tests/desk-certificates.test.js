@@ -46,6 +46,16 @@ const N = String(Date.now()).slice(-7);
     const part = byType && byType.rows.find((row) => row[0] === 'Conference · Participation');
     check('...and the counts by certificate, each row adding up', !!part && part[1] >= 1 && part[5] === part[1] + part[2] + part[3] + part[4], part);
     check('...only for those who see the Certificates page', (await call('GET', '/api/admin/reports/certificates?format=json', null, desk)).status === 403);
+    const issuedOnly = (await call('GET', '/api/admin/reports/certificates?format=json&status=issued', null, admin)).body.report;
+    const listOnly = issuedOnly.sections[1];
+    check('filtered to Issued: only issued ones listed, the counts whole', issuedOnly.title === 'Certificates: Issued' && listOnly.rows.length > 0
+      && listOnly.rows.every((row) => /^Issued/.test(row[4])) && JSON.stringify(issuedOnly.sections[0]) === JSON.stringify(byType));
+    const notOnly = (await call('GET', '/api/admin/reports/certificates?format=json&status=not', null, admin)).body.report.sections[1];
+    check('...to Not yet: only those, each with its reason', notOnly.rows.every((row) => row[4] === 'Not yet' && row[9]));
+    check('...an unknown filter lists everything', (await call('GET', '/api/admin/reports/certificates?format=json&status=bogus', null, admin)).body.report.sections[1].rows.length === every.rows.length);
+    const fpdf = await call('GET', '/api/admin/reports/certificates?format=pdf&status=due', null, admin);
+    check('...and the PDF follows the filter', fpdf.status === 200 && (fpdf.buf || Buffer.from('')).slice(0, 4).toString() === '%PDF');
+    check('the page: All, Issued, Due, Not yet, Excluded chips on this report', /type === 'certificates' \? certReportFilterHtml\(rep, extraQuery\)/.test(fs.readFileSync(appFile('public', 'app.js'), 'utf8')));
     const rpdf = await call('GET', '/api/admin/reports/certificates?format=pdf', null, admin);
     check('...as a PDF and Excel too', rpdf.status === 200 && (rpdf.buf || Buffer.from('')).slice(0, 4).toString() === '%PDF'
       && /Every certificate/.test((await call('GET', '/api/admin/reports/certificates?format=csv', null, admin)).raw || ''));

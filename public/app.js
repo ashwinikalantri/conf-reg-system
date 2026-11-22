@@ -11119,11 +11119,24 @@ async function viewReport(type, extraQuery) {
         <button type="button" onclick='downloadReport(${esc(JSON.stringify(type))}, "csv", ${extra})' class="inline-flex items-center gap-1.5 h-10 px-3.5 rounded-xl border border-slate-300 bg-white text-navy text-sm font-semibold hover:bg-slate-50"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>Excel</button>
         <button type="button" onclick='downloadReport(${esc(JSON.stringify(type))}, null, ${extra})' class="inline-flex items-center gap-1.5 h-10 px-3.5 rounded-xl bg-navy hover:bg-indigo-700 text-white text-sm font-semibold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>PDF</button>
       </div>
+      ${type === 'certificates' ? certReportFilterHtml(rep, extraQuery) : ''}
       ${summary ? '' : `<div class="w-full"><label for="report-search-input" class="sr-only">Search in this report</label>
         <input id="report-search-input" type="search" placeholder="Search in this report" oninput="filterReportRows()" class="w-full sm:max-w-sm h-10 px-3 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-200"></div>`}
     </div>
     ${summary ? reportSummaryHtml(rep) : `<div class="pb-1">${rep.sections.map(table).join('')}</div>`}`;
   watchFitTables();
+}
+
+// The Certificates report's filter (22 Nov 2026): All, Issued, Due, Not yet,
+// Excluded, each with its count; the list, Excel and PDF follow it.
+function certReportFilterHtml(rep, extraQuery) {
+  const on = (/[?&]status=([a-z]+)/.exec(extraQuery || '') || [])[1] || '';
+  const counts = rep.sections.find((x) => x.name === 'By certificate');
+  const sum = (i) => (counts ? counts.rows.reduce((n, r) => n + Number(r[i] || 0), 0) : 0);
+  const chips = [['', 'All', sum(5)], ['issued', 'Issued', sum(1)], ['due', 'Due', sum(2)], ['not', 'Not yet', sum(3)], ['excluded', 'Excluded', sum(4)]];
+  return `<div class="w-full flex flex-wrap gap-2" role="group" aria-label="Show">${chips.map(([k, label, n]) => `<button type="button" aria-pressed="${k === on}"
+    onclick="viewReport('certificates', ${esc(JSON.stringify(k ? `&status=${k}` : ''))})" class="h-10 px-3.5 rounded-full text-sm font-semibold border ${k === on
+    ? 'bg-navy border-navy text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}">${label} <span class="tabular-nums ${k === on ? 'text-white/80' : 'text-slate-500'}">${n}</span></button>`).join('')}</div>`;
 }
 
 // The Workshop Feedback report's own view (redesigned 21 Nov 2026): the
