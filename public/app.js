@@ -4517,7 +4517,7 @@ function applyRoleVisibility() {
   // not get a section full of buttons the server would refuse -- which is
   // what happened before this, silently, since the allocation call never
   // read its response.
-  // Zenodo's Step 5 shows once renderZenodo() knows it is switched on.
+  // Zenodo's Step 6 shows once renderZenodo() knows it is switched on.
   const zenodoBlock = document.getElementById('abstracts-zenodo-block');
   if (zenodoBlock && !can('abstracts.publish')) zenodoBlock.classList.add('hidden');
   const assignBlock = document.getElementById('abstracts-assignment-block');
@@ -11513,24 +11513,26 @@ function setOrderView(view) {
   orderView = ['POSTER', 'ORAL', 'AWARD'].includes(view) ? view : 'POSTER';
   styleOrderView();
   if (orderView === 'POSTER') renderPosterScreens(); else renderOralOrder();
-  renderPrizes();
 }
 
 // The winners (owner, 21 Nov 2026): 1st, 2nd and 3rd for oral, e-poster
 // and award papers, overall; each presenter gets a Prize certificate,
-// issued on the Certificates page.
+// issued on the Certificates page. Review Desk Step 5 (22 Nov 2026).
 async function renderPrizes() {
+  const block = document.getElementById('abstracts-prizes-block');
   const box = document.getElementById('order-prizes');
-  if (!box) return;
+  if (!box || !block) return;
   const data = await (await fetch('/api/admin/prizes')).json().catch(() => ({}));
+  block.classList.toggle('hidden', !data.success);
+  if (absStep != null) showAbstractStep(absStep);
   if (!data.success) { box.innerHTML = ''; return; }
   const assign = can('abstracts.assign');
   box.innerHTML = `<div class="flex flex-wrap items-end justify-between gap-2 mb-3">
-      <div><h3 id="order-prizes-h" class="text-lg font-bold text-slate-900">Prizes</h3>
+      <div><h3 class="text-lg font-bold text-slate-900">Prizes</h3>
         <p class="text-sm text-slate-600">1st, 2nd and 3rd for each, overall. Their presenters get a Prize certificate: issue it on the Certificates page.</p></div>
       ${can('certificates.view') ? '<button type="button" onclick="selectSettingsTab(\'certificates\')" class="min-h-[40px] px-3.5 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-navy hover:bg-slate-50">Certificates →</button>' : ''}
     </div>
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">${data.formats.map((f) => `<div class="rounded-xl border border-slate-200 p-3">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">${data.formats.map((f) => `<div class="bg-white rounded-xl border border-slate-200 p-3">
       <p class="font-bold text-slate-800 mb-2">${esc(f.label)}</p>
       ${f.places.map((pl) => {
     const chosen = f.papers.find((x) => x.id === pl.abstractId);
@@ -12195,7 +12197,7 @@ function toggleAbstractsMissingAuthors() {
 }
 
 
-// --- ZENODO (Review Desk, Step 5) -------------------------------------------
+// --- ZENODO (Review Desk, Step 6) -------------------------------------------
 // Accepted abstracts with a DOI: settings, then per abstract Send as draft
 // (DOI reserved) and Publish (permanent). The server does the calls; see
 // zenodo.js and /api/admin/zenodo.
@@ -12208,7 +12210,7 @@ async function renderZenodo() {
   if (!data.success) { setText('zenodo-status', 'Zenodo: could not load'); return; }
   zenodoData = data;
   const s = data.settings;
-  // Switched off in Conference setup: no Step 5 at all, nor its tab.
+  // Switched off in Conference setup: no Step 6 at all, nor its tab.
   block.classList.toggle('hidden', !s.enabled);
   if (absStep != null) showAbstractStep(absStep);
   if (!s.enabled) return;
@@ -12368,7 +12370,7 @@ const absHits = {};
 const absStepShown = (n) => { const b = document.querySelector(`#section-abstracts .abs-panel[data-step="${n}"]`); return !!b && !b.classList.contains('hidden'); };
 
 function showAbstractStep(n, chosen) {
-  if (!absStepShown(n)) n = ['1', '2', '3', '4', '5'].find(absStepShown) || '1';
+  if (!absStepShown(n)) n = ['1', '2', '3', '4', '5', '6'].find(absStepShown) || '1';
   absStep = String(n);
   if (chosen) storageSet('session', ABS_STEP_KEY, absStep);
   document.querySelectorAll('#section-abstracts .abs-panel').forEach((p) => { p.style.display = p.dataset.step === absStep ? '' : 'none'; });
@@ -12389,7 +12391,7 @@ function abstractStepWithWork() {
 function drawAbstractTabs() {
   const waiting = { 1: absWait.review, 2: absWait.assign, 3: absWait.files, 4: absWait.unplaced };
   const words = { 1: 'to review', 2: 'to assign', 3: 'awaiting', 4: 'to place' };
-  ['1', '2', '3', '4', '5'].forEach((n) => {
+  ['1', '2', '3', '4', '5', '6'].forEach((n) => {
     const tab = document.getElementById(`abs-tab-${n}`);
     if (!tab) return;
     tab.classList.toggle('hidden', !absStepShown(n));

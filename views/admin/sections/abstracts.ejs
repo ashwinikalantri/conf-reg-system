@@ -1,5 +1,5 @@
     <!-- TAB 2: THE REVIEW DESK (redesigned 19 Nov 2026). What is waiting and
-         a search across every abstract, then the five steps as tabs with
+         a search across every abstract, then the six steps as tabs with
          their counts, one step shown at a time -- opening on the first with
          work in it. renderBackendAbstracts() and showAbstractStep(). -->
     <section id="section-abstracts" class="hidden space-y-3">
@@ -26,7 +26,7 @@
            is what is waiting there; while searching, how many match. -->
       <nav id="abs-tabs" class="sticky top-0 z-20 -mx-4 px-4 sm:mx-0 sm:px-0 py-2 bg-slate-100/95 backdrop-blur" aria-label="Review steps">
         <div class="flex gap-1.5 overflow-x-auto border-b border-slate-200 pb-2" role="tablist">
-          <% [['1', 'Approval'], ['2', 'Assignment'], ['3', 'Presentations'], ['4', 'Running order'], ['5', 'Zenodo']].forEach(([n, name]) => { %>
+          <% [['1', 'Approval'], ['2', 'Assignment'], ['3', 'Presentations'], ['4', 'Running order'], ['5', 'Prizes'], ['6', 'Zenodo']].forEach(([n, name]) => { %>
           <button type="button" id="abs-tab-<%= n %>" role="tab" aria-selected="false" onclick="showAbstractStep('<%= n %>', true)" class="abs-tab shrink-0 h-10 px-3 rounded-lg text-sm font-semibold whitespace-nowrap flex items-center gap-2 text-slate-700 hover:bg-white">
             <span class="abs-tab-n text-slate-400"><%= n %></span><%= name %><span id="abs-tab-count-<%= n %>" class="abs-tab-count hidden text-[12px] px-1.5 py-0.5 rounded-full font-bold"></span>
           </button>
@@ -79,15 +79,18 @@
         <div id="screens-board" class="space-y-6"></div>
         <div id="screens-unallotted" class="mt-3"></div>
         </div>
-        <!-- The winners (21 Nov 2026): 1st, 2nd and 3rd for each kind,
-             overall; their presenters get a Prize certificate (renderPrizes). -->
-        <section id="order-prizes" aria-labelledby="order-prizes-h" class="mt-8 bg-white rounded-2xl border border-slate-200 p-4 sm:p-5"></section>
       </div>
-      <!-- Step 5, Zenodo (abstracts.publish only, and only while it is
+      <!-- Step 5, prizes (renderPrizes(); its own step from 22 Nov 2026):
+           1st, 2nd and 3rd for each kind, overall; their presenters get a
+           Prize certificate, issued on the Certificates page. -->
+      <div id="abstracts-prizes-block" class="hidden abs-panel" data-step="5">
+        <div id="order-prizes"></div>
+      </div>
+      <!-- Step 6, Zenodo (abstracts.publish only, and only while it is
            switched on in Conference setup › Zenodo; renderZenodo()): accepted
            abstracts whose presenting author agreed, sent as drafts with the
            DOI reserved, then published -- which cannot be undone. -->
-      <div id="abstracts-zenodo-block" class="hidden abs-panel" data-step="5">
+      <div id="abstracts-zenodo-block" class="hidden abs-panel" data-step="6">
         <h3 class="text-lg font-bold text-slate-900">Publish with DOIs (Zenodo)</h3>
         <p class="text-sm text-slate-600 mb-3">Only accepted abstracts whose presenting author agreed in the portal, and who has registered. Send as a draft to check it on Zenodo with its DOI reserved, then publish. A published record and its DOI are permanent.</p>
         <p class="text-sm text-slate-600 mb-3">Settings and the on/off switch: <button type="button" onclick="openSetupPage('zenodo')" class="font-semibold text-indigo-700 underline">Conference setup › Zenodo</button>. <span id="zenodo-status"></span></p>
