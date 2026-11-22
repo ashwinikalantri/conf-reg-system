@@ -26,6 +26,7 @@ const {
   roleCan, permissionsForRole,
 } = require('./permissions');
 const { renderReportPdf } = require('./report-pdf');
+const { renderWorkshopFeedbackPdf } = require('./workshop-feedback-pdf');
 
 const multer = require('multer');
 const XLSX = require('xlsx');
@@ -15638,6 +15639,7 @@ async function buildReport(type, opts = {}) {
         present, responses: mine.length,
         questions: summary.map((q) => ({ label: q.label, n: q.n, mean: q.mean, counts: q.counts })),
         suggestions: mine.filter((f) => f.suggestions).map((f) => ({ regNo: f.registration_number || '', text: f.suggestions, at: Number(f.submitted_at) })),
+        rows: mine.map((f) => ({ regNo: f.registration_number || '', ratings: workshopFeedbackLib.QUESTIONS.map((q) => f[q.key]), at: Number(f.submitted_at) })),
       });
       sections.push({
         name: `${w.name}: ratings (${mine.length} of ${present} present responded)`,
@@ -15886,9 +15888,10 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
         sec.qr.png = await Promise.all(sec.rows.map((r) => (r[sec.qr.column]
           ? QRCode.toBuffer(String(r[sec.qr.of]), { type: 'png', width: 300, margin: 2, errorCorrectionLevel: 'M' }) : null)));
       }
-      const pdf = await renderReportPdf(rep, {
-        heading: reportHeading(rep), subline: reportSubline(rep), footer: reportHeading(rep),
-      });
+      // Workshop feedback (22 Nov 2026): its own layout, a page per workshop.
+      const pdf = type === 'workshop-feedback' && rep.feedback
+        ? await renderWorkshopFeedbackPdf(rep.feedback, { heading: reportHeading(rep), subline: `Generated ${new Date().toLocaleString('en-IN', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Asia/Kolkata' })}`, footer: reportHeading(rep) })
+        : await renderReportPdf(rep, { heading: reportHeading(rep), subline: reportSubline(rep), footer: reportHeading(rep) });
       res.set('Content-Type', 'application/pdf');
       res.set('Content-Disposition', `attachment; filename="${reportFilePrefix()}-${type}-report.pdf"`);
       return res.send(pdf);
