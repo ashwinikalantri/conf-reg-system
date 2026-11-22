@@ -36,6 +36,19 @@ const N = String(Date.now()).slice(-7);
     const pdf = await call('GET', `/api/desk/certificates/${issued.id}.pdf`, null, desk);
     check('...the desk downloads it', pdf.status === 200 && (pdf.buf || Buffer.from('')).slice(0, 4).toString() === '%PDF', pdf.status);
     check('...not without the desk', (await call('GET', `/api/desk/certificates/${issued.id}.pdf`, null, null)).status >= 400);
+    // The Certificates report (22 Nov 2026): every certificate, issued or not.
+    const rep = (await call('GET', '/api/admin/reports/certificates?format=json', null, admin)).body.report;
+    const every = rep && rep.sections.find((x) => x.name === 'Every certificate');
+    const mine = every && every.rows.find((row) => row[0] === `DSK${N}`);
+    check('the Certificates report: a row per certificate, with number, issuer and email', !!mine && mine[3] === 'Conference · Participation' && mine[4] === 'Issued'
+      && mine[5] === issued.certNo && mine[8] === 'Not emailed', mine);
+    const byType = rep.sections.find((x) => x.name === 'By certificate');
+    const part = byType && byType.rows.find((row) => row[0] === 'Conference · Participation');
+    check('...and the counts by certificate, each row adding up', !!part && part[1] >= 1 && part[5] === part[1] + part[2] + part[3] + part[4], part);
+    check('...only for those who see the Certificates page', (await call('GET', '/api/admin/reports/certificates?format=json', null, desk)).status === 403);
+    const rpdf = await call('GET', '/api/admin/reports/certificates?format=pdf', null, admin);
+    check('...as a PDF and Excel too', rpdf.status === 200 && (rpdf.buf || Buffer.from('')).slice(0, 4).toString() === '%PDF'
+      && /Every certificate/.test((await call('GET', '/api/admin/reports/certificates?format=csv', null, admin)).raw || ''));
     await call('POST', `/api/admin/certificates/${issued.id}/revoke`, { reason: 'Test' }, admin);
     check('a withdrawn one is not handed out', (await call('GET', `/api/desk/certificates/${issued.id}.pdf`, null, desk)).status === 404);
 

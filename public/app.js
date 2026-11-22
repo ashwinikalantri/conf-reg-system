@@ -4567,6 +4567,7 @@ function applyRoleVisibility() {
     'report-users': 'reports.users',
     'report-meals': 'meals.view',
     'report-workshop-feedback': 'reports.programs',
+    'report-certificates': 'certificates.view',
   };
   Object.entries(reportCards).forEach(([id, permission]) => {
     const el = document.getElementById(id);

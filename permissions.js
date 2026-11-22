@@ -506,6 +506,9 @@ const REPORT_PERMISSIONS = {
   // Each workshop's ratings and suggestions, by registration number only:
   // whoever sees the workshop rosters.
   'workshop-feedback': 'reports.programs',
+  // Every certificate, issued or not, with names (22 Nov 2026): whoever
+  // sees the Certificates page.
+  certificates: 'certificates.view',
 };
 
 // Which permission opens each screen of the admin panel -- one entry per file

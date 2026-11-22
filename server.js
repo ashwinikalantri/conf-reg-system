@@ -11915,20 +11915,27 @@ const CERT_CONF_WORDS = { MMC: 'MMC points', NURSING: 'Nursing points', CONF: 'P
 function certificateLines(p) {
   if (!p) return [];
   const lines = [];
+  // type: the kind of certificate, for counting (the Certificates report).
+  let type = '';
   const line = (title, issued, due, override, reason) => {
     const excluded = override && override.decision === 'EXCLUDE';
-    lines.push(issued ? { title, status: 'issued', id: issued.id, certNo: issued.cert_no, at: issued.issued_at }
-      : { title, status: excluded ? 'excluded' : due ? 'due' : 'not', reason: excluded ? `Excluded: ${override.reason}` : due ? null : (reason || 'Does not qualify yet') });
+    lines.push(issued ? { type, title, status: 'issued', id: issued.id, certNo: issued.cert_no, at: issued.issued_at, by: issued.issued_by || '',
+      forced: issued.forced_reason || null, emailStatus: issued.email_status || null, emailedAt: issued.emailed_at || null }
+      : { type, title, status: excluded ? 'excluded' : due ? 'due' : 'not', reason: excluded ? `Excluded: ${override.reason}` : due ? null : (reason || 'Does not qualify yet') });
   };
   const c = p.conference;
   if (!p.notRegistered || c.issued) {
     const kind = (c.issued && c.issued.kind) || c.kind || (p.volunteer ? 'VOLUNTEER' : p.mmcCategory ? 'MMC' : p.nursingCategory ? 'NURSING' : 'CONF');
+    type = kind === 'VOLUNTEER' ? 'Volunteer' : `Conference · ${CERT_CONF_WORDS[kind] || 'Participation'}`;
     line(`Conference · ${CERT_CONF_WORDS[kind] || 'Participation'}`, c.issued, !!c.kind, c.override, c.whyNot);
   }
+  type = 'Workshop';
   (p.workshops || []).forEach((w) => line(`Workshop · ${w.name}`, w.issued, w.eligible, w.override, w.whyNot));
+  type = 'Workshop faculty';
   (p.workshopFaculty || []).forEach((w) => line(`Workshop faculty · ${w.name}`, w.issued, w.eligible, w.override, w.whyNot));
+  type = 'Prize';
   (p.prizes || []).forEach((x) => line(`${x.label} · ${x.title}`, x.issued, x.eligible, null, x.whyNot));
-  (p.roles || []).forEach((r) => line(`${CERT_KIND_LABEL[r.kind]} · ${r.sessions.join('; ')}`, r.issued, r.eligible, r.override, r.whyNot));
+  (p.roles || []).forEach((r) => { type = CERT_KIND_LABEL[r.kind]; line(`${CERT_KIND_LABEL[r.kind]} · ${r.sessions.join('; ')}`, r.issued, r.eligible, r.override, r.whyNot); });
   return lines;
 }
 
@@ -15751,6 +15758,39 @@ async function buildReport(type, opts = {}) {
       rows: feedback.workshops.filter((w) => w.summary).map((w) => [w.name, w.summary.overview, w.summary.strengths.join('; '), w.summary.improvements.join('; '), w.summary.responses]),
     });
     return { title: 'Workshop Feedback', sections, feedback };
+  }
+  if (type === 'certificates') {
+    // Every certificate, issued or not (owner, 22 Nov 2026): a row for each
+    // certificate each person has or could have, as the Certificates page
+    // lists them -- issued (number, when, by whom, emailed), due, excluded,
+    // or not yet and why. First the counts by kind.
+    const when = (ms) => (ms ? new Date(Number(ms)).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }) : '');
+    const STATUS = { issued: 'Issued', due: 'Due', not: 'Not yet', excluded: 'Excluded' };
+    const EMAIL = { SENT: 'Emailed', QUEUED: 'Queued', SENDING: 'Sending', FAILED: 'Email failed' };
+    const people = await certificateCandidates();
+    const rows = [];
+    const byType = new Map();
+    for (const p of people) {
+      for (const l of certificateLines(p)) {
+        const t = byType.get(l.type) || { issued: 0, due: 0, not: 0, excluded: 0 };
+        t[l.status] += 1;
+        byType.set(l.type, t);
+        rows.push([p.registrationNumber || '', p.name || '', p.category || '', l.title, l.status === 'issued' && l.forced ? 'Issued (forced)' : STATUS[l.status],
+          l.certNo || '', when(l.at), l.by || '',
+          l.status === 'issued' ? (l.emailStatus ? `${EMAIL[l.emailStatus] || l.emailStatus}${l.emailedAt ? ` ${when(l.emailedAt)}` : ''}` : 'Not emailed') : '',
+          l.forced ? `Forced: ${l.forced}` : (l.reason || '')]);
+      }
+    }
+    const order = ['Conference · MMC points', 'Conference · Nursing points', 'Conference · Participation', 'Volunteer', 'Workshop', 'Workshop faculty', 'Prize'];
+    const types = [...byType.keys()].sort((a, b) => ((order.indexOf(a) + 1) || 99) - ((order.indexOf(b) + 1) || 99) || a.localeCompare(b));
+    return {
+      title: 'Certificates',
+      sections: [
+        { name: 'By certificate', columns: ['Certificate', 'Issued', 'Due', 'Not yet', 'Excluded', 'Total'],
+          rows: types.map((t) => { const c = byType.get(t); return [t, c.issued, c.due, c.not, c.excluded, c.issued + c.due + c.not + c.excluded]; }) },
+        { name: 'Every certificate', columns: ['Reg No', 'Name', 'Category', 'Certificate', 'Status', 'Certificate No', 'Issued on', 'Issued by', 'Email', 'Why not yet / note'], rows },
+      ],
+    };
   }
   if (type === 'users') {
     // Every column the users table actually has, plus the registration

@@ -436,6 +436,12 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x));
         + 'its suggestions by registration number, never a name. Behind reports.programs, as the workshop '
         + 'rosters, which already list who is in each workshop.',
     },
+    certificates: {
+      roles: ['SUPER_ADMIN'],
+      why: 'Every certificate, issued or not (owner, 22 Nov 2026): name, registration, category, the '
+        + 'certificate, its status, number, who issued it, the email, and why one is not yet due. Behind '
+        + 'certificates.view, exactly those who see the Certificates page, which shows all of it already.',
+    },
     volunteers: {
       roles: ['OPERATIONS', 'SUPER_ADMIN'],
       why: 'Everyone in the Volunteer category or holding a volunteer role, with contact details, areas, '
