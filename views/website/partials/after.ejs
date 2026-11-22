@@ -1,4 +1,4 @@
-<%# After the conference (owner, 22 Nov 2026; mockup approved): thanks, the
+<%# After the conference (owner, 22 Nov 2026; mockup approved): the name and thanks, the
     delegate's own certificates (For you), the conference in figures, the
     Oration, the best papers once the organisers show them, and what each
     day held. From website.js afterConference(). %>
@@ -6,8 +6,10 @@
   <div class="wrap">
     <div class="hero-main">
       <p class="kicker"><%= conf.acronym || 'NQOCN 2026' %> · <%= conf.location || 'Sevagram, Wardha' %></p>
-      <h1>Thank you for making <%= conf.acronym || 'NQOCN 2026' %> a success</h1>
+      <%# The conference's name stays at the top (owner, 23 Nov 2026), the thanks beneath it. %>
+      <h1><%= conf.name %></h1>
       <p class="theme"><%= content.theme %></p>
+      <p class="thanks">Thank you for making <%= conf.acronym || 'NQOCN 2026' %> a success.</p>
       <p class="hosts">Two days with nurses, doctors, students and frontline workers, hosted by the <%= content.host %> and co-hosted by the <%= content.coHost %>.</p>
       <div class="hero-actions">
         <a class="btn btn-gold" href="<%= portal %>">Download your certificate</a>
@@ -15,7 +17,6 @@
       </div>
     </div>
     <div class="date-card" aria-label="When and where">
-      <span class="done-badge">Concluded</span>
       <% const dm = /^(\d+)(?:–(\d+))? (\w+) (\d{4})$/.exec(conf.dates || ''); %>
       <% if (dm) { %>
         <p class="big"><%= dm[2] ? `${dm[1]}–${dm[2]}` : dm[1] %></p>

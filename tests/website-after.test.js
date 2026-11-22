@@ -14,7 +14,8 @@ const fs = require('fs');
     const page = async (at) => (await call('GET', `/website/?at=${at}`, null, null)).raw || '';
     const after = await page('2099-12-31T10:00');
     const before = await page('2000-01-01T10:00');
-    check('after the last day: the thank-you page', /Thank you for making/.test(after) && /Download your certificate/.test(after) && /Concluded/.test(after), after.slice(0, 200));
+    check('after the last day: the thank-you page, under the conference\'s name', /<h1>[^<]+<\/h1>\s*<p class="theme">/.test(after) && /class="thanks">Thank you for making/.test(after)
+      && /Download your certificate/.test(after) && !/Concluded/.test(after), after.slice(0, 200));
     check('...with no Register now, nor the days to come', !/Register now/.test(after) && !/workshops begin across the campus/.test(after));
     check('...the conference in figures, leaving out any that is nought', /in numbers<\/h2>/.test(after) && /<p class="l">registered<\/p>/.test(after) && !/<p class="n">0<\/p>/.test(after) && !/>0 hands-on/.test(after));
     check('...and what each day held', /What happened/.test(after) && /Workshops and field visits/.test(after) && /The scientific programme/.test(after));
