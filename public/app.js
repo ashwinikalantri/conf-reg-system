@@ -17799,6 +17799,7 @@ async function renderCertificates() {
   certState.kinds = data.kinds || {};
   certState.workshops = data.workshops || [];
   certState.superAdmin = !!data.superAdmin;
+  certState.designChangedAt = Number(data.designChangedAt) || 0;
   certState.tab = certState.tab || 'due';
   const p = certState.people;
   const all = p.map((x) => ({ x, items: certItems(x) }));
@@ -17965,7 +17966,10 @@ function renderCertPerson() {
       const c = it.issued;
       acts.push(`<a href="/api/admin/certificates/${encodeURIComponent(c.id)}.pdf" target="_blank" rel="noopener" class="inline-flex items-center min-h-[40px] px-3.5 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-navy hover:bg-slate-50">Download</a>`);
       if (mayIssue && (!c.email_status || c.email_status === 'FAILED')) acts.push(btn(c.email_status === 'FAILED' ? 'Retry the email' : 'Email it', `offerCertificateEmails([${Number(c.id)}])`, 'main'));
-      if (certState.superAdmin && c.email_status === 'SENT' && !c.resent_at && Number(c.updated_at) > Number(c.emailed_at)) acts.push(btn('Re-send the corrected one', `resendCertificate(${Number(c.id)})`));
+      // Corrected since it was emailed: its name, or the wording, signatures
+      // or design (22 Nov 2026).
+      if (certState.superAdmin && c.email_status === 'SENT' && !c.resent_at
+        && (Number(c.updated_at) > Number(c.emailed_at) || Number(certState.designChangedAt) > Number(c.emailed_at))) acts.push(btn('Re-send the corrected one', `resendCertificate(${Number(c.id)})`));
       if (mayIssue) acts.push(btn('Correct the name…', `correctCertificate(${Number(c.id)})`), btn('Withdraw…', `revokeCertificate(${Number(c.id)})`, 'risk'));
     } else {
       // Not issued yet: see it as it will be issued (21 Nov 2026).

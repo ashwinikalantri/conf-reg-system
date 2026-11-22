@@ -41,7 +41,10 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     for (let i = 0; i < 30; i++) { c = await row(); if (c.email_status !== 'QUEUED') break; await wait(200); }
 
     // As if it had gone: never again.
-    await db.run("UPDATE certificates SET email_status = 'SENT', emailed_at = ?, emailed_to = ?, email_error = NULL WHERE id = ?", [Date.now() - 60000, email, id]);
+    // Emailed after every change made so far, here and by the tests before
+    // this one: nothing on it is corrected yet.
+    await db.run("UPDATE certificates SET email_status = 'SENT', emailed_at = ?, emailed_to = ?, email_error = NULL WHERE id = ?", [Date.now(), email, id]);
+    await wait(20);
     check('once emailed, never queued again', (await call('POST', '/api/admin/certificates/email', { ids: [id] }, admin)).body.queued === 0
       && (await row()).email_status === 'SENT');
     check('...nor on the "Certificate issued" reminder list', !((await call('GET', '/api/admin/reminders/audiences/certificates/recipients', null, admin)).body.recipients || []).some((x) => x.id === phone));
@@ -59,9 +62,23 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     await db.run('UPDATE certificates SET resent_at = ? WHERE id = ?', [Date.now(), id]);
     check('...only once', (await call('POST', `/api/admin/certificates/${id}/resend`, null, admin)).status === 409);
 
+    // A signature, the wording or the design changed after it was emailed
+    // (22 Nov 2026: a wrong signature on the prize certificates): re-sendable.
+    const at = Date.now() + 5000;
+    await db.run("UPDATE certificates SET resent_at = NULL, email_status = 'SENT', emailed_at = ?, updated_at = ? WHERE id = ?", [at, at, id]);
+    check('re-send: not while nothing has changed since', (await call('POST', `/api/admin/certificates/${id}/resend`, null, admin)).status === 409);
+    await db.run(`INSERT INTO audit_log (entity_type, entity_id, action, old_value, new_value, actor_phone, actor_name, actor_role, created_at)
+      VALUES ('certificate_signatory', '0', 'SIGNATORY_UPDATED', NULL, 'signature', 'cert-email-test', 'Test', 'SUPER_ADMIN', ?)`, [at + 1000]);
+    const cand = (await call('GET', '/api/admin/certificates/candidates', null, admin)).body;
+    check('...a signature changed after it was emailed: the page is told when', cand.designChangedAt === at + 1000, cand.designChangedAt);
+    const re2 = await call('POST', `/api/admin/certificates/${id}/resend`, null, admin);
+    check('...and it can be re-sent as corrected', re2.body.success, re2.body);
+    await db.run("DELETE FROM audit_log WHERE actor_phone = 'cert-email-test'");
+
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
     check('the page: Send or Cancel after every issue; Email them; Retry; Re-send the corrected one', /await offerCertificateEmails\(data\.ids\);/.test(js) && /'Send', 'Cancel'\);\n  if \(!ok\)/.test(js)
-      && /Email them<\/button>/.test(js) && /Re-send the corrected one/.test(js));
+      && /Email them<\/button>/.test(js) && /Re-send the corrected one/.test(js)
+      && /Number\(certState\.designChangedAt\) > Number\(c\.emailed_at\)/.test(js));
   } finally {
     if (phone) {
       await db.run('DELETE FROM certificates WHERE phone_number = ?', [phone]);

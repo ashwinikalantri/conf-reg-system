@@ -11682,7 +11682,9 @@ app.get('/api/admin/certificates/candidates', requirePermission('certificates.vi
     res.json({ people, issued: Object.fromEntries(issued.map((r) => [r.kind, r.n])), kinds: CERT_KIND_LABEL,
       // For Force issue: every workshop, and whether this is a super admin.
       workshops: [...(await certificateWorkshops()).values()].map((w) => ({ optionId: w.optionId, name: w.name })),
-      superAdmin: req.session.role === 'SUPER_ADMIN' });
+      superAdmin: req.session.role === 'SUPER_ADMIN',
+      // For "Re-send the corrected one": when the wording, signatures or design last changed.
+      designChangedAt: await certificateDesignChangedAt() });
   } catch (err) {
     next(err);
   }
@@ -11829,6 +11831,17 @@ app.post('/api/admin/certificates/email', requirePermission('certificates.issue'
 });
 
 // The one re-send of a corrected certificate (a super admin, the role).
+// When a certificate's look last changed for everyone -- its wording, a
+// signatory or signature, the design -- from the activity log. A certificate
+// emailed before then can be re-sent as corrected (owner, 22 Nov 2026: a
+// wrong signature on the prize certificates), as one whose name was corrected.
+async function certificateDesignChangedAt() {
+  const r = await dbGet(`SELECT MAX(created_at) AS at FROM audit_log
+    WHERE action IN ('CERTIFICATE_SETTINGS_UPDATED', 'CERTIFICATE_BACKGROUND', 'SIGNATORY_ADDED', 'SIGNATORY_UPDATED')`);
+  return Number((r && r.at) || 0);
+}
+const certCorrectedSinceEmail = (c, designAt) => Number(c.updated_at) > Number(c.emailed_at) || designAt > Number(c.emailed_at);
+
 app.post('/api/admin/certificates/:id/resend', requirePermission('certificates.issue'), async (req, res, next) => {
   try {
     if (req.session.role !== 'SUPER_ADMIN') return res.status(403).json({ success: false, error: 'Only a super admin can re-send a certificate.' });
@@ -11836,7 +11849,7 @@ app.post('/api/admin/certificates/:id/resend', requirePermission('certificates.i
     if (!c) return res.status(404).json({ success: false, error: 'Not found.' });
     if (c.email_status !== 'SENT' || !c.emailed_at) return res.status(409).json({ success: false, error: 'It has not been emailed yet: send it, not re-send.' });
     if (c.resent_at) return res.status(409).json({ success: false, error: 'It has been re-sent once already. It can be downloaded from the portal.' });
-    if (!(Number(c.updated_at) > Number(c.emailed_at))) return res.status(409).json({ success: false, error: 'It has not been corrected since it was emailed.' });
+    if (!certCorrectedSinceEmail(c, await certificateDesignChangedAt())) return res.status(409).json({ success: false, error: 'Nothing on it has been corrected since it was emailed.' });
     await dbRun("UPDATE certificates SET email_status = 'QUEUED', email_resend = 1, email_queued_at = ? WHERE id = ?", [Date.now(), c.id]);
     await recordAudit({ req, entityType: 'certificate', entityId: c.id, action: 'CERTIFICATE_RESEND_QUEUED', oldValue: null, newValue: c.cert_no });
     runCertificateEmails();
