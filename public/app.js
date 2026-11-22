@@ -11128,11 +11128,20 @@ async function viewReport(type, extraQuery) {
 // totals, every workshop's response rate and three averages on one screen,
 // then one workshop open -- each question's spread from Poor to Excellent
 // and its suggestions, by registration number only. Excel and PDF as before.
-const fbState = { rep: null, open: null };
+// ai: whether summaries are set up and this person may make them (fetched
+// once); busy: the workshop whose summary is being made, or 'all'.
+const fbState = { rep: null, open: null, ai: null, busy: null };
 const FB_COLOURS = ['#dc2626', '#f59e0b', '#94a3b8', '#34d399', '#047857'];
 const fbTone = (v) => (v == null ? 'bg-slate-100 text-slate-500' : v >= 4.5 ? 'bg-emerald-100 text-emerald-800' : v >= 3.5 ? 'bg-slate-100 text-slate-800' : 'bg-amber-100 text-amber-900');
 function renderFeedbackReport(box, rep) {
   fbState.rep = rep;
+  if (!fbState.ai) {
+    fbState.ai = { configured: false, superAdmin: false };
+    fetch('/api/admin/workshop-feedback/ai').then((r) => r.json()).then((d) => {
+      if (d && d.success) { fbState.ai = d; if (fbState.rep === rep) renderFeedbackReport(box, rep); }
+    }).catch(() => {});
+  }
+  const ai = fbState.ai;
   const f = rep.feedback;
   const ws = f.workshops;
   if (fbState.open == null || !ws.some((w) => w.optionId === fbState.open)) {
@@ -11168,6 +11177,7 @@ function renderFeedbackReport(box, rep) {
         ${tile('Average, all questions', avg == null ? '—' : avg.toFixed(1), 'out of 5')}
         ${tile('Suggestions written', suggestions, '')}
       </div>
+      ${fbSummaryTools(ws, ai)}
     </div>
     <div class="p-4 sm:p-5 border-b border-slate-200">
       <div class="hidden sm:grid grid-cols-[minmax(0,1fr)_9rem_11rem] gap-4 text-xs font-semibold text-slate-500 pb-1"><span>Workshop</span><span>Responded</span><span class="text-right">Relevance · Facilitation · Use</span></div>
@@ -11187,6 +11197,7 @@ function renderFeedbackReport(box, rep) {
           <h4 class="text-lg font-bold text-slate-900 break-words">${esc(open.name)}</h4></div>
         <p class="text-sm text-slate-600">${open.responses} of ${open.present} present responded${open.present ? ` · ${pct(open.responses, open.present)}%` : ''}</p>
       </div>
+      ${fbSummaryBlock(open, ai)}
       <div class="mt-3 divide-y divide-slate-100">${open.questions.map((q) => {
     const total = q.counts.reduce((a, b) => a + b, 0);
     return `<div class="py-3 grid grid-cols-[minmax(0,1fr)_3.5rem] gap-x-3 gap-y-2 items-center">
@@ -11201,6 +11212,100 @@ function renderFeedbackReport(box, rep) {
         <p class="text-xs text-slate-500 mt-0.5">${esc(s.regNo || 'No reg no')} · ${esc(fmtAuditTime(s.at))}</p></div>`).join('') || '<p class="py-3 text-sm text-slate-500">None yet.</p>'}</div>
     </div>` : ''}`;
 }
+// The summary tools, for a super admin: the key while none is set, else
+// "Generate all" for the workshops with responses and no summary, or one
+// that more responses have come in since.
+function fbSummaryTools(ws, ai) {
+  if (!ai || !ai.superAdmin) return '';
+  if (!ai.configured) {
+    return `<form onsubmit="event.preventDefault(); saveFeedbackAiKey()" class="rounded-xl border border-slate-200 bg-slate-50 p-3 flex flex-wrap items-end gap-2">
+      <label class="flex-1 min-w-[14rem]"><span class="block text-sm font-semibold text-slate-700 mb-1">AI summaries: paste the Anthropic API key</span>
+        <input id="fb-ai-key" type="password" autocomplete="off" spellcheck="false" class="w-full h-11 px-3 border border-slate-300 rounded-lg text-base sm:text-sm bg-white"></label>
+      <button type="submit" class="h-11 px-4 rounded-lg bg-navy hover:bg-indigo-700 text-white text-sm font-semibold">Save key</button>
+      <p class="w-full text-xs text-slate-500">Kept on the server, never shown again. Only super admins see this.</p>
+    </form>`;
+  }
+  const due = ws.filter((w) => w.responses && (!w.summary || w.summary.newer));
+  const busy = fbState.busy === 'all';
+  return `<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+    <button type="button" onclick="generateAllFeedbackSummaries()" ${due.length && !fbState.busy ? '' : 'disabled'} class="h-10 px-3.5 rounded-xl border border-slate-300 bg-white text-sm font-semibold text-navy hover:bg-slate-50 disabled:opacity-50">${busy ? 'Writing summaries…' : `Generate summaries${due.length ? ` · ${due.length}` : ''}`}</button>
+    <span class="text-sm text-slate-500">${due.length ? `${due.length} workshop${due.length === 1 ? '' : 's'} without an up-to-date summary.` : 'Every workshop with responses has an up-to-date summary.'}</span>
+  </div>`;
+}
+
+// One workshop's summary in its panel: the overview, what worked, what to
+// improve; for a super admin, how old it is and Generate / Regenerate.
+function fbSummaryBlock(w, ai) {
+  const s = w.summary;
+  const may = ai && ai.superAdmin && ai.configured;
+  const busy = fbState.busy === w.optionId || fbState.busy === 'all';
+  const btn = may && w.responses ? `<button type="button" onclick="generateFeedbackSummary(${Number(w.optionId)})" ${fbState.busy ? 'disabled' : ''} class="h-9 px-3 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-navy hover:bg-slate-50 disabled:opacity-50">${busy ? 'Writing…' : s ? 'Regenerate' : 'Generate summary'}</button>` : '';
+  if (!s) return btn ? `<div class="mt-4 rounded-xl border border-dashed border-slate-300 p-4 flex flex-wrap items-center justify-between gap-2"><p class="text-sm text-slate-600">No summary yet.</p>${btn}</div>` : '';
+  const list = (title, items) => (items.length ? `<div><p class="text-sm font-bold text-slate-800">${title}</p><ul class="mt-1 space-y-1 text-[15px] text-slate-800 list-disc pl-5">${items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '');
+  return `<div class="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+    <div class="flex flex-wrap items-baseline justify-between gap-2">
+      <p class="text-xs font-bold tracking-wide uppercase text-slate-600">Summary</p>
+      <span class="flex flex-wrap items-center gap-2 text-xs text-slate-500">From ${s.responses} response${s.responses === 1 ? '' : 's'} · ${esc(fmtAuditTime(s.at))}
+        ${s.newer ? `<span class="font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">Out of date: ${s.newer} new since</span>` : ''}${btn}</span>
+    </div>
+    <p class="text-[15px] text-slate-800 leading-relaxed">${esc(s.overview)}</p>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">${list('What worked', s.strengths)}${list('To improve', s.improvements)}</div>
+  </div>`;
+}
+
+function redrawFeedbackReport() {
+  const box = document.getElementById('report-view-container');
+  if (box && fbState.rep) renderFeedbackReport(box, fbState.rep);
+}
+
+// Makes one summary and puts it in the report as it is shown. false when it
+// could not be made (said in a toast).
+async function makeFeedbackSummary(optionId) {
+  const data = await (await fetch(`/api/admin/workshop-feedback/${encodeURIComponent(optionId)}/summary`, { method: 'POST' })).json().catch(() => ({}));
+  if (!data.success) { showToast(data.error || 'Could not make the summary.'); return false; }
+  const w = fbState.rep && fbState.rep.feedback.workshops.find((x) => x.optionId === optionId);
+  if (w) w.summary = data.summary;
+  return true;
+}
+async function generateFeedbackSummary(optionId) {
+  if (fbState.busy) return;
+  fbState.busy = optionId;
+  redrawFeedbackReport();
+  const ok = await makeFeedbackSummary(optionId);
+  fbState.busy = null;
+  redrawFeedbackReport();
+  if (ok) showToast('Summary written.', 'success');
+}
+async function generateAllFeedbackSummaries() {
+  if (fbState.busy || !fbState.rep) return;
+  const due = fbState.rep.feedback.workshops.filter((w) => w.responses && (!w.summary || w.summary.newer));
+  if (!due.length) return;
+  fbState.busy = 'all';
+  redrawFeedbackReport();
+  let made = 0;
+  for (const w of due) {
+    if (!(await makeFeedbackSummary(w.optionId))) break;
+    made += 1;
+    redrawFeedbackReport();
+  }
+  fbState.busy = null;
+  redrawFeedbackReport();
+  if (made) showToast(`${made} summar${made === 1 ? 'y' : 'ies'} written.`, 'success');
+}
+async function saveFeedbackAiKey() {
+  const input = document.getElementById('fb-ai-key');
+  const apiKey = input ? input.value.trim() : '';
+  if (!apiKey) return showToast('Paste the Anthropic API key.');
+  const data = await (await fetch('/api/admin/workshop-feedback/ai-key', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey }),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not save the key.');
+  if (input) input.value = '';
+  fbState.ai = { ...(fbState.ai || {}), configured: !!data.configured };
+  showToast('Key saved.', 'success');
+  redrawFeedbackReport();
+}
+
 function openFeedbackWorkshop(id) {
   fbState.open = id;
   const box = document.getElementById('report-view-container');

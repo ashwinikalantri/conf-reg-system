@@ -10,6 +10,7 @@
     "seed": "node tests/seed.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.12.0",
     "@aws-sdk/client-sesv2": "^3.1106.0",
     "@tesseract.js-data/eng": "1.0.0",
     "compression": "^1.8.1",

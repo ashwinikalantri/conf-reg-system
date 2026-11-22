@@ -111,6 +111,10 @@ async function waitForServer(port, child, log) {
   // Where the app's Zenodo calls go: a stand-in that tests/zenodo.test.js
   // starts on this port. Never the real Zenodo.
   const zenodoPort = await freePort();
+  // Where the AI summaries go: a stand-in that tests/workshop-summary.test.js
+  // starts on this port. Never the real Anthropic API, and no key until a
+  // test sets a made-up one.
+  const aiPort = await freePort();
   let log = '';
   const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: work,
@@ -122,6 +126,7 @@ async function waitForServer(port, child, log) {
       NODE_ENV: 'test',
       ZENODO_API_BASE: `http://127.0.0.1:${zenodoPort}`,
       ZENODO_TOKEN: '', ZENODO_COMMUNITY: '', ZENODO_SANDBOX: '', ZENODO_ENABLED: '',
+      ANTHROPIC_BASE_URL: `http://127.0.0.1:${aiPort}`, ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -155,7 +160,7 @@ async function waitForServer(port, child, log) {
   for (const file of files) {
     const res = spawnSync(process.execPath, [path.join(__dirname, file), dbPath], {
       encoding: 'utf8',
-      env: { ...process.env, TEST_PORT: String(port), ZENODO_MOCK_PORT: String(zenodoPort) },
+      env: { ...process.env, TEST_PORT: String(port), ZENODO_MOCK_PORT: String(zenodoPort), AI_MOCK_PORT: String(aiPort) },
       timeout: FILE_TIMEOUT_MS,
       killSignal: 'SIGKILL',
     });

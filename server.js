@@ -45,6 +45,7 @@ const volunteerTestLib = require('./volunteer-test');
 const { AsyncLocalStorage } = require('async_hooks');
 const posterScreensLib = require('./poster-screens');
 const workshopFeedbackLib = require('./workshop-feedback');
+const workshopSummaryLib = require('./workshop-summary');
 const zenodoLib = require('./zenodo');
 const QRCode = require('qrcode');
 // Shared with scripts/daily-digest.js -- see the note there about why the
@@ -2182,6 +2183,20 @@ db.serialize(() => {
   `);
   // Oral and award papers in their sessions' running order (owner, 20 Nov
   // 2026: "for oral presentation also, allow me to select the sequence").
+  // Each workshop's feedback summed up by Claude (workshop-summary.js; owner,
+  // 22 Nov 2026): made when a super admin asks, kept with the number of
+  // responses it was made from. strengths and improvements: JSON arrays.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS workshop_feedback_summaries (
+      option_id INTEGER PRIMARY KEY,
+      overview TEXT NOT NULL,
+      strengths TEXT NOT NULL,
+      improvements TEXT NOT NULL,
+      responses INTEGER NOT NULL,
+      generated_by TEXT,
+      generated_at INTEGER NOT NULL
+    )
+  `);
   // The winners (owner, 21 Nov 2026): 1st, 2nd and 3rd for each kind of
   // presentation overall -- oral, e-poster, award paper -- each a paper.
   db.run(`
@@ -15627,6 +15642,8 @@ async function buildReport(type, opts = {}) {
     const sessionsAll = await programmeSessions();
     const facultyKeys = await workshopFacultyKeys();
     const feedback = { questions: workshopFeedbackLib.QUESTIONS.map((q) => q.label), scale: workshopFeedbackLib.SCALE, workshops: [] };
+    const summaries = new Map((await dbAll('SELECT * FROM workshop_feedback_summaries')).map((s) => [Number(s.option_id), s]));
+    const listOf = (t) => { try { const a = JSON.parse(t || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
     for (const w of workshops) {
       const keys = new Set([...w.sessionIds].map((id) => `s:${id}`));
       // Those asked: present, not the workshop's own faculty.
@@ -15640,6 +15657,13 @@ async function buildReport(type, opts = {}) {
         questions: summary.map((q) => ({ label: q.label, n: q.n, mean: q.mean, counts: q.counts })),
         suggestions: mine.filter((f) => f.suggestions).map((f) => ({ regNo: f.registration_number || '', text: f.suggestions, at: Number(f.submitted_at) })),
         rows: mine.map((f) => ({ regNo: f.registration_number || '', ratings: workshopFeedbackLib.QUESTIONS.map((q) => f[q.key]), at: Number(f.submitted_at) })),
+        // Claude's summary, if one has been made; newer counts the responses
+        // that came in after it.
+        summary: summaries.has(w.optionId) ? (() => {
+          const s = summaries.get(w.optionId);
+          return { overview: s.overview, strengths: listOf(s.strengths), improvements: listOf(s.improvements),
+            responses: Number(s.responses), at: Number(s.generated_at), newer: Math.max(0, mine.length - Number(s.responses)) };
+        })() : null,
       });
       sections.push({
         name: `${w.name}: ratings (${mine.length} of ${present} present responded)`,
@@ -15653,6 +15677,11 @@ async function buildReport(type, opts = {}) {
       });
     }
     feedback.workshops.sort((a, b) => (a.no || 999) - (b.no || 999) || a.name.localeCompare(b.name));
+    sections.push({
+      name: 'Summaries',
+      columns: ['Workshop', 'Summary', 'What worked', 'To improve', 'From responses'],
+      rows: feedback.workshops.filter((w) => w.summary).map((w) => [w.name, w.summary.overview, w.summary.strengths.join('; '), w.summary.improvements.join('; '), w.summary.responses]),
+    });
     return { title: 'Workshop Feedback', sections, feedback };
   }
   if (type === 'users') {
@@ -17321,6 +17350,61 @@ app.put('/api/admin/prizes', requirePermission('abstracts.assign'), async (req, 
     next(err);
   }
 });
+// --- AI SUMMARIES OF WORKSHOP FEEDBACK (workshop-summary.js) -----------------
+// Owner, 22 Nov 2026: a super admin -- the role itself -- makes them and sets
+// the key; anyone who can open the report reads them, there and in its PDF.
+const superAdminOnly = (req, res, what) => {
+  if (req.session.role === 'SUPER_ADMIN') return true;
+  res.status(403).json({ success: false, error: `Only a super admin can ${what}.` });
+  return false;
+};
+
+// Whether summaries can be made here, and by this person. The key itself is
+// never sent to a page.
+app.get('/api/admin/workshop-feedback/ai', requirePermission('reports.programs'), (req, res) => {
+  res.json({ success: true, configured: workshopSummaryLib.configured(), superAdmin: req.session.role === 'SUPER_ADMIN' });
+});
+
+// The Anthropic API key, written to .env and never read back; clear: true
+// takes it away.
+app.put('/api/admin/workshop-feedback/ai-key', requirePermission('reports.programs'), async (req, res, next) => {
+  try {
+    if (!superAdminOnly(req, res, 'set the AI key')) return;
+    const clear = req.body && req.body.clear === true;
+    const key = clear ? '' : String((req.body && req.body.apiKey) || '').trim();
+    if (!clear && !key) return res.status(400).json({ success: false, error: 'Paste the Anthropic API key.' });
+    if (/\s/.test(key)) return res.status(400).json({ success: false, error: 'A key has no spaces or line breaks.' });
+    writeEnvVar('ANTHROPIC_API_KEY', key);
+    await recordAudit({ req, entityType: 'settings', entityId: 'ANTHROPIC_API_KEY', action: clear ? 'AI_KEY_CLEARED' : 'AI_KEY_SET', oldValue: null, newValue: clear ? 'cleared' : 'set' });
+    res.json({ success: true, configured: workshopSummaryLib.configured() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Makes (or makes again) one workshop's summary from its feedback as it is now.
+app.post('/api/admin/workshop-feedback/:optionId/summary', requirePermission('reports.programs'), async (req, res, next) => {
+  try {
+    if (!superAdminOnly(req, res, 'make AI summaries')) return;
+    const rep = await buildReport('workshop-feedback', { optionId: req.params.optionId });
+    const w = rep.feedback.workshops[0];
+    if (!w) return res.status(404).json({ success: false, error: 'No such workshop.' });
+    let out;
+    try {
+      out = await workshopSummaryLib.summarise(w, rep.feedback.scale);
+    } catch (err) {
+      return res.status(err.status || 502).json({ success: false, error: err.message || 'Could not make the summary.' });
+    }
+    const now = Date.now();
+    await dbRun(`INSERT OR REPLACE INTO workshop_feedback_summaries (option_id, overview, strengths, improvements, responses, generated_by, generated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`, [w.optionId, out.overview, JSON.stringify(out.strengths), JSON.stringify(out.improvements), w.responses, req.session.name || req.session.phone, now]);
+    await recordAudit({ req, entityType: 'workshop', entityId: w.optionId, action: 'FEEDBACK_SUMMARY_MADE', oldValue: w.summary ? `from ${w.summary.responses} responses` : null, newValue: `from ${w.responses} responses` });
+    res.json({ success: true, summary: { ...out, responses: w.responses, at: now, newer: 0 } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 
 // The judges' assessment sheets (owner, 21 Nov 2026): one for each oral or
 // award session (each hall), its papers in running order, prefilled.

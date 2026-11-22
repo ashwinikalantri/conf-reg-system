@@ -8,7 +8,10 @@
 // feedback: the report's rep.feedback ({ questions, scale, workshops: [{ no,
 // label, name, hall, present, responses, questions: [{ label, n, mean,
 // counts }], suggestions: [{ regNo, text, at }], rows: [{ regNo, ratings,
-// at }] }] }); meta: { heading, subline, footer }.
+// at }], summary: { overview, strengths, improvements } | null }] }); meta:
+// { heading, subline, footer }. The summary (workshop-summary.js) is printed
+// as it is, under the workshop's name, with no word of how it was made
+// (owner, 22 Nov 2026).
 const path = require('path');
 const { ensureTextDecoders } = require('./report-pdf');
 
@@ -138,6 +141,39 @@ function renderWorkshopFeedbackPdf(feedback, meta = {}) {
     y += 22;
     doc.moveTo(X, y).lineTo(X + W, y).lineWidth(0.8).strokeColor(C.rule).stroke();
     y += 12;
+
+    // The summary, when one has been made: the overview, then what worked
+    // and what to improve side by side.
+    if (w.summary) {
+      const s = w.summary;
+      const pad = 12;
+      const inner = W - pad * 2;
+      const colW = (inner - 16) / 2;
+      const listH = (items) => (items.length ? 15 + items.reduce((h, t) => h + textH(t, colW - 10, 'body', 9) + 3, 0) : 0);
+      const overH = textH(s.overview, inner, 'body', 10, { lineGap: 1.5 });
+      const listsH = Math.max(listH(s.strengths), listH(s.improvements));
+      const boxH = pad + 14 + overH + (listsH ? 10 + listsH : 0) + pad - 4;
+      if (y + boxH > bottom()) newPage();
+      doc.roundedRect(X, y, W, boxH, 6).fillAndStroke(C.tile, C.rule);
+      let sy = y + pad;
+      doc.font('bold').fontSize(7.5).fillColor(C.thInk).text('SUMMARY', X + pad, sy, { characterSpacing: 0.6, lineBreak: false });
+      sy += 14;
+      doc.font('body').fontSize(10).fillColor(C.text).text(s.overview, X + pad, sy, { width: inner, lineGap: 1.5 });
+      sy = doc.y + 10;
+      const list = (title, items, x) => {
+        if (!items.length) return;
+        doc.font('bold').fontSize(9).fillColor(C.ink).text(title, x, sy, { width: colW, lineBreak: false });
+        let ly = sy + 15;
+        items.forEach((t) => {
+          doc.circle(x + 2.5, ly + 5, 1.6).fill(C.muted);
+          doc.font('body').fontSize(9).fillColor(C.text).text(t, x + 10, ly, { width: colW - 10 });
+          ly = doc.y + 3;
+        });
+      };
+      list('What worked', s.strengths, X + pad);
+      list('To improve', s.improvements, X + pad + colW + 16);
+      y += boxH + 16;
+    }
 
     // Each question: its average, and how the ratings spread.
     w.questions.forEach((q) => {
