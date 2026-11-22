@@ -10877,17 +10877,21 @@ app.delete('/api/attendance/:id', requirePermission('attendance.manage'), async 
 // points, or participation), workshops' (participants, and their faculty),
 // the Faculty list's, and one for each role in the programme -- speaker,
 // judge, chairperson, moderator, panelist -- naming the sessions.
-const CERT_KINDS = ['MMC', 'NURSING', 'CONF', 'WORKSHOP', 'WORKSHOP_FACULTY', 'FACULTY', 'SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST', 'PRIZE'];
+// Volunteers (owner, 22 Nov 2026): a registration in the Volunteer category
+// gets the Volunteer certificate in place of the delegates' one.
+const CERT_KINDS = ['MMC', 'NURSING', 'CONF', 'VOLUNTEER', 'WORKSHOP', 'WORKSHOP_FACULTY', 'FACULTY', 'SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST', 'PRIZE'];
 // Prizes (21 Nov 2026): which, and for what.
 const PRIZE_RANK = { 1: 'First Prize', 2: 'Second Prize', 3: 'Third Prize' };
 const PRIZE_FORMAT = { ORAL: 'Oral Paper Presentation', POSTER: 'E-Poster Presentation', AWARD: 'Award Paper Presentation' };
 const PRIZE_SPECIMEN = JSON.stringify({ rank: 1, format: 'ORAL', title: 'An Example Paper on Quality in Nursing Care' });
 const prizeDetail = (c) => { try { return JSON.parse(c.detail || '{}'); } catch (e) { return {}; } };
+// The one certificate a registration gets for the conference itself.
+const CONF_KINDS = ['MMC', 'NURSING', 'CONF', 'VOLUNTEER'];
 const CERT_ROLE_KINDS = ['SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST'];
-const CERT_KIND_CODE = { MMC: 'MMC', NURSING: 'N', CONF: 'P', WORKSHOP: 'W', WORKSHOP_FACULTY: 'WF', FACULTY: 'F',
+const CERT_KIND_CODE = { MMC: 'MMC', NURSING: 'N', CONF: 'P', VOLUNTEER: 'V', WORKSHOP: 'W', WORKSHOP_FACULTY: 'WF', FACULTY: 'F',
   SPEAKER: 'S', JUDGE: 'J', CHAIR: 'C', MODERATOR: 'MO', PANELIST: 'PN', PRIZE: 'PR' };
 const CERT_KIND_LABEL = { MMC: 'Conference, with MMC points', NURSING: 'Conference, with Nursing points', CONF: 'Conference, participation',
-  WORKSHOP: 'Workshop', WORKSHOP_FACULTY: 'Workshop faculty', FACULTY: 'Faculty',
+  VOLUNTEER: 'Conference, volunteer', WORKSHOP: 'Workshop', WORKSHOP_FACULTY: 'Workshop faculty', FACULTY: 'Faculty',
   SPEAKER: 'Speaker', JUDGE: 'Judge', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist', PRIZE: 'Prize' };
 const certKindLabel = (c) => (c.kind === 'WORKSHOP' ? `Workshop: ${c.workshop_name}` : c.kind === 'WORKSHOP_FACULTY' ? `Workshop faculty: ${c.workshop_name}`
   : c.kind === 'PRIZE' ? (() => { const d = prizeDetail(c); return `${PRIZE_RANK[d.rank] || 'Prize'}, ${PRIZE_FORMAT[d.format] || 'presentation'}`; })() : CERT_KIND_LABEL[c.kind]);
@@ -10916,6 +10920,10 @@ const CERT_TEMPLATE_DEFAULTS = {
   CONF: {
     title: 'Certificate', subtitle: 'of Participation', lead: 'This is to certify that',
     body: 'has participated in the **{{conference}}** held at {{venue}} on {{dates}}.',
+  },
+  VOLUNTEER: {
+    title: 'Certificate', subtitle: 'of Appreciation', lead: 'This is to certify that',
+    body: 'has served as a **volunteer** at the **{{conference}}** held at {{venue}} on {{dates}}. We thank them for their valuable contribution to the conference.',
   },
   WORKSHOP: {
     title: 'Certificate', subtitle: 'of Workshop Participation', lead: 'This is to certify that',
@@ -11225,6 +11233,9 @@ async function certificateCandidates() {
     if (ov && ov.decision === 'EXCLUDE') confWhyNot = `Excluded: ${ov.reason}`;
     else if (!included && !done.complete) confWhyNot = 'Not checked in at the registration desk';
     else if (!included && !paid) confWhyNot = 'Payment not complete';
+    // Volunteers get the Volunteer certificate, not the delegates' (owner,
+    // 22 Nov 2026), on the same rule: checked in at the desk.
+    else if (r.category_key === VOLUNTEER_CATEGORY) confKind = 'VOLUNTEER';
     // Every Doctor and Medical PG gets the MMC certificate (owner, 21 Nov
     // 2026) -- a council number is no longer needed; it prints where the
     // wording asks for it and they gave one.
@@ -11271,7 +11282,8 @@ async function certificateCandidates() {
       phone: r.phone_number, registrationNumber: r.registration_number, name, category: r.category_label, categoryKey: r.category_key,
       councilName: r.council_name || null, councilRegNo: r.council_reg_no || null, mmcCategory, paid,
       attended: [...ids], parts: done.parts.map((p) => ({ label: p.label, done: p.done })), missing: done.missing, complete: done.complete,
-      conference: { kind: confKind, whyNot: confWhyNot, override: ov, facultyOnly, issued: myIssued.find((c) => ['MMC', 'NURSING', 'CONF'].includes(c.kind)) || null },
+      conference: { kind: confKind, whyNot: confWhyNot, override: ov, facultyOnly, issued: myIssued.find((c) => CONF_KINDS.includes(c.kind)) || null },
+      volunteer: r.category_key === VOLUNTEER_CATEGORY,
       nursingCategory: (nursing.categories || []).includes(r.category_key),
       workshops: ws, faculty: facultyByPhone.get(r.phone_number) || null,
       roles: facultyByPhone.has(r.phone_number) ? rolesFor(facultyByPhone.get(r.phone_number).guestId) : delegateJudgeRoles(r.phone_number),
@@ -11899,8 +11911,9 @@ app.post('/api/admin/certificates/force', requirePermission('certificates.issue'
     if (!kind || !CERT_KIND_CODE[kind] || kind === 'FACULTY') return res.status(400).json({ success: false, error: 'Choose the certificate.' });
     let workshop = null;
     let detail = null;
-    if (['MMC', 'NURSING', 'CONF'].includes(kind)) {
+    if (CONF_KINDS.includes(kind)) {
       if (person.notRegistered) return res.status(400).json({ success: false, error: 'A conference certificate needs a registration.' });
+      if (person.volunteer !== (kind === 'VOLUNTEER')) return res.status(400).json({ success: false, error: person.volunteer ? 'A volunteer gets the volunteer certificate.' : 'The volunteer certificate is for the Volunteer category.' });
       if (kind === 'MMC' && !person.mmcCategory) return res.status(400).json({ success: false, error: 'The MMC certificate is for Doctors and Medical PGs: choose participation.' });
       if (person.conference.issued) return res.status(409).json({ success: false, error: `They have one already: ${person.conference.issued.cert_no}.` });
     } else if (kind === 'WORKSHOP' || kind === 'WORKSHOP_FACULTY') {

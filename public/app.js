@@ -17753,7 +17753,7 @@ const CERT_BADGE = {
   SPEAKER: 'bg-violet-100 text-violet-800 border-violet-300', JUDGE: 'bg-violet-100 text-violet-800 border-violet-300', CHAIR: 'bg-violet-100 text-violet-800 border-violet-300',
   MODERATOR: 'bg-violet-100 text-violet-800 border-violet-300', PANELIST: 'bg-violet-100 text-violet-800 border-violet-300',
 };
-const CERT_CONF_WORD = { MMC: 'MMC points', NURSING: 'Nursing points', CONF: 'Participation' };
+const CERT_CONF_WORD = { MMC: 'MMC points', NURSING: 'Nursing points', CONF: 'Participation', VOLUNTEER: 'Volunteer' };
 const CERT_ROLE_WORD = { SPEAKER: 'Speaker', JUDGE: 'Judge', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist' };
 
 // Redesigned 21 Nov 2026: Ready to issue (a row per kind), Not yet and why
@@ -17767,7 +17767,7 @@ function certItems(x) {
     const kind = (c.issued && c.issued.kind) || c.kind;
     // Not qualifying yet, it would print as theirs will: MMC with a council
     // number, Nursing in a nursing category, else participation.
-    const would = kind || (x.mmcCategory ? 'MMC' : x.nursingCategory ? 'NURSING' : 'CONF');
+    const would = kind || (x.volunteer ? 'VOLUNTEER' : x.mmcCategory ? 'MMC' : x.nursingCategory ? 'NURSING' : 'CONF');
     items.push({ title: `Conference${kind ? ` · ${CERT_CONF_WORD[kind] || 'Participation'}` : ''}`, status: st(c.issued, !!c.kind, c.override), reason: c.whyNot || '',
       issued: c.issued, issueScope: 'conference', ovKey: x.phone, ovScope: 'CONF', override: c.override, include: !c.kind && !c.facultyOnly, kind: kind || 'CONF', cert: would });
   }
@@ -17807,7 +17807,7 @@ async function renderCertificates() {
   const confDue = (k) => p.filter((x) => x.conference.kind === k && !x.conference.issued).length;
   const mayIssue = can('certificates.issue');
   const rows = [
-    ['conference', 'Conference', `Checked in and paid · MMC ${confDue('MMC')} · Nursing ${confDue('NURSING')} · Participation ${confDue('CONF')}`, issuedOf(['MMC', 'NURSING', 'CONF'])],
+    ['conference', 'Conference', `Checked in and paid · MMC ${confDue('MMC')} · Nursing ${confDue('NURSING')} · Participation ${confDue('CONF')} · Volunteer ${confDue('VOLUNTEER')}`, issuedOf(['MMC', 'NURSING', 'CONF', 'VOLUNTEER'])],
     ['workshops', 'Workshops', 'Marked present at the workshop, and its feedback given', issuedOf(['WORKSHOP'])],
     ['workshop_faculty', 'Workshop faculty', 'On a workshop’s roster, or named in its sessions', issuedOf(['WORKSHOP_FACULTY'])],
     ['roles', 'Speaker, judge, chair, moderator, panelist', 'From the programme, one per role naming the sessions', issuedOf(['SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST'])],
@@ -18014,9 +18014,12 @@ function openCertForce() {
   const has = (kind, title) => items.some((i) => (i.status === 'issued' || i.status === 'forced') && i.kind === kind && (!title || i.title === title));
   const opts = [];
   if (!x.notRegistered && !x.conference.issued) {
-    if (x.mmcCategory) opts.push(['MMC', 'Conference · MMC points']);
-    if (x.nursingCategory) opts.push(['NURSING', 'Conference · Nursing points']);
-    opts.push(['CONF', 'Conference · participation']);
+    if (x.volunteer) opts.push(['VOLUNTEER', 'Conference · volunteer']);
+    else {
+      if (x.mmcCategory) opts.push(['MMC', 'Conference · MMC points']);
+      if (x.nursingCategory) opts.push(['NURSING', 'Conference · Nursing points']);
+      opts.push(['CONF', 'Conference · participation']);
+    }
   }
   certState.workshops.forEach((w) => { if (!has('WORKSHOP', `Workshop · ${w.name}`)) opts.push([`WORKSHOP:${w.optionId}`, `Workshop · ${w.name}`]); });
   if (x.faculty) {
@@ -18035,7 +18038,7 @@ function certForceWhy() {
   const v = document.getElementById('cert-force-what').value || '';
   const items = x ? certItems(x) : [];
   const [kind, opt] = v.split(':');
-  const it = ['MMC', 'NURSING', 'CONF'].includes(kind) ? items.find((i) => i.issueScope === 'conference')
+  const it = ['MMC', 'NURSING', 'CONF', 'VOLUNTEER'].includes(kind) ? items.find((i) => i.issueScope === 'conference')
     : kind === 'WORKSHOP' ? items.find((i) => i.issueScope === 'workshops' && i.ovScope === `ws:${opt}`) : items.find((i) => i.kind === kind);
   const prev = document.getElementById('cert-force-preview');
   if (prev) { prev.href = v ? certPreviewUrl(certState.open, v) : '#'; prev.classList.toggle('hidden', !v); }
@@ -18158,17 +18161,18 @@ function loadCertificateSettingsCard() {
 // wording typed and not saved is kept per kind (drafts) and shown in the
 // live preview, which renders it on the server without saving.
 const CS_PARTS = [['points', 'Points and who earns them'], ['signatories', 'Signatories'], ['design', 'Design'], ['rules', 'Who qualifies']];
-const CS_GROUPS = [['Conference', ['MMC', 'NURSING', 'CONF']], ['Workshops', ['WORKSHOP', 'WORKSHOP_FACULTY']],
+const CS_GROUPS = [['Conference', ['MMC', 'NURSING', 'CONF', 'VOLUNTEER']], ['Workshops', ['WORKSHOP', 'WORKSHOP_FACULTY']],
   // The Faculty certificate is retired (20 Nov 2026): Speaker is theirs.
   ['Session roles', ['SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE']], ['Prizes', ['PRIZE']]];
 const CS_RETIRED = ['FACULTY'];
-const CS_SHORT = { MMC: 'With MMC points', NURSING: 'With Nursing points', CONF: 'Participation', WORKSHOP: 'Workshop', WORKSHOP_FACULTY: 'Workshop faculty',
+const CS_SHORT = { MMC: 'With MMC points', NURSING: 'With Nursing points', CONF: 'Participation', VOLUNTEER: 'Volunteer', WORKSHOP: 'Workshop', WORKSHOP_FACULTY: 'Workshop faculty',
   FACULTY: 'Faculty', SPEAKER: 'Speaker', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist', JUDGE: 'Judge', PRIZE: 'Prize' };
 const CS_WHO = {
   PRIZE: 'The presenters of the papers chosen 1st, 2nd and 3rd for oral, e-poster and award papers (Abstracts › Step 4).',
   MMC: 'Every Doctor and Medical PG registered, paid and checked in at the desk (a council number is not needed).',
   NURSING: 'Nurses in the categories that earn Nursing points, registered, paid and checked in at the desk.',
   CONF: 'Everyone else registered, paid and checked in at the desk.',
+  VOLUNTEER: 'Registrations in the Volunteer category, checked in at the desk — in place of the participation certificate.',
   WORKSHOP: 'Marked present at the workshop, and its feedback given.',
   WORKSHOP_FACULTY: 'A workshop\'s faculty: on its roster as faculty, or named in its sessions.',
   FACULTY: 'Everyone on the Faculty list who is not Cancelled.',
