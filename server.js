@@ -15769,9 +15769,11 @@ async function buildReport(type, opts = {}) {
     const EMAIL = { SENT: 'Emailed', QUEUED: 'Queued', SENDING: 'Sending', FAILED: 'Email failed' };
     const people = await certificateCandidates();
     const rows = [];
+    const rowType = [];   // each row's kind of certificate, for the type filter
     const byType = new Map();
     for (const p of people) {
       for (const l of certificateLines(p)) {
+        rowType.push(l.type);
         const t = byType.get(l.type) || { issued: 0, due: 0, not: 0, excluded: 0 };
         t[l.status] += 1;
         byType.set(l.type, t);
@@ -15784,15 +15786,17 @@ async function buildReport(type, opts = {}) {
     // Only one status, when asked (owner, 22 Nov 2026: Issued, Due, Not yet,
     // Excluded): the list, and so its Excel and PDF; the counts stay whole.
     const only = STATUS[opts.status] ? STATUS[opts.status] : null;
-    const listed = only ? rows.filter((r) => r[4] === only || (only === 'Issued' && r[4] === 'Issued (forced)')) : rows;
+    // ...and one kind of certificate (22 Nov 2026), as named in the counts.
+    const kind = byType.has(String(opts.certType || '')) ? String(opts.certType) : null;
+    const listed = rows.filter((r, i) => (!only || r[4] === only || (only === 'Issued' && r[4] === 'Issued (forced)')) && (!kind || rowType[i] === kind));
     const order = ['Conference · MMC points', 'Conference · Nursing points', 'Conference · Participation', 'Volunteer', 'Workshop', 'Workshop faculty', 'Prize'];
     const types = [...byType.keys()].sort((a, b) => ((order.indexOf(a) + 1) || 99) - ((order.indexOf(b) + 1) || 99) || a.localeCompare(b));
     return {
-      title: only ? `Certificates: ${only}` : 'Certificates',
+      title: ['Certificates', [kind, only].filter(Boolean).join(', ')].filter(Boolean).join(': '),
       sections: [
         { name: 'By certificate', columns: ['Certificate', 'Issued', 'Due', 'Not yet', 'Excluded', 'Total'],
           rows: types.map((t) => { const c = byType.get(t); return [t, c.issued, c.due, c.not, c.excluded, c.issued + c.due + c.not + c.excluded]; }) },
-        { name: only ? `${only} certificates` : 'Every certificate', columns: ['Reg No', 'Name', 'Category', 'Certificate', 'Status', 'Certificate No', 'Issued on', 'Issued by', 'Email', 'Why not yet / note'], rows: listed },
+        { name: only || kind ? [only, kind].filter(Boolean).join(' · ') : 'Every certificate', columns: ['Reg No', 'Name', 'Category', 'Certificate', 'Status', 'Certificate No', 'Issued on', 'Issued by', 'Email', 'Why not yet / note'], rows: listed },
       ],
     };
   }
@@ -16008,7 +16012,7 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
     if (type === 'workshops' && !req.query.optionId) {
       return res.status(400).json({ success: false, error: 'Select a workshop or QI practice first.' });
     }
-    const rep = await buildReport(type, { optionId: req.query.optionId, status: req.query.status, role: req.session.role, roles: req.session.roles });
+    const rep = await buildReport(type, { optionId: req.query.optionId, status: req.query.status, certType: req.query.certType, role: req.session.role, roles: req.session.roles });
     res.set('Cache-Control', 'private, no-store');
     if (req.query.format === 'csv') {
       res.set('Content-Type', 'text/csv; charset=utf-8');
@@ -16022,7 +16026,8 @@ app.get('/api/admin/reports/:type', requireAuth, async (req, res, next) => {
     // (see report-pdf.js for why this is no longer left to the browser).
     const pdfHref = `/api/admin/reports/${encodeURIComponent(type)}?format=pdf`
       + (req.query.optionId ? `&optionId=${encodeURIComponent(req.query.optionId)}` : '')
-      + (req.query.status ? `&status=${encodeURIComponent(req.query.status)}` : '');
+      + (req.query.status ? `&status=${encodeURIComponent(req.query.status)}` : '')
+      + (req.query.certType ? `&certType=${encodeURIComponent(req.query.certType)}` : '');
     if (req.query.format === 'pdf') {
       // The QR images, made here as the /api/qr route makes them.
       for (const sec of rep.sections) {

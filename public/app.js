@@ -11130,13 +11130,27 @@ async function viewReport(type, extraQuery) {
 // The Certificates report's filter (22 Nov 2026): All, Issued, Due, Not yet,
 // Excluded, each with its count; the list, Excel and PDF follow it.
 function certReportFilterHtml(rep, extraQuery) {
-  const on = (/[?&]status=([a-z]+)/.exec(extraQuery || '') || [])[1] || '';
+  const q = new URLSearchParams(String(extraQuery || '').replace(/^&/, ''));
+  const on = q.get('status') || '';
+  const type = q.get('certType') || '';
   const counts = rep.sections.find((x) => x.name === 'By certificate');
-  const sum = (i) => (counts ? counts.rows.reduce((n, r) => n + Number(r[i] || 0), 0) : 0);
+  const rowsFor = counts ? counts.rows.filter((r) => !type || r[0] === type) : [];
+  const sum = (i) => rowsFor.reduce((n, r) => n + Number(r[i] || 0), 0);
   const chips = [['', 'All', sum(5)], ['issued', 'Issued', sum(1)], ['due', 'Due', sum(2)], ['not', 'Not yet', sum(3)], ['excluded', 'Excluded', sum(4)]];
-  return `<div class="w-full flex flex-wrap gap-2" role="group" aria-label="Show">${chips.map(([k, label, n]) => `<button type="button" aria-pressed="${k === on}"
-    onclick="viewReport('certificates', ${esc(JSON.stringify(k ? `&status=${k}` : ''))})" class="h-10 px-3.5 rounded-full text-sm font-semibold border ${k === on
-    ? 'bg-navy border-navy text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}">${label} <span class="tabular-nums ${k === on ? 'text-white/80' : 'text-slate-500'}">${n}</span></button>`).join('')}</div>`;
+  const select = counts ? `<label class="flex items-center gap-2 text-sm font-semibold text-slate-600"><span>Certificate</span>
+    <select onchange="filterCertReport(${esc(JSON.stringify(on))}, this.value)" class="h-10 px-3 border border-slate-300 rounded-xl text-sm bg-white max-w-[16rem]">
+      <option value="">All types</option>
+      ${counts.rows.map((r) => `<option value="${esc(r[0])}"${r[0] === type ? ' selected' : ''}>${esc(r[0])} (${Number(r[5])})</option>`).join('')}
+    </select></label>` : '';
+  return `<div class="w-full flex flex-wrap items-center gap-2">${select}<div class="flex flex-wrap gap-2" role="group" aria-label="Show">${chips.map(([k, label, n]) => `<button type="button" aria-pressed="${k === on}"
+    onclick="filterCertReport(${esc(JSON.stringify(k))}, ${esc(JSON.stringify(type))})" class="h-10 px-3.5 rounded-full text-sm font-semibold border ${k === on
+    ? 'bg-navy border-navy text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}">${label} <span class="tabular-nums ${k === on ? 'text-white/80' : 'text-slate-500'}">${n}</span></button>`).join('')}</div></div>`;
+}
+
+// A status and a type together; either may be blank (all).
+function filterCertReport(status, certType) {
+  const q = [status ? `&status=${encodeURIComponent(status)}` : '', certType ? `&certType=${encodeURIComponent(certType)}` : ''].join('');
+  viewReport('certificates', q);
 }
 
 // The Workshop Feedback report's own view (redesigned 21 Nov 2026): the

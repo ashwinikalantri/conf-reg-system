@@ -53,6 +53,13 @@ const N = String(Date.now()).slice(-7);
     const notOnly = (await call('GET', '/api/admin/reports/certificates?format=json&status=not', null, admin)).body.report.sections[1];
     check('...to Not yet: only those, each with its reason', notOnly.rows.every((row) => row[4] === 'Not yet' && row[9]));
     check('...an unknown filter lists everything', (await call('GET', '/api/admin/reports/certificates?format=json&status=bogus', null, admin)).body.report.sections[1].rows.length === every.rows.length);
+    const partOnly = (await call('GET', `/api/admin/reports/certificates?format=json&certType=${encodeURIComponent('Conference · Participation')}`, null, admin)).body.report;
+    check('by type: only that kind listed', partOnly.title === 'Certificates: Conference · Participation' && partOnly.sections[1].rows.length > 0
+      && partOnly.sections[1].rows.every((row) => row[3] === 'Conference · Participation'));
+    const both = (await call('GET', `/api/admin/reports/certificates?format=json&status=issued&certType=${encodeURIComponent('Conference · Participation')}`, null, admin)).body.report.sections[1];
+    check('...type and status together', both.rows.length >= 1 && both.rows.every((row) => row[3] === 'Conference · Participation' && /^Issued/.test(row[4])) && both.rows.some((row) => row[0] === `DSK${N}`));
+    check('...an unknown type lists every type', (await call('GET', '/api/admin/reports/certificates?format=json&certType=Nope', null, admin)).body.report.sections[1].rows.length === every.rows.length);
+    check('the page: a Certificate type list beside the status chips', /function filterCertReport\(status, certType\)/.test(fs.readFileSync(appFile('public', 'app.js'), 'utf8')));
     const fpdf = await call('GET', '/api/admin/reports/certificates?format=pdf&status=due', null, admin);
     check('...and the PDF follows the filter', fpdf.status === 200 && (fpdf.buf || Buffer.from('')).slice(0, 4).toString() === '%PDF');
     check('the page: All, Issued, Due, Not yet, Excluded chips on this report', /type === 'certificates' \? certReportFilterHtml\(rep, extraQuery\)/.test(fs.readFileSync(appFile('public', 'app.js'), 'utf8')));
