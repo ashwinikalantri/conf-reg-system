@@ -264,7 +264,7 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
       && /certsettings: 'general'/.test(js)
       && !/data-att-view|att-view-certificates|att-view-settings/.test(view));
     check('certificate settings alone opens Conference setup, showing only that card', require(appFile('permissions.js')).SECTION_PERMISSIONS.general.anyOf.includes('certificates.manage')
-      && /const full = can\('system\.settings_view'\);[\s\S]{0,400}?card\.classList\.toggle\('hidden', !full\)[\s\S]{0,300}?if \(!full\) return;/.test(js));
+      && /const full = can\('system\.settings_view'\);[\s\S]{0,400}?card\.classList\.toggle\('hidden', !full\)[\s\S]{0,400}?if \(!full\) return;/.test(js));
     check('issuing asks first', /async function issueCertificates\(scope\) \{[\s\S]{0,200}await showConfirm\(/.test(js));
     check('the portal card offers each download', /\/api\/certificates\/mine\/\$\{encodeURIComponent\(m\.id\)\}\.pdf/.test(js));
   } finally {

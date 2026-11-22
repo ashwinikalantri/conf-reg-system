@@ -8,9 +8,9 @@
 // What is sent: the workshop's name, its rating counts and averages, and the
 // suggestions as written. No names, registration numbers or phone numbers.
 //
-// The key is ANTHROPIC_API_KEY in .env (set from the report by a super
-// admin); ANTHROPIC_BASE_URL points the tests at a stand-in, never the real
-// API.
+// The key is ANTHROPIC_API_KEY in .env (set by a super admin in Conference
+// setup › AI summaries); ANTHROPIC_BASE_URL points the tests at a stand-in,
+// never the real API.
 
 const MODEL = 'claude-opus-5-5';
 const MAX_POINTS = 3;
@@ -93,7 +93,7 @@ const configured = () => !!String(process.env.ANTHROPIC_API_KEY || '').trim();
 
 // One workshop's summary, or an Error whose message can be shown as it is.
 async function summarise(w, scale) {
-  if (!configured()) throw new Error('AI summaries aren’t set up: add the Anthropic API key first.');
+  if (!configured()) throw new Error('AI summaries aren’t set up: add the Anthropic API key in Conference setup › AI summaries.');
   if (!w.responses) throw new Error('No responses yet to summarise.');
   const sdk = require('@anthropic-ai/sdk');
   const A = sdk.default || sdk;

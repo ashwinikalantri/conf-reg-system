@@ -9285,7 +9285,7 @@ async function renderGeneralSettings() {
   if (can('system.settings_edit')) renderVolunteerTest();
   else { const vt = document.getElementById('gs-card-volunteer-test'); if (vt) vt.classList.add('hidden'); }
   document.querySelectorAll('#section-general [id^="gs-card-"]').forEach((card) => {
-    if (card.id === 'gs-card-halls' || card.id === 'gs-card-certificates' || card.id === 'gs-card-zenodo') return;
+    if (card.id === 'gs-card-halls' || card.id === 'gs-card-certificates' || card.id === 'gs-card-zenodo' || card.id === 'gs-card-ai') return;
     card.classList.toggle('hidden', !full);
     const jump = document.querySelector(`#gs-jump [data-target="${card.id}"]`);
     if (jump) jump.classList.toggle('hidden', !full);
@@ -9293,6 +9293,7 @@ async function renderGeneralSettings() {
   loadHallsCard();
   loadCertificateSettingsCard();
   loadZenodoSetupCard();
+  loadAiSetupCard();   // shown or hidden at once; the key's state follows
   showSetupPage();
   if (!full) return;
   // Independent of the settings fetch below, so a backup-status hiccup can't
@@ -11218,12 +11219,7 @@ function renderFeedbackReport(box, rep) {
 function fbSummaryTools(ws, ai) {
   if (!ai || !ai.superAdmin) return '';
   if (!ai.configured) {
-    return `<form onsubmit="event.preventDefault(); saveFeedbackAiKey()" class="rounded-xl border border-slate-200 bg-slate-50 p-3 flex flex-wrap items-end gap-2">
-      <label class="flex-1 min-w-[14rem]"><span class="block text-sm font-semibold text-slate-700 mb-1">AI summaries: paste the Anthropic API key</span>
-        <input id="fb-ai-key" type="password" autocomplete="off" spellcheck="false" class="w-full h-11 px-3 border border-slate-300 rounded-lg text-base sm:text-sm bg-white"></label>
-      <button type="submit" class="h-11 px-4 rounded-lg bg-navy hover:bg-indigo-700 text-white text-sm font-semibold">Save key</button>
-      <p class="w-full text-xs text-slate-500">Kept on the server, never shown again. Only super admins see this.</p>
-    </form>`;
+    return `<p class="text-sm text-slate-600">AI summaries aren’t set up yet: add the Anthropic API key in <button type="button" onclick="openSetupPage('ai')" class="font-semibold text-indigo-700 underline">Conference setup › AI summaries</button>.</p>`;
   }
   const due = ws.filter((w) => w.responses && (!w.summary || w.summary.newer));
   const busy = fbState.busy === 'all';
@@ -11292,20 +11288,6 @@ async function generateAllFeedbackSummaries() {
   redrawFeedbackReport();
   if (made) showToast(`${made} summar${made === 1 ? 'y' : 'ies'} written.`, 'success');
 }
-async function saveFeedbackAiKey() {
-  const input = document.getElementById('fb-ai-key');
-  const apiKey = input ? input.value.trim() : '';
-  if (!apiKey) return showToast('Paste the Anthropic API key.');
-  const data = await (await fetch('/api/admin/workshop-feedback/ai-key', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey }),
-  })).json().catch(() => ({}));
-  if (!data.success) return showToast(data.error || 'Could not save the key.');
-  if (input) input.value = '';
-  fbState.ai = { ...(fbState.ai || {}), configured: !!data.configured };
-  showToast('Key saved.', 'success');
-  redrawFeedbackReport();
-}
-
 function openFeedbackWorkshop(id) {
   fbState.open = id;
   const box = document.getElementById('report-view-container');
@@ -12382,6 +12364,40 @@ async function renderZenodo() {
       </div>`;
   }).join('') : '<p class="px-4 py-6 text-sm text-slate-500 text-center">No accepted abstracts yet.</p>');
 }
+// Conference setup › AI summaries: the Anthropic API key, for a super admin
+// only (owner, 22 Nov 2026). Whether one is set; never the key.
+async function loadAiSetupCard() {
+  const card = document.getElementById('gs-card-ai');
+  if (!card) return;
+  const allowed = isSuperAdminViewer();
+  card.classList.toggle('hidden', !allowed);
+  const jump = document.getElementById('gs-jump-ai');
+  if (jump) jump.classList.toggle('hidden', !allowed);
+  if (!allowed) return;
+  const data = await (await fetch('/api/admin/workshop-feedback/ai')).json().catch(() => ({}));
+  if (!data.success) return;
+  setText('ai-setup-status', data.configured ? 'A key is set.' : 'No key set yet.');
+  const clear = document.getElementById('ai-key-clear');
+  if (clear) clear.classList.toggle('hidden', !data.configured);
+}
+async function saveAiKey(body) {
+  const input = document.getElementById('ai-key');
+  const payload = body || { apiKey: input ? input.value.trim() : '' };
+  if (!body && !payload.apiKey) return showToast('Paste the Anthropic API key.');
+  const data = await (await fetch('/api/admin/workshop-feedback/ai-key', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not save the key.');
+  if (input) input.value = '';
+  fbState.ai = null;   // the report asks again
+  showToast(body ? 'Key removed.' : 'Key saved.', 'success');
+  loadAiSetupCard();
+}
+async function clearAiKey() {
+  if (!(await showConfirm('Remove the Anthropic API key? Summaries already made stay; no new ones can be made until a key is set again.'))) return;
+  saveAiKey({ clear: true });
+}
+
 // Conference setup › Zenodo: the switch and the settings (abstracts.publish).
 async function loadZenodoSetupCard() {
   const card = document.getElementById('gs-card-zenodo');

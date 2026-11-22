@@ -10,6 +10,7 @@
         <button type="button" id="gs-jump-halls" data-target="gs-card-halls" onclick="showSetupPage('halls')" class="hidden px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Halls</button>
         <button type="button" id="gs-jump-certificates" data-target="gs-card-certificates" onclick="showSetupPage('certificates')" class="hidden px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Certificates</button>
         <button type="button" id="gs-jump-zenodo" data-target="gs-card-zenodo" onclick="showSetupPage('zenodo')" class="hidden px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Zenodo</button>
+        <button type="button" id="gs-jump-ai" data-target="gs-card-ai" onclick="showSetupPage('ai')" class="hidden px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">AI summaries</button>
         <button type="button" data-target="gs-card-sms" onclick="showSetupPage('sms')" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">SMS</button>
         <button type="button" data-target="gs-card-email" onclick="showSetupPage('email')" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Email</button>
         <button type="button" data-target="gs-card-payment" onclick="showSetupPage('payment')" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 gs-jump-btn lg:w-full lg:text-left lg:border-0 lg:bg-transparent lg:text-sm lg:px-3 lg:py-2.5">Payment</button>
@@ -108,6 +109,27 @@
           <button type="button" onclick="saveZenodoSettings()" class="px-4 py-2 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Save</button>
           <button type="button" onclick="checkZenodo()" class="px-4 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg">Test connection</button>
         </div>
+      </div>
+
+      <!-- AI summaries of workshop feedback (owner, 22 Nov 2026): the
+           Anthropic API key, set by a super admin only, never shown again.
+           loadAiSetupCard() in app.js; the summaries are made in Reports ›
+           Workshop feedback. -->
+      <div id="gs-card-ai" class="hidden bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+        <div>
+          <h3 class="text-lg font-bold text-slate-900">AI summaries</h3>
+          <p class="text-sm text-slate-600">Summaries of each workshop's feedback, written by Claude, in Reports › Workshop feedback and its PDF. <span id="ai-setup-status" class="font-semibold"></span></p>
+        </div>
+        <form onsubmit="event.preventDefault(); saveAiKey()" class="space-y-3">
+          <label class="block text-xs font-semibold text-slate-600">Anthropic API key
+            <input id="ai-key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Paste a key to set or replace it" class="mt-1 w-full sm:w-2/3 h-9 px-3 border border-slate-300 rounded-lg text-xs font-mono outline-none">
+          </label>
+          <p class="text-[11px] text-slate-500">From console.anthropic.com › API keys. Kept on the server, never shown again. Only super admins see this page.</p>
+          <div class="flex flex-wrap gap-2">
+            <button type="submit" class="px-4 py-2 bg-navy hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">Save</button>
+            <button type="button" id="ai-key-clear" onclick="clearAiKey()" class="hidden px-4 py-2 border border-rose-300 hover:bg-rose-50 text-rose-800 text-xs font-semibold rounded-lg">Remove the key</button>
+          </div>
+        </form>
       </div>
 
       <!-- SMS -->
