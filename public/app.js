@@ -10098,11 +10098,18 @@ ${reminderSignOff()}`;
 
 // For delegates marked present at a workshop who have not given feedback on
 // it: the workshop certificate is issued only once it is in.
+// The workshop certificate waits for the feedback (owner, 21 Nov 2026), and
+// the email says so (owner, 22 Nov 2026).
 async function buildWorkshopFeedbackBody() {
   return `<p>Dear {{name}},</p>
 <p>Thank you for attending <b>{{workshops}}</b>. We would value your feedback: three quick ratings, and any suggestions for improving the workshop in future.</p>
+<div style="background:#eef3f6;border:1px solid #b9cedb;border-radius:10px;padding:1rem 1.25rem;margin:1.25rem 0">
+  <div style="font-size:.7rem;letter-spacing:.09em;text-transform:uppercase;color:#2f5673;font-weight:700">Your workshop certificate</div>
+  <div style="font-size:.9rem;color:#1c3549;margin-top:.4rem">Workshop certificates will be issued <b>only after you give your feedback</b>. Once you have, your certificate is issued with the next batch, and you can download it from the delegate portal.</div>
+</div>
 <p>It takes a minute, on the home screen of the delegate portal, and helps us improve the workshop for the future.</p>
 ${steelButton(portalHomeUrl(), 'Give My Feedback')}
+<p style="font-size:.85rem;color:#64748b">If you have already given your feedback, please ignore this message.</p>
 ${reminderSignOff()}`;
 }
 

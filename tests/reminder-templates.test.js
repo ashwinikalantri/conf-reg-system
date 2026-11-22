@@ -202,6 +202,10 @@ const CONF={ name:'International Conference on Healthcare Quality & Patient Safe
  const os=await TT['oral-slot'].body();
  check('the oral and award slot email: their slot, title and format, in the hall 15 minutes early, the upload date', /\{\{screen\}\}/.test(os) && /\{\{title\}\}/.test(os) && /\{\{format\}\}/.test(os)
    && /15 minutes before your session starts/.test(os) && /\{\{deadline\}\}/.test(os) && !/e-poster|screen/i.test(os.replace(/\{\{screen\}\}/g, '')) && TT['oral-slot'].audiences.join()==='presenters');
+ console.log('\n== Workshop feedback (22 Nov) ==');
+ const fb=await TT['workshop-feedback'].body();
+ check('the feedback email says the workshop certificate is issued only after the feedback', /issued <b>only after you give your feedback<\/b>/.test(fb)
+   && /Give My Feedback/.test(fb) && /already given your feedback, please ignore/.test(fb) && TT['workshop-feedback'].audiences.join()==='workshop_feedback');
  console.log('\n== The welcome (20 Nov) ==');
  const wd=await TT['welcome-delegates'].body();
  const wf=await TT['welcome-faculty'].body();
