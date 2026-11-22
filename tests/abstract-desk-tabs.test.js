@@ -20,9 +20,9 @@ function makeDoc() {
       setAttribute: (k, v) => { attrs[k] = String(v); }, getAttribute: (k) => attrs[k], querySelector: () => null, scrollIntoView() {}, ...extra };
     return e;
   };
-  const panels = ['1', '2', '3', '4', '5', '6'].map((n) => { const p = el(`panel-${n}`); p.dataset.step = n; return p; });
+  const panels = ['1', '2', '3', '4', '5', '6', '7'].map((n) => { const p = el(`panel-${n}`); p.dataset.step = n; return p; });
   panels[4].classList.add('hidden');                     // Prizes, not loaded
-  panels[5].classList.add('hidden');                     // Zenodo, switched off
+  panels[6].classList.add('hidden');                     // Zenodo, switched off
   const doc = {
     getElementById: (id) => { if (!els[id]) els[id] = el(id); return els[id]; },
     querySelector: (sel) => { const m = /data-step="(\d)"/.exec(sel); return m ? panels[Number(m[1]) - 1] : null; },
@@ -39,9 +39,9 @@ function makeDoc() {
 
   console.log('\n== The page ==');
   const tabs = [...html.matchAll(/id="abs-tab-(\d)"[^>]*onclick="showAbstractStep\('(\d)', true\)"[\s\S]*?<span class="abs-tab-n text-slate-400">\d<\/span>([^<]+)</g)].map((m) => `${m[1]}${m[3]}`);
-  check('six steps as tabs, in order (Step 4 Running order since 20 Nov; Step 5 Prizes since 22 Nov)', tabs.join() === '1Approval,2Assignment,3Presentations,4Running order,5Prizes,6Zenodo', tabs);
+  check('seven steps as tabs, in order (Step 4 Running order since 20 Nov; Step 5 Prizes, Step 6 Attendance since 22 Nov)', tabs.join() === '1Approval,2Assignment,3Presentations,4Running order,5Prizes,6Attendance,7Zenodo', tabs);
   check('...that stay in reach while scrolling', /<nav id="abs-tabs" class="sticky top-0/.test(html));
-  check('each step a panel the tabs show one at a time', ['approval', 'assignment', 'presentations', 'screens', 'prizes', 'zenodo'].every((b, i) => new RegExp(`id="abstracts-${b}-block" class="[^"]*abs-panel[^"]*" data-step="${i + 1}"`).test(html)));
+  check('each step a panel the tabs show one at a time', ['approval', 'assignment', 'presentations', 'screens', 'prizes', 'attendance', 'zenodo'].every((b, i) => new RegExp(`id="abstracts-${b}-block" class="[^"]*abs-panel[^"]*" data-step="${i + 1}"`).test(html)));
   check('one search for every step', /id="abs-search" type="search"[^>]*oninput="setAbstractSearch\(this\.value\)"/.test(html) && /title, author, Reg No, #id/.test(html));
   check('"Waiting on you" above the tabs', html.indexOf('Waiting on you') < html.indexOf('id="abs-tabs"') && /id="abs-waiting"/.test(html));
   check('no folds left', !/abs-step group|<details class="abs-step/.test(html) && !/rememberAbstractStep|restoreAbstractSteps/.test(js));
@@ -71,7 +71,7 @@ function makeDoc() {
   check('it opens on the first step with work: Approval, with one to review', vm.runInContext('absStep', sb) === '1' && shown() === '1', [vm.runInContext('absStep', sb), shown()]);
   check('...the tab counts what waits there', /1 to review/.test(els['abs-tab-count-1'].textContent) && /1 to assign/.test(els['abs-tab-count-2'].textContent));
   check('"Waiting on you" says it, each a way into its step', /<b[^>]*>1<\/b> to review →/.test(els['abs-waiting'].innerHTML) && /showAbstractStep\('2', true\)/.test(els['abs-waiting'].innerHTML));
-  check('a switched-off step has no tab', els['abs-tab-6'].classList.contains('hidden') && els['abs-tab-5'].classList.contains('hidden'));
+  check('a switched-off step has no tab', els['abs-tab-7'].classList.contains('hidden') && els['abs-tab-5'].classList.contains('hidden'));
   sb.showAbstractStep('3', true);
   check('a tab chosen is shown alone, and remembered for this browser tab', shown() === '3' && store.nqocn_abs_step === '3');
   sb.setAbstractSearch('rohan');

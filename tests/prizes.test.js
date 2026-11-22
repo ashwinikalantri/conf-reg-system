@@ -102,9 +102,9 @@ const N = String(Date.now()).slice(-7);
     console.log('\n== The pages ==');
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
     const ejs = fs.readFileSync(appFile('views', 'admin', 'sections', 'abstracts.ejs'), 'utf8');
-    check('Prizes is Review Desk Step 5, before Zenodo (Step 6), drawn when the desk opens', /\['5', 'Prizes'\], \['6', 'Zenodo'\]/.test(ejs)
-      && /id="abstracts-prizes-block" class="hidden abs-panel" data-step="5">\s*<div id="order-prizes"><\/div>/.test(ejs) && /id="abstracts-zenodo-block" class="hidden abs-panel" data-step="6"/.test(ejs)
-      && ejs.indexOf('id="abstracts-screens-block"') < ejs.indexOf('id="abstracts-prizes-block"') && /renderPosterScreens\(\);\n    renderPrizes\(\);\n    const res = await fetch\('\/api\/abstracts'\)/.test(js));
+    check('Prizes is Review Desk Step 5, then Attendance and Zenodo, drawn when the desk opens', /\['5', 'Prizes'\], \['6', 'Attendance'\], \['7', 'Zenodo'\]/.test(ejs)
+      && /id="abstracts-prizes-block" class="hidden abs-panel" data-step="5">\s*<div id="order-prizes"><\/div>/.test(ejs) && /id="abstracts-zenodo-block" class="hidden abs-panel" data-step="7"/.test(ejs)
+      && ejs.indexOf('id="abstracts-screens-block"') < ejs.indexOf('id="abstracts-prizes-block"') && /renderPosterScreens\(\);\n    renderPrizes\(\);\n    renderPresentationAttendance\(\);\n    const res = await fetch\('\/api\/abstracts'\)/.test(js));
     check('Ready to issue has a Prizes row; settings have its wording', /\['prizes', 'Prizes'/.test(js) && /\['Prizes', \['PRIZE'\]\]/.test(js));
   } finally {
     if (phone) {

@@ -4517,7 +4517,7 @@ function applyRoleVisibility() {
   // not get a section full of buttons the server would refuse -- which is
   // what happened before this, silently, since the allocation call never
   // read its response.
-  // Zenodo's Step 6 shows once renderZenodo() knows it is switched on.
+  // Zenodo's Step 7 shows once renderZenodo() knows it is switched on.
   const zenodoBlock = document.getElementById('abstracts-zenodo-block');
   if (zenodoBlock && !can('abstracts.publish')) zenodoBlock.classList.add('hidden');
   const assignBlock = document.getElementById('abstracts-assignment-block');
@@ -11680,6 +11680,95 @@ async function renderPrizes() {
   }).join('')}
     </div>`).join('')}</div>`;
 }
+// Step 6, presentation attendance (owner, 22 Nov 2026): one kind at a time,
+// its papers in running order, each Presented or Absent; Finalise when all
+// are marked, which makes the presenters' certificates due.
+const presAtt = { format: 'ORAL', data: null, busy: false };
+async function renderPresentationAttendance(format) {
+  if (format) presAtt.format = format;
+  const box = document.getElementById('pres-att');
+  if (!box) return;
+  const data = await (await fetch(`/api/admin/presentation-attendance?format=${encodeURIComponent(presAtt.format)}`)).json().catch(() => ({}));
+  if (!data.success) { box.innerHTML = '<p class="text-sm text-slate-500">Could not load the attendance.</p>'; return; }
+  presAtt.data = data;
+  drawPresentationAttendance();
+}
+function drawPresentationAttendance() {
+  const box = document.getElementById('pres-att');
+  const d = presAtt.data;
+  if (!box || !d) return;
+  const may = can('abstracts.assign') && !d.finalised;
+  const c = d.counts;
+  const tab = (f, label) => `<button type="button" onclick="renderPresentationAttendance('${f}')" aria-pressed="${presAtt.format === f}" class="h-9 px-3 rounded-lg text-sm font-semibold ${presAtt.format === f ? 'bg-navy text-white' : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50'}">${label}</button>`;
+  const mark = (p, val, label) => {
+    const on = p.presented === val;
+    const tone = val ? (on ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-slate-300 text-emerald-800 hover:bg-emerald-50')
+      : (on ? 'bg-rose-700 border-rose-700 text-white' : 'bg-white border-slate-300 text-rose-800 hover:bg-rose-50');
+    return `<button type="button" ${may ? `onclick="markPresentation(${Number(p.id)}, ${on ? 'null' : val})"` : 'disabled'} aria-pressed="${on}" class="min-h-[40px] px-3 rounded-lg border text-sm font-semibold ${tone} disabled:opacity-60">${label}</button>`;
+  };
+  const row = (p) => `<li class="py-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
+      <span class="w-8 shrink-0 text-sm font-bold text-slate-500 tabular-nums">${p.place ? esc(p.place) : '—'}</span>
+      <span class="min-w-0 flex-1"><span class="block text-[15px] font-semibold text-slate-900 break-words">${esc(p.presenter || '')}${p.regNo ? ` <span class="text-sm font-normal text-slate-500">· ${esc(p.regNo)}</span>` : ''}${p.time ? ` <span class="text-sm font-normal text-slate-500">· ${esc(p.time)}</span>` : ''}</span>
+        <span class="block text-sm text-slate-600 break-words">${esc(p.title || '')}</span></span>
+      <span class="flex gap-2 shrink-0">${mark(p, true, 'Presented')}${mark(p, false, 'Absent')}</span>
+    </li>`;
+  const finalBar = d.finalised
+    ? `<div class="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+        <p class="text-sm text-emerald-900"><b>Finalised</b> by ${esc(d.finalised.by || '—')}, ${esc(fmtAuditTime(d.finalised.at))}. Presenters marked Presented now have their certificate due on the Certificates page${d.issued ? ` (${d.issued} issued)` : ''}.</p>
+        ${d.superAdmin && !d.issued ? '<button type="button" onclick="reopenPresentationAttendance()" class="min-h-[40px] px-3 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50">Reopen</button>' : ''}
+      </div>`
+    : `<div class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+        <p class="text-sm text-slate-700">${c.unmarked ? `<b>${c.unmarked}</b> not marked yet. Mark each paper, then finalise.` : 'Every paper is marked. Finalise to make the certificates due.'}</p>
+        ${can('abstracts.assign') ? `<button type="button" onclick="finalisePresentationAttendance()" ${c.unmarked || !c.total ? 'disabled' : ''} class="min-h-[40px] px-4 rounded-lg bg-navy hover:bg-indigo-700 text-white text-sm font-semibold disabled:opacity-50">Finalise attendance</button>` : ''}
+      </div>`;
+  box.innerHTML = `<div class="flex flex-wrap items-end justify-between gap-3 mb-3">
+      <div><h3 class="text-lg font-bold text-slate-900">Presentation attendance</h3>
+        <p class="text-sm text-slate-600">Mark who presented. Once finalised, each presenter marked Presented gets a Certificate of Presentation (prize winners get their prize certificate instead).</p></div>
+      <div class="flex flex-wrap gap-2" role="group" aria-label="Presentations">${tab('ORAL', 'Oral papers')}${tab('POSTER', 'E-posters')}${tab('AWARD', 'Award papers')}</div>
+    </div>
+    <p class="text-sm text-slate-600 mb-3 tabular-nums"><b class="text-slate-900">${c.total}</b> papers · <span class="text-emerald-800 font-semibold">${c.presented} presented</span> · <span class="text-rose-800 font-semibold">${c.absent} absent</span> · ${c.unmarked} not marked</p>
+    ${finalBar}
+    <div class="mt-4 space-y-4">${d.groups.map((g) => `<section class="bg-white rounded-xl border border-slate-200 px-4 py-2">
+        <h4 class="pt-2 font-bold text-slate-900">${esc(g.title)}</h4>${g.sub ? `<p class="text-sm text-slate-500">${esc(g.sub)}</p>` : ''}
+        <ul class="divide-y divide-slate-100">${g.papers.map(row).join('')}</ul></section>`).join('') || '<p class="text-sm text-slate-500">No papers of this kind.</p>'}</div>`;
+}
+async function markPresentation(abstractId, presented) {
+  if (presAtt.busy) return;
+  presAtt.busy = true;
+  const data = await (await fetch('/api/admin/presentation-attendance', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ abstractId, presented }),
+  })).json().catch(() => ({}));
+  presAtt.busy = false;
+  if (!data.success) return showToast(data.error || 'Could not save.');
+  const p = presAtt.data && presAtt.data.groups.flatMap((g) => g.papers).find((x) => x.id === abstractId);
+  if (p) {
+    p.presented = presented;
+    const all = presAtt.data.groups.flatMap((g) => g.papers);
+    presAtt.data.counts = { total: all.length, presented: all.filter((x) => x.presented === true).length, absent: all.filter((x) => x.presented === false).length, unmarked: all.filter((x) => x.presented === null).length };
+  }
+  drawPresentationAttendance();
+}
+async function finalisePresentationAttendance() {
+  const d = presAtt.data;
+  if (!d) return;
+  if (!(await showConfirm(`Finalise ${d.label} attendance: ${d.counts.presented} presented, ${d.counts.absent} absent? The marks are then locked, and the presenters' certificates become due.`, 'Finalise'))) return;
+  const data = await (await fetch('/api/admin/presentation-attendance/finalise', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: presAtt.format }),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not finalise.');
+  showToast('Finalised.', 'success');
+  renderPresentationAttendance();
+}
+async function reopenPresentationAttendance() {
+  if (!(await showConfirm('Reopen this attendance? Its certificates stop being due until it is finalised again.', 'Reopen'))) return;
+  const data = await (await fetch('/api/admin/presentation-attendance/reopen', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: presAtt.format }),
+  })).json().catch(() => ({}));
+  if (!data.success) return showToast(data.error || 'Could not reopen.');
+  showToast('Reopened.', 'success');
+  renderPresentationAttendance();
+}
+
 async function setPrize(format, rank, abstractId) {
   const data = await (await fetch('/api/admin/prizes', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format, rank, abstractId: abstractId ? Number(abstractId) : null }),
@@ -12333,7 +12422,7 @@ function toggleAbstractsMissingAuthors() {
 }
 
 
-// --- ZENODO (Review Desk, Step 6) -------------------------------------------
+// --- ZENODO (Review Desk, Step 7) -------------------------------------------
 // Accepted abstracts with a DOI: settings, then per abstract Send as draft
 // (DOI reserved) and Publish (permanent). The server does the calls; see
 // zenodo.js and /api/admin/zenodo.
@@ -12346,7 +12435,7 @@ async function renderZenodo() {
   if (!data.success) { setText('zenodo-status', 'Zenodo: could not load'); return; }
   zenodoData = data;
   const s = data.settings;
-  // Switched off in Conference setup: no Step 6 at all, nor its tab.
+  // Switched off in Conference setup: no Step 7 at all, nor its tab.
   block.classList.toggle('hidden', !s.enabled);
   if (absStep != null) showAbstractStep(absStep);
   if (!s.enabled) return;
@@ -12540,7 +12629,7 @@ const absHits = {};
 const absStepShown = (n) => { const b = document.querySelector(`#section-abstracts .abs-panel[data-step="${n}"]`); return !!b && !b.classList.contains('hidden'); };
 
 function showAbstractStep(n, chosen) {
-  if (!absStepShown(n)) n = ['1', '2', '3', '4', '5', '6'].find(absStepShown) || '1';
+  if (!absStepShown(n)) n = ['1', '2', '3', '4', '5', '6', '7'].find(absStepShown) || '1';
   absStep = String(n);
   if (chosen) storageSet('session', ABS_STEP_KEY, absStep);
   document.querySelectorAll('#section-abstracts .abs-panel').forEach((p) => { p.style.display = p.dataset.step === absStep ? '' : 'none'; });
@@ -12561,7 +12650,7 @@ function abstractStepWithWork() {
 function drawAbstractTabs() {
   const waiting = { 1: absWait.review, 2: absWait.assign, 3: absWait.files, 4: absWait.unplaced };
   const words = { 1: 'to review', 2: 'to assign', 3: 'awaiting', 4: 'to place' };
-  ['1', '2', '3', '4', '5', '6'].forEach((n) => {
+  ['1', '2', '3', '4', '5', '6', '7'].forEach((n) => {
     const tab = document.getElementById(`abs-tab-${n}`);
     if (!tab) return;
     tab.classList.toggle('hidden', !absStepShown(n));
@@ -12636,6 +12725,7 @@ async function renderBackendAbstracts(local) {
     renderPresentations();
     renderPosterScreens();
     renderPrizes();
+    renderPresentationAttendance();
     const res = await fetch('/api/abstracts');
     if (!approvalBox || !assignBox) return;
     if (!res.ok) {
@@ -17825,6 +17915,8 @@ function certItems(x) {
     issueScope: 'workshop_faculty', ovKey: x.phone, ovScope: w.scope, override: w.override, include: false, kind: 'WORKSHOP_FACULTY', cert: `WORKSHOP_FACULTY:${w.optionId}` }));
   (x.prizes || []).forEach((r) => items.push({ title: `${r.label} · ${r.title}`, status: st(r.issued, r.eligible, null), reason: r.whyNot || '', issued: r.issued,
     issueScope: 'prizes', ovKey: x.phone, ovScope: '', override: null, include: false, kind: 'PRIZE', cert: `PRIZE:${r.abstractId}`, noExclude: true }));
+  (x.presentations || []).forEach((r) => items.push({ title: `Presentation · ${r.label} · ${r.title}`, status: st(r.issued, r.eligible, null), reason: r.whyNot || '', issued: r.issued,
+    issueScope: 'presentations', ovKey: x.phone, ovScope: '', override: null, include: false, kind: 'PRESENTATION', cert: `PRESENTATION:${r.abstractId}`, noExclude: true }));
   (x.roles || []).forEach((r) => items.push({ title: `${CERT_ROLE_WORD[r.kind]} · ${r.sessions.join('; ')}`, status: st(r.issued, r.eligible, r.override), reason: r.whyNot || '', issued: r.issued,
     issueScope: 'roles', ovKey: r.key, ovScope: `role:${r.kind}`, override: r.override, include: false, kind: r.kind, cert: r.kind }));
   return items;
@@ -17861,7 +17953,8 @@ async function renderCertificates() {
     ['workshops', 'Workshops', 'Marked present at the workshop, and its feedback given', issuedOf(['WORKSHOP'])],
     ['workshop_faculty', 'Workshop faculty', 'On a workshop’s roster, or named in its sessions', issuedOf(['WORKSHOP_FACULTY'])],
     ['roles', 'Speaker, judge, chair, moderator, panelist', 'From the programme, one per role naming the sessions', issuedOf(['SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST'])],
-    ['prizes', 'Prizes', '1st, 2nd and 3rd for oral, e-poster and award papers, chosen in Abstracts › Step 4', issuedOf(['PRIZE'])],
+    ['prizes', 'Prizes', '1st, 2nd and 3rd for oral, e-poster and award papers, chosen in Review Desk › Step 5', issuedOf(['PRIZE'])],
+    ['presentations', 'Presentations', 'Presenters marked Presented in Review Desk › Step 6, once that attendance is finalised (prize winners excepted)', issuedOf(['PRESENTATION'])],
   ];
   let total = 0;
   const emailedOf = (scope) => all.reduce((n, a) => n + a.items.filter((i) => i.issueScope === scope && i.issued && i.issued.email_status === 'SENT').length, 0);
@@ -18138,7 +18231,7 @@ async function setCertificateOverride(phone, scope, decision) {
 
 function issueCertificatesQuestion(scope) {
   const what = { conference: 'conference certificate', workshops: 'workshop certificate', faculty: 'faculty certificate',
-    workshop_faculty: 'workshop faculty certificate', roles: 'speaker, judge, chairperson, moderator and panelist certificate', prizes: 'prize certificate', volunteers: 'volunteer certificate', all: 'certificate' }[scope];
+    workshop_faculty: 'workshop faculty certificate', roles: 'speaker, judge, chairperson, moderator and panelist certificate', prizes: 'prize certificate', presentations: 'presentation certificate', volunteers: 'volunteer certificate', all: 'certificate' }[scope];
   const who = scope === 'all' ? 'Delegates and faculty with an account can download theirs from the portal.' : ['faculty', 'roles', 'workshop_faculty'].includes(scope) ? 'Faculty with an account can download theirs from the portal; for the rest, download it here.' : 'The delegate can download it from the portal.';
   return `Issue every ${what} now due? Each gets its number. ${who}`;
 }
@@ -18150,7 +18243,7 @@ async function issueCertificates(scope) {
   })).json();
   if (!data.success) return showToast(data.error || 'Could not issue.');
   const i = data.issued;
-  showToast(scope === 'all' ? `Issued ${data.total} certificates.` : scope === 'prizes' ? `Issued ${i.PRIZE} prize certificates.` : scope === 'volunteers' ? `Issued ${i.VOLUNTEER} volunteer certificates.` : scope === 'conference' ? `Issued ${i.MMC} with MMC points, ${i.NURSING} with Nursing points and ${i.CONF} participation certificates.`
+  showToast(scope === 'all' ? `Issued ${data.total} certificates.` : scope === 'prizes' ? `Issued ${i.PRIZE} prize certificates.` : scope === 'volunteers' ? `Issued ${i.VOLUNTEER} volunteer certificates.` : scope === 'presentations' ? `Issued ${i.PRESENTATION} presentation certificates.` : scope === 'conference' ? `Issued ${i.MMC} with MMC points, ${i.NURSING} with Nursing points and ${i.CONF} participation certificates.`
     : scope === 'faculty' ? `Issued ${i.FACULTY} faculty certificates.`
       : scope === 'workshop_faculty' ? `Issued ${i.WORKSHOP_FACULTY} workshop faculty certificates.`
         : scope === 'roles' ? `Issued ${i.SPEAKER} speaker, ${i.JUDGE} judge, ${i.CHAIR} chairperson, ${i.MODERATOR} moderator and ${i.PANELIST} panelist certificates.`
@@ -18214,14 +18307,15 @@ function loadCertificateSettingsCard() {
 // wording typed and not saved is kept per kind (drafts) and shown in the
 // live preview, which renders it on the server without saving.
 const CS_PARTS = [['points', 'Points and who earns them'], ['signatories', 'Signatories'], ['design', 'Design'], ['rules', 'Who qualifies']];
-const CS_GROUPS = [['Conference', ['MMC', 'NURSING', 'CONF']], ['Volunteers', ['VOLUNTEER']], ['Workshops', ['WORKSHOP', 'WORKSHOP_FACULTY']],
+const CS_GROUPS = [['Conference', ['MMC', 'NURSING', 'CONF']], ['Volunteers', ['VOLUNTEER']], ['Presentations', ['PRESENTATION']], ['Workshops', ['WORKSHOP', 'WORKSHOP_FACULTY']],
   // The Faculty certificate is retired (20 Nov 2026): Speaker is theirs.
   ['Session roles', ['SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE']], ['Prizes', ['PRIZE']]];
 const CS_RETIRED = ['FACULTY'];
 const CS_SHORT = { MMC: 'With MMC points', NURSING: 'With Nursing points', CONF: 'Participation', VOLUNTEER: 'Volunteer', WORKSHOP: 'Workshop', WORKSHOP_FACULTY: 'Workshop faculty',
-  FACULTY: 'Faculty', SPEAKER: 'Speaker', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist', JUDGE: 'Judge', PRIZE: 'Prize' };
+  FACULTY: 'Faculty', SPEAKER: 'Speaker', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist', JUDGE: 'Judge', PRIZE: 'Prize', PRESENTATION: 'Presentation' };
 const CS_WHO = {
-  PRIZE: 'The presenters of the papers chosen 1st, 2nd and 3rd for oral, e-poster and award papers (Abstracts › Step 4).',
+  PRESENTATION: 'The presenting author of each oral, e-poster and award paper marked Presented in Review Desk › Step 6, once that attendance is finalised. Prize winners get the prize certificate instead.',
+  PRIZE: 'The presenters of the papers chosen 1st, 2nd and 3rd for oral, e-poster and award papers (Review Desk › Step 5).',
   MMC: 'Every Doctor and Medical PG registered, paid and checked in at the desk (a council number is not needed).',
   NURSING: 'Nurses in the categories that earn Nursing points, registered, paid and checked in at the desk.',
   CONF: 'Everyone else registered, paid and checked in at the desk.',
@@ -18240,7 +18334,7 @@ const CS_FIELDS = { name: 'Name', conference: 'Conference', acronym: 'Short name
 const csFieldsFor = (kind) => Object.keys(CS_FIELDS).filter((k) => !((/^mmc_|^council/.test(k) && kind !== 'MMC')
   || (/^nursing_/.test(k) && kind !== 'NURSING') || (/^workshop/.test(k) && !/^WORKSHOP/.test(kind))
   || (k === 'sessions' && !['SPEAKER', 'CHAIR', 'MODERATOR', 'PANELIST', 'JUDGE'].includes(kind))
-  || (['prize', 'presentation', 'paper'].includes(k) && kind !== 'PRIZE')));
+  || (k === 'prize' && kind !== 'PRIZE') || (['presentation', 'paper'].includes(k) && kind !== 'PRIZE' && kind !== 'PRESENTATION')));
 const csState = { d: null, view: 'MMC', drafts: {}, points: null, timer: null, url: null, seq: 0, shownFor: {} };
 // "XXX", "MMC/…/XXXXX", "—", blank: not a real value yet.
 const csPlaceholder = (v) => { const t = String(v == null ? '' : v).trim(); return !t || /x{3,}/i.test(t) || /^x+$/i.test(t) || /^[-—–?]+$/.test(t); };

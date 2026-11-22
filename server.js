@@ -2183,6 +2183,24 @@ db.serialize(() => {
   `);
   // Oral and award papers in their sessions' running order (owner, 20 Nov
   // 2026: "for oral presentation also, allow me to select the sequence").
+  // Presentation attendance (owner, 22 Nov 2026; Review Desk Step 6): each
+  // paper marked presented (1) or absent (0); each kind (ORAL, POSTER,
+  // AWARD) finalised once, after which its presenters' certificates are due.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS presentation_attendance (
+      abstract_id INTEGER PRIMARY KEY,
+      presented INTEGER NOT NULL,
+      marked_by TEXT,
+      marked_at INTEGER NOT NULL
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS presentation_attendance_final (
+      format TEXT PRIMARY KEY,
+      finalised_by TEXT,
+      finalised_at INTEGER NOT NULL
+    )
+  `);
   // Each workshop's feedback summed up by Claude (workshop-summary.js; owner,
   // 22 Nov 2026): made when a super admin asks, kept with the number of
   // responses it was made from. strengths and improvements: JSON arrays.
@@ -10879,22 +10897,26 @@ app.delete('/api/attendance/:id', requirePermission('attendance.manage'), async 
 // judge, chairperson, moderator, panelist -- naming the sessions.
 // Volunteers (owner, 22 Nov 2026): a registration in the Volunteer category
 // gets the Volunteer certificate in place of the delegates' one.
-const CERT_KINDS = ['MMC', 'NURSING', 'CONF', 'VOLUNTEER', 'WORKSHOP', 'WORKSHOP_FACULTY', 'FACULTY', 'SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST', 'PRIZE'];
+// Presenters (owner, 22 Nov 2026): a Presentation certificate for each oral,
+// e-poster and award paper presented, once Step 6's attendance is final.
+const CERT_KINDS = ['MMC', 'NURSING', 'CONF', 'VOLUNTEER', 'WORKSHOP', 'WORKSHOP_FACULTY', 'FACULTY', 'SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST', 'PRIZE', 'PRESENTATION'];
 // Prizes (21 Nov 2026): which, and for what.
 const PRIZE_RANK = { 1: 'First Prize', 2: 'Second Prize', 3: 'Third Prize' };
 const PRIZE_FORMAT = { ORAL: 'Oral Paper Presentation', POSTER: 'E-Poster Presentation', AWARD: 'Award Paper Presentation' };
 const PRIZE_SPECIMEN = JSON.stringify({ rank: 1, format: 'ORAL', title: 'An Example Paper on Quality in Nursing Care' });
+const PRESENTATION_SPECIMEN = JSON.stringify({ format: 'POSTER', title: 'An Example Paper on Quality in Nursing Care' });
 const prizeDetail = (c) => { try { return JSON.parse(c.detail || '{}'); } catch (e) { return {}; } };
 // The one certificate a registration gets for the conference itself.
 const CONF_KINDS = ['MMC', 'NURSING', 'CONF', 'VOLUNTEER'];
 const CERT_ROLE_KINDS = ['SPEAKER', 'JUDGE', 'CHAIR', 'MODERATOR', 'PANELIST'];
 const CERT_KIND_CODE = { MMC: 'MMC', NURSING: 'N', CONF: 'P', VOLUNTEER: 'V', WORKSHOP: 'W', WORKSHOP_FACULTY: 'WF', FACULTY: 'F',
-  SPEAKER: 'S', JUDGE: 'J', CHAIR: 'C', MODERATOR: 'MO', PANELIST: 'PN', PRIZE: 'PR' };
+  SPEAKER: 'S', JUDGE: 'J', CHAIR: 'C', MODERATOR: 'MO', PANELIST: 'PN', PRIZE: 'PR', PRESENTATION: 'PS' };
 const CERT_KIND_LABEL = { MMC: 'Conference, with MMC points', NURSING: 'Conference, with Nursing points', CONF: 'Conference, participation',
   VOLUNTEER: 'Conference, volunteer', WORKSHOP: 'Workshop', WORKSHOP_FACULTY: 'Workshop faculty', FACULTY: 'Faculty',
-  SPEAKER: 'Speaker', JUDGE: 'Judge', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist', PRIZE: 'Prize' };
+  SPEAKER: 'Speaker', JUDGE: 'Judge', CHAIR: 'Chairperson', MODERATOR: 'Moderator', PANELIST: 'Panelist', PRIZE: 'Prize', PRESENTATION: 'Presentation' };
 const certKindLabel = (c) => (c.kind === 'WORKSHOP' ? `Workshop: ${c.workshop_name}` : c.kind === 'WORKSHOP_FACULTY' ? `Workshop faculty: ${c.workshop_name}`
-  : c.kind === 'PRIZE' ? (() => { const d = prizeDetail(c); return `${PRIZE_RANK[d.rank] || 'Prize'}, ${PRIZE_FORMAT[d.format] || 'presentation'}`; })() : CERT_KIND_LABEL[c.kind]);
+  : c.kind === 'PRIZE' ? (() => { const d = prizeDetail(c); return `${PRIZE_RANK[d.rank] || 'Prize'}, ${PRIZE_FORMAT[d.format] || 'presentation'}`; })()
+    : c.kind === 'PRESENTATION' ? `Presentation, ${PRIZE_FORMAT[prizeDetail(c).format] || 'paper'}` : CERT_KIND_LABEL[c.kind]);
 // A programme role's certificate, from the session it is in: a panel's
 // speakers are panelists and its chairs moderators; the chairs of a judged
 // session (award, oral or poster presentations) are judges; elsewhere,
@@ -10966,6 +10988,10 @@ const CERT_TEMPLATE_DEFAULTS = {
     title: 'Certificate', subtitle: 'of Merit', lead: 'This is to certify that',
     body: 'has been awarded the **{{prize}}** in the **{{presentation}}** for the paper titled **“{{paper}}”** at the **{{conference}}** held at {{venue}} on {{dates}}.',
   },
+  PRESENTATION: {
+    title: 'Certificate', subtitle: 'of Presentation', lead: 'This is to certify that',
+    body: 'has presented the paper titled **“{{paper}}”** in the **{{presentation}}** at the **{{conference}}** held at {{venue}} on {{dates}}.',
+  },
 };
 const CERT_PLACEHOLDERS = {
   name: 'The name on the certificate', council: 'Their Medical Council', council_reg_no: 'Their registration number',
@@ -10974,7 +11000,7 @@ const CERT_PLACEHOLDERS = {
   mmc_accreditation_no: 'The MMC accreditation number', mmc_points: 'The MMC credit points', cert_no: 'The certificate number',
   nursing_council: 'The Nursing Council', nursing_accreditation_no: 'Its accreditation number', nursing_points: 'The Nursing credit points',
   sessions: 'The session(s) of a speaker, judge, chairperson, moderator or panelist',
-  prize: 'The prize: First, Second or Third Prize', presentation: 'Oral, e-poster or award paper presentation', paper: 'The winning paper\'s title',
+  prize: 'The prize: First, Second or Third Prize', presentation: 'Oral, e-poster or award paper presentation', paper: 'The paper\'s title (prizes and presentations)',
 };
 
 // A signatory marked mmc_only (the MMC Observer) signs only the
@@ -11212,6 +11238,22 @@ async function certificateCandidates() {
   // The prize winners, each to the presenter's account (21 Nov 2026).
   const prizeRows = await dbAll(`SELECT p.format, p.rank, p.abstract_id, a.title, a.phone_number FROM presentation_prizes p
       JOIN abstracts a ON a.id = p.abstract_id ORDER BY p.format, p.rank`).catch(() => []);
+  // Presentations (22 Nov 2026): the presenting author of each accepted oral,
+  // e-poster and award paper, due once that kind's attendance is final
+  // (Step 6) and they were marked presented. A prize winner gets the prize
+  // certificate only (owner) -- unless one was issued before the prize.
+  const presRows = await dbAll(`SELECT a.id, a.title, a.allocation, a.phone_number, pa.presented
+      FROM abstracts a LEFT JOIN presentation_attendance pa ON pa.abstract_id = a.id
+     WHERE a.status = 'ACCEPTED' AND a.decision_sent_at IS NOT NULL AND a.allocation IN ('ORAL', 'POSTER', 'AWARD')`).catch(() => []);
+  const finalised = new Set((await dbAll('SELECT format FROM presentation_attendance_final').catch(() => [])).map((f) => f.format));
+  const winners = new Set(prizeRows.map((x) => Number(x.abstract_id)));
+  const presentationsFor = (phone, paid) => presRows.filter((x) => x.phone_number === phone).map((x) => {
+    const cert = issued.find((c) => c.kind === 'PRESENTATION' && c.phone_number === phone && Number(c.option_id) === Number(x.id)) || null;
+    if (winners.has(Number(x.id)) && !cert) return null;
+    const whyNot = !finalised.has(x.allocation) ? 'Presentation attendance not finalised yet'
+      : Number(x.presented) !== 1 ? 'Marked absent' : !paid ? 'Payment not complete' : null;
+    return { kind: 'PRESENTATION', format: x.allocation, abstractId: x.id, title: x.title, label: PRIZE_FORMAT[x.allocation], eligible: !whyNot, whyNot, issued: cert };
+  }).filter(Boolean);
   const prizesFor = (phone) => prizeRows.filter((x) => x.phone_number === phone).map((x) => ({
     kind: 'PRIZE', format: x.format, rank: Number(x.rank), abstractId: x.abstract_id, title: x.title,
     label: `${PRIZE_RANK[x.rank]}, ${PRIZE_FORMAT[x.format]}`, eligible: true, whyNot: null,
@@ -11289,6 +11331,7 @@ async function certificateCandidates() {
       roles: facultyByPhone.has(r.phone_number) ? rolesFor(facultyByPhone.get(r.phone_number).guestId) : delegateJudgeRoles(r.phone_number),
       workshopFaculty: workshopFacultyFor(r.phone_number),
       prizes: prizesFor(r.phone_number),
+      presentations: presentationsFor(r.phone_number, paid),
     };
   });
   // Faculty who have not registered: here for their faculty certificates
@@ -11301,7 +11344,7 @@ async function certificateCandidates() {
       councilName: null, councilRegNo: null, mmcCategory: false, paid: false, attended: [], parts: [], missing: [], complete: false,
       notRegistered: true,
       conference: { kind: null, whyNot: f.linked ? 'Not registered' : 'Not signed up', override: null, issued: null },
-      workshops: [], faculty: f.entry, roles: rolesFor(f.entry.guestId), workshopFaculty: workshopFacultyFor(f.phone), prizes: [],
+      workshops: [], faculty: f.entry, roles: rolesFor(f.entry.guestId), workshopFaculty: workshopFacultyFor(f.phone), prizes: [], presentations: [],
     });
   }
   return people.sort((a, b) => String(a.name).localeCompare(String(b.name)));
@@ -11378,9 +11421,10 @@ async function certificatePdf(cert, { specimen = false, draft = null } = {}) {
     workshop: cert.workshop_name || '', workshop_date: cert.workshop_date ? attendanceLib.dateRange(cert.workshop_date, cert.workshop_date) : '',
     mmc_accreditation_no: settings.mmc.accreditationNo, mmc_points: settings.mmc.points, cert_no: cert.cert_no,
     nursing_council: settings.nursing.councilLabel, nursing_accreditation_no: settings.nursing.accreditationNo || '—', nursing_points: settings.nursing.points || '—',
-    sessions: cert.kind === 'PRIZE' ? '' : (cert.detail || ''),
+    sessions: cert.kind === 'PRIZE' || cert.kind === 'PRESENTATION' ? '' : (cert.detail || ''),
     // A prize: which, for what, and the paper (21 Nov 2026).
     ...(cert.kind === 'PRIZE' ? (() => { const d = prizeDetail(cert); return { prize: PRIZE_RANK[d.rank] || 'Prize', presentation: PRIZE_FORMAT[d.format] || '', paper: d.title || cert.workshop_name || '' }; })() : {}),
+    ...(cert.kind === 'PRESENTATION' ? (() => { const d = prizeDetail(cert); return { presentation: PRIZE_FORMAT[d.format] || '', paper: d.title || cert.workshop_name || '' }; })() : {}),
   };
   const fill = (t) => String(t || '').replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (w, k) => (values[k] == null ? w : String(values[k])));
   const readUpload = async (file) => (file ? fs.promises.readFile(path.join(UPLOAD_DIR, path.basename(file))).catch(() => null) : null);
@@ -11614,7 +11658,7 @@ app.get('/api/admin/certificates/preview.pdf', requirePermission('certificates.v
     const ws = (kind === 'WORKSHOP' || kind === 'WORKSHOP_FACULTY') && /^\d+$/.test(String(req.query.option || '')) ? (await certificateWorkshops()).get(Number(req.query.option)) : null;
     const facultyKind = ['FACULTY', 'WORKSHOP_FACULTY', ...CERT_ROLE_KINDS].includes(kind);
     const pdf = await certificatePdf({
-      kind, name: facultyKind ? 'Dr Example Faculty' : 'Dr Example Delegate', detail: kind === 'PRIZE' ? PRIZE_SPECIMEN : certSessionList(kind === 'JUDGE' ? ['Award Paper Presentations'] : ['An Example Session']), council_name: 'Maharashtra Medical Council', council_reg_no: '2012/03/1234', category_label: 'Doctor',
+      kind, name: facultyKind ? 'Dr Example Faculty' : 'Dr Example Delegate', detail: kind === 'PRIZE' ? PRIZE_SPECIMEN : kind === 'PRESENTATION' ? PRESENTATION_SPECIMEN : certSessionList(kind === 'JUDGE' ? ['Award Paper Presentations'] : ['An Example Session']), council_name: 'Maharashtra Medical Council', council_reg_no: '2012/03/1234', category_label: 'Doctor',
       workshop_name: ws ? ws.name : 'Example Workshop', workshop_date: ws ? ws.date : CONFERENCE.startDate, option_id: ws ? ws.optionId : null,
       cert_no: `${certPrefix()}/${CERT_KIND_CODE[kind]}/0000`, verify_code: 'SPECIMEN00',
     }, { specimen: true });
@@ -11634,7 +11678,7 @@ app.post('/api/admin/certificates/preview.pdf', requirePermission('certificates.
     const ws = (kind === 'WORKSHOP' || kind === 'WORKSHOP_FACULTY') && /^\d+$/.test(String(req.body.option || '')) ? (await certificateWorkshops()).get(Number(req.body.option)) : null;
     const facultyKind = ['FACULTY', 'WORKSHOP_FACULTY', ...CERT_ROLE_KINDS].includes(kind);
     const cert = {
-      kind, name: facultyKind ? 'Dr Example Faculty' : 'Dr Example Delegate', detail: kind === 'PRIZE' ? PRIZE_SPECIMEN : certSessionList(kind === 'JUDGE' ? ['Award Paper Presentations'] : ['An Example Session']),
+      kind, name: facultyKind ? 'Dr Example Faculty' : 'Dr Example Delegate', detail: kind === 'PRIZE' ? PRIZE_SPECIMEN : kind === 'PRESENTATION' ? PRESENTATION_SPECIMEN : certSessionList(kind === 'JUDGE' ? ['Award Paper Presentations'] : ['An Example Session']),
       council_name: 'Maharashtra Medical Council', council_reg_no: '2012/03/1234', category_label: 'Doctor',
       workshop_name: ws ? ws.name : 'Example Workshop', workshop_date: ws ? ws.date : CONFERENCE.startDate, option_id: ws ? ws.optionId : null,
       cert_no: `${certPrefix()}/${CERT_KIND_CODE[kind]}/0000`, verify_code: 'SPECIMEN00',
@@ -11649,6 +11693,8 @@ app.post('/api/admin/certificates/preview.pdf', requirePermission('certificates.
       if (role) cert.detail = certSessionList(role.sessions);
       const prize = kind === 'PRIZE' ? (who.prizes || [])[0] : null;
       if (prize) cert.detail = JSON.stringify({ rank: prize.rank, format: prize.format, title: prize.title });
+      const pres = kind === 'PRESENTATION' ? (who.presentations || [])[0] : null;
+      if (pres) cert.detail = JSON.stringify({ format: pres.format, title: pres.title });
       const w = kind === 'WORKSHOP' ? (who.workshops || []).find((x) => x.eligible) : kind === 'WORKSHOP_FACULTY' ? (who.workshopFaculty || [])[0] : null;
       if (w) Object.assign(cert, { workshop_name: w.name, workshop_date: w.date, option_id: w.optionId });
     }
@@ -11895,6 +11941,10 @@ app.get('/api/admin/certificates/person-preview.pdf', requirePermission('certifi
       const prize = (person.prizes || []).find((x) => Number(x.abstractId) === Number(m[2]));
       if (!prize) return res.status(400).json({ success: false, error: 'Which prize?' });
       detail = JSON.stringify({ rank: prize.rank, format: prize.format, title: prize.title });
+    } else if (kind === 'PRESENTATION') {
+      const pres = (person.presentations || []).find((x) => Number(x.abstractId) === Number(m[2]));
+      if (!pres) return res.status(400).json({ success: false, error: 'Which presentation?' });
+      detail = JSON.stringify({ format: pres.format, title: pres.title });
     }
     const pdf = await certificatePdf({
       kind, name: person.name, council_name: kind === 'MMC' ? person.councilName : null, council_reg_no: kind === 'MMC' ? person.councilRegNo : null,
@@ -11935,6 +11985,8 @@ function certificateLines(p) {
   (p.workshopFaculty || []).forEach((w) => line(`Workshop faculty · ${w.name}`, w.issued, w.eligible, w.override, w.whyNot));
   type = 'Prize';
   (p.prizes || []).forEach((x) => line(`${x.label} · ${x.title}`, x.issued, x.eligible, null, x.whyNot));
+  type = 'Presentation';
+  (p.presentations || []).forEach((x) => line(`Presentation · ${x.label} · ${x.title}`, x.issued, x.eligible, null, x.whyNot));
   (p.roles || []).forEach((r) => { type = CERT_KIND_LABEL[r.kind]; line(`${CERT_KIND_LABEL[r.kind]} · ${r.sessions.join('; ')}`, r.issued, r.eligible, r.override, r.whyNot); });
   return lines;
 }
@@ -12002,7 +12054,7 @@ app.post('/api/admin/certificates/force', requirePermission('certificates.issue'
 // ('faculty'), or all of them ('all').
 app.post('/api/admin/certificates/issue', requirePermission('certificates.issue'), async (req, res, next) => {
   try {
-    const scope = ['conference', 'volunteers', 'workshops', 'workshop_faculty', 'faculty', 'roles', 'prizes', 'all'].includes(req.body.scope) ? req.body.scope : null;
+    const scope = ['conference', 'volunteers', 'workshops', 'workshop_faculty', 'faculty', 'roles', 'prizes', 'presentations', 'all'].includes(req.body.scope) ? req.body.scope : null;
     if (!scope) return res.status(400).json({ success: false, error: 'Choose what to issue.' });
     const only = Array.isArray(req.body.phones) && req.body.phones.length ? new Set(req.body.phones.map(String)) : null;
     const counts = Object.fromEntries(CERT_KINDS.map((k) => [k, 0]));
@@ -12046,6 +12098,13 @@ app.post('/api/admin/certificates/issue', requirePermission('certificates.issue'
           if (!x.eligible || x.issued) continue;
           await issueCertificate(req, p, 'PRIZE', { optionId: x.abstractId, name: x.title, date: null }, JSON.stringify({ rank: x.rank, format: x.format, title: x.title }));
           counts.PRIZE++;
+        }
+      }
+      if (doing('presentations')) {
+        for (const x of p.presentations || []) {
+          if (!x.eligible || x.issued) continue;
+          await issueCertificate(req, p, 'PRESENTATION', { optionId: x.abstractId, name: x.title, date: null }, JSON.stringify({ format: x.format, title: x.title }));
+          counts.PRESENTATION++;
         }
       }
     }
@@ -17456,6 +17515,10 @@ app.put('/api/admin/prizes', requirePermission('abstracts.assign'), async (req, 
     } else {
       const a = await dbGet("SELECT id, title, allocation FROM abstracts WHERE id = ? AND status = 'ACCEPTED' AND decision_sent_at IS NOT NULL", [Number(req.body.abstractId)]);
       if (!a || a.allocation !== format) return res.status(400).json({ success: false, error: `Choose a paper presented as ${PRIZE_FORMAT[format].toLowerCase()}.` });
+      // A winner gets the prize certificate only: not one whose presentation
+      // certificate is out already (withdraw that first).
+      const pres = await dbGet("SELECT cert_no FROM certificates WHERE kind = 'PRESENTATION' AND option_id = ? AND revoked_at IS NULL", [a.id]);
+      if (pres) return res.status(409).json({ success: false, error: `Its presentation certificate is issued (${pres.cert_no}): a winner gets the prize certificate only. Withdraw that first.` });
       const other = await dbGet('SELECT rank FROM presentation_prizes WHERE format = ? AND abstract_id = ? AND rank != ?', [format, a.id, rank]);
       if (other) return res.status(409).json({ success: false, error: `That paper already has the ${PRIZE_RANK[other.rank].toLowerCase()}.` });
       await dbRun('INSERT OR REPLACE INTO presentation_prizes (format, rank, abstract_id, set_by, set_at) VALUES (?, ?, ?, ?, ?)',
@@ -17468,6 +17531,108 @@ app.put('/api/admin/prizes', requirePermission('abstracts.assign'), async (req, 
     next(err);
   }
 });
+// --- PRESENTATION ATTENDANCE (Review Desk Step 6; owner, 22 Nov 2026) -------
+// Each oral, e-poster and award paper marked Presented or Absent, in its
+// running order; then each kind finalised, which makes its presenters'
+// certificates due. Finalised marks are locked; a super admin may reopen a
+// kind while none of its certificates is issued.
+const ATTENDANCE_FORMATS = ['ORAL', 'POSTER', 'AWARD'];
+async function presentationAttendance(format) {
+  const marks = new Map((await dbAll('SELECT * FROM presentation_attendance')).map((m) => [Number(m.abstract_id), m]));
+  const fin = await dbGet('SELECT * FROM presentation_attendance_final WHERE format = ?', [format]);
+  const paper = (p) => {
+    const m = marks.get(Number(p.id));
+    return { id: p.id, place: p.place || null, time: p.time || null, presenter: p.presenter, regNo: p.regNo || '', title: p.title,
+      presented: m ? Number(m.presented) === 1 : null, markedBy: m ? m.marked_by : null, markedAt: m ? Number(m.marked_at) : null };
+  };
+  const groups = [];
+  if (format === 'POSTER') {
+    const b = await posterBoard();
+    for (const x of b.sessions) {
+      for (const sc of x.screens) {
+        if (sc.posters.length) groups.push({ title: `${x.title} · ${sc.name}`, sub: [x.day, `${x.startTime}–${x.endTime}`, x.hall].filter(Boolean).join(' · '), papers: sc.posters.map(paper) });
+      }
+    }
+    if (b.unallotted.length) groups.push({ title: 'Not on a screen', sub: '', papers: b.unallotted.map(paper) });
+  } else {
+    const b = await oralBoard(format);
+    for (const x of b.sessions) if (x.items.length) groups.push({ title: x.title, sub: [x.day, `${x.startTime}–${x.endTime}`, x.hall].filter(Boolean).join(' · '), papers: x.items.map(paper) });
+    if (b.unallotted.length) groups.push({ title: 'Not placed in a session', sub: '', papers: b.unallotted.map(paper) });
+  }
+  const all = groups.flatMap((g) => g.papers);
+  const issued = (await dbGet(`SELECT COUNT(*) AS n FROM certificates c JOIN abstracts a ON a.id = c.option_id
+     WHERE c.kind = 'PRESENTATION' AND c.revoked_at IS NULL AND a.allocation = ?`, [format])).n;
+  return { format, label: PRIZE_FORMAT[format], groups,
+    counts: { total: all.length, presented: all.filter((p) => p.presented === true).length, absent: all.filter((p) => p.presented === false).length, unmarked: all.filter((p) => p.presented === null).length },
+    finalised: fin ? { by: fin.finalised_by, at: Number(fin.finalised_at) } : null, issued };
+}
+const attendanceFormat = (v) => (ATTENDANCE_FORMATS.includes(String(v || '')) ? String(v) : null);
+
+app.get('/api/admin/presentation-attendance', requirePermission('abstracts.view'), async (req, res, next) => {
+  try {
+    const format = attendanceFormat(req.query.format) || 'ORAL';
+    res.json({ success: true, ...(await presentationAttendance(format)), superAdmin: req.session.role === 'SUPER_ADMIN' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// One paper: presented true/false, or null to clear. Not once its kind is final.
+app.put('/api/admin/presentation-attendance', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const a = await dbGet("SELECT id, allocation FROM abstracts WHERE id = ? AND status = 'ACCEPTED' AND allocation IN ('ORAL', 'POSTER', 'AWARD')", [Number(req.body.abstractId)]);
+    if (!a) return res.status(404).json({ success: false, error: 'No such paper.' });
+    if (await dbGet('SELECT 1 AS y FROM presentation_attendance_final WHERE format = ?', [a.allocation])) {
+      return res.status(409).json({ success: false, error: 'This attendance is finalised. A super admin can reopen it.' });
+    }
+    const p = req.body.presented;
+    if (p === null) await dbRun('DELETE FROM presentation_attendance WHERE abstract_id = ?', [a.id]);
+    else if (p === true || p === false) {
+      await dbRun('INSERT OR REPLACE INTO presentation_attendance (abstract_id, presented, marked_by, marked_at) VALUES (?, ?, ?, ?)',
+        [a.id, p ? 1 : 0, req.session.name || req.session.phone, Date.now()]);
+    } else return res.status(400).json({ success: false, error: 'Presented or absent?' });
+    await recordAudit({ req, entityType: 'abstract', entityId: a.id, action: 'PRESENTATION_ATTENDANCE', oldValue: null, newValue: p === null ? 'cleared' : p ? 'presented' : 'absent' });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Finalise one kind: every paper marked first; then its certificates are due.
+app.post('/api/admin/presentation-attendance/finalise', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const format = attendanceFormat(req.body.format);
+    if (!format) return res.status(400).json({ success: false, error: 'Which presentations?' });
+    const v = await presentationAttendance(format);
+    if (v.finalised) return res.status(409).json({ success: false, error: 'Already finalised.' });
+    if (!v.counts.total) return res.status(400).json({ success: false, error: 'No papers to finalise.' });
+    if (v.counts.unmarked) return res.status(400).json({ success: false, error: `${v.counts.unmarked} ${v.counts.unmarked === 1 ? 'paper is' : 'papers are'} not marked yet: mark each Presented or Absent first.` });
+    await dbRun('INSERT INTO presentation_attendance_final (format, finalised_by, finalised_at) VALUES (?, ?, ?)', [format, req.session.name || req.session.phone, Date.now()]);
+    await recordAudit({ req, entityType: 'presentation_attendance', entityId: format, action: 'PRESENTATION_ATTENDANCE_FINALISED', oldValue: null,
+      newValue: `${v.counts.presented} presented, ${v.counts.absent} absent` });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Reopen (a super admin): only while none of that kind's certificates is out.
+app.post('/api/admin/presentation-attendance/reopen', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    if (req.session.role !== 'SUPER_ADMIN') return res.status(403).json({ success: false, error: 'Only a super admin can reopen finalised attendance.' });
+    const format = attendanceFormat(req.body.format);
+    if (!format) return res.status(400).json({ success: false, error: 'Which presentations?' });
+    const v = await presentationAttendance(format);
+    if (!v.finalised) return res.status(409).json({ success: false, error: 'It is not finalised.' });
+    if (v.issued) return res.status(409).json({ success: false, error: `${v.issued} of its certificates ${v.issued === 1 ? 'is' : 'are'} issued: withdraw ${v.issued === 1 ? 'it' : 'them'} on the Certificates page first.` });
+    await dbRun('DELETE FROM presentation_attendance_final WHERE format = ?', [format]);
+    await recordAudit({ req, entityType: 'presentation_attendance', entityId: format, action: 'PRESENTATION_ATTENDANCE_REOPENED', oldValue: 'finalised', newValue: 'open' });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- AI SUMMARIES OF WORKSHOP FEEDBACK (workshop-summary.js) -----------------
 // Owner, 22 Nov 2026: a super admin -- the role itself -- makes them and sets
 // the key; anyone who can open the report reads them, there and in its PDF.

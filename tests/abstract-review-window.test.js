@@ -20,9 +20,9 @@ function makeDoc() {
       setAttribute: (k, v) => { attrs[k] = String(v); }, getAttribute: (k) => attrs[k], querySelector: () => null, scrollIntoView() {}, ...extra };
     return e;
   };
-  const panels = ['1', '2', '3', '4', '5', '6'].map((n) => { const p = el(`panel-${n}`); p.dataset.step = n; return p; });
+  const panels = ['1', '2', '3', '4', '5', '6', '7'].map((n) => { const p = el(`panel-${n}`); p.dataset.step = n; return p; });
   panels[4].classList.add('hidden');                     // Prizes, not loaded
-  panels[5].classList.add('hidden');                     // Zenodo, switched off
+  panels[6].classList.add('hidden');                     // Zenodo, switched off
   const doc = {
     getElementById: (id) => { if (!els[id]) els[id] = el(id); return els[id]; },
     querySelector: (sel) => { const m = /data-step="(\d)"/.exec(sel); return m ? panels[Number(m[1]) - 1] : null; },
