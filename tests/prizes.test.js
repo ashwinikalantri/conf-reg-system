@@ -82,6 +82,22 @@ const N = String(Date.now()).slice(-7);
     check('an issued place cannot be moved until its certificate is withdrawn', moved.status === 409 && moved.body.error.includes(row.cert_no), moved.body);
     const dl = await call('GET', `/api/admin/certificates/${row.id}.pdf`, null, admin);
     check('the issued certificate prints', dl.status === 200, dl.status);
+    // Withdraw and Correct find the certificate they act on among everything
+    // the person panel lists -- a prize too (22 Nov 2026: Withdraw did nothing).
+    {
+      const vm = require('vm');
+      const src = fs.readFileSync(appFile('public', 'app.js'), 'utf8');
+      const grab = (start) => { const i = src.indexOf(start); return src.slice(i, src.indexOf('\n}\n', i) + 3); };
+      const ctx = { certState: { people: [p1] }, certPreviewUrl: () => '' };
+      vm.createContext(ctx);
+      vm.runInContext(`${src.match(/const CERT_CONF_WORD = [^\n]+/)[0]}\n${src.match(/const CERT_ROLE_WORD = [^\n]+/)[0]}\n${grab('function certItems(x)')}\n${grab('function issuedCertificate(id)')}\nthis.find = issuedCertificate;`, ctx);
+      const found = ctx.find(row.id);
+      check('Withdraw and Correct find an issued prize certificate', found && found.cert_no === row.cert_no, found);
+    }
+    const wd = await call('POST', `/api/admin/certificates/${row.id}/revoke`, { reason: 'Test withdrawal' }, admin);
+    check('...and it can be withdrawn', wd.body.success && !!(await db.get('SELECT revoked_at FROM certificates WHERE id = ?', [row.id])).revoked_at, wd.body);
+    const freed = await call('PUT', '/api/admin/prizes', { format: 'ORAL', rank: 1, abstractId: oral2 }, admin);
+    check('...after which its place can be given to another paper', freed.body.success, freed.body);
 
     console.log('\n== The pages ==');
     const js = fs.readFileSync(appFile('public', 'app.js'), 'utf8');

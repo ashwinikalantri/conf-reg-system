@@ -18107,14 +18107,14 @@ async function issueCertificates(scope) {
 }
 
 // An issued certificate on the list, by id.
+// An issued certificate, from everything the person panel lists for anyone
+// -- so a kind added later (prizes were missed, 22 Nov 2026) is found too.
 function issuedCertificate(id) {
   for (const x of certState.people) {
-    if (x.conference.issued && x.conference.issued.id === id) return x.conference.issued;
-    const w = x.workshops.find((y) => y.issued && y.issued.id === id);
-    if (w) return w.issued;
-    if (x.faculty && x.faculty.issued && x.faculty.issued.id === id) return x.faculty.issued;
-    const other = [...(x.workshopFaculty || []), ...(x.roles || [])].find((y) => y.issued && y.issued.id === id);
-    if (other) return other.issued;
+    const it = certItems(x).find((i) => i.issued && Number(i.issued.id) === Number(id));
+    if (it) return it.issued;
+    // The Faculty list's own (retired), not listed in the panel.
+    if (x.faculty && x.faculty.issued && Number(x.faculty.issued.id) === Number(id)) return x.faculty.issued;
   }
   return null;
 }
