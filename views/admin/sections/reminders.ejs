@@ -122,6 +122,11 @@
             <button id="rem-send-btn" onclick="sendReminders()" class="px-4 py-2.5 bg-navy hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm rounded-xl shadow-md">Send to <span id="rem-send-count">0</span></button>
             <span id="rem-send-result" class="text-xs font-semibold"></span>
           </div>
+          <!-- The 24-hour limit, set aside for one send (owner, 22 Nov 2026). -->
+          <label class="mt-3 flex items-start gap-2 text-sm text-slate-700 select-none cursor-pointer">
+            <input type="checkbox" id="rem-ignore-cooldown" onchange="setReminderIgnoreCooldown(this.checked)" class="mt-1 shrink-0">
+            <span><b>Include people emailed in the last 24 hours</b> <span class="text-slate-500">— for this send only; turns itself off afterwards.</span></span>
+          </label>
         </div>
       </div>
 

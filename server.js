@@ -9493,13 +9493,13 @@ app.post('/api/admin/reminders/audiences/:key/test', requirePermission('comms.re
 });
 
 // Records a send for the Sent history: what went, to whom, what was skipped.
-async function recordReminderSend(req, a, filters, subject, bodyHtml, outcomes) {
+async function recordReminderSend(req, a, filters, subject, bodyHtml, outcomes, ignoredCooldown = false) {
   const counts = (o) => outcomes.filter((x) => x.outcome === o).length;
   const r = await dbRun(
     `INSERT INTO reminder_sends (audience, filters, subject, body_html, requested, sent, skipped, sent_by_phone, sent_by_name, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [a.key, JSON.stringify(filters), subject, bodyHtml, outcomes.length, counts('sent'),
-      JSON.stringify({ cooldown: counts('cooldown'), noEmail: counts('no_email'), invalid: counts('invalid'), noLongerDue: counts('no_longer_due') }),
+      JSON.stringify({ cooldown: counts('cooldown'), noEmail: counts('no_email'), invalid: counts('invalid'), noLongerDue: counts('no_longer_due'), ...(ignoredCooldown ? { ignoredCooldown: true } : {}) }),
       req.session.phone, req.session.name || null, Date.now()]);
   for (const o of outcomes) {
     await dbRun('INSERT INTO reminder_send_recipients (send_id, recipient_id, name, email, outcome) VALUES (?, ?, ?, ?, ?)',
@@ -9512,10 +9512,13 @@ async function recordReminderSend(req, a, filters, subject, bodyHtml, outcomes) 
 // selection can never turn into everyone. Each person is checked against the
 // audience as it is NOW (registered since, code used since: not written to),
 // against the cooldown, and for an address; then one email and one audit row
-// each. Nothing here can be undone.
+// each. Nothing here can be undone. ignoreCooldown (owner, 22 Nov 2026):
+// this send only, the 24-hour limit set aside -- asked for each time, kept
+// with the send in the Sent history.
 async function sendReminder(req, res, a) {
   if (!reminderGuard(a, req.body, res)) return;
   const { subject, bodyHtml } = req.body;
+  const ignoreCooldown = req.body.ignoreCooldown === true;
   const filters = reminderFilters(req.body.filters);
   const ids = Array.isArray(req.body.ids) ? req.body.ids.map((x) => String(x || '').trim()).filter(Boolean) : [];
   if (!ids.length) {
@@ -9538,7 +9541,7 @@ async function sendReminder(req, res, a) {
       if (seen.has(addr)) continue;
       seen.add(addr);
       if (!EMAIL_RE.test(addr)) { outcomes.push({ id: raw, email: raw, outcome: 'invalid' }); continue; }
-      if (recent.has(addr)) { outcomes.push({ id: addr, email: addr, outcome: 'cooldown' }); continue; }
+      if (recent.has(addr) && !ignoreCooldown) { outcomes.push({ id: addr, email: addr, outcome: 'cooldown' }); continue; }
       await sendEmail(addr, subject, emailWrap(subject, bodyHtml));
       await recordAudit({ req, entityType: 'reminder_email', entityId: addr, action: a.action, oldValue: null, newValue: subject });
       outcomes.push({ id: addr, email: addr, outcome: 'sent' });
@@ -9547,7 +9550,7 @@ async function sendReminder(req, res, a) {
     const chosen = new Set(ids);
     const members = (await audienceRecipients(a.key, filters)).filter((m) => chosen.has(String(m.id)));
     for (const m of members) {
-      if (m.last_reminder_sent_at && m.last_reminder_sent_at >= since) { outcomes.push({ ...m, outcome: 'cooldown' }); continue; }
+      if (m.last_reminder_sent_at && m.last_reminder_sent_at >= since && !ignoreCooldown) { outcomes.push({ ...m, outcome: 'cooldown' }); continue; }
       if (!m.email) { outcomes.push({ ...m, outcome: 'no_email' }); continue; }
       const personalSubject = reminderLib.fillPlaceholders(subject, m.values);
       await sendEmail(m.email, personalSubject, emailWrap(personalSubject, reminderLib.fillPlaceholders(bodyHtml, m.values)));
@@ -9563,7 +9566,7 @@ async function sendReminder(req, res, a) {
     for (const id of chosen) if (!found.has(id)) outcomes.push({ id, outcome: 'no_longer_due' });
   }
 
-  const sendId = await recordReminderSend(req, a, filters, subject, bodyHtml, outcomes);
+  const sendId = await recordReminderSend(req, a, filters, subject, bodyHtml, outcomes, ignoreCooldown);
   const n = (o) => outcomes.filter((x) => x.outcome === o).length;
   res.json({
     success: true, sendId, total: outcomes.length, sent: n('sent'),

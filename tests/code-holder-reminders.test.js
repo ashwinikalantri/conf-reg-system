@@ -127,7 +127,7 @@ const base = { salutation: 'Dr', age: '38', gender: 'Female', designation: 'Cons
     check('its ready-made email carries {{codes}}, and is what it starts with', /async function buildCodeHolderBody\(\)[\s\S]{0,400}\{\{codes\}\}/.test(js) && /codes: 'code-holder'/.test(js));
     check('sending without {{codes}} is stopped before it reaches the server too: the preview reports it and Send is held',
       /remState\.problems\.missing\.map/.test(js) && /sendBtn\.disabled = !n \|\| !maySend \|\| !!blocked;/.test(js));
-    check('...and asks before sending', /showConfirm\(`Send this reminder to \$\{who\}\? This can't be undone\.`\)/.test(js));
+    check('...and asks before sending', /showConfirm\(`Send this reminder to \$\{who\}\$\{again\}\? This can't be undone\.`\)/.test(js));
   } finally {
     for (const phone of used) await db.run('DELETE FROM registrations WHERE phone_number = ?', [phone]);
     for (const code of made) await db.run('DELETE FROM discount_codes WHERE code = ?', [code]);

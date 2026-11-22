@@ -183,7 +183,7 @@ const base = { salutation: 'Dr', age: '41', gender: 'Female', designation: 'Prof
     check('the preview cannot run script or reach the page', /<iframe id="rem-preview" sandbox=""/.test(view) && /<iframe id="rem-send-preview" sandbox=""/.test(view));
     check('Compose and Sent', view.includes("switchReminderView('compose')") && view.includes("switchReminderView('sent')"));
     check('the preview is drawn by the server, after typing stops', /function scheduleReminderPreview\(delay = 450\)/.test(js) && /\/preview`, \{/.test(js));
-    check('only people who can be written to can be chosen', /const reminderSelectable = \(r\) => !!r\.email && !reminderOnCooldown\(r\);/.test(js));
+    check('only people who can be written to can be chosen', /const reminderSelectable = \(r\) => !!r\.email && \(remState\.ignoreCooldown \|\| !reminderOnCooldown\(r\)\);/.test(js));
     check('the tab loads the composer', /if \(tab === 'reminders'\) renderReminders\(\);/.test(js));
   } finally {
     for (const id of guestIds) await db.run('DELETE FROM guests WHERE id = ?', [id]);

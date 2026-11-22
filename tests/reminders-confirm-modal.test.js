@@ -18,7 +18,7 @@ console.log('\n== The reminder send confirms through showConfirm() ==');
 // Since the Reminders composer, one send serves every audience (pasted
 // addresses included), so there is one call site to hold to this.
 const sendFn = js.slice(js.indexOf('async function sendReminders()'), js.indexOf('\n}', js.indexOf('async function sendReminders()')));
-check('sendReminders asks first, through showConfirm', /await showConfirm\(`Send this reminder to \$\{who\}\? This can't be undone\.`\)/.test(sendFn));
+check('sendReminders asks first, through showConfirm', /await showConfirm\(`Send this reminder to \$\{who\}\$\{again\}\? This can't be undone\.`\)/.test(sendFn));
 check('...before it disables the button and sends', sendFn.indexOf('await showConfirm(') > 0
   && sendFn.indexOf('await showConfirm(') < sendFn.indexOf("const btn = document.getElementById('rem-send-btn');")
   && sendFn.indexOf("const btn = document.getElementById('rem-send-btn');") < sendFn.indexOf('await fetch(url'));

@@ -10421,10 +10421,19 @@ const remState = {
   audiences: [], placeholders: {}, options: { categories: [], statuses: [] },
   key: null, recipients: [], selected: new Set(), filters: { domain: '', category: '', status: '', format: '', faculty: '' },
   autoFilled: null, problems: { unsupported: [], missing: [] }, previewTimer: null, previewSeq: 0,
+  // The 24-hour limit set aside for the next send only (owner, 22 Nov 2026).
+  ignoreCooldown: false,
 };
 const REMINDER_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const reminderOnCooldown = (r) => !!r.last_reminder_sent_at && (Date.now() - Number(r.last_reminder_sent_at)) < REMINDER_COOLDOWN_MS;
-const reminderSelectable = (r) => !!r.email && !reminderOnCooldown(r);
+const reminderSelectable = (r) => !!r.email && (remState.ignoreCooldown || !reminderOnCooldown(r));
+// Include people emailed in the last 24 hours, for this send; turned off
+// again, they drop out of the selection.
+function setReminderIgnoreCooldown(on) {
+  remState.ignoreCooldown = !!on;
+  if (!on) remState.selected = new Set([...remState.selected].filter((id) => !remState.recipients.some((r) => String(r.id) === id && reminderOnCooldown(r))));
+  renderReminderRecipients();
+}
 const remAudience = () => remState.audiences.find((a) => a.key === remState.key) || null;
 
 async function renderReminders() {
@@ -10758,11 +10767,12 @@ async function sendReminderTest() {
 async function sendReminders() {
   const a = remAudience();
   const ids = reminderTargets();
-  const body = { ...reminderPayload(), ids };
+  const body = { ...reminderPayload(), ids, ignoreCooldown: remState.ignoreCooldown };
   if (!body.subject || !body.bodyHtml) return showToast('Subject and body are both required.');
   if (!ids.length) return showToast(a.key === 'paste' ? 'Enter at least one email address.' : 'Select at least one person.');
   const who = a.key === 'paste' ? `${ids.length} entered ${ids.length === 1 ? 'address' : 'addresses'}` : `${ids.length} ${ids.length === 1 ? 'person' : 'people'} in "${a.label}"`;
-  if (!(await showConfirm(`Send this reminder to ${who}? This can't be undone.`))) return;
+  const again = remState.ignoreCooldown ? ', including anyone emailed in the last 24 hours' : '';
+  if (!(await showConfirm(`Send this reminder to ${who}${again}? This can't be undone.`))) return;
 
   const btn = document.getElementById('rem-send-btn');
   btn.disabled = true;
@@ -10785,6 +10795,9 @@ async function sendReminders() {
   setReminderResult('text-emerald-600', msg);
   showToast(msg, 'success');
   remState.selected = new Set();
+  remState.ignoreCooldown = false;
+  const ignoreBox = document.getElementById('rem-ignore-cooldown');
+  if (ignoreBox) ignoreBox.checked = false;
   if (a.key === 'paste') document.getElementById('rem-paste').value = '';
   // Counts, "last sent" and the cooldown marks reflect what just happened.
   await renderReminders();
@@ -10822,12 +10835,13 @@ async function renderReminderHistory() {
   if (!res.ok) return;
   const sends = (await res.json()).sends || [];
   box.innerHTML = sends.length ? sends.map((s) => {
-    const skipped = s.skipped ? Object.values(s.skipped).reduce((t, n) => t + Number(n || 0), 0) : 0;
+    const skipped = s.skipped ? Object.entries(s.skipped).reduce((t, [k, n]) => t + (k === 'ignoredCooldown' ? 0 : Number(n || 0)), 0) : 0;
     const filter = reminderFilterLabel(s.filters);
+    const again = s.skipped && s.skipped.ignoredCooldown ? ' · 24-hour limit set aside' : '';
     return `<button type="button" onclick="openReminderSend('${esc(s.id)}')" class="w-full text-left px-4 py-3 hover:bg-slate-50 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4">
       <span class="min-w-0 flex-1">
         <span class="block font-semibold text-slate-800 truncate">${esc(s.subject || '(no subject)')}</span>
-        <span class="block text-xs text-slate-500">${esc(s.audienceLabel)}${filter ? ` · ${esc(filter)}` : ''} · by ${esc(s.sentBy || '—')}${s.legacy ? ' · from the activity log' : ''}</span>
+        <span class="block text-xs text-slate-500">${esc(s.audienceLabel)}${filter ? ` · ${esc(filter)}` : ''} · by ${esc(s.sentBy || '—')}${s.legacy ? ' · from the activity log' : ''}${again}</span>
       </span>
       <span class="text-xs text-slate-500 shrink-0 tabular-nums">${esc(fmtAuditTime(s.createdAt))}</span>
       <span class="text-xs font-bold shrink-0 tabular-nums ${s.sent ? 'text-emerald-700' : 'text-slate-500'}">${s.sent} sent${skipped ? `<span class="font-semibold text-amber-700"> · ${skipped} skipped</span>` : ''}</span>
