@@ -11668,6 +11668,10 @@ async function renderPrizes() {
         <p class="text-sm text-slate-600">1st, 2nd and 3rd for each, overall. Their presenters get a Prize certificate: issue it on the Certificates page.</p></div>
       ${can('certificates.view') ? '<button type="button" onclick="selectSettingsTab(\'certificates\')" class="min-h-[40px] px-3.5 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-navy hover:bg-slate-50">Certificates →</button>' : ''}
     </div>
+    ${assign ? `<label class="mb-4 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 cursor-pointer">
+      <input type="checkbox" class="mt-1" ${data.public ? 'checked' : ''} onchange="setPrizesPublic(this.checked)">
+      <span class="text-sm text-slate-700"><b>Show the winners on the website</b><span class="block text-slate-500">On the home page after the conference: each winner's name, institution and paper title, for the places chosen.</span></span>
+    </label>` : `<p class="mb-4 text-sm text-slate-600">${data.public ? 'The winners are shown on the website.' : 'The winners are not shown on the website.'}</p>`}
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">${data.formats.map((f) => `<div class="bg-white rounded-xl border border-slate-200 p-3">
       <p class="font-bold text-slate-800 mb-2">${esc(f.label)}</p>
       ${f.places.map((pl) => {
@@ -11767,6 +11771,15 @@ async function reopenPresentationAttendance() {
   if (!data.success) return showToast(data.error || 'Could not reopen.');
   showToast('Reopened.', 'success');
   renderPresentationAttendance();
+}
+
+async function setPrizesPublic(on) {
+  if (on && !(await showConfirm('Show the winners on the website? Their names, institutions and paper titles appear on the home page after the conference.', 'Show'))) return renderPrizes();
+  const data = await (await fetch('/api/admin/prizes/public', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ public: !!on }),
+  })).json().catch(() => ({}));
+  if (!data.success) showToast(data.error || 'Could not save.'); else showToast(on ? 'Shown on the website.' : 'Hidden from the website.', 'success');
+  renderPrizes();
 }
 
 async function setPrize(format, rank, abstractId) {

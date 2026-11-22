@@ -142,6 +142,9 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
         startDate: C.startDate, endDate: C.endDate,
         location: C.location || '',
         daysToGo,
+        // The day after the last day (owner, 22 Nov 2026): the site thanks
+        // people rather than asking them to register.
+        over: !!C.endDate && today > C.endDate,
       },
     };
   }
@@ -310,7 +313,11 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
       const now = at ? Date.parse(`${at[1]}T${at[2]}:${at[3]}:00+05:30`) : Date.now();
       const liveDays = [...new Set(all.map((s) => s.session_date))].filter((x) => x >= (C.startDate || '') && x <= (C.endDate || C.startDate || ''));
       const live = liveLib.build(all, { days: liveDays.length ? liveDays : confDays, now, isBreak });
-      return { days, oration: pick(/oration/i), plenary: pick(/plenary/i), fee: await feeState(), live,
+      // After the last day (owner, 22 Nov 2026): the thank-you page, built
+      // from the record of what happened. ?at= previews it too.
+      const atDate = at ? at[1] : d.istDateString();
+      const after = !live && !!C.endDate && atDate > C.endDate ? await afterConference(all, pick) : null;
+      return { days, oration: pick(/oration/i), plenary: pick(/plenary/i), fee: await feeState(), live, after,
         glancePdf: `${base}/programme-at-a-glance.pdf`,
         extraHead: live && !at ? '<meta http-equiv="refresh" content="300">' : undefined };
     },
@@ -422,6 +429,57 @@ module.exports = function mountWebsite(app, d, { host = '' } = {}) {
   function sortLines(lines) {
     const mins = (t) => { const m = /^(\d+):(\d+) (AM|PM)$/.exec(t); if (!m) return 0; return ((Number(m[1]) % 12) + (m[3] === 'PM' ? 12 : 0)) * 60 + Number(m[2]); };
     return lines.sort((a, b) => mins(a.t) - mins(b.t));
+  }
+
+  // The conference in figures, the best papers (once the organisers show
+  // them) and what each day held -- for the page after it (owner, 22 Nov
+  // 2026). Counts only, and the winners' names, institutions and titles.
+  async function afterConference(all, pick) {
+    const one = async (sql, p = []) => Number(((await d.dbGet(sql, p)) || {}).n || 0);
+    const workshopGroup = "(SELECT o.id FROM program_options o JOIN program_groups g ON g.id = o.group_id WHERE g.name = 'Workshops' AND o.active = 1)";
+    const papers = await d.dbAll(`SELECT authors FROM abstracts WHERE status = 'ACCEPTED' AND decision_sent_at IS NOT NULL AND allocation IN ('ORAL', 'POSTER', 'AWARD')`);
+    const coauthors = papers.reduce((n, a) => { try { const x = JSON.parse(a.authors || '[]'); return n + (Array.isArray(x) ? x.length : 0); } catch (e) { return n; } }, 0);
+    const workshops = await one(`SELECT COUNT(DISTINCT option_id) AS n FROM programme_sessions WHERE option_id IN ${workshopGroup}`);
+    const stats = [
+      [await one("SELECT COUNT(*) AS n FROM registrations WHERE COALESCE(bank_status, '') != 'REJECTED'"), 'registered'],
+      [await one("SELECT COUNT(DISTINCT COALESCE(CAST(guest_id AS TEXT), LOWER(TRIM(name)))) AS n FROM programme_session_faculty"), 'faculty'],
+      [all.filter((s) => !isBreak(s)).length, 'sessions'],
+      [workshops, 'workshops'],
+      [await one(`SELECT COUNT(DISTINCT a.phone_number || '|' || s.option_id) AS n FROM attendance a JOIN programme_sessions s ON 's:' || s.id = a.event_key
+          WHERE a.removed_at IS NULL AND s.option_id IN ${workshopGroup}`), 'workshop participants'],
+      [papers.length, 'abstracts presented'],
+      [papers.length + coauthors, 'researchers'],
+      [await one("SELECT COUNT(*) AS n FROM program_options o JOIN program_groups g ON g.id = o.group_id WHERE g.name = 'QI Practices' AND o.active = 1"), 'field visits'],
+    ].filter(([n]) => n > 0).map(([n, label]) => ({ n: Number(n).toLocaleString('en-IN'), label }));
+
+    // The best papers: only once the organisers choose to show them
+    // (Review Desk, Step 5).
+    const shown = ((await d.dbGet("SELECT value FROM schema_meta WHERE key = 'website_winners_public'")) || {}).value === '1';
+    const rows = shown ? await d.dbAll(`SELECT p.format, p.rank, a.title, a.author_name, u.salutation, u.full_name, u.institution
+        FROM presentation_prizes p JOIN abstracts a ON a.id = p.abstract_id LEFT JOIN users u ON u.phone_number = a.phone_number ORDER BY p.rank`) : [];
+    const kinds = [['AWARD', 'Award papers'], ['ORAL', 'Oral papers'], ['POSTER', 'E-posters']];
+    const winners = kinds.map(([format, label]) => ({ label, places: rows.filter((r) => r.format === format).map((r) => ({
+      rank: Number(r.rank), name: [r.salutation, r.full_name || r.author_name].filter(Boolean).join(' '), institution: r.institution || '', title: r.title,
+    })) })).filter((k) => k.places.length);
+
+    // What each day held, in the past tense.
+    const parliament = pick(/student parliament/i);
+    const plenary = pick(/plenary/i);
+    const day2 = [
+      'Scientific sessions, oral papers and e-posters across the halls',
+      parliament ? parliament.title : null,
+      plenary ? `Plenary panel: ${plenary.title}` : null,
+      pick(/award/i) ? 'Award paper presentations' : null,
+    ].filter(Boolean);
+    const C = d.CONFERENCE;
+    return {
+      stats, winners,
+      days: [
+        { kicker: `Day 1 · ${dayLong(C.startDate)}`, title: 'Workshops and field visits',
+          text: `${workshops ? `${workshops} hands-on workshops` : 'Hands-on workshops'}, and quality improvement in practice at sites around Sevagram.`, link: 'workshops', linkText: 'All workshops' },
+        { kicker: `Day 2 · ${dayLong(C.endDate)}`, title: 'The scientific programme', list: day2, link: 'programme', linkText: 'Full programme' },
+      ],
+    };
   }
 
   function abstractState() {

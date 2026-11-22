@@ -10667,9 +10667,16 @@ app.get('/api/site/for-you', requireAuth, async (req, res, next) => {
       if (place && place.published) note('ok', 'Your slot', `You present: ${place.line}`, abs.file_name ? 'Your file is uploaded. Be there a few minutes early.' : 'Be there a few minutes early.');
     }
 
-    // After it: certificates ready.
-    const certs = (await dbGet('SELECT COUNT(*) AS n FROM certificates WHERE phone_number = ? AND revoked_at IS NULL', [phone])).n;
-    if (certs) note('ok', 'Certificate ready', certs === 1 ? 'Your certificate is ready' : `Your ${certs} certificates are ready`, 'Download it from the delegate portal.', { label: 'Download', to: 'portal' });
+    // Their certificates, one by one (owner, 22 Nov 2026): ready to
+    // download, or on its way; one waiting on feedback is the feedback note
+    // above. One they do not qualify for is not listed here.
+    const after = !!CONFERENCE.endDate && today > CONFERENCE.endDate;
+    const me = (await certificateCandidates()).find((p) => p.phone === phone);
+    for (const c of certificateLines(me)) {
+      if (c.status === 'issued') note('ok', 'Ready', c.title, `${c.certNo}. Download it from the delegate portal.`, { label: 'Download', to: 'portal' });
+      else if (c.status === 'due') note('ok', 'On its way', c.title, 'It qualifies: it will be issued shortly. Nothing for you to do.');
+      else if (c.reason === 'Presentation attendance not finalised yet') note('ok', 'On its way', c.title, 'Issued once the organisers finalise presentation attendance. Nothing for you to do.');
+    }
 
     const order = { act: 0, due: 1, ok: 2 };
     notes.sort((x, y) => order[x.tone] - order[y.tone]);
@@ -10683,6 +10690,8 @@ app.get('/api/site/for-you', requireAuth, async (req, res, next) => {
         checkedIn, checkedInAt: checkedIn ? atText(reg.checked_in_at) : null,
         conferenceDay,
       },
+      // After the conference the badge QR is no longer needed.
+      after,
       notes,
       // Their workshops' options, to mark "Yours" on the page.
       mine: [...enrolled],
@@ -17490,11 +17499,25 @@ app.get('/api/admin/prizes', requirePermission('abstracts.view'), async (req, re
         LEFT JOIN registrations r ON r.phone_number = a.phone_number AND COALESCE(r.bank_status, '') != 'REJECTED'
        WHERE a.status = 'ACCEPTED' AND a.decision_sent_at IS NOT NULL AND a.allocation IN ('ORAL', 'POSTER', 'AWARD') ORDER BY a.id`);
     const view = (x) => ({ id: x.id, title: x.title, presenter: reminderName(x.salutation, x.full_name || x.author_name), regNo: x.registration_number || '' });
-    res.json({ success: true, formats: Object.entries(PRIZE_FORMAT).map(([format, label]) => ({
+    const shown = ((await dbGet("SELECT value FROM schema_meta WHERE key = 'website_winners_public'")) || {}).value === '1';
+    res.json({ success: true, public: shown, formats: Object.entries(PRIZE_FORMAT).map(([format, label]) => ({
       format, label,
       places: [1, 2, 3].map((rank) => ({ rank, label: PRIZE_RANK[rank], abstractId: (set.find((s) => s.format === format && Number(s.rank) === rank) || {}).abstract_id || null })),
       papers: papers.filter((x) => x.allocation === format).map(view),
     })) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Whether the website's page after the conference names the winners
+// (owner, 22 Nov 2026: hidden until the organisers choose to show them).
+app.put('/api/admin/prizes/public', requirePermission('abstracts.assign'), async (req, res, next) => {
+  try {
+    const on = req.body && req.body.public === true;
+    await dbRun("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('website_winners_public', ?)", [on ? '1' : '0']);
+    await recordAudit({ req, entityType: 'prizes', entityId: 'website', action: on ? 'PRIZES_SHOWN_ON_WEBSITE' : 'PRIZES_HIDDEN_ON_WEBSITE', oldValue: null, newValue: on ? 'shown' : 'hidden' });
+    res.json({ success: true, public: on });
   } catch (err) {
     next(err);
   }

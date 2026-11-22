@@ -364,7 +364,7 @@ table.fees thead .past { text-decoration: none; }
 /* Signed in: the pass and For you (partials/foryou.ejs, 21 Nov 2026). */
 .has-pass .if-guest { display: none; }
 .you { background: #fff; border-bottom: 1px solid var(--line); }
-.you[hidden] { display: none; }
+.you[hidden], .you-pass[hidden] { display: none; }
 .you .wrap { padding-top: 22px; padding-bottom: 22px; display: flex; flex-direction: column; gap: 14px; }
 .you-pass { display: flex; flex-wrap: wrap; align-items: center; gap: 18px 26px; border: 1px solid var(--gold-300); background: var(--gold-50); border-radius: 18px; padding: 18px; }
 .you-qr { flex: none; width: 168px; height: 168px; background: #fff; border-radius: 12px; border: 1px solid var(--line); padding: 6px; }
@@ -398,3 +398,24 @@ table.fees thead .past { text-decoration: none; }
 @media (max-width: 719px) { .you-pass { justify-content: center; text-align: left; } .you-qr { width: 200px; height: 200px; } .you-notes .dot { display: none; } }
 
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+
+/* After the conference (22 Nov 2026): the date card's "Concluded", the
+   figures, the Oration and the best papers. */
+.done-badge { align-self: flex-start; font-size: 13px; font-weight: 700; padding: 3px 11px; border-radius: 999px; background: #e7f4ec; color: #1e6b3c; }
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+@media (min-width: 900px) { .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.stat { padding: 18px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
+@media (min-width: 720px) { .stat { padding: 24px; } }
+.stat .n { font-family: var(--display); font-weight: 800; font-size: 32px; line-height: 1.1; color: var(--navy); font-variant-numeric: tabular-nums; }
+@media (min-width: 720px) { .stat .n { font-size: 44px; } }
+.stat .l { font-weight: 700; }
+.oration-card { padding: 28px; gap: 8px; }
+@media (min-width: 720px) { .oration-card { padding: 32px; } }
+.places { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.places li { display: flex; gap: 12px; align-items: flex-start; }
+.places .rank { flex: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; color: var(--ink); background: #e8cfae; }
+.places .rank-1 { background: var(--gold); color: #fff; }
+.places .rank-2 { background: var(--line-2); }
+.places .who { font-weight: 700; }
+.places .what { font-size: 15px; color: var(--muted); }
+.happened { margin: 0; padding-left: 20px; color: var(--text); display: flex; flex-direction: column; gap: 6px; }

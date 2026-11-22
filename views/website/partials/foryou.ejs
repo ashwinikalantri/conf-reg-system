@@ -37,7 +37,9 @@
   fetch('/api/site/for-you', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
     if (!d || !d.pass) return;
     var p = d.pass;
-    document.getElementById('you-qr').src = p.qr;
+    // After the conference (22 Nov 2026): no badge to show, only what is theirs.
+    if (d.after) { var passBox = box.querySelector('.you-pass'); if (passBox) passBox.hidden = true; }
+    else document.getElementById('you-qr').src = p.qr;
     document.getElementById('you-name').textContent = p.name;
     document.getElementById('you-meta').textContent = [p.regNo, p.category].filter(Boolean).join(' · ');
     var status = document.getElementById('you-status');
@@ -87,8 +89,9 @@
         if (h && !card.querySelector('.yours')) h.parentNode.insertBefore(el('span', 'yours', 'Yours'), h);
       });
     });
-    box.hidden = false;
-    document.documentElement.classList.add('has-pass');
+    // After the conference, nothing to show without a certificate or a note.
+    box.hidden = !!d.after && !(d.notes || []).length;
+    if (!d.after) document.documentElement.classList.add('has-pass');
   }).catch(function () {});
 })();
 </script>

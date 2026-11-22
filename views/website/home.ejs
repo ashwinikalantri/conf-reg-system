@@ -3,6 +3,8 @@
 <%# While the conference is on, the page is live (21 Nov 2026): partials/live.ejs, from website-live.js. %>
 <% if (live) { %>
 <%- include('partials/live') %>
+<% } else if (after) { %>
+<%- include('partials/after') %>
 <% } else { %>
 
 <section class="band-navy hero">
